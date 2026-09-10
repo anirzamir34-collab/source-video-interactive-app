@@ -12,7 +12,7 @@ const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://sou
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 }
+  limits: { fileSize: 250 * 1024 * 1024 }
 });
 
 app.disable('x-powered-by');
@@ -113,6 +113,18 @@ app.post('/api/external-analyze-segment', upload.single('video'), async (req, re
   } catch (error) {
     return res.status(503).json({ available: false, reason: 'UPSTREAM_UNAVAILABLE', error: error?.message || String(error) });
   }
+});
+
+app.use((error, _req, res, next) => {
+  if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      available: false,
+      reason: 'VIDEO_TOO_LARGE',
+      message: 'Video 250 MB yükleme sınırını aşıyor.'
+    });
+  }
+
+  return next(error);
 });
 
 app.get('/health', (_req, res) => {
