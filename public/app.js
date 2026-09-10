@@ -385,3 +385,29 @@ function restoreSavedAnalysis() {
 }
 
 restoreSavedAnalysis();
+
+
+// FULLSCREEN GAME MODE
+const fullscreenBtn = document.getElementById('fullscreenBtn');
+const fullscreenStage = document.querySelector('.video-stage');
+
+fullscreenBtn?.addEventListener('click', async () => {
+  try {
+    if (!document.fullscreenElement) {
+      await fullscreenStage.requestFullscreen();
+      try { await screen.orientation?.lock?.('landscape'); } catch {}
+    } else {
+      await document.exitFullscreen();
+    }
+  } catch (error) {
+    console.error('Tam ekran açılamadı:', error);
+  }
+});
+
+document.addEventListener('fullscreenchange', () => {
+  if (fullscreenBtn) {
+    fullscreenBtn.textContent = document.fullscreenElement
+      ? '✕ TAM EKRANDAN ÇIK'
+      : '⛶ OYUN MODU';
+  }
+});
