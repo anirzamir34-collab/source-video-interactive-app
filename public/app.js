@@ -43,6 +43,12 @@ function setServiceStatus(kind, label, meta = '') {
 function setGameState(next) {
   state.gameState = next;
   els.gameState.textContent = next;
+
+  const stage = document.querySelector('.video-stage');
+  if (stage) {
+    stage.dataset.state = next;
+  }
+
   renderDebug();
 }
 

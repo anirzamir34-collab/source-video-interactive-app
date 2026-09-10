@@ -70,12 +70,19 @@
       </div>
 
       <div id="interactivePanel" class="tab-panel active">
-        <video id="video" controls playsinline></video>
-        <div class="state-row">
-          <span id="gameState" class="mini-state">IDLE</span>
-          <span id="cursorText" class="meta">cursor: 0.000</span>
+        <div class="video-stage">
+          <video id="video" controls playsinline></video>
+
+          <div class="cinema-shade"></div>
+
+          <div class="game-hud">
+            <span class="live-dot"></span>
+            <span id="gameState" class="hud-state">IDLE</span>
+            <span id="cursorText" class="hud-time">0.000</span>
+          </div>
+
+          <div id="choices" class="choices choices-overlay"></div>
         </div>
-        <div id="choices" class="choices"></div>
       </div>
 
       <div id="timelinePanel" class="tab-panel">

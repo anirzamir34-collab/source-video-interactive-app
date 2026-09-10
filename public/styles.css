@@ -28,3 +28,303 @@ button,input{font:inherit}
 .tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);overflow:auto}.tab{white-space:nowrap;border:0;background:transparent;color:#9ba5a8;padding:12px 14px;font-weight:800;border-bottom:2px solid transparent}.tab.active{color:var(--accent);border-bottom-color:var(--accent)}.tab-panel{display:none;padding-top:18px}.tab-panel.active{display:block}
 video{width:100%;max-height:58vh;background:black;border-radius:14px}.state-row{display:flex;justify-content:space-between;gap:12px;margin-top:12px}.choices{display:grid;gap:10px;margin-top:14px}.choice{border:1px solid #245f4d;background:#0b221b;color:#f0fff9;border-radius:14px;padding:14px;text-align:left;cursor:pointer}.choice:hover{border-color:var(--accent)}.choice-title{font-weight:900}.choice-meta{color:#91b9aa;font-size:12px;margin-top:6px}.timeline-list{display:grid;gap:8px}.timeline-item{border:1px solid var(--line);border-radius:12px;padding:12px}.timeline-item b{color:var(--accent)}
 @media (max-width:640px){.shell{padding:14px 14px 60px}.brand-title{font-size:18px}.top-pills{gap:6px}.pill{font-size:10px;padding:7px 8px}.truth-card{padding:18px}.status-card{grid-template-columns:1fr}.status-actions{justify-content:flex-start}.truth-card,.upload-card,.analysis-card,.player-card,.debug-card{border-radius:16px}}
+
+
+/* VIDEOQUEST CINEMATIC PLAYER */
+.video-stage {
+  position: relative;
+  width: 100%;
+  min-height: 52vh;
+  max-height: 74vh;
+  overflow: hidden;
+  border: 1px solid rgba(93, 255, 207, 0.22);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 40%, #17211f 0%, #070909 70%);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.025) inset;
+  isolation: isolate;
+}
+
+.video-stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 52vh;
+  max-height: 74vh;
+  object-fit: contain;
+  border-radius: 0;
+  background: #000;
+}
+
+.cinema-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.55) 0%, transparent 25%),
+    linear-gradient(0deg, rgba(0,0,0,.92) 0%, rgba(0,0,0,.08) 58%, transparent 76%);
+}
+
+.game-hud {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 13px;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 999px;
+  color: #eafff8;
+  background: rgba(5, 10, 9, .62);
+  box-shadow: 0 8px 30px rgba(0,0,0,.28);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #54f2bd;
+  box-shadow: 0 0 0 5px rgba(84,242,189,.12), 0 0 18px #54f2bd;
+  animation: hudPulse 1.8s ease-in-out infinite;
+}
+
+.hud-state {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .11em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hud-time {
+  margin-left: auto;
+  color: rgba(226,255,246,.7);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.choices-overlay {
+  position: absolute;
+  right: 14px;
+  bottom: 16px;
+  left: 14px;
+  z-index: 5;
+  display: grid;
+  gap: 9px;
+  max-height: 48%;
+  padding: 42px 10px 10px;
+  overflow-y: auto;
+  border: 1px solid rgba(101,255,209,.18);
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(4,15,13,.88), rgba(5,8,8,.78));
+  box-shadow: 0 22px 60px rgba(0,0,0,.58);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  scrollbar-width: none;
+}
+
+.choices-overlay::-webkit-scrollbar {
+  display: none;
+}
+
+.choices-overlay:empty {
+  display: none;
+}
+
+.choices-overlay::before {
+  content: "SEÇİM ANI";
+  position: absolute;
+  top: 14px;
+  left: 17px;
+  color: #60f4c1;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .18em;
+}
+
+.choices-overlay::after {
+  content: "GERÇEK VİDEODAN BİR HAREKET SEÇ";
+  position: absolute;
+  top: 15px;
+  right: 17px;
+  color: rgba(226,255,246,.48);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .07em;
+}
+
+.choices-overlay .choice {
+  position: relative;
+  width: 100%;
+  min-height: 68px;
+  margin: 0;
+  padding: 13px 42px 13px 54px;
+  overflow: hidden;
+  border: 1px solid rgba(96,244,193,.20);
+  border-radius: 17px;
+  text-align: left;
+  color: #f1fff9;
+  background:
+    linear-gradient(115deg, rgba(25,75,61,.72), rgba(10,25,21,.82));
+  box-shadow:
+    0 10px 24px rgba(0,0,0,.26),
+    0 1px 0 rgba(255,255,255,.04) inset;
+  transform: translateZ(0);
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+
+.choices-overlay .choice::after {
+  content: "›";
+  position: absolute;
+  top: 50%;
+  right: 17px;
+  color: #6effcc;
+  font-size: 29px;
+  font-weight: 300;
+  transform: translateY(-52%);
+}
+
+.choices-overlay .choice:nth-of-type(1)::before,
+.choices-overlay .choice:nth-of-type(2)::before,
+.choices-overlay .choice:nth-of-type(3)::before {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  color: #6effcc;
+  font-size: 13px;
+  font-weight: 950;
+  transform: translateY(-50%);
+}
+
+.choices-overlay .choice:nth-of-type(1)::before { content: "01"; }
+.choices-overlay .choice:nth-of-type(2)::before { content: "02"; }
+.choices-overlay .choice:nth-of-type(3)::before { content: "03"; }
+
+.choices-overlay .choice:active {
+  border-color: rgba(110,255,204,.8);
+  background: linear-gradient(115deg, rgba(36,112,87,.92), rgba(10,36,29,.94));
+  transform: scale(.975);
+}
+
+.choices-overlay .choice-title {
+  font-size: clamp(14px, 4vw, 18px);
+  font-weight: 850;
+  line-height: 1.18;
+}
+
+.choices-overlay .choice-meta {
+  margin-top: 6px;
+  color: rgba(201,255,237,.58);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .035em;
+}
+
+@keyframes hudPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .55; transform: scale(.82); }
+}
+
+@media (max-width: 520px) {
+  .player-card {
+    padding: 10px;
+  }
+
+  .video-stage,
+  .video-stage video {
+    min-height: 58vh;
+    max-height: 76vh;
+  }
+
+  .game-hud {
+    top: 11px;
+    left: 11px;
+    right: 11px;
+  }
+
+  .choices-overlay {
+    right: 9px;
+    bottom: 10px;
+    left: 9px;
+    max-height: 51%;
+  }
+
+  .choices-overlay::after {
+    display: none;
+  }
+}
+
+
+/* VIDEOQUEST GAME MOTION */
+.choices-overlay {
+  animation: decisionPanelIn .34s cubic-bezier(.2,.8,.2,1) both;
+}
+
+.choices-overlay .choice {
+  animation: choiceCardIn .42s cubic-bezier(.16,.84,.32,1) both;
+}
+
+.choices-overlay .choice:nth-of-type(1) { animation-delay: .04s; }
+.choices-overlay .choice:nth-of-type(2) { animation-delay: .11s; }
+.choices-overlay .choice:nth-of-type(3) { animation-delay: .18s; }
+
+.video-stage .game-hud,
+.video-stage .cinema-shade {
+  transition: opacity .28s ease, transform .28s ease;
+}
+
+.video-stage[data-state="SEGMENT_PLAYING"] .game-hud {
+  opacity: .34;
+  transform: translateY(-4px) scale(.98);
+}
+
+.video-stage[data-state="SEGMENT_PLAYING"] .cinema-shade {
+  opacity: .18;
+}
+
+.video-stage[data-state="DECISION_PENDING"] {
+  box-shadow:
+    0 30px 90px rgba(0,0,0,.62),
+    0 0 0 1px rgba(96,244,193,.18) inset,
+    0 0 38px rgba(31,211,155,.08);
+}
+
+@keyframes decisionPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes choiceCardIn {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .choices-overlay,
+  .choices-overlay .choice,
+  .live-dot {
+    animation: none;
+  }
+}
