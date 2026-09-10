@@ -340,7 +340,7 @@ async function fetchPublicUrl(rawUrl, options = {}) {
     const response = await fetch(current, {
       ...options,
       redirect: 'manual',
-      signal: AbortSignal.timeout(25000),
+      signal: options.timeoutMs === 0 ? undefined : AbortSignal.timeout(options.timeoutMs || 25000),
       headers: {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
         'Accept': '*/*',
@@ -480,7 +480,7 @@ app.get('/api/video-proxy', async (req, res) => {
       headers.Referer = referer;
     }
 
-    const { response } = await fetchPublicUrl(sourceUrl, { headers });
+    const { response } = await fetchPublicUrl(sourceUrl, { headers, timeoutMs: 0 });
     if (!response.ok && response.status !== 206) {
       return res.status(response.status).json({ ok: false, message: `Video sunucusu ${response.status} yanıtı verdi.` });
     }
@@ -492,7 +492,15 @@ app.get('/api/video-proxy', async (req, res) => {
 
     res.status(response.status);
     const { Readable } = await import('node:stream');
-    Readable.fromWeb(response.body).pipe(res);
+    const stream = Readable.fromWeb(response.body);
+    stream.on('error', error => {
+      console.error('Video proxy stream error:', error?.message || error);
+      if (!res.destroyed) res.destroy(error);
+    });
+    req.on('close', () => {
+      if (!stream.destroyed) stream.destroy();
+    });
+    stream.pipe(res);
   } catch (error) {
     res.status(502).json({ ok: false, reason: 'VIDEO_PROXY_ERROR', message: error?.message || 'Video aktarılamadı.' });
   }
