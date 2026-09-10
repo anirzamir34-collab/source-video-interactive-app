@@ -161,6 +161,13 @@ function normalizeAnalysis(body) {
     .map((a, i) => ({
       actionId: String(a.actionId ?? a.id ?? `ACTION_${String(i + 1).padStart(3, '0')}`),
       label: String(a.label ?? a.action ?? 'Unnamed action'),
+      choiceKey: String(
+        a.choiceKey ??
+        a.afterState?.choiceKey ??
+        a.label ??
+        a.action ??
+        `choice-${i}`
+      ).trim().toLocaleLowerCase('tr-TR'),
       startTime: Number(a.startTime ?? a.start ?? 0),
       endTime: Number(a.endTime ?? a.end ?? 0),
       beforeState: a.beforeState ?? null,
@@ -194,11 +201,32 @@ function initializeInteractive(analysis) {
 }
 
 function futureActions() {
-  return state.analysis.actions.filter((a, idx) =>
+  const lookAheadSeconds = 45;
+  const windowEnd = Math.min(
+    state.gameCursorTime + lookAheadSeconds,
+    state.analysis.videoDuration || Number.POSITIVE_INFINITY
+  );
+
+  const pool = state.analysis.actions.filter((a, idx) =>
     idx > state.currentActionIndex &&
     a.startTime >= state.gameCursorTime - 0.001 &&
+    a.startTime <= windowEnd &&
     !state.consumedActionIds.has(a.actionId)
   );
+
+  const seenChoices = new Set();
+
+  return pool.filter((action) => {
+    const key = action.choiceKey ||
+      action.label.trim().toLocaleLowerCase('tr-TR');
+
+    if (seenChoices.has(key)) {
+      return false;
+    }
+
+    seenChoices.add(key);
+    return true;
+  });
 }
 
 function renderChoices() {
