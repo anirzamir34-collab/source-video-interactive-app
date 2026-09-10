@@ -162,14 +162,22 @@ Rules:
     ];
 
     const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-      contents: [{ role: 'user', parts }],
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.1
-      }
-    });
+  let response;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      response = await ai.models.generateContent({
+        model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+        contents: [{ role: "user", parts }],
+        config: { responseMimeType: "application/json", temperature: 0.1 }
+      });
+      break;
+    } catch (error) {
+      const details = String(error?.message || error);
+      const retryable = details.includes("503") || details.includes("UNAVAILABLE") || details.includes("high demand");
+      if (!retryable || attempt === 4) throw error;
+      await new Promise(resolve => setTimeout(resolve, attempt * 5000));
+    }
+  }
 
     const raw = String(response.text || '').trim();
     const parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
