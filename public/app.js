@@ -143,7 +143,11 @@ els.analyzeBtn.addEventListener('click', async () => {
   let response;
   let body;
   try {
-    response = await fetch('/api/gemini-storyboard-analyze', { method: 'POST', body: form });
+    response = await fetch('/api/gemini-storyboard-analyze', {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(200000)
+    });
     body = await response.json();
   } catch (error) {
     body = { available: false, reason: 'NETWORK_ERROR', error: error.message };

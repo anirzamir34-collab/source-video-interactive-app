@@ -23,7 +23,12 @@ export async function extractStoryboard(file, onProgress = () => {}, signal) {
 
     // Video uzunluğundan bağımsız, en fazla yaklaşık 228 kare üret.
   // Kısa videolarda daha sık; uzun videolarda daha dengeli örnekleme yapar.
-  const interval = Math.max(0.75, duration / 228);
+  const targetFrameCount =
+    duration <= 300 ? 144 :
+    duration <= 900 ? 192 :
+    228;
+
+  const interval = Math.max(0.75, duration / targetFrameCount);
     const times = [];
     for (let time = 0; time < duration; time += interval) times.push(time);
 
