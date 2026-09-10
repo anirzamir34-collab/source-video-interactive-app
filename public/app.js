@@ -118,12 +118,32 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisOutput.textContent = 'Video harici analiz servisine gönderiliyor…\nSahte fallback kullanılmayacak.';
   setGameState('ANALYZING');
 
-  const form = new FormData();
-  form.append('video', state.selectedFile);
+  const file = state.selectedFile;
+  els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
+  els.analysisState.textContent = 'LOCAL_PROCESSING';
 
-  let response, body;
+  const { extractStoryboard } = await import('./storyboard.js');
+  const storyboard = await extractStoryboard(file, (progress) => {
+    els.analysisTitle.textContent = `Video telefonda hazırlanıyor: %${progress}`;
+  });
+
+  const originalMB = (file.size / 1024 / 1024).toFixed(1);
+  const storyboardMB = (storyboard.totalBytes / 1024 / 1024).toFixed(1);
+  els.analysisTitle.textContent =
+    `${storyboard.timestamps.length} kare hazır • ${originalMB} MB yerine ${storyboardMB} MB gönderiliyor`;
+  els.analysisState.textContent = 'UPLOADING_STORYBOARD';
+
+  const form = new FormData();
+  storyboard.sheets.forEach((blob, index) => {
+    form.append('storyboards', blob, `storyboard-${String(index + 1).padStart(2, '0')}.jpg`);
+  });
+  form.append('duration', String(storyboard.duration));
+  form.append('timestamps', JSON.stringify(storyboard.timestamps));
+
+  let response;
+  let body;
   try {
-    response = await fetch('/api/external-analyze', { method: 'POST', body: form });
+    response = await fetch('/api/gemini-storyboard-analyze', { method: 'POST', body: form });
     body = await response.json();
   } catch (error) {
     body = { available: false, reason: 'NETWORK_ERROR', error: error.message };
