@@ -78,7 +78,7 @@ app.post('/api/external-analyze', upload.single('video'), async (req, res) => {
     const upstream = await fetch(`${EXTERNAL_ANALYSIS_URL}/analyze`, {
       method: 'POST',
       body: form,
-      signal: AbortSignal.timeout(180000)
+      signal: AbortSignal.timeout(900000)
     });
 
     const body = await readJsonSafe(upstream);
@@ -106,7 +106,7 @@ app.post('/api/external-analyze-segment', upload.single('video'), async (req, re
     const upstream = await fetch(`${EXTERNAL_ANALYSIS_URL}/analyze-segment`, {
       method: 'POST',
       body: form,
-      signal: AbortSignal.timeout(180000)
+      signal: AbortSignal.timeout(900000)
     });
     const body = await readJsonSafe(upstream);
     return res.status(upstream.status).json(body ?? {});
