@@ -92,7 +92,7 @@ async function checkHealth() {
 }
 
 function updateAnalyzeAvailability() {
-  els.analyzeBtn.disabled = !(state.serviceConnected && state.selectedFile);
+  els.analyzeBtn.disabled = !state.selectedFile;
 }
 
 els.healthBtn.addEventListener('click', checkHealth);
