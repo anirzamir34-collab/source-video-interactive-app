@@ -214,7 +214,38 @@ function normalizeAnalysis(body) {
 }
 
 function initializeInteractive(analysis) {
-  state.gameCursorTime = 0;
+  const requestedStart = Number(
+    analysis.playStartTime ??
+    analysis.introEndTime ??
+    analysis.actions?.[0]?.startTime ??
+    0
+  );
+
+  const playStartTime = Number.isFinite(requestedStart)
+    ? Math.max(0, requestedStart)
+    : 0;
+
+  state.gameCursorTime = playStartTime;
+
+  const seekToMainScene = () => {
+    const safeDuration = Number.isFinite(els.video.duration)
+      ? els.video.duration
+      : playStartTime;
+
+    els.video.pause();
+    els.video.currentTime = Math.min(
+      playStartTime,
+      Math.max(0, safeDuration - 0.05)
+    );
+  };
+
+  if (els.video.readyState >= 1) {
+    seekToMainScene();
+  } else {
+    els.video.addEventListener('loadedmetadata', seekToMainScene, {
+      once: true
+    });
+  }
   state.currentActionIndex = -1;
   state.consumedActionIds.clear();
   state.activeAction = null;

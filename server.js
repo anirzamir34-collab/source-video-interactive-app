@@ -115,14 +115,42 @@ scene changes. Never invent alternatives.
 Video duration: ${duration} seconds
 Timestamp metadata: ${timestamps}
 
+TWO-LEVEL DEEP ANALYSIS:
+- MAIN actions are real scene, position, body-arrangement or major interaction changes.
+- BONUS actions are meaningful visible changes inside the same main scene: pace/rhythm change, acceleration, slowing, pause, kiss, touch, hand placement, posture, body transition, clothing removal or another clearly visible male action.
+- Do not represent a several-minute scene with one broad action when meaningful changes occur inside it.
+- Keep the same sceneId for BONUS actions until a new MAIN action begins.
+- Aim for approximately one meaningful action every 15-35 seconds when evidence supports it. Never invent actions to reach a number.
+- Actions must be chronological, forward-moving and non-overlapping.
+
+INTRO:
+- Detect logos, title cards, advertisements, previews, static openings and other non-story material.
+- introEndTime is the first real main scene.
+- Create no action before introEndTime.
+- playStartTime must equal introEndTime.
+
+CAMERA:
+- third_person: male protagonist is externally visible.
+- male_pov: viewpoint is reliably from the male protagonist.
+- mixed: visible transition between both.
+- uncertain: insufficient evidence.
+- Do not discard male POV merely because his full body is absent. Use visible hands, arms, camera movement, body position and continuity.
+- Never infer an invisible action without evidence.
+
 Return ONLY valid JSON with this exact shape:
 {
   "available": true,
   "videoDuration": number,
+  "introEndTime": number,
+  "playStartTime": number,
   "videoPrompt": "concise chronological Turkish scenario",
   "actions": [
     {
       "actionId": "tl-001",
+      "sceneId": "scene-001",
+      "actionLevel": "main|bonus",
+      "actionType": "position|tempo_change|kiss|touch|clothing|body_transition|camera_transition|other",
+      "cameraMode": "third_person|male_pov|mixed|uncertain",
       "label": "short Turkish imperative",
       "startTime": number,
       "endTime": number,
@@ -148,6 +176,9 @@ Rules:
 - no overlaps, duplicates or invented actions
 - sort actions chronologically
 - if evidence is insufficient, omit the action
+- no action may begin before introEndTime
+- playStartTime must equal introEndTime
+- MAIN and BONUS actions must reflect visible evidence
 - Turkish labels must be short and directly describe the male action
 `;
 
@@ -181,11 +212,22 @@ Rules:
 
     const raw = String(response.text || '').trim();
     const parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
+    const resolvedDuration = Math.max(0, duration || Number(parsed.videoDuration || 0));
+    const introEndTime = Math.min(
+      resolvedDuration,
+      Math.max(0, Number(parsed.introEndTime ?? parsed.playStartTime ?? 0))
+    );
 
     const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
       .map((action, index) => ({
         ...action,
         actionId: String(action.actionId || `tl-${String(index + 1).padStart(3, '0')}`),
+        sceneId: String(action.sceneId || `scene-${String(index + 1).padStart(3, '0')}`),
+        actionLevel: action.actionLevel === 'bonus' ? 'bonus' : 'main',
+        actionType: String(action.actionType || 'other'),
+        cameraMode: ['third_person', 'male_pov', 'mixed', 'uncertain'].includes(action.cameraMode)
+          ? action.cameraMode
+          : 'uncertain',
         label: String(action.label || '').trim(),
         startTime: Number(action.startTime),
         endTime: Number(action.endTime),
@@ -195,6 +237,7 @@ Rules:
       .filter((action) =>
         action.label &&
         action.sourceVerified &&
+        action.startTime + 0.05 >= introEndTime &&
         Number.isFinite(action.startTime) &&
         Number.isFinite(action.endTime) &&
         action.startTime >= 0 &&
@@ -208,7 +251,9 @@ Rules:
 
     return res.json({
       available: true,
-      videoDuration: duration || Number(parsed.videoDuration || 0),
+      videoDuration: resolvedDuration,
+      introEndTime,
+      playStartTime: introEndTime,
       videoPrompt: String(parsed.videoPrompt || ''),
       actions,
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []

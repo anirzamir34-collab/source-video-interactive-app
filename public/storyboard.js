@@ -21,7 +21,9 @@ export async function extractStoryboard(file, onProgress = () => {}, signal) {
       throw new Error('Video süresi okunamadı.');
     }
 
-    const interval = Math.max(1, Math.ceil(duration / 180));
+    // Video uzunluğundan bağımsız, en fazla yaklaşık 228 kare üret.
+  // Kısa videolarda daha sık; uzun videolarda daha dengeli örnekleme yapar.
+  const interval = Math.max(0.75, duration / 228);
     const times = [];
     for (let time = 0; time < duration; time += interval) times.push(time);
 
@@ -92,7 +94,59 @@ export async function extractStoryboard(file, onProgress = () => {}, signal) {
     await finishSheet();
 
     const totalBytes = sheets.reduce((sum, blob) => sum + blob.size, 0);
-    return { sheets, timestamps, duration, interval, totalBytes };
+    // Ana karelerin hemen sonrasını karşılaştırarak yerel hareket yoğunluğunu ölç.
+    // Böylece hızlanma, yavaşlama ve kısa hareket değişimleri analize eklenebilir.
+    const motionCanvas = document.createElement('canvas');
+    motionCanvas.width = 64;
+    motionCanvas.height = 36;
+    const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
+    const motionProfile = [];
+    let previousPixels = null;
+
+    for (const sampleTime of timestamps) {
+      const firstTime = Math.min(sampleTime, Math.max(0, duration - 0.05));
+      video.currentTime = firstTime;
+      await waitForSeek(video);
+
+      motionCtx.drawImage(video, 0, 0, 64, 36);
+      const firstPixels = motionCtx.getImageData(0, 0, 64, 36).data;
+
+      const probeTime = Math.min(sampleTime + 0.3, Math.max(0, duration - 0.05));
+      video.currentTime = probeTime;
+      await waitForSeek(video);
+
+      motionCtx.drawImage(video, 0, 0, 64, 36);
+      const secondPixels = motionCtx.getImageData(0, 0, 64, 36).data;
+
+      let difference = 0;
+      for (let i = 0; i < firstPixels.length; i += 16) {
+        difference +=
+          Math.abs(firstPixels[i] - secondPixels[i]) +
+          Math.abs(firstPixels[i + 1] - secondPixels[i + 1]) +
+          Math.abs(firstPixels[i + 2] - secondPixels[i + 2]);
+      }
+
+      const comparisons = Math.max(1, Math.ceil(firstPixels.length / 16));
+      const score = Math.min(100, Math.round(difference / comparisons / 7.65));
+      const level = score >= 45 ? 'high' : score >= 20 ? 'medium' : 'low';
+
+      motionProfile.push({
+        time: Number(sampleTime.toFixed(2)),
+        score,
+        level
+      });
+
+      previousPixels = secondPixels;
+    }
+
+    return {
+      sheets,
+      timestamps,
+      duration,
+      interval,
+      totalBytes,
+      motionProfile
+    };
   } finally {
     video.pause();
     video.removeAttribute('src');
