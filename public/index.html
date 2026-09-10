@@ -48,6 +48,15 @@
       </label>
       <input id="videoInput" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" hidden />
       <div id="fileMeta" class="meta"></div>
+      <div class="url-import">
+        <div class="url-divider"><span>VEYA VİDEO SAYFASI URL'Sİ</span></div>
+        <div class="url-row">
+          <input id="videoUrl" class="url-input" type="url" inputmode="url"
+            placeholder="https://site.com/video-sayfasi" autocomplete="off" />
+          <button id="resolveUrlBtn" class="url-btn" type="button">VİDEOYU BUL</button>
+        </div>
+        <div id="urlStatus" class="url-status"></div>
+      </div>
       <button id="analyzeBtn" class="primary-btn" disabled>Videoyu analiz et</button>
     </section>
 

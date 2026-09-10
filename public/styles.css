@@ -552,3 +552,87 @@ section {
     padding: 8px 10px;
   }
 }
+
+
+/* VIDEO URL IMPORT */
+.url-import {
+  margin: 16px 0;
+}
+
+.url-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 11px;
+  color: #78838d;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .10em;
+}
+
+.url-divider::before,
+.url-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255,255,255,.08);
+}
+
+.url-row {
+  display: flex;
+  gap: 8px;
+}
+
+.url-input {
+  min-width: 0;
+  flex: 1;
+  height: 44px;
+  padding: 0 13px;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 11px;
+  outline: none;
+  background: rgba(5,8,11,.72);
+  color: #f4f7f8;
+  font-size: 13px;
+}
+
+.url-input:focus {
+  border-color: rgba(46,230,166,.65);
+  box-shadow: 0 0 0 3px rgba(46,230,166,.08);
+}
+
+.url-btn {
+  min-width: 104px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(46,230,166,.42);
+  border-radius: 11px;
+  background: rgba(46,230,166,.10);
+  color: #2ee6a6;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.url-btn:disabled {
+  opacity: .55;
+}
+
+.url-status {
+  min-height: 18px;
+  padding-top: 7px;
+  color: #8d98a3;
+  font-size: 11px;
+}
+
+.url-status.success { color: #2ee6a6; }
+.url-status.error { color: #ff727d; }
+
+@media (max-width: 480px) {
+  .url-row {
+    flex-direction: column;
+  }
+
+  .url-btn {
+    width: 100%;
+  }
+}

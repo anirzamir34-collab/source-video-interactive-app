@@ -411,3 +411,105 @@ document.addEventListener('fullscreenchange', () => {
       : '⛶ OYUN MODU';
   }
 });
+
+
+// VIDEO URL IMPORT
+const videoUrlInput = document.getElementById('videoUrl');
+const resolveUrlBtn = document.getElementById('resolveUrlBtn');
+const urlStatus = document.getElementById('urlStatus');
+
+function setUrlStatus(message, type = '') {
+  if (!urlStatus) return;
+  urlStatus.textContent = message;
+  urlStatus.className = `url-status ${type}`.trim();
+}
+
+async function downloadUrlVideo(proxyUrl, sourceUrl) {
+  const response = await fetch(proxyUrl);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.message || `Video indirilemedi (${response.status}).`);
+  }
+
+  const total = Number(response.headers.get('content-length')) || 0;
+  const contentType = response.headers.get('content-type') || 'video/mp4';
+  const reader = response.body?.getReader();
+
+  if (!reader) return response.blob();
+
+  const chunks = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+
+    const receivedMB = (received / 1024 / 1024).toFixed(1);
+    const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
+    setUrlStatus(`Video hazırlanıyor: ${receivedMB} MB${totalText}`);
+  }
+
+  return new Blob(chunks, { type: contentType });
+}
+
+async function resolveVideoUrl() {
+  const pageUrl = videoUrlInput?.value.trim();
+  if (!pageUrl) {
+    setUrlStatus('Lütfen video sayfasının bağlantısını gir.', 'error');
+    return;
+  }
+
+  resolveUrlBtn.disabled = true;
+  setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor...');
+
+  try {
+    const resolveResponse = await fetch('/api/resolve-video-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: pageUrl })
+    });
+
+    const result = await resolveResponse.json().catch(() => ({}));
+    if (!resolveResponse.ok || !result.ok) {
+      throw new Error(result.message || 'Bu sayfada kullanılabilir video bulunamadı.');
+    }
+
+    if (result.type === 'hls') {
+      throw new Error('HLS/m3u8 kaynağı bulundu; ancak yerel kare analizi için MP4/WebM kaynağı gerekiyor.');
+    }
+
+    setUrlStatus('Video bulundu. Cihaza geçici olarak hazırlanıyor...');
+    const blob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
+
+    if (!blob.size) throw new Error('Video boş geldi.');
+
+    const sourcePath = new URL(result.sourceUrl).pathname;
+    const sourceName = decodeURIComponent(sourcePath.split('/').pop() || '');
+    const extension = sourceName.match(/\.(mp4|webm|m4v|mov)$/i)?.[0] ||
+      (blob.type.includes('webm') ? '.webm' : '.mp4');
+    const fileName = sourceName || `url-video${extension}`;
+    const file = new File([blob], fileName, { type: blob.type || 'video/mp4' });
+
+    state.selectedFile = file;
+    els.video.src = URL.createObjectURL(file);
+    els.fileMeta.textContent =
+      `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • URL kaynağı`;
+    updateAnalyzeAvailability();
+    renderDebug();
+
+    setUrlStatus('Video hazır. Şimdi “Videoyu analiz et” düğmesine bas.', 'success');
+  } catch (error) {
+    state.selectedFile = null;
+    updateAnalyzeAvailability();
+    setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
+  } finally {
+    resolveUrlBtn.disabled = false;
+  }
+}
+
+resolveUrlBtn?.addEventListener('click', resolveVideoUrl);
+videoUrlInput?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') resolveVideoUrl();
+});

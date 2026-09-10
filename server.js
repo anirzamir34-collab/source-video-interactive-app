@@ -285,6 +285,219 @@ app.use((error, _req, res, next) => {
   return next(error);
 });
 
+
+// PUBLIC VIDEO URL RESOLVER
+function normalizeAmpUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  if (url.hostname.endsWith('.cdn.ampproject.org')) {
+    const secure = url.pathname.match(/^\/c\/s\/(.+)$/);
+    const plain = url.pathname.match(/^\/c\/(.+)$/);
+    if (secure) return `https://${secure[1]}${url.search}`;
+    if (plain) return `http://${plain[1]}${url.search}`;
+  }
+  return url.href;
+}
+
+function isPrivateAddress(address) {
+  const value = String(address).toLowerCase();
+  return value === '::1' ||
+    value === '0.0.0.0' ||
+    value.startsWith('10.') ||
+    value.startsWith('127.') ||
+    value.startsWith('169.254.') ||
+    value.startsWith('192.168.') ||
+    value.startsWith('fc') ||
+    value.startsWith('fd') ||
+    value.startsWith('fe80:') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(value);
+}
+
+async function validatePublicUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('Yalnızca HTTP veya HTTPS adresleri desteklenir.');
+  }
+
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.local')) {
+    throw new Error('Yerel ağ adresleri kullanılamaz.');
+  }
+
+  const dns = await import('node:dns/promises');
+  const records = await dns.lookup(hostname, { all: true });
+  if (!records.length || records.some(record => isPrivateAddress(record.address))) {
+    throw new Error('Bu ağ adresine erişim engellendi.');
+  }
+
+  return url;
+}
+
+async function fetchPublicUrl(rawUrl, options = {}) {
+  let current = normalizeAmpUrl(rawUrl);
+
+  for (let redirect = 0; redirect < 5; redirect++) {
+    await validatePublicUrl(current);
+    const response = await fetch(current, {
+      ...options,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(25000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+        'Accept': '*/*',
+        ...(options.headers || {})
+      }
+    });
+
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location');
+      if (!location) throw new Error('Yönlendirme adresi bulunamadı.');
+      current = new URL(location, current).href;
+      continue;
+    }
+
+    return { response, finalUrl: current };
+  }
+
+  throw new Error('Çok fazla yönlendirme yapıldı.');
+}
+
+function decodeMediaUrl(value, baseUrl) {
+  if (!value) return null;
+
+  const decoded = String(value)
+    .replace(/\\u002f/gi, '/')
+    .replace(/\\\//g, '/')
+    .replace(/&amp;|&#038;/gi, '&')
+    .replace(/&quot;|&#34;/gi, '"')
+    .trim();
+
+  try {
+    return new URL(decoded, baseUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+function findVideoCandidates(html, baseUrl) {
+  const candidates = [];
+  const add = value => {
+    const resolved = decodeMediaUrl(value, baseUrl);
+    if (resolved && !candidates.includes(resolved)) candidates.push(resolved);
+  };
+
+  for (const match of html.matchAll(/<(?:video|source)\b[^>]*\bsrc=["']([^"']+)["']/gi)) add(match[1]);
+  for (const match of html.matchAll(/"contentUrl"\s*:\s*"([^"]+)"/gi)) add(match[1]);
+  for (const match of html.matchAll(/https?:\\?\/\\?\/[^"'<> ]+\.(?:mp4|webm|m4v|mov|m3u8)(?:\?[^"'<> ]*)?/gi)) add(match[0]);
+
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const key = tag.match(/(?:property|name)=["']([^"']+)["']/i)?.[1]?.toLowerCase();
+    const content = tag.match(/content=["']([^"']+)["']/i)?.[1];
+    if (content && ['og:video', 'og:video:url', 'og:video:secure_url', 'twitter:player:stream'].includes(key)) {
+      add(content);
+    }
+  }
+
+  return candidates;
+}
+
+app.post('/api/resolve-video-url', async (req, res) => {
+  try {
+    const requestedUrl = String(req.body?.url || '').trim();
+    if (!requestedUrl) {
+      return res.status(400).json({ ok: false, reason: 'URL_REQUIRED', message: 'Video sayfası URL’si gerekli.' });
+    }
+
+    const normalizedUrl = normalizeAmpUrl(requestedUrl);
+    const pathname = new URL(normalizedUrl).pathname.toLowerCase();
+
+    if (/\.(mp4|webm|m4v|mov|m3u8)$/.test(pathname)) {
+      await validatePublicUrl(normalizedUrl);
+      return res.json({
+        ok: true,
+        type: pathname.endsWith('.m3u8') ? 'hls' : 'video',
+        sourceUrl: normalizedUrl,
+        proxyUrl: `/api/video-proxy?url=${encodeURIComponent(normalizedUrl)}`
+      });
+    }
+
+    const { response, finalUrl } = await fetchPublicUrl(normalizedUrl, {
+      headers: { Accept: 'text/html,application/xhtml+xml,video/*;q=0.8' }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Sayfa ${response.status} yanıtı verdi.`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.startsWith('video/')) {
+      return res.json({
+        ok: true,
+        type: 'video',
+        sourceUrl: finalUrl,
+        proxyUrl: `/api/video-proxy?url=${encodeURIComponent(finalUrl)}`
+      });
+    }
+
+    const html = (await response.text()).slice(0, 3000000);
+    const candidates = findVideoCandidates(html, finalUrl);
+    const sourceUrl = candidates.find(url => /\.(mp4|webm|m4v|mov|m3u8)(?:$|\?)/i.test(url));
+
+    if (!sourceUrl) {
+      return res.status(422).json({
+        ok: false,
+        reason: 'VIDEO_SOURCE_HIDDEN',
+        message: 'Bu sayfa video kaynağını gizliyor veya özel oynatıcı kullanıyor.'
+      });
+    }
+
+    res.json({
+      ok: true,
+      type: /\.m3u8(?:$|\?)/i.test(sourceUrl) ? 'hls' : 'video',
+      sourceUrl,
+      pageUrl: finalUrl,
+      proxyUrl: `/api/video-proxy?url=${encodeURIComponent(sourceUrl)}&referer=${encodeURIComponent(finalUrl)}`
+    });
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      reason: 'URL_RESOLVE_ERROR',
+      message: error?.message || 'Video sayfası çözümlenemedi.'
+    });
+  }
+});
+
+app.get('/api/video-proxy', async (req, res) => {
+  try {
+    const sourceUrl = String(req.query.url || '');
+    const referer = String(req.query.referer || '');
+    if (!sourceUrl) return res.status(400).json({ ok: false, message: 'Video URL’si gerekli.' });
+
+    const headers = {};
+    if (req.headers.range) headers.Range = req.headers.range;
+    if (referer) {
+      await validatePublicUrl(referer);
+      headers.Referer = referer;
+    }
+
+    const { response } = await fetchPublicUrl(sourceUrl, { headers });
+    if (!response.ok && response.status !== 206) {
+      return res.status(response.status).json({ ok: false, message: `Video sunucusu ${response.status} yanıtı verdi.` });
+    }
+
+    for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
+      const value = response.headers.get(name);
+      if (value) res.setHeader(name, value);
+    }
+
+    res.status(response.status);
+    const { Readable } = await import('node:stream');
+    Readable.fromWeb(response.body).pipe(res);
+  } catch (error) {
+    res.status(502).json({ ok: false, reason: 'VIDEO_PROXY_ERROR', message: error?.message || 'Video aktarılamadı.' });
+  }
+});
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'source-video-interactive-app' });
 });
