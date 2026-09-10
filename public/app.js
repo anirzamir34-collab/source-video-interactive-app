@@ -190,7 +190,7 @@ function initializeInteractive(analysis) {
 function futureActions() {
   return state.analysis.actions.filter((a, idx) =>
     idx > state.currentActionIndex &&
-    a.startTime > state.gameCursorTime + 0.001 &&
+    a.startTime >= state.gameCursorTime - 0.001 &&
     !state.consumedActionIds.has(a.actionId)
   );
 }
