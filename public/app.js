@@ -150,6 +150,11 @@ els.analyzeBtn.addEventListener('click', async () => {
   }
 
   state.analysis = normalized;
+  try {
+    localStorage.setItem("videoquest:last-analysis", JSON.stringify(normalized));
+  } catch (error) {
+    console.warn("Analysis could not be saved locally:", error);
+  }
   els.analysisState.textContent = 'TIMELINE_READY';
   els.analysisTitle.textContent = `${normalized.actions.length} doğrulanmış action`;
   initializeInteractive(normalized);
@@ -340,3 +345,23 @@ els.video.addEventListener('timeupdate', renderDebug);
 
 checkHealth();
 renderDebug();
+
+function restoreSavedAnalysis() {
+  try {
+    const raw = localStorage.getItem("videoquest:last-analysis");
+    if (!raw) return;
+
+    const normalized = normalizeAnalysis(JSON.parse(raw));
+    if (!normalized.actions.length) return;
+
+    state.analysis = normalized;
+    els.analysisState.textContent = "TIMELINE_RESTORED";
+    els.analysisTitle.textContent = `${normalized.actions.length} kayıtlı eylem geri yüklendi`;
+    initializeInteractive(normalized);
+  } catch (error) {
+    console.warn("Saved analysis could not be restored:", error);
+    localStorage.removeItem("videoquest:last-analysis");
+  }
+}
+
+restoreSavedAnalysis();
