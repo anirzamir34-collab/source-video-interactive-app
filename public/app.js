@@ -181,56 +181,6 @@ els.videoInput.addEventListener('change', () => {
   renderDebug();
 });
 
-function buildSafeDubGroups(segments = []) {
-  const groups = [];
-
-  for (const rawSegment of segments) {
-    const segment = { ...rawSegment };
-    const startTime = Number(segment.startTime);
-    const endTime = Number(segment.endTime);
-    const text = String(segment.turkishText || '').trim();
-
-    if (!text || !Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) {
-      continue;
-    }
-
-    const previous = groups[groups.length - 1];
-    const gap = previous ? startTime - Number(previous.endTime) : Infinity;
-    const combinedDuration = previous ? endTime - Number(previous.startTime) : 0;
-    const sameSpeaker = previous &&
-      String(previous.speakerId || '') === String(segment.speakerId || '') &&
-      String(previous.gender || '') === String(segment.gender || '');
-    const sameEmotion = previous &&
-      String(previous.emotion || '').toLowerCase() ===
-      String(segment.emotion || '').toLowerCase();
-
-    if (
-      previous &&
-      sameSpeaker &&
-      sameEmotion &&
-      gap >= 0 &&
-      gap <= 0.6 &&
-      combinedDuration <= 8
-    ) {
-      previous.endTime = endTime;
-      previous.turkishText = `${previous.turkishText} ${text}`.trim();
-      previous.segmentId = `${previous.segmentId}+${segment.segmentId}`;
-      previous.sourceSegmentIds.push(segment.segmentId);
-    } else {
-      groups.push({
-        ...segment,
-        segmentId: `dub-${segment.segmentId}`,
-        startTime,
-        endTime,
-        turkishText: text,
-        sourceSegmentIds: [segment.segmentId]
-      });
-    }
-  }
-
-  return groups;
-}
-
 async function analyzeSelectedDialogue(file) {
   els.analysisCard.classList.remove('hidden');
   els.analysisTitle.textContent = 'Video diyaloğu analiz ediliyor';
@@ -258,7 +208,6 @@ async function analyzeSelectedDialogue(file) {
     ...body,
     segments: Array.isArray(body.segments) ? body.segments : []
   };
-  state.dialogue.dubSegments = buildSafeDubGroups(state.dialogue.segments);
 
   try {
     localStorage.setItem(
@@ -273,7 +222,7 @@ async function analyzeSelectedDialogue(file) {
 }
 
 function renderSubtitle() {
-  const segments = state.dialogue?.dubSegments || state.dialogue?.segments || [];
+  const segments = state.dialogue?.segments || [];
   const now = Number(els.video.currentTime) || 0;
 
   if (!state.subtitlesEnabled || !segments.length) {
@@ -353,7 +302,7 @@ async function ensureDubAudio(segment) {
 }
 
 function prepareUpcomingDubs(currentIndex) {
-  const segments = state.dialogue?.dubSegments || state.dialogue?.segments || [];
+  const segments = state.dialogue?.segments || [];
   segments
     .slice(Math.max(0, currentIndex), currentIndex + 8)
     .forEach(segment => ensureDubAudio(segment));
@@ -485,9 +434,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
         els.video.muted = !modes.keepOriginalAudio;
-        const dubSegments = dialogue.dubSegments || dialogue.segments;
-        await Promise.all(dubSegments.slice(0, 3).map(ensureDubAudio));
-        prepareUpcomingDubs(3);
+        await Promise.all(dialogue.segments.slice(0, 8).map(ensureDubAudio));
+        prepareUpcomingDubs(8);
       }
 
       if (!modes.motion) {
