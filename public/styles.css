@@ -1712,3 +1712,129 @@ pre {
     width: 92%;
   }
 }
+
+
+/* VIDEOQUEST PLAYER FIX V2.1 */
+.choices-overlay {
+  padding-top: 138px !important;
+  padding-bottom: 18px !important;
+  background:
+    linear-gradient(180deg,
+      rgba(0,0,0,.04) 0%,
+      rgba(0,0,0,.18) 32%,
+      rgba(0,0,0,.82) 72%,
+      rgba(0,0,0,.94) 100%) !important;
+}
+
+.choices-overlay .choice {
+  width: min(92%, 760px) !important;
+  min-height: 62px !important;
+  margin: 7px auto !important;
+  padding: 13px 16px !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  border-left: 4px solid var(--vqa-green) !important;
+  border-radius: 16px !important;
+  color: #f7fbff !important;
+  background:
+    linear-gradient(100deg, rgba(34,230,168,.13), transparent 42%),
+    rgba(8,13,20,.91) !important;
+  box-shadow: 0 12px 28px rgba(0,0,0,.38) !important;
+  text-shadow: none !important;
+}
+
+.choices-overlay .choice .choice-title,
+.choices-overlay .choice strong {
+  color: #ffffff !important;
+  font-size: clamp(.96rem, 2.5vw, 1.12rem) !important;
+  font-weight: 850 !important;
+  line-height: 1.25 !important;
+  text-shadow: none !important;
+}
+
+.choices-overlay .choice .choice-meta,
+.choices-overlay .choice small {
+  color: #aebaca !important;
+  opacity: 1 !important;
+  font-size: .75rem !important;
+  text-shadow: none !important;
+}
+
+.choice-navigation {
+  position: absolute !important;
+  z-index: 14 !important;
+  top: 66px !important;
+  left: 50% !important;
+  width: max-content !important;
+  max-width: calc(100% - 24px) !important;
+  padding: 0 !important;
+  transform: translateX(-50%) !important;
+}
+
+.choice-navigation button {
+  min-width: 132px !important;
+  min-height: 46px !important;
+  padding: 0 15px !important;
+  color: #f4f7fb !important;
+  background: rgba(10,14,21,.86) !important;
+  border: 1px solid rgba(255,255,255,.17) !important;
+  box-shadow: 0 10px 26px rgba(0,0,0,.34) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.game-hud {
+  background: rgba(5,9,14,.84) !important;
+}
+
+@media (max-width: 600px) {
+  .video-stage {
+    height: 62svh !important;
+    min-height: 430px !important;
+  }
+
+  .choices-overlay {
+    padding: 132px 7px 12px !important;
+  }
+
+  .choices-overlay .choice {
+    width: calc(100% - 14px) !important;
+    min-height: 58px !important;
+    margin: 6px auto !important;
+    padding: 12px 14px !important;
+  }
+
+  .choice-navigation {
+    top: 62px !important;
+    gap: 7px !important;
+  }
+
+  .choice-navigation button {
+    min-width: 0 !important;
+    width: 142px !important;
+    min-height: 43px !important;
+    padding-inline: 8px !important;
+    font-size: .82rem !important;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .video-stage {
+    height: 100svh !important;
+    min-height: 100svh !important;
+  }
+
+  .choices-overlay {
+    padding: 96px 14px 12px !important;
+  }
+
+  .choices-overlay .choice {
+    width: min(82%, 820px) !important;
+    min-height: 48px !important;
+    margin: 5px auto !important;
+    padding: 9px 14px !important;
+  }
+
+  .choice-navigation {
+    top: 18px !important;
+  }
+}
