@@ -62,9 +62,60 @@ function setServiceStatus(kind, label, meta = '') {
   els.serviceMeta.textContent = meta;
 }
 
+let analysisWakeLock = null;
+
+async function acquireAnalysisWakeLock() {
+  if (
+    !('wakeLock' in navigator) ||
+    document.visibilityState !== 'visible' ||
+    state.gameState !== 'ANALYZING' ||
+    analysisWakeLock
+  ) {
+    return;
+  }
+
+  try {
+    analysisWakeLock = await navigator.wakeLock.request('screen');
+
+    analysisWakeLock.addEventListener(
+      'release',
+      () => {
+        analysisWakeLock = null;
+      },
+      { once: true }
+    );
+  } catch (error) {
+    console.warn('Ekran uyanık tutma kilidi alınamadı:', error);
+  }
+}
+
+async function releaseAnalysisWakeLock() {
+  const wakeLock = analysisWakeLock;
+  analysisWakeLock = null;
+
+  if (wakeLock) {
+    await wakeLock.release().catch(() => {});
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (
+    document.visibilityState === 'visible' &&
+    state.gameState === 'ANALYZING'
+  ) {
+    acquireAnalysisWakeLock();
+  }
+});
+
 function setGameState(next) {
   state.gameState = next;
   els.gameState.textContent = next;
+
+  if (next === 'ANALYZING') {
+    acquireAnalysisWakeLock();
+  } else {
+    releaseAnalysisWakeLock();
+  }
 
   const stage = document.querySelector('.video-stage');
   if (stage) {
