@@ -298,7 +298,6 @@ Rules:
       }))
       .filter((action) =>
         action.label &&
-        action.sourceVerified &&
         action.startTime + 0.05 >= introEndTime &&
         Number.isFinite(action.startTime) &&
         Number.isFinite(action.endTime) &&

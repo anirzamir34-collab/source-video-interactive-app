@@ -590,7 +590,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       }
     }
 
-    if (failureBody) {
+    if (failureBody && !chunkResults.length) {
       body = failureBody;
     } else {
       const mergedActions = chunkResults
