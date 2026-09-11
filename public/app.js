@@ -181,6 +181,68 @@ els.videoInput.addEventListener('change', () => {
   renderDebug();
 });
 
+function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const startedAt = performance.now();
+
+    xhr.open('POST', '/api/gemini-dialogue-analyze');
+    xhr.responseType = 'json';
+
+    xhr.upload.addEventListener('progress', event => {
+      if (!event.lengthComputable) return;
+
+      const elapsedSeconds = Math.max(
+        (performance.now() - startedAt) / 1000,
+        0.1
+      );
+
+      onProgress({
+        loaded: event.loaded,
+        total: event.total,
+        percent: Math.min(
+          100,
+          Math.round((event.loaded / event.total) * 100)
+        ),
+        speed: (event.loaded / 1024 / 1024) / elapsedSeconds
+      });
+    });
+
+    xhr.upload.addEventListener('load', () => {
+      onUploadComplete();
+    });
+
+    xhr.addEventListener('load', () => {
+      let body = xhr.response;
+
+      if (!body || typeof body !== 'object') {
+        try {
+          body = JSON.parse(xhr.responseText || '{}');
+        } catch {
+          body = {};
+        }
+      }
+
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        body
+      });
+    });
+
+    xhr.addEventListener('error', () => {
+      reject(new Error('Video yüklenirken ağ bağlantısı kesildi.'));
+    });
+
+    xhr.addEventListener('abort', () => {
+      reject(new Error('Video yüklemesi iptal edildi.'));
+    });
+
+    xhr.timeout = 0;
+    xhr.send(form);
+  });
+}
+
 async function analyzeSelectedDialogue(file) {
   els.analysisCard.classList.remove('hidden');
   els.analysisTitle.textContent = 'Video diyaloğu analiz ediliyor';
@@ -193,15 +255,28 @@ async function analyzeSelectedDialogue(file) {
   form.append('video', file, file.name || 'video.mp4');
   form.append('duration', String(Number(els.video.duration) || 0));
 
-  const response = await fetch('/api/gemini-dialogue-analyze', {
-    method: 'POST',
-    body: form
-  });
+  const upload = await uploadDialogueWithProgress(
+    form,
+    ({ loaded, total, percent, speed }) => {
+      els.analysisTitle.textContent = `Video yükleniyor · %${percent}`;
+      els.analysisOutput.textContent =
+        `Gerçek yükleme ilerlemesi: %${percent}\n` +
+        `${(loaded / 1024 / 1024).toFixed(1)} / ` +
+        `${(total / 1024 / 1024).toFixed(1)} MB\n` +
+        `Yükleme hızı: ${speed.toFixed(1)} MB/sn`;
+    },
+    () => {
+      els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
+      els.analysisOutput.textContent =
+        'Yükleme %100 tamamlandı.\n' +
+        'Kaynak dil algılanıyor ve Türkçeye çevriliyor...';
+    }
+  );
 
-  const body = await response.json();
+  const { body } = upload;
 
-  if (!response.ok || !body.available) {
-    throw new Error(body.error || body.message || `HTTP ${response.status}`);
+  if (!upload.ok || !body.available) {
+    throw new Error(body.error || body.message || `HTTP ${upload.status}`);
   }
 
   state.dialogue = {
