@@ -686,3 +686,116 @@ section {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+
+/* FULLSCREEN CHOICE SHEET V3 */
+.video-stage:fullscreen .choices-overlay,
+.video-stage:-webkit-full-screen .choices-overlay {
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  padding:
+    max(48px, env(safe-area-inset-top))
+    10px
+    max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  overflow-y: auto;
+  transform: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.04) 0%,
+    rgba(0, 0, 0, 0.42) 28%,
+    rgba(0, 0, 0, 0.96) 100%
+  );
+}
+
+.video-stage:fullscreen .choices-overlay.empty,
+.video-stage:-webkit-full-screen .choices-overlay.empty {
+  display: none;
+}
+
+.video-stage:fullscreen .choices-overlay .choice,
+.video-stage:-webkit-full-screen .choices-overlay .choice {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 10px;
+  white-space: normal;
+  overflow: visible;
+}
+
+.video-stage:fullscreen .choice-title,
+.video-stage:-webkit-full-screen .choice-title,
+.video-stage:fullscreen .choice-meta,
+.video-stage:-webkit-full-screen .choice-meta {
+  display: block;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.video-stage:fullscreen .choice-title,
+.video-stage:-webkit-full-screen .choice-title {
+  font-size: clamp(11px, 3.1vw, 14px);
+  line-height: 1.15;
+}
+
+.video-stage:fullscreen .choice-meta,
+.video-stage:-webkit-full-screen .choice-meta {
+  margin-top: 2px;
+  font-size: clamp(9px, 2.5vw, 11px);
+  line-height: 1.1;
+}
+
+
+/* PROTAGONIST LOCK FIELD */
+.protagonist-lock {
+  margin: 18px 0 14px;
+  padding: 14px;
+  border: 1px solid rgba(46, 230, 177, 0.24);
+  border-radius: 14px;
+  background: rgba(46, 230, 177, 0.05);
+}
+
+.protagonist-lock label {
+  display: block;
+  margin-bottom: 8px;
+  color: #35ddb0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+}
+
+.protagonist-lock input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 13px;
+  color: #f4f7f6;
+  background: #090c0d;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 11px;
+  font: inherit;
+  outline: none;
+}
+
+.protagonist-lock input:focus {
+  border-color: #35ddb0;
+  box-shadow: 0 0 0 3px rgba(53, 221, 176, 0.12);
+}
+
+.protagonist-lock small {
+  display: block;
+  margin-top: 7px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  line-height: 1.35;
+}

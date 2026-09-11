@@ -20,6 +20,7 @@ const els = {
   videoInput: $('videoInput'),
   fileMeta: $('fileMeta'),
   analyzeBtn: $('analyzeBtn'),
+  protagonistInput: $('protagonistInput'),
   analysisCard: $('analysisCard'),
   analysisTitle: $('analysisTitle'),
   analysisState: $('analysisState'),
@@ -144,7 +145,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     let response = null;
     let body = null;
 
-    let protagonistProfile = '';
+    let protagonistProfile =
+    String(els.protagonistInput?.value || '').trim();
 
   for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
       const firstSheet = chunkIndex * sheetsPerChunk;
@@ -412,7 +414,7 @@ function futureActions() {
 function renderChoices() {
   els.choices.innerHTML = '';
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
-  const candidates = futureActions().slice(0, 3);
+  const candidates = futureActions().slice(0, 4);
 
   if (!candidates.length) {
     setGameState('ENDED');

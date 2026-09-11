@@ -110,6 +110,11 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const protagonistProfile = String(
     req.body?.protagonistProfile || ''
   ).trim();
+  const chunkDuration = Math.max(1, chunkEnd - chunkStart);
+  const targetActionCount = Math.max(
+    5,
+    Math.min(16, Math.round(chunkDuration / 12))
+  );
 
     const prompt = `
 SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
@@ -158,7 +163,10 @@ TWO-LEVEL DEEP ANALYSIS:
 - BONUS actions are meaningful visible changes inside the same main scene: pace/rhythm change, acceleration, slowing, pause, kiss, touch, hand placement, posture, body transition, clothing removal or another clearly visible male action.
 - Do not represent a several-minute scene with one broad action when meaningful changes occur inside it.
 - Keep the same sceneId for BONUS actions until a new MAIN action begins.
-- Aim for approximately one meaningful action every 15-35 seconds when evidence supports it. Never invent actions to reach a number.
+- Target ${targetActionCount} distinct, visible MAIN_MALE actions in this chunk when evidence supports them.
+- Prefer approximately one meaningful action every 8-18 seconds.
+- Split long continuous scenes whenever pose, direction, contact, position, tempo, partner interaction or camera relationship visibly changes.
+- Do not invent actions merely to reach the target.
 - Actions must be chronological, forward-moving and non-overlapping.
 
 INTRO:
