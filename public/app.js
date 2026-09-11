@@ -304,7 +304,7 @@ async function ensureDubAudio(segment) {
 function prepareUpcomingDubs(currentIndex) {
   const segments = state.dialogue?.segments || [];
   segments
-    .slice(Math.max(0, currentIndex), currentIndex + 3)
+    .slice(Math.max(0, currentIndex), currentIndex + 8)
     .forEach(segment => ensureDubAudio(segment));
 }
 
@@ -422,9 +422,11 @@ els.analyzeBtn.addEventListener('click', async () => {
     try {
       const dialogue = await analyzeSelectedDialogue(file);
 
-      if (modes.subtitles && dialogue.segments.length) {
-        els.subtitleToggleBtn?.classList.remove('hidden');
-        state.subtitlesEnabled = true;
+      state.subtitlesEnabled = Boolean(modes.subtitles && dialogue.segments.length);
+      els.subtitleToggleBtn.classList.toggle('hidden', !state.subtitlesEnabled);
+      if (!state.subtitlesEnabled) {
+        els.subtitleOverlay.textContent = '';
+        els.subtitleOverlay.classList.add('hidden');
       }
 
       if (modes.dubbing && dialogue.segments.length) {
@@ -432,7 +434,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
         els.video.muted = !modes.keepOriginalAudio;
-        prepareUpcomingDubs(0);
+        await Promise.all(dialogue.segments.slice(0, 8).map(ensureDubAudio));
+        prepareUpcomingDubs(8);
       }
 
       if (!modes.motion) {
