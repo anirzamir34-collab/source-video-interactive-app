@@ -181,6 +181,91 @@ els.videoInput.addEventListener('change', () => {
   renderDebug();
 });
 
+function createDialogueWav(audioBuffer, targetRate = 16000) {
+  const sourceRate = audioBuffer.sampleRate;
+  const sampleCount = Math.ceil(audioBuffer.duration * targetRate);
+  const wavBuffer = new ArrayBuffer(44 + sampleCount * 2);
+  const view = new DataView(wavBuffer);
+  const channels = audioBuffer.numberOfChannels;
+  const channelData = Array.from(
+    { length: channels },
+    (_, index) => audioBuffer.getChannelData(index)
+  );
+
+  const writeText = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+
+  writeText(0, 'RIFF');
+  view.setUint32(4, 36 + sampleCount * 2, true);
+  writeText(8, 'WAVE');
+  writeText(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetRate, true);
+  view.setUint32(28, targetRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, 'data');
+  view.setUint32(40, sampleCount * 2, true);
+
+  const ratio = sourceRate / targetRate;
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sourceIndex = Math.min(
+      Math.floor(index * ratio),
+      audioBuffer.length - 1
+    );
+
+    let sample = 0;
+    for (let channel = 0; channel < channels; channel += 1) {
+      sample += channelData[channel][sourceIndex] || 0;
+    }
+
+    sample = Math.max(-1, Math.min(1, sample / channels));
+    view.setInt16(
+      44 + index * 2,
+      sample < 0 ? sample * 32768 : sample * 32767,
+      true
+    );
+  }
+
+  return new Blob([wavBuffer], { type: 'audio/wav' });
+}
+
+async function extractDialogueAudio(file) {
+  const AudioEngine = window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioEngine) {
+    throw new Error('Bu tarayıcı ses çıkarma işlemini desteklemiyor.');
+  }
+
+  els.analysisTitle.textContent = 'Videodan konuşma sesi ayrılıyor';
+  els.analysisOutput.textContent =
+    'Video telefonda işleniyor...\n' +
+    'Büyük video sunucuya gönderilmeyecek.';
+
+  const audioContext = new AudioEngine();
+
+  try {
+    const sourceBuffer = await file.arrayBuffer();
+    const decodedAudio = await audioContext.decodeAudioData(sourceBuffer);
+    const wavBlob = createDialogueWav(decodedAudio, 16000);
+    const baseName = (file.name || 'video').replace(/\.[^.]+$/, '');
+
+    return new File(
+      [wavBlob],
+      `${baseName}-dialogue.wav`,
+      { type: 'audio/wav' }
+    );
+  } finally {
+    await audioContext.close().catch(() => {});
+  }
+}
+
 function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -252,7 +337,21 @@ async function analyzeSelectedDialogue(file) {
     `${(file.size / 1024 / 1024).toFixed(1)} MB`;
 
   const form = new FormData();
-  form.append('video', file, file.name || 'video.mp4');
+  let dialogueFile = file;
+
+  try {
+    dialogueFile = await extractDialogueAudio(file);
+  } catch (error) {
+    console.warn('Ses ayrılamadı; özgün video kullanılacak:', error);
+    els.analysisOutput.textContent =
+      'Ses telefonda ayrılamadı. Özgün video gönderiliyor...';
+  }
+
+  form.append(
+    'video',
+    dialogueFile,
+    dialogueFile.name || 'dialogue.wav'
+  );
   form.append('duration', String(Number(els.video.duration) || 0));
 
   const upload = await uploadDialogueWithProgress(
