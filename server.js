@@ -720,7 +720,10 @@ Rules:
 - Identify and consistently separate different speakers.
 - Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
 - Transcribe speech faithfully without inventing words.
-- Translate every intelligible segment into natural Turkish.
+- Transcribe and translate every clearly audible spoken word without censorship, sanitization, euphemism, summarization, or omission.
+- Preserve profanity, slang, sexual or adult vocabulary, commands, reactions, and intensity exactly in natural Turkish.
+- Never replace words with asterisks, softened expressions, generic summaries, or skipped segments.
+- Treat every speaker equally and include every intelligible spoken line regardless of its subject.
 - Preserve the meaning, tone and emotion of the original dialogue.
 - Split long speech into readable subtitle segments, normally 1 to 7 seconds.
 - Do not include music, breathing, moans, sound effects or silence as dialogue.
@@ -863,7 +866,7 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
       gender === 'female'
         ? 'Kore'
         : gender === 'male'
-          ? 'Puck'
+          ? 'Orus'
           : 'Charon';
 
     const voiceStyle =
