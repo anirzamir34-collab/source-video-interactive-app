@@ -30,6 +30,8 @@ const els = {
   gameState: $('gameState'),
   cursorText: $('cursorText'),
   choices: $('choices'),
+  prevChoiceBtn: $('prevChoiceBtn'),
+  nextChoiceBtn: $('nextChoiceBtn'),
   timelineList: $('timelineList'),
   videoPrompt: $('videoPrompt'),
   debugOutput: $('debugOutput'),
@@ -414,7 +416,17 @@ function futureActions() {
 function renderChoices() {
   els.choices.innerHTML = '';
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
-  const candidates = futureActions().slice(0, 4);
+  let candidates = futureActions().slice(0, 4);
+
+  if (!candidates.length && state.analysis?.actions?.length) {
+    candidates = state.analysis.actions
+      .filter((action, index) =>
+        index > state.currentActionIndex &&
+        Number(action.startTime) >= state.gameCursorTime - 0.001 &&
+        !state.consumedActions.has(action.actionId)
+      )
+      .slice(0, 4);
+  }
 
   if (!candidates.length) {
     setGameState('ENDED');
@@ -475,6 +487,62 @@ function finishAction(action) {
   renderChoices();
 }
 
+function resetGameAtAction(index) {
+  const actions = state.analysis?.actions || [];
+  if (!actions.length) return;
+
+  const safeIndex = Math.max(0, Math.min(index, actions.length - 1));
+  const target = actions[safeIndex];
+
+  if (state.stopListener) {
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+  }
+
+  state.activeAction = null;
+  state.currentActionIndex = safeIndex - 1;
+  state.gameCursorTime = Number(target.startTime) || 0;
+  state.consumedActions = new Set(
+    actions.slice(0, safeIndex).map(action => action.actionId)
+  );
+
+  els.video.pause();
+  state.navigationSeeking = true;
+  els.video.currentTime = state.gameCursorTime;
+
+  const finishNavigation = () => {
+    state.navigationSeeking = false;
+    setGameState('DECISION_PENDING');
+    renderChoices();
+  };
+
+  els.video.addEventListener('seeked', finishNavigation, { once: true });
+  setTimeout(() => {
+    if (state.navigationSeeking) finishNavigation();
+  }, 1200);
+}
+
+function jumpChoice(direction) {
+  const actions = state.analysis?.actions || [];
+  if (!actions.length) return;
+
+  const now = Number(els.video.currentTime) || 0;
+  let index;
+
+  if (direction > 0) {
+    index = actions.findIndex(action => Number(action.startTime) > now + 0.35);
+    if (index < 0) index = actions.length - 1;
+  } else {
+    index = actions.length - 1;
+    while (index >= 0 && Number(actions[index].startTime) >= now - 0.35) {
+      index -= 1;
+    }
+    if (index < 0) index = 0;
+  }
+
+  resetGameAtAction(index);
+}
+
 function renderTimeline() {
   els.timelineList.innerHTML = '';
   state.analysis.actions.forEach((a, i) => {
@@ -511,6 +579,37 @@ document.querySelectorAll('.tab').forEach(btn => {
     const target = btn.dataset.tab;
     document.getElementById(`${target}Panel`).classList.add('active');
   });
+});
+
+els.prevChoiceBtn?.addEventListener('click', () => jumpChoice(-1));
+els.nextChoiceBtn?.addEventListener('click', () => jumpChoice(1));
+
+els.video.addEventListener('seeking', () => {
+  if (!state.activeAction && !state.navigationSeeking) {
+    state.manualSeeking = true;
+  }
+});
+
+els.video.addEventListener('seeked', () => {
+  if (!state.manualSeeking || state.activeAction || state.navigationSeeking) return;
+  state.manualSeeking = false;
+
+  const actions = state.analysis?.actions || [];
+  if (!actions.length) return;
+
+  const now = Number(els.video.currentTime) || 0;
+  let index = actions.findIndex(action => Number(action.startTime) >= now - 0.1);
+  if (index < 0) index = actions.length - 1;
+
+  state.currentActionIndex = index - 1;
+  state.gameCursorTime = Number(actions[index].startTime) || now;
+  state.consumedActions = new Set(
+    actions.slice(0, index).map(action => action.actionId)
+  );
+
+  els.video.pause();
+  setGameState('DECISION_PENDING');
+  renderChoices();
 });
 
 els.video.addEventListener('play', () => {

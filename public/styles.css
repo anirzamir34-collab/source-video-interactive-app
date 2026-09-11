@@ -799,3 +799,40 @@ section {
   font-size: 11px;
   line-height: 1.35;
 }
+
+
+/* CHOICE NAVIGATION V1 */
+.choice-navigation {
+  position: absolute;
+  z-index: 70;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.choice-navigation button {
+  min-height: 38px;
+  padding: 8px 12px;
+  color: #eafff8;
+  background: rgba(5, 12, 11, 0.88);
+  border: 1px solid rgba(53, 221, 176, 0.48);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.video-stage:fullscreen .choice-navigation,
+.video-stage:-webkit-full-screen .choice-navigation {
+  bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+.video-stage[data-state="DECISION_PENDING"] .choice-navigation {
+  bottom: auto;
+  top: max(8px, env(safe-area-inset-top));
+}
