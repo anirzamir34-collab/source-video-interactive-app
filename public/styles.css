@@ -1838,3 +1838,33 @@ pre {
     top: 18px !important;
   }
 }
+
+
+/* VIDEOQUEST NAV HEIGHT FIX V2.2 */
+.choice-navigation {
+  height: 46px !important;
+  min-height: 46px !important;
+  max-height: 46px !important;
+  align-items: center !important;
+}
+
+.choice-navigation button {
+  display: inline-flex !important;
+  flex: 0 0 142px !important;
+  width: 142px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  align-self: center !important;
+  margin: 0 !important;
+}
+
+@media (max-width: 360px) {
+  .choice-navigation button {
+    flex-basis: 128px !important;
+    width: 128px !important;
+    font-size: .76rem !important;
+  }
+}
