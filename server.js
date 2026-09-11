@@ -168,6 +168,12 @@ CHUNK RULES:
 - BONUS actions capture visible tempo, touch, clothing, posture, body, or camera changes inside the scene.
 - Consecutive atomic actions may touch at their boundaries.
 - MAIN and BONUS evidence may belong to the same scene, but every returned action must have its own playable time segment.
+- ADULT SCENE CHOICES: When a clearly consensual sexual interaction between visible adults is actually shown, write the Turkish choiceLabel as a direct, specific description of that verified sexual action.
+- Name the visibly verified roles, position, contact, direction and tempo when they distinguish one real action from another.
+- Do not censor, soften, euphemize or replace verified adult actions with vague labels such as "devam et", "yakınlaş", "pozisyonu değiştir" or "hareketi sürdür".
+- Each adult choice must distinguish a genuinely different playable action or variation that exists inside this chunk and must seek to its exact startTime.
+- Never invent an adult action, body contact, position, participant, consent, intensity or outcome that is not clearly visible in the source video.
+- If adulthood or the visible action is uncertain, keep the description neutral and limited to the clearly observable movement.
 - For chunks after the first one, introEndTime and playStartTime must equal chunkStart.
 - Never create filler merely to reach a target count.
 
