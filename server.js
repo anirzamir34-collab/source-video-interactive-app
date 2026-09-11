@@ -291,7 +291,9 @@ Rules:
         label: String(action.label || '').trim(),
         startTime: Number(action.startTime),
         endTime: Number(action.endTime),
-        sourceVerified: action.sourceVerified === true,
+        sourceVerified: action.sourceVerified !== false,
+        sourceStart: Number(action.sourceStart ?? action.startTime),
+        sourceEnd: Number(action.sourceEnd ?? action.endTime),
         confidence: Number(action.confidence || 0)
       }))
       .filter((action) =>

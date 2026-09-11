@@ -624,9 +624,6 @@ els.analyzeBtn.addEventListener('click', async () => {
         ),
         videoPrompt: prompts.join('\n\n'),
         actions: mergedActions,
-        actions: chunkResults.flatMap(result =>
-          Array.isArray(result.actions) ? result.actions : []
-        ),
         warnings: chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
         ),
@@ -966,7 +963,10 @@ els.video.addEventListener('seeked', () => {
 });
 
 els.video.addEventListener('play', () => {
-  if (state.gameState !== 'SEGMENT_PLAYING') {
+  if (
+    state.gameState !== 'SEGMENT_PLAYING' &&
+    state.gameState !== 'DIALOGUE_READY'
+  ) {
     els.video.pause();
   }
 });
