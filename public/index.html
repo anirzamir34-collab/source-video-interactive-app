@@ -68,7 +68,63 @@
         />
         <small>Birden fazla erkek varsa başkarakteri tarif et. Boş bırakırsan otomatik seçilir.</small>
       </div>
-      <button id="analyzeBtn" class="primary-btn" disabled>Videoyu analiz et</button>
+      <section class="analysis-modes">
+        <div class="analysis-modes__head">
+          <div>
+            <strong>ANALİZ MODLARI</strong>
+            <small>Yalnızca ihtiyacın olan özellikleri çalıştır.</small>
+          </div>
+          <select id="qualityMode" aria-label="Analiz kalitesi">
+            <option value="fast">Hızlı</option>
+            <option value="balanced">Dengeli</option>
+            <option value="ultra" selected>Ultra</option>
+          </select>
+        </div>
+
+        <label class="mode-switch">
+          <span>
+            <b>Hareket ve seçim analizi</b>
+            <small>Aksiyonlar, ana seçenekler ve alt seçenekler</small>
+          </span>
+          <input id="motionMode" type="checkbox" checked />
+          <i></i>
+        </label>
+
+        <label class="mode-switch">
+          <span>
+            <b>Türkçe altyazı</b>
+            <small>Diyalog, konuşmacı ve zaman damgaları</small>
+          </span>
+          <input id="subtitleMode" type="checkbox" />
+          <i></i>
+        </label>
+
+        <label class="mode-switch">
+          <span>
+            <b>Türkçe dublaj</b>
+            <small>Kadın ve erkek için ayrı Türkçe sesler</small>
+          </span>
+          <input id="dubMode" type="checkbox" />
+          <i></i>
+        </label>
+
+        <label id="originalAudioRow" class="mode-switch sub-mode disabled">
+          <span>
+            <b>Orijinal sesi arkada koru</b>
+            <small>Dublaj sırasında kaynak sesi düşük seviyede çal</small>
+          </span>
+          <input id="keepOriginalAudio" type="checkbox" checked disabled />
+          <i></i>
+        </label>
+
+        <div id="selectedModesSummary" class="selected-modes-summary">
+          Ultra hareket ve seçim analizi seçildi.
+        </div>
+      </section>
+
+      <button id="analyzeBtn" class="primary-btn" disabled>
+        Seçili analizleri başlat
+      </button>
     </section>
 
     <section id="analysisCard" class="analysis-card hidden">
@@ -92,7 +148,17 @@
       <div id="interactivePanel" class="tab-panel active">
         <div class="video-stage">
           <video id="video" controls playsinline controlslist="nofullscreen"></video>
+          <div id="subtitleOverlay" class="subtitle-overlay hidden" aria-live="polite">
+            <span id="subtitleSpeaker" class="subtitle-speaker"></span>
+            <span id="subtitleText" class="subtitle-text"></span>
+          </div>
           <button id="fullscreenBtn" class="fullscreen-btn" type="button">⛶ OYUN MODU</button>
+        <button id="subtitleToggleBtn" class="subtitle-toggle-btn hidden" type="button">
+          TR ALTYAZI: AÇIK
+        </button>
+        <button id="dubToggleBtn" class="dub-toggle-btn hidden" type="button">
+          TR DUBLAJ: AÇIK
+        </button>
         <div class="choice-navigation" aria-label="Seçim navigasyonu">
           <button id="prevChoiceBtn" type="button">⏮ Önceki seçim</button>
           <button id="nextChoiceBtn" type="button">Sonraki seçim ⏭</button>

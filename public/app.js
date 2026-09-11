@@ -5,6 +5,13 @@ const state = {
   serviceCapabilities: null,
   selectedFile: null,
   analysis: null,
+  dialogue: null,
+  subtitlesEnabled: true,
+  dubbingEnabled: false,
+  keepOriginalAudioEnabled: true,
+  activeDubSegmentId: null,
+  dubCache: new Map(),
+  dubRequests: new Map(),
   gameState: 'IDLE',
   gameCursorTime: 0,
   currentActionIndex: -1,
@@ -20,6 +27,13 @@ const els = {
   videoInput: $('videoInput'),
   fileMeta: $('fileMeta'),
   analyzeBtn: $('analyzeBtn'),
+  qualityMode: $('qualityMode'),
+  motionMode: $('motionMode'),
+  subtitleMode: $('subtitleMode'),
+  dubMode: $('dubMode'),
+  keepOriginalAudio: $('keepOriginalAudio'),
+  originalAudioRow: $('originalAudioRow'),
+  selectedModesSummary: $('selectedModesSummary'),
   protagonistInput: $('protagonistInput'),
   analysisCard: $('analysisCard'),
   analysisTitle: $('analysisTitle'),
@@ -27,6 +41,11 @@ const els = {
   analysisOutput: $('analysisOutput'),
   playerSection: $('playerSection'),
   video: $('video'),
+  subtitleOverlay: $('subtitleOverlay'),
+  subtitleSpeaker: $('subtitleSpeaker'),
+  subtitleText: $('subtitleText'),
+  subtitleToggleBtn: $('subtitleToggleBtn'),
+  dubToggleBtn: $('dubToggleBtn'),
   gameState: $('gameState'),
   cursorText: $('cursorText'),
   choices: $('choices'),
@@ -94,9 +113,58 @@ async function checkHealth() {
   renderDebug();
 }
 
-function updateAnalyzeAvailability() {
-  els.analyzeBtn.disabled = !state.selectedFile;
+function selectedAnalysisModes() {
+  return {
+    motion: Boolean(els.motionMode?.checked),
+    subtitles: Boolean(els.subtitleMode?.checked),
+    dubbing: Boolean(els.dubMode?.checked),
+    keepOriginalAudio: Boolean(els.keepOriginalAudio?.checked),
+    quality: String(els.qualityMode?.value || 'ultra')
+  };
 }
+
+function updateAnalysisModesUI() {
+  const modes = selectedAnalysisModes();
+  const qualityNames = {
+    fast: 'Hızlı',
+    balanced: 'Dengeli',
+    ultra: 'Ultra'
+  };
+
+  if (els.keepOriginalAudio) {
+    els.keepOriginalAudio.disabled = !modes.dubbing;
+  }
+
+  els.originalAudioRow?.classList.toggle('disabled', !modes.dubbing);
+
+  const active = [];
+  if (modes.motion) active.push('hareket ve seçim');
+  if (modes.subtitles) active.push('Türkçe altyazı');
+  if (modes.dubbing) active.push('Türkçe dublaj');
+
+  if (els.selectedModesSummary) {
+    els.selectedModesSummary.textContent = active.length
+      ? `${qualityNames[modes.quality]} · ${active.join(' + ')}`
+      : 'En az bir analiz modu seçmelisin.';
+  }
+
+  return active.length > 0;
+}
+
+function updateAnalyzeAvailability() {
+  const hasMode = updateAnalysisModesUI();
+  els.analyzeBtn.disabled = !state.selectedFile || !hasMode;
+}
+
+[
+  els.qualityMode,
+  els.motionMode,
+  els.subtitleMode,
+  els.dubMode,
+  els.keepOriginalAudio
+].forEach(control => {
+  control?.addEventListener('change', updateAnalyzeAvailability);
+});
 
 els.healthBtn.addEventListener('click', checkHealth);
 
@@ -113,6 +181,232 @@ els.videoInput.addEventListener('change', () => {
   renderDebug();
 });
 
+async function analyzeSelectedDialogue(file) {
+  els.analysisCard.classList.remove('hidden');
+  els.analysisTitle.textContent = 'Video diyaloğu analiz ediliyor';
+  els.analysisState.textContent = 'AUDIO_ANALYSIS';
+  els.analysisOutput.textContent =
+    `Video ve ses Gemini'ye gönderiliyor...\n` +
+    `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+
+  const form = new FormData();
+  form.append('video', file, file.name || 'video.mp4');
+  form.append('duration', String(Number(els.video.duration) || 0));
+
+  const response = await fetch('/api/gemini-dialogue-analyze', {
+    method: 'POST',
+    body: form
+  });
+
+  const body = await response.json();
+
+  if (!response.ok || !body.available) {
+    throw new Error(body.error || body.message || `HTTP ${response.status}`);
+  }
+
+  state.dialogue = {
+    ...body,
+    segments: Array.isArray(body.segments) ? body.segments : []
+  };
+
+  try {
+    localStorage.setItem(
+      'videoquest:last-dialogue',
+      JSON.stringify(state.dialogue)
+    );
+  } catch (error) {
+    console.warn('Dialogue could not be saved:', error);
+  }
+
+  return state.dialogue;
+}
+
+function renderSubtitle() {
+  const segments = state.dialogue?.segments || [];
+  const now = Number(els.video.currentTime) || 0;
+
+  if (!state.subtitlesEnabled || !segments.length) {
+    els.subtitleOverlay?.classList.add('hidden');
+    return;
+  }
+
+  const segment = segments.find(item =>
+    now >= Number(item.startTime) &&
+    now <= Number(item.endTime)
+  );
+
+  if (!segment) {
+    els.subtitleOverlay?.classList.add('hidden');
+    return;
+  }
+
+  const speaker =
+    segment.gender === 'female'
+      ? 'KADIN'
+      : segment.gender === 'male'
+        ? 'ERKEK'
+        : 'KONUŞMACI';
+
+  els.subtitleSpeaker.textContent =
+    `${speaker} · ${String(segment.emotion || 'neutral').toUpperCase()}`;
+  els.subtitleText.textContent = segment.turkishText;
+  els.subtitleOverlay.classList.remove('hidden');
+}
+
+const dubAudio = new Audio();
+dubAudio.preload = 'auto';
+
+async function ensureDubAudio(segment) {
+  if (!segment?.segmentId || !segment.turkishText) return null;
+
+  if (state.dubCache.has(segment.segmentId)) {
+    return state.dubCache.get(segment.segmentId);
+  }
+
+  if (state.dubRequests.has(segment.segmentId)) {
+    return state.dubRequests.get(segment.segmentId);
+  }
+
+  const request = fetch('/api/gemini-dub-segment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: segment.turkishText,
+      gender: segment.gender,
+      emotion: segment.emotion,
+      speakerId: segment.speakerId
+    })
+  })
+    .then(async response => {
+      const body = await response.json();
+      if (!response.ok || !body.available || !body.audioBase64) {
+        throw new Error(body.error || body.message || `HTTP ${response.status}`);
+      }
+
+      const source =
+        `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
+
+      state.dubCache.set(segment.segmentId, source);
+      return source;
+    })
+    .catch(error => {
+      console.error('Dub segment failed:', segment.segmentId, error);
+      return null;
+    })
+    .finally(() => {
+      state.dubRequests.delete(segment.segmentId);
+    });
+
+  state.dubRequests.set(segment.segmentId, request);
+  return request;
+}
+
+function prepareUpcomingDubs(currentIndex) {
+  const segments = state.dialogue?.segments || [];
+  segments
+    .slice(Math.max(0, currentIndex), currentIndex + 3)
+    .forEach(segment => ensureDubAudio(segment));
+}
+
+async function syncDubPlayback() {
+  if (!state.dubbingEnabled) {
+    if (!dubAudio.paused) dubAudio.pause();
+    return;
+  }
+
+  const segments = state.dialogue?.segments || [];
+  const now = Number(els.video.currentTime) || 0;
+  const index = segments.findIndex(segment =>
+    now >= Number(segment.startTime) &&
+    now <= Number(segment.endTime)
+  );
+
+  if (index < 0) {
+    if (!dubAudio.paused) dubAudio.pause();
+    state.activeDubSegmentId = null;
+    return;
+  }
+
+  const segment = segments[index];
+  prepareUpcomingDubs(index + 1);
+
+  if (state.activeDubSegmentId === segment.segmentId) return;
+  state.activeDubSegmentId = segment.segmentId;
+
+  if (!dubAudio.paused) dubAudio.pause();
+
+  const source = await ensureDubAudio(segment);
+  if (!source || !state.dubbingEnabled) return;
+
+  const currentTime = Number(els.video.currentTime) || 0;
+  if (
+    currentTime < Number(segment.startTime) ||
+    currentTime > Number(segment.endTime)
+  ) {
+    return;
+  }
+
+  dubAudio.src = source;
+
+  const playWhenReady = () => {
+    const targetDuration = Math.max(
+      0.5,
+      Number(segment.endTime) - Number(segment.startTime)
+    );
+
+    if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
+      dubAudio.playbackRate = Math.max(
+        0.75,
+        Math.min(1.5, dubAudio.duration / targetDuration)
+      );
+    }
+
+    dubAudio.play().catch(error => {
+      console.warn('Dub autoplay was blocked:', error);
+    });
+  };
+
+  if (dubAudio.readyState >= 2) {
+    playWhenReady();
+  } else {
+    dubAudio.addEventListener('loadedmetadata', playWhenReady, { once: true });
+  }
+}
+
+els.dubToggleBtn?.addEventListener('click', () => {
+  state.dubbingEnabled = !state.dubbingEnabled;
+  els.dubToggleBtn.textContent =
+    `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
+
+  els.video.muted =
+    state.dubbingEnabled && !state.keepOriginalAudioEnabled;
+
+  if (!state.dubbingEnabled) {
+    dubAudio.pause();
+    state.activeDubSegmentId = null;
+  } else {
+    syncDubPlayback();
+  }
+});
+
+els.video.addEventListener('timeupdate', syncDubPlayback);
+els.video.addEventListener('pause', () => dubAudio.pause());
+els.video.addEventListener('seeking', () => {
+  dubAudio.pause();
+  state.activeDubSegmentId = null;
+});
+els.video.addEventListener('play', syncDubPlayback);
+
+els.subtitleToggleBtn?.addEventListener('click', () => {
+  state.subtitlesEnabled = !state.subtitlesEnabled;
+  els.subtitleToggleBtn.textContent =
+    `TR ALTYAZI: ${state.subtitlesEnabled ? 'AÇIK' : 'KAPALI'}`;
+  renderSubtitle();
+});
+
+els.video.addEventListener('timeupdate', renderSubtitle);
+els.video.addEventListener('seeked', renderSubtitle);
+
 els.analyzeBtn.addEventListener('click', async () => {
   if (!state.selectedFile) return;
   els.analysisCard.classList.remove('hidden');
@@ -122,6 +416,51 @@ els.analyzeBtn.addEventListener('click', async () => {
   setGameState('ANALYZING');
 
   const file = state.selectedFile;
+  const modes = selectedAnalysisModes();
+
+  if (modes.subtitles || modes.dubbing) {
+    try {
+      const dialogue = await analyzeSelectedDialogue(file);
+
+      if (modes.subtitles && dialogue.segments.length) {
+        els.subtitleToggleBtn?.classList.remove('hidden');
+        state.subtitlesEnabled = true;
+      }
+
+      if (modes.dubbing && dialogue.segments.length) {
+        state.dubbingEnabled = true;
+        state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
+        els.dubToggleBtn?.classList.remove('hidden');
+        els.video.muted = !modes.keepOriginalAudio;
+        prepareUpcomingDubs(0);
+      }
+
+      if (!modes.motion) {
+        els.playerSection.classList.remove('hidden');
+        els.analysisState.textContent = dialogue.segments.length
+          ? 'DIALOGUE_READY'
+          : 'NO_DIALOGUE';
+        els.analysisTitle.textContent = dialogue.segments.length
+          ? `${dialogue.segments.length} Türkçe diyalog bölümü hazır`
+          : 'Anlaşılabilir diyalog bulunamadı';
+        els.analysisOutput.textContent = [
+          dialogue.summaryTr || 'Diyalog analizi tamamlandı.',
+          `${dialogue.speakers?.length || 0} konuşmacı algılandı.`,
+          modes.dubbing
+            ? 'Dublaj için konuşma verisi hazırlandı.'
+            : 'Türkçe altyazılar kullanıma hazır.'
+        ].join('\n');
+        setGameState('DIALOGUE_READY');
+        return;
+      }
+    } catch (error) {
+      els.analysisState.textContent = 'DIALOGUE_ERROR';
+      els.analysisOutput.textContent =
+        `Diyalog analizi başarısız: ${error.message}`;
+
+      if (!modes.motion) return;
+    }
+  }
   els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
   els.analysisState.textContent = 'LOCAL_PROCESSING';
 
@@ -197,6 +536,14 @@ els.analyzeBtn.addEventListener('click', async () => {
       form.append('chunkEnd', String(chunkEnd));
       form.append('chunkIndex', String(chunkIndex));
       form.append('chunkCount', String(chunkCount));
+
+    const chunkDialogue = (state.dialogue?.segments || []).filter(segment =>
+      Number(segment.endTime) >= chunkStart &&
+      Number(segment.startTime) <= chunkEnd
+    );
+
+    form.append('dialogueContext', JSON.stringify(chunkDialogue));
+    form.append('qualityMode', modes.quality);
     form.append('protagonistProfile', protagonistProfile);
 
       els.analysisTitle.textContent =

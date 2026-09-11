@@ -110,6 +110,8 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const protagonistProfile = String(
     req.body?.protagonistProfile || ''
   ).trim();
+  const dialogueContext = String(req.body?.dialogueContext || '[]');
+  const qualityMode = String(req.body?.qualityMode || 'ultra');
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
   const targetActionCount = Math.max(
     5,
@@ -132,6 +134,17 @@ Video duration: ${duration} seconds
 Timestamp metadata for this chunk: ${timestamps}
 Local visual-change profile for this chunk: ${motionProfile}
 Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
+
+DIALOGUE AND SCENE CONTEXT:
+Quality mode: ${qualityMode}
+Time-aligned dialogue segments:
+${dialogueContext}
+
+- Use dialogue only when its timestamp overlaps the visible scene.
+- Use verified spoken meaning to improve scene understanding and Turkish choice wording.
+- Dialogue never overrides contradictory visual evidence.
+- Never invent speech, responses or outcomes.
+- Connect dialogue choices only to matching visible MAIN_MALE actions.
 
 PROTAGONIST IDENTITY LOCK:
 Current locked profile:
@@ -595,6 +608,331 @@ app.get('/api/video-proxy', async (req, res) => {
     stream.pipe(res);
   } catch (error) {
     res.status(502).json({ ok: false, reason: 'VIDEO_PROXY_ERROR', message: error?.message || 'Video aktarılamadı.' });
+  }
+});
+
+
+const dialogueUpload = multer({
+  dest: '/tmp/videoquest-dialogue',
+  limits: {
+    fileSize: 600 * 1024 * 1024,
+    files: 1,
+    fields: 5
+  },
+  fileFilter: (_req, file, callback) => {
+    const allowed = /^video\/(mp4|quicktime|webm|x-m4v)$/i.test(file.mimetype);
+    callback(allowed ? null : new Error('UNSUPPORTED_VIDEO_FORMAT'), allowed);
+  }
+});
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+app.post(
+  '/api/gemini-dialogue-analyze',
+  dialogueUpload.single('video'),
+  async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    const tempPath = req.file?.path;
+    let uploadedFile = null;
+
+    try {
+      if (!apiKey) {
+        return res.status(503).json({
+          available: false,
+          reason: 'GEMINI_NOT_CONFIGURED',
+          message: 'Gemini API anahtarı yapılandırılmamış.'
+        });
+      }
+
+      if (!req.file || !tempPath) {
+        return res.status(400).json({
+          available: false,
+          reason: 'VIDEO_REQUIRED',
+          message: 'Diyalog analizi için video gerekli.'
+        });
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+
+      uploadedFile = await ai.files.upload({
+        file: tempPath,
+        config: {
+          mimeType: req.file.mimetype,
+          displayName: req.file.originalname || 'videoquest-dialogue-video'
+        }
+      });
+
+      let remoteFile = uploadedFile;
+      const processingDeadline = Date.now() + 20 * 60 * 1000;
+
+      while (
+        remoteFile?.state === 'PROCESSING' &&
+        Date.now() < processingDeadline
+      ) {
+        await wait(4000);
+        remoteFile = await ai.files.get({ name: remoteFile.name });
+      }
+
+      if (!remoteFile || remoteFile.state === 'FAILED') {
+        throw new Error('GEMINI_VIDEO_PROCESSING_FAILED');
+      }
+
+      if (remoteFile.state === 'PROCESSING') {
+        throw new Error('GEMINI_VIDEO_PROCESSING_TIMEOUT');
+      }
+
+      const prompt = `
+Analyze only the audible dialogue and speech in this video.
+
+Return valid JSON only, with this exact structure:
+{
+  "available": true,
+  "hasDialogue": true,
+  "sourceLanguage": "string",
+  "summaryTr": "short Turkish summary",
+  "speakers": [
+    {
+      "speakerId": "speaker-01",
+      "gender": "female|male|uncertain",
+      "description": "short stable Turkish description"
+    }
+  ],
+  "segments": [
+    {
+      "segmentId": "dlg-001",
+      "startTime": 0.0,
+      "endTime": 2.5,
+      "speakerId": "speaker-01",
+      "gender": "female|male|uncertain",
+      "originalText": "exact spoken dialogue",
+      "turkishText": "natural Turkish translation",
+      "emotion": "neutral|happy|sad|angry|afraid|excited|whispering|uncertain",
+      "confidence": 0.0
+    }
+  ],
+  "warnings": []
+}
+
+Rules:
+- Use seconds as numbers for startTime and endTime.
+- Preserve chronological order.
+- Identify and consistently separate different speakers.
+- Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
+- Transcribe speech faithfully without inventing words.
+- Translate every intelligible segment into natural Turkish.
+- Preserve the meaning, tone and emotion of the original dialogue.
+- Split long speech into readable subtitle segments, normally 1 to 7 seconds.
+- Do not include music, breathing, moans, sound effects or silence as dialogue.
+- If there is no intelligible speech, return hasDialogue false and an empty segments array.
+- Never add dialogue that is not audible in the source video.
+`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: [{
+          role: 'user',
+          parts: [
+            {
+              fileData: {
+                fileUri: remoteFile.uri,
+                mimeType: remoteFile.mimeType || req.file.mimetype
+              }
+            },
+            { text: prompt }
+          ]
+        }],
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.1
+        }
+      });
+
+      const raw = String(response.text || '').trim();
+      const parsed = JSON.parse(
+        raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '')
+      );
+
+      const duration = Math.max(0, Number(req.body?.duration || 0));
+      const segments = (Array.isArray(parsed.segments) ? parsed.segments : [])
+        .map((segment, index) => ({
+          segmentId: `dlg-${String(index + 1).padStart(3, '0')}`,
+          startTime: Math.max(0, Number(segment.startTime || 0)),
+          endTime: Math.max(0, Number(segment.endTime || 0)),
+          speakerId: String(segment.speakerId || 'speaker-uncertain'),
+          gender: ['female', 'male'].includes(segment.gender)
+            ? segment.gender
+            : 'uncertain',
+          originalText: String(segment.originalText || '').trim(),
+          turkishText: String(segment.turkishText || '').trim(),
+          emotion: String(segment.emotion || 'uncertain'),
+          confidence: Math.max(0, Math.min(1, Number(segment.confidence || 0)))
+        }))
+        .filter(segment =>
+          segment.originalText &&
+          segment.turkishText &&
+          segment.endTime > segment.startTime &&
+          (!duration || segment.startTime <= duration)
+        )
+        .sort((a, b) => a.startTime - b.startTime);
+
+      return res.json({
+        available: true,
+        hasDialogue: segments.length > 0,
+        sourceLanguage: String(parsed.sourceLanguage || 'unknown'),
+        summaryTr: String(parsed.summaryTr || ''),
+        speakers: Array.isArray(parsed.speakers) ? parsed.speakers : [],
+        segments,
+        warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []
+      });
+    } catch (error) {
+      console.error('Dialogue analysis failed:', error);
+      return res.status(502).json({
+        available: false,
+        reason: 'GEMINI_DIALOGUE_ERROR',
+        message: 'Video diyaloğu analiz edilirken hata oluştu.',
+        error: error?.message || String(error)
+      });
+    } finally {
+      if (tempPath) {
+        try {
+          if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+        } catch (cleanupError) {
+          console.error('Temporary dialogue video cleanup failed:', cleanupError);
+        }
+      }
+
+      if (uploadedFile?.name && process.env.KEEP_GEMINI_FILES !== 'true') {
+        try {
+          const cleanupAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+          await cleanupAi.files.delete({ name: uploadedFile.name });
+        } catch (cleanupError) {
+          console.error('Gemini file cleanup failed:', cleanupError);
+        }
+      }
+    }
+  }
+);
+
+
+function pcmBase64ToWavBase64(pcmBase64, sampleRate = 24000) {
+  const pcm = Buffer.from(pcmBase64, 'base64');
+  const wav = Buffer.alloc(44 + pcm.length);
+
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + pcm.length, 4);
+  wav.write('WAVE', 8);
+  wav.write('fmt ', 12);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(pcm.length, 40);
+  pcm.copy(wav, 44);
+
+  return wav.toString('base64');
+}
+
+app.post('/api/gemini-dub-segment', async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        available: false,
+        reason: 'GEMINI_NOT_CONFIGURED'
+      });
+    }
+
+    const text = String(req.body?.text || '').trim();
+    const gender = String(req.body?.gender || 'uncertain');
+    const emotion = String(req.body?.emotion || 'neutral');
+    const speakerId = String(req.body?.speakerId || 'speaker');
+
+    if (!text || text.length > 1200) {
+      return res.status(400).json({
+        available: false,
+        reason: 'INVALID_DUB_TEXT'
+      });
+    }
+
+    const voiceName =
+      gender === 'female'
+        ? 'Kore'
+        : gender === 'male'
+          ? 'Puck'
+          : 'Charon';
+
+    const voiceStyle =
+      gender === 'female'
+        ? 'an adult Turkish woman'
+        : gender === 'male'
+          ? 'an adult Turkish man'
+          : 'a natural adult Turkish speaker';
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-tts-preview',
+      contents: [{
+        role: 'user',
+        parts: [{
+          text:
+            `Read the following Turkish line exactly as written. ` +
+            `Use ${voiceStyle}. Preserve a natural ${emotion} emotion, ` +
+            `realistic conversational pace and clear pronunciation. ` +
+            `Do not add, remove or explain any words.\n\n${text}`
+        }]
+      }],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName
+            }
+          }
+        }
+      }
+    });
+
+    const parts = response?.candidates?.[0]?.content?.parts || [];
+    const audioPart = parts.find(part => part.inlineData?.data);
+    const audioData = audioPart?.inlineData?.data;
+    const sourceMime = String(
+      audioPart?.inlineData?.mimeType || 'audio/L16;rate=24000'
+    );
+
+    if (!audioData) {
+      throw new Error('GEMINI_TTS_AUDIO_MISSING');
+    }
+
+    const isRawPcm =
+      /L16|pcm|raw/i.test(sourceMime) ||
+      !/wav|mpeg|mp3|ogg|webm/i.test(sourceMime);
+
+    const finalData = isRawPcm
+      ? pcmBase64ToWavBase64(audioData, 24000)
+      : audioData;
+
+    return res.json({
+      available: true,
+      speakerId,
+      gender,
+      voiceName,
+      mimeType: isRawPcm ? 'audio/wav' : sourceMime,
+      audioBase64: finalData
+    });
+  } catch (error) {
+    console.error('Gemini dub generation failed:', error);
+    return res.status(502).json({
+      available: false,
+      reason: 'GEMINI_DUB_ERROR',
+      message: 'Türkçe dublaj sesi üretilemedi.',
+      error: error?.message || String(error)
+    });
   }
 });
 
