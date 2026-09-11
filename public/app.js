@@ -624,6 +624,9 @@ els.analyzeBtn.addEventListener('click', async () => {
         ),
         videoPrompt: prompts.join('\n\n'),
         actions: mergedActions,
+        actions: chunkResults.flatMap(result =>
+          Array.isArray(result.actions) ? result.actions : []
+        ),
         warnings: chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
         ),
