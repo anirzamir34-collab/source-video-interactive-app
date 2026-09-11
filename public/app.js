@@ -288,7 +288,13 @@ els.analyzeBtn.addEventListener('click', async () => {
     console.warn("Analysis could not be saved locally:", error);
   }
   els.analysisState.textContent = 'TIMELINE_READY';
-  els.analysisTitle.textContent = `${normalized.actions.length} doğrulanmış action`;
+  els.analysisTitle.textContent = `${normalized.actions.length} doğrulanmış aksiyon`;
+  els.analysisOutput.textContent = [
+    'Derin analiz tamamlandı.',
+    `${normalized.actions.length} doğrulanmış aksiyon hazır.`,
+    `${Number(body.chunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
+    'Oyun modu kullanıma hazır.'
+  ].join('\n');
   initializeInteractive(normalized);
 });
 
