@@ -4,6 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -752,12 +753,173 @@ const dialogueUpload = multer({
   }
 });
 
+const dialogueUploadSessions = new Map();
+const dialogueChunkParser = express.raw({
+  type: 'application/octet-stream',
+  limit: '2mb'
+});
+
+app.post('/api/dialogue-upload/start', async (req, res) => {
+  try {
+    const totalSize = Number(req.body?.totalSize || 0);
+    const fileName = String(req.body?.fileName || 'dialogue.wav')
+      .replace(/[^a-zA-Z0-9._-]/g, '_');
+    const mimeType = String(req.body?.mimeType || 'audio/wav');
+
+    if (
+      !Number.isFinite(totalSize) ||
+      totalSize <= 0 ||
+      totalSize > 250 * 1024 * 1024
+    ) {
+      return res.status(400).json({
+        available: false,
+        reason: 'INVALID_AUDIO_SIZE',
+        message: 'Ses dosyası boyutu geçersiz.'
+      });
+    }
+
+    const uploadId = crypto.randomUUID();
+    const filePath = `/tmp/videoquest-dialogue/${uploadId}.part`;
+
+    await fs.promises.mkdir('/tmp/videoquest-dialogue', {
+      recursive: true
+    });
+    await fs.promises.writeFile(filePath, Buffer.alloc(0));
+
+    dialogueUploadSessions.set(uploadId, {
+      filePath,
+      fileName,
+      mimeType,
+      totalSize,
+      receivedSize: 0,
+      nextChunk: 0,
+      updatedAt: Date.now()
+    });
+
+    return res.json({
+      available: true,
+      uploadId,
+      receivedSize: 0,
+      nextChunk: 0
+    });
+  } catch (error) {
+    return res.status(500).json({
+      available: false,
+      reason: 'UPLOAD_START_FAILED',
+      message: error.message || String(error)
+    });
+  }
+});
+
+app.post(
+  '/api/dialogue-upload/:uploadId/chunk',
+  dialogueChunkParser,
+  async (req, res) => {
+    const uploadId = String(req.params.uploadId || '');
+    const session = dialogueUploadSessions.get(uploadId);
+
+    if (!session) {
+      return res.status(404).json({
+        available: false,
+        reason: 'UPLOAD_SESSION_NOT_FOUND'
+      });
+    }
+
+    const chunkIndex = Number(req.headers['x-chunk-index']);
+
+    if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+      return res.status(400).json({
+        available: false,
+        reason: 'INVALID_CHUNK_INDEX'
+      });
+    }
+
+    if (chunkIndex < session.nextChunk) {
+      return res.json({
+        available: true,
+        duplicate: true,
+        receivedSize: session.receivedSize,
+        nextChunk: session.nextChunk
+      });
+    }
+
+    if (chunkIndex !== session.nextChunk || !Buffer.isBuffer(req.body)) {
+      return res.status(409).json({
+        available: false,
+        reason: 'CHUNK_ORDER_MISMATCH',
+        receivedSize: session.receivedSize,
+        nextChunk: session.nextChunk
+      });
+    }
+
+    if (session.receivedSize + req.body.length > session.totalSize) {
+      return res.status(400).json({
+        available: false,
+        reason: 'UPLOAD_SIZE_EXCEEDED'
+      });
+    }
+
+    try {
+      await fs.promises.appendFile(session.filePath, req.body);
+      session.receivedSize += req.body.length;
+      session.nextChunk += 1;
+      session.updatedAt = Date.now();
+
+      return res.json({
+        available: true,
+        receivedSize: session.receivedSize,
+        nextChunk: session.nextChunk,
+        complete: session.receivedSize === session.totalSize
+      });
+    } catch (error) {
+      return res.status(500).json({
+        available: false,
+        reason: 'CHUNK_WRITE_FAILED',
+        message: error.message || String(error)
+      });
+    }
+  }
+);
+
+setInterval(() => {
+  const expiry = Date.now() - 60 * 60 * 1000;
+
+  for (const [uploadId, session] of dialogueUploadSessions) {
+    if (session.updatedAt >= expiry) continue;
+
+    dialogueUploadSessions.delete(uploadId);
+    fs.promises.unlink(session.filePath).catch(() => {});
+  }
+}, 10 * 60 * 1000).unref();
+
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 app.post(
   '/api/gemini-dialogue-analyze',
   dialogueUpload.single('video'),
   async (req, res) => {
+    const uploadId = String(req.body?.uploadId || '');
+    const uploadSession = dialogueUploadSessions.get(uploadId);
+
+    if (!req.file && uploadSession) {
+      if (uploadSession.receivedSize !== uploadSession.totalSize) {
+        return res.status(409).json({
+          available: false,
+          reason: 'UPLOAD_INCOMPLETE',
+          message: 'Ses yüklemesi henüz tamamlanmadı.'
+        });
+      }
+
+      req.file = {
+        path: uploadSession.filePath,
+        originalname: uploadSession.fileName,
+        mimetype: uploadSession.mimeType,
+        size: uploadSession.totalSize
+      };
+
+      dialogueUploadSessions.delete(uploadId);
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     const tempPath = req.file?.path;
     let uploadedFile = null;

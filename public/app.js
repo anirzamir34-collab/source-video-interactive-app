@@ -317,66 +317,195 @@ async function extractDialogueAudio(file) {
   }
 }
 
-function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
+function waitUntilPageVisible() {
+  if (document.visibilityState === 'visible') {
+    return Promise.resolve();
+  }
+
+  return new Promise(resolve => {
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.visibilityState === 'visible') resolve();
+      },
+      { once: true }
+    );
+  });
+}
+
+function sendDialogueChunk({
+  uploadId,
+  chunk,
+  chunkIndex,
+  completedBytes,
+  totalBytes,
+  startedAt,
+  onProgress
+}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const startedAt = performance.now();
 
-    xhr.open('POST', '/api/gemini-dialogue-analyze');
+    xhr.open(
+      'POST',
+      `/api/dialogue-upload/${encodeURIComponent(uploadId)}/chunk`
+    );
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
+    xhr.timeout = 60000;
     xhr.responseType = 'json';
 
     xhr.upload.addEventListener('progress', event => {
-      if (!event.lengthComputable) return;
-
-      const elapsedSeconds = Math.max(
+      const loaded = Math.min(
+        totalBytes,
+        completedBytes + (event.loaded || 0)
+      );
+      const elapsed = Math.max(
         (performance.now() - startedAt) / 1000,
         0.1
       );
 
       onProgress({
-        loaded: event.loaded,
-        total: event.total,
-        percent: Math.min(
-          100,
-          Math.round((event.loaded / event.total) * 100)
-        ),
-        speed: (event.loaded / 1024 / 1024) / elapsedSeconds
+        loaded,
+        total: totalBytes,
+        percent: Math.min(100, Math.round(loaded / totalBytes * 100)),
+        speed: (loaded / 1024 / 1024) / elapsed
       });
-    });
-
-    xhr.upload.addEventListener('load', () => {
-      onUploadComplete();
     });
 
     xhr.addEventListener('load', () => {
-      let body = xhr.response;
+      const body = xhr.response || {};
 
-      if (!body || typeof body !== 'object') {
-        try {
-          body = JSON.parse(xhr.responseText || '{}');
-        } catch {
-          body = {};
-        }
+      if (xhr.status >= 200 && xhr.status < 300 && body.available) {
+        resolve(body);
+      } else {
+        reject(
+          new Error(
+            body.message ||
+            body.reason ||
+            `Parça yükleme hatası: HTTP ${xhr.status}`
+          )
+        );
       }
-
-      resolve({
-        ok: xhr.status >= 200 && xhr.status < 300,
-        status: xhr.status,
-        body
-      });
     });
 
     xhr.addEventListener('error', () => {
-      reject(new Error('Video yüklenirken ağ bağlantısı kesildi.'));
+      reject(new Error('Parça yüklenirken bağlantı kesildi.'));
     });
 
-    xhr.addEventListener('abort', () => {
-      reject(new Error('Video yüklemesi iptal edildi.'));
+    xhr.addEventListener('timeout', () => {
+      reject(new Error('Parça yüklemesi zaman aşımına uğradı.'));
     });
 
-    xhr.timeout = 0;
-    xhr.send(form);
+    xhr.send(chunk);
   });
+}
+
+async function uploadDialogueWithProgress(
+  form,
+  onProgress,
+  onUploadComplete
+) {
+  const file = form.get('video');
+  const duration = String(form.get('duration') || '0');
+
+  if (!(file instanceof Blob)) {
+    throw new Error('Yüklenecek ses dosyası bulunamadı.');
+  }
+
+  await waitUntilPageVisible();
+
+  const startResponse = await fetch('/api/dialogue-upload/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      totalSize: file.size,
+      fileName: file.name || 'dialogue.wav',
+      mimeType: file.type || 'audio/wav'
+    })
+  });
+
+  const startBody = await startResponse.json();
+
+  if (!startResponse.ok || !startBody.available) {
+    throw new Error(
+      startBody.message ||
+      startBody.reason ||
+      `Yükleme başlatılamadı: HTTP ${startResponse.status}`
+    );
+  }
+
+  const uploadId = startBody.uploadId;
+  const chunkSize = 1024 * 1024;
+  const chunkCount = Math.ceil(file.size / chunkSize);
+  const startedAt = performance.now();
+
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    const start = chunkIndex * chunkSize;
+    const end = Math.min(file.size, start + chunkSize);
+    const chunk = file.slice(start, end);
+    let retryCount = 0;
+
+    while (true) {
+      await waitUntilPageVisible();
+
+      try {
+        await sendDialogueChunk({
+          uploadId,
+          chunk,
+          chunkIndex,
+          completedBytes: start,
+          totalBytes: file.size,
+          startedAt,
+          onProgress
+        });
+        break;
+      } catch (error) {
+        retryCount += 1;
+
+        if (retryCount >= 8) throw error;
+
+        els.analysisTitle.textContent =
+          `Bağlantı bekleniyor · parça ${chunkIndex + 1}/${chunkCount}`;
+        els.analysisOutput.textContent =
+          'Yükleme kesildi veya uygulama arka plana alındı.\n' +
+          'Sayfaya dönüldüğünde kaldığı parçadan devam edilecek.';
+
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+
+    const loaded = end;
+    const elapsed = Math.max(
+      (performance.now() - startedAt) / 1000,
+      0.1
+    );
+
+    onProgress({
+      loaded,
+      total: file.size,
+      percent: Math.min(100, Math.round(loaded / file.size * 100)),
+      speed: (loaded / 1024 / 1024) / elapsed
+    });
+  }
+
+  onUploadComplete();
+
+  const finishForm = new FormData();
+  finishForm.append('uploadId', uploadId);
+  finishForm.append('duration', duration);
+
+  const response = await fetch('/api/gemini-dialogue-analyze', {
+    method: 'POST',
+    body: finishForm
+  });
+
+  const body = await response.json();
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    body
+  };
 }
 
 async function analyzeSelectedDialogue(file) {
