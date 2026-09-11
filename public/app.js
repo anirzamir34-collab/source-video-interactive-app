@@ -144,7 +144,9 @@ els.analyzeBtn.addEventListener('click', async () => {
     let response = null;
     let body = null;
 
-    for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    let protagonistProfile = '';
+
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
       const firstSheet = chunkIndex * sheetsPerChunk;
       const chunkSheets = storyboard.sheets.slice(
         firstSheet,
@@ -191,6 +193,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       form.append('chunkEnd', String(chunkEnd));
       form.append('chunkIndex', String(chunkIndex));
       form.append('chunkCount', String(chunkCount));
+    form.append('protagonistProfile', protagonistProfile);
 
       els.analysisTitle.textContent =
         `Derin analiz: bölüm ${chunkIndex + 1}/${chunkCount}`;
@@ -219,6 +222,9 @@ els.analyzeBtn.addEventListener('click', async () => {
         }
 
         chunkResults.push(body);
+      if (body.protagonistProfile) {
+        protagonistProfile = String(body.protagonistProfile).trim();
+      }
       } catch (error) {
         failureBody = {
           available: false,

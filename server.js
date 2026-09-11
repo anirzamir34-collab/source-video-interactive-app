@@ -107,6 +107,9 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
     );
     const chunkIndex = Math.max(0, Number(req.body?.chunkIndex || 0));
     const chunkCount = Math.max(1, Number(req.body?.chunkCount || 1));
+  const protagonistProfile = String(
+    req.body?.protagonistProfile || ''
+  ).trim();
 
     const prompt = `
 SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
@@ -124,6 +127,19 @@ Video duration: ${duration} seconds
 Timestamp metadata for this chunk: ${timestamps}
 Local visual-change profile for this chunk: ${motionProfile}
 Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
+
+PROTAGONIST IDENTITY LOCK:
+Current locked profile:
+${protagonistProfile || 'NOT_LOCKED. In this chunk, identify one clearly visible adult male with the strongest narrative continuity and label him MAIN_MALE.'}
+
+- Select exactly one adult male as MAIN_MALE.
+- If a locked profile exists, preserve that same identity across clothing, pose, distance and camera-angle changes.
+- Distinguish all other males as OTHER_MALE and never convert their actions into player choices.
+- Use face, hair, facial hair, skin tone, body build, clothing, accessories, position and scene continuity together.
+- Never switch MAIN_MALE merely because another male becomes larger or more central in the frame.
+- If identity is uncertain, omit the action instead of assigning another male's action to MAIN_MALE.
+- Return a short stable protagonistProfile describing MAIN_MALE with persistent visible identity anchors.
+- Every returned action must belong to MAIN_MALE or to the male-POV camera controlled by MAIN_MALE.
 Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.
 
 CHUNK RULES:
@@ -165,6 +181,7 @@ Return ONLY valid JSON with this exact shape:
   "videoDuration": number,
   "introEndTime": number,
   "playStartTime": number,
+"protagonistProfile": "stable visible identity description of MAIN_MALE",
   "videoPrompt": "concise chronological Turkish scenario",
   "actions": [
     {
