@@ -3,6 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,125 @@ const upload = multer({
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '16kb' }));
+
+const APP_PASSWORD = String(process.env.APP_PASSWORD || '');
+const AUTH_COOKIE = 'videoquest_owner';
+const AUTH_MAX_AGE = 60 * 60 * 24 * 30;
+const loginAttempts = new Map();
+
+function secureEqual(left, right) {
+  const a = Buffer.from(String(left));
+  const b = Buffer.from(String(right));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function expectedAuthToken() {
+  return crypto
+    .createHmac('sha256', APP_PASSWORD)
+    .update('videoquest-owner-session-v1')
+    .digest('hex');
+}
+
+function readCookie(req, name) {
+  const cookies = String(req.headers.cookie || '').split(';');
+  for (const cookie of cookies) {
+    const [key, ...value] = cookie.trim().split('=');
+    if (key === name) return decodeURIComponent(value.join('='));
+  }
+  return '';
+}
+
+function isAuthenticated(req) {
+  if (!APP_PASSWORD) return false;
+  return secureEqual(readCookie(req, AUTH_COOKIE), expectedAuthToken());
+}
+
+app.get('/login', (req, res) => {
+  if (isAuthenticated(req)) return res.redirect('/');
+  const failed = req.query.error === '1';
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(`<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#05070b">
+  <title>VIDEOQUEST AI · Özel Giriş</title>
+  <style>
+    *{box-sizing:border-box}html{color-scheme:dark}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:22px;color:#f7fbff;background:radial-gradient(circle at 15% 0,rgba(34,230,168,.18),transparent 34rem),#05070b;font-family:Inter,system-ui,sans-serif}
+    .card{width:min(100%,430px);padding:30px 24px;border:1px solid rgba(255,255,255,.12);border-radius:26px;background:rgba(15,21,30,.92);box-shadow:0 28px 80px rgba(0,0,0,.52)}
+    .mark{width:58px;height:58px;display:grid;place-items:center;margin-bottom:22px;border-radius:18px;color:#03130e;background:linear-gradient(135deg,#22e6a8,#56ffd0);font-size:25px;font-weight:900}
+    .eyebrow{color:#22e6a8;font-size:12px;font-weight:900;letter-spacing:.16em}h1{margin:8px 0 10px;font-size:32px;letter-spacing:-.05em}p{margin:0 0 22px;color:#9eabba}
+    input{width:100%;height:56px;padding:0 16px;border:1px solid rgba(255,255,255,.14);border-radius:16px;color:#fff;background:#080c12;font-size:17px;outline:none}
+    input:focus{border-color:#22e6a8;box-shadow:0 0 0 4px rgba(34,230,168,.12)}
+    button{width:100%;height:56px;margin-top:13px;border:0;border-radius:16px;color:#03130e;background:linear-gradient(135deg,#22e6a8,#56ffd0);font-size:17px;font-weight:900}
+    .error{margin:0 0 14px;padding:11px 13px;border:1px solid rgba(255,85,105,.3);border-radius:13px;color:#ffb6c0;background:rgba(255,68,92,.09)}
+    .private{margin-top:18px;color:#6f7d8e;font-size:12px;text-align:center}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="mark">VQ</div>
+    <div class="eyebrow">PRIVATE ACCESS</div>
+    <h1>VIDEOQUEST AI</h1>
+    <p>Kişisel çalışma alanına devam etmek için parolanı gir.</p>
+    ${failed ? '<div class="error">Parola yanlış. Tekrar deneyebilirsin.</div>' : ''}
+    <form method="post" action="/login">
+      <input name="password" type="password" autocomplete="current-password" placeholder="Kişisel parola" required autofocus>
+      <button type="submit">Güvenli giriş yap</button>
+    </form>
+    <div class="private">Şifreli bağlantı · Yalnızca yetkili kullanıcı</div>
+  </main>
+</body>
+</html>`);
+});
+
+app.post('/login', (req, res) => {
+  if (!APP_PASSWORD) return res.status(503).send('APP_PASSWORD yapılandırılmamış.');
+  const key = req.ip || 'unknown';
+  const now = Date.now();
+  const recent = (loginAttempts.get(key) || []).filter(time => now - time < 15 * 60 * 1000);
+
+  if (recent.length >= 5) {
+    loginAttempts.set(key, recent);
+    return res.status(429).send('Çok fazla deneme. 15 dakika sonra tekrar dene.');
+  }
+
+  if (!secureEqual(req.body?.password || '', APP_PASSWORD)) {
+    recent.push(now);
+    loginAttempts.set(key, recent);
+    return res.redirect('/login?error=1');
+  }
+
+  loginAttempts.delete(key);
+  res.setHeader(
+    'Set-Cookie',
+    `${AUTH_COOKIE}=${expectedAuthToken()}; Max-Age=${AUTH_MAX_AGE}; Path=/; HttpOnly; Secure; SameSite=Strict`
+  );
+  return res.redirect('/');
+});
+
+app.post('/logout', (_req, res) => {
+  res.setHeader(
+    'Set-Cookie',
+    `${AUTH_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict`
+  );
+  res.redirect('/login');
+});
+
+app.use((req, res, next) => {
+  if (isAuthenticated(req)) return next();
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({
+      available: false,
+      reason: 'AUTH_REQUIRED',
+      message: 'Bu işlem için giriş gerekli.'
+    });
+  }
+  return res.redirect('/login');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 async function readJsonSafe(response) {
