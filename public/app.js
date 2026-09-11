@@ -133,36 +133,144 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${originalMB} MB yerine ${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-  const form = new FormData();
-  storyboard.sheets.forEach((blob, index) => {
-    form.append('storyboards', blob, `storyboard-${String(index + 1).padStart(2, '0')}.jpg`);
-  });
-  form.append('duration', String(storyboard.duration));
-  form.append('timestamps', JSON.stringify(storyboard.timestamps));
+    const sheetsPerChunk = 2;
+    const framesPerSheet = 12;
+    const chunkCount = Math.ceil(
+      storyboard.sheets.length / sheetsPerChunk
+    );
 
-  let response;
-  let body;
-  try {
-    response = await fetch('/api/gemini-storyboard-analyze', {
-      method: 'POST',
-      body: form,
-      signal: AbortSignal.timeout(200000)
-    });
-    body = await response.json();
-  } catch (error) {
-    body = { available: false, reason: 'NETWORK_ERROR', error: error.message };
-    response = { ok: false, status: 0 };
-  }
+    const chunkResults = [];
+    let failureBody = null;
+    let response = null;
+    let body = null;
 
-  els.analysisOutput.textContent = JSON.stringify(body, null, 2);
+    for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      const firstSheet = chunkIndex * sheetsPerChunk;
+      const chunkSheets = storyboard.sheets.slice(
+        firstSheet,
+        firstSheet + sheetsPerChunk
+      );
 
-  if (!response.ok) {
-    els.analysisState.textContent = `ERROR ${response.status || ''}`.trim();
-    els.analysisTitle.textContent = body?.detail?.reason || body?.reason || 'Analiz motoru hazır değil';
-    setGameState('ERROR');
-    renderDebug({ lastAnalyzeStatus: response.status, lastAnalyzeBody: body });
-    return;
-  }
+      const firstFrame = firstSheet * framesPerSheet;
+      const chunkTimestamps = storyboard.timestamps.slice(
+        firstFrame,
+        firstFrame + chunkSheets.length * framesPerSheet
+      );
+
+      const chunkStart = Number(chunkTimestamps[0] ?? 0);
+      const lastTimestamp = Number(
+        chunkTimestamps[chunkTimestamps.length - 1] ?? chunkStart
+      );
+
+      const chunkEnd = Math.min(
+        storyboard.duration,
+        lastTimestamp + storyboard.interval
+      );
+
+      const chunkMotionProfile = (
+        storyboard.motionProfile || []
+      ).filter(entry =>
+        Number(entry.time) >= chunkStart &&
+        Number(entry.time) <= chunkEnd
+      );
+
+      const form = new FormData();
+
+      chunkSheets.forEach((blob, index) => {
+        form.append(
+          'storyboards',
+          blob,
+          `chunk-${String(chunkIndex + 1).padStart(2, '0')}-sheet-${String(index + 1).padStart(2, '0')}.jpg`
+        );
+      });
+
+      form.append('duration', String(storyboard.duration));
+      form.append('timestamps', JSON.stringify(chunkTimestamps));
+      form.append('motionProfile', JSON.stringify(chunkMotionProfile));
+      form.append('chunkStart', String(chunkStart));
+      form.append('chunkEnd', String(chunkEnd));
+      form.append('chunkIndex', String(chunkIndex));
+      form.append('chunkCount', String(chunkCount));
+
+      els.analysisTitle.textContent =
+        `Derin analiz: bölüm ${chunkIndex + 1}/${chunkCount}`;
+
+      els.analysisState.textContent = 'DEEP_CHUNK_ANALYSIS';
+
+      els.analysisOutput.textContent =
+        `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...`;
+
+      try {
+        response = await fetch('/api/gemini-storyboard-analyze', {
+          method: 'POST',
+          body: form,
+          signal: AbortSignal.timeout(200000)
+        });
+
+        body = await response.json();
+
+        if (!response.ok || !body?.available) {
+          failureBody = body || {
+            available: false,
+            reason: 'CHUNK_ANALYSIS_FAILED',
+            message: `Bölüm ${chunkIndex + 1} analiz edilemedi.`
+          };
+          break;
+        }
+
+        chunkResults.push(body);
+      } catch (error) {
+        failureBody = {
+          available: false,
+          reason: 'NETWORK_ERROR',
+          message: `Bölüm ${chunkIndex + 1} sırasında bağlantı hatası oluştu.`,
+          error: error?.message || String(error)
+        };
+        break;
+      }
+    }
+
+    if (failureBody) {
+      body = failureBody;
+    } else {
+      const mergedActions = chunkResults
+        .flatMap(result =>
+          Array.isArray(result.actions) ? result.actions : []
+        )
+        .sort((a, b) =>
+          Number(a.startTime) - Number(b.startTime)
+        )
+        .map((action, index) => ({
+          ...action,
+          actionId: `tl-${String(index + 1).padStart(3, '0')}`,
+          sceneId: action.sceneId ||
+            `scene-${String(index + 1).padStart(3, '0')}`
+        }));
+
+      const prompts = chunkResults
+        .map(result => String(result.videoPrompt || '').trim())
+        .filter(Boolean);
+
+      const firstResult = chunkResults[0] || {};
+
+      body = {
+        available: true,
+        videoDuration: storyboard.duration,
+        introEndTime: Number(firstResult.introEndTime || 0),
+        playStartTime: Number(
+          firstResult.playStartTime ??
+          firstResult.introEndTime ??
+          0
+        ),
+        videoPrompt: prompts.join('\n\n'),
+        actions: mergedActions,
+        warnings: chunkResults.flatMap(result =>
+          Array.isArray(result.warnings) ? result.warnings : []
+        ),
+        analysisMode: 'MULTI_PASS_DEEP',
+        chunkCount
+      };
+    }
 
   const normalized = normalizeAnalysis(body);
   if (!normalized.actions.length) {

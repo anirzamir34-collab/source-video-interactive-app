@@ -99,6 +99,14 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
 
     const duration = Math.max(0, Number(req.body?.duration || 0));
     const timestamps = String(req.body?.timestamps || '[]');
+    const motionProfile = String(req.body?.motionProfile || '[]');
+    const chunkStart = Math.max(0, Number(req.body?.chunkStart || 0));
+    const chunkEnd = Math.min(
+      duration,
+      Math.max(chunkStart, Number(req.body?.chunkEnd || duration))
+    );
+    const chunkIndex = Math.max(0, Number(req.body?.chunkIndex || 0));
+    const chunkCount = Math.max(1, Number(req.body?.chunkCount || 1));
 
     const prompt = `
 SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
@@ -113,7 +121,21 @@ tempo, direction, posture, body orientation, contact point, interaction or
 scene changes. Never invent alternatives.
 
 Video duration: ${duration} seconds
-Timestamp metadata: ${timestamps}
+Timestamp metadata for this chunk: ${timestamps}
+Local visual-change profile for this chunk: ${motionProfile}
+Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
+Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.
+
+CHUNK RULES:
+- Return actions only when startTime and endTime are inside this chunk.
+- Examine this short interval deeply instead of summarizing the whole video.
+- Prefer atomic visible actions and meaningful changes over broad multi-minute descriptions.
+- A MAIN action marks a major scene, position, location, or interaction change.
+- BONUS actions capture visible tempo, touch, clothing, posture, body, or camera changes inside the scene.
+- Consecutive atomic actions may touch at their boundaries.
+- MAIN and BONUS evidence may belong to the same scene, but every returned action must have its own playable time segment.
+- For chunks after the first one, introEndTime and playStartTime must equal chunkStart.
+- Never create filler merely to reach a target count.
 
 TWO-LEVEL DEEP ANALYSIS:
 - MAIN actions are real scene, position, body-arrangement or major interaction changes.
@@ -173,7 +195,7 @@ Return ONLY valid JSON with this exact shape:
 Rules:
 - timestamps must be within 0 and ${duration}
 - startTime must be smaller than endTime
-- no overlaps, duplicates or invented actions
+- no duplicate or invented actions; return separate chronological atomic segments
 - sort actions chronologically
 - if evidence is insufficient, omit the action
 - no action may begin before introEndTime
