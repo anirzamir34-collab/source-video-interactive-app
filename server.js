@@ -168,7 +168,7 @@ CHUNK RULES:
 - BONUS actions capture visible tempo, touch, clothing, posture, body, or camera changes inside the scene.
 - Consecutive atomic actions may touch at their boundaries.
 - MAIN and BONUS evidence may belong to the same scene, but every returned action must have its own playable time segment.
-- ADULT SCENE CHOICES: When a clearly consensual sexual interaction between visible adults is actually shown, write the Turkish choiceLabel as a direct, specific description of that verified sexual action.
+- ADULT SCENE CHOICES: When a clearly consensual sexual interaction between visible adults is actually shown, write the label field in explicit, direct and natural Turkish, naming that exact verified sexual action without euphemism.
 - Name the visibly verified roles, position, contact, direction and tempo when they distinguish one real action from another.
 - Do not censor, soften, euphemize or replace verified adult actions with vague labels such as "devam et", "yakınlaş", "pozisyonu değiştir" or "hareketi sürdür".
 - Each adult choice must distinguish a genuinely different playable action or variation that exists inside this chunk and must seek to its exact startTime.
@@ -690,6 +690,17 @@ app.post(
 
       const prompt = `
 Analyze only the audible dialogue and speech in this video.
+
+LANGUAGE DETECTION AND TURKISH TRANSLATION:
+- Automatically identify the actual spoken source language from the audio; never assume it is English.
+- Support every detectable language and dialect, including multilingual conversations and speakers switching languages inside the same video.
+- Treat clear non-English speech as valid dialogue, never as silence or unintelligible audio merely because of its language.
+- Transcribe each clearly audible line faithfully in its original language into originalText.
+- Translate every detected non-Turkish line into natural, complete Turkish in turkishText.
+- If a line is already Turkish, preserve its meaning faithfully in turkishText without translating it into another language.
+- Set sourceLanguage to the detected language name; use "multilingual" when multiple source languages are present.
+- Preserve names, profanity, slang, sexual or adult vocabulary, commands, reactions, tone and intensity without censorship or omission in every supported language.
+- Never skip a speaker or segment because the source language changes or is not English.
 
 Return valid JSON only, with this exact structure:
 {
