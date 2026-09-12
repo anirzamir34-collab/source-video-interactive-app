@@ -1440,6 +1440,9 @@ async function playAction(action) {
 
   const seekTarget = action.startTime;
   els.video.currentTime = seekTarget;
+  const mobilePlayPromise = els.video.play().catch(() => {
+    els.video.controls = true;
+  });
 
   await waitForEvent(els.video, 'seeked', 5000).catch(() => {});
   setGameState('SEGMENT_PLAYING');
