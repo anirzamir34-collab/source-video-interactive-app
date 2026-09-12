@@ -678,13 +678,19 @@ async function ensureDubAudio(segment) {
 function prepareUpcomingDubs(currentIndex) {
   const segments = state.dialogue?.segments || [];
   segments
-    .slice(Math.max(0, currentIndex), currentIndex + 8)
+    .slice(Math.max(0, currentIndex), currentIndex + 20)
     .forEach(segment => ensureDubAudio(segment));
 }
 
 async function syncDubPlayback() {
   if (!state.dubbingEnabled) {
     if (!dubAudio.paused) dubAudio.pause();
+    return;
+  }
+
+  if (state.adultMode && state.adultDubLoopMuted) {
+    if (!dubAudio.paused) dubAudio.pause();
+    state.activeDubSegmentId = null;
     return;
   }
 
@@ -1212,7 +1218,7 @@ function prepareAdultScenes() {
       .map(position => ({
         ...position,
         movements: position.movements
-          .filter(item => item.loopEndTime - item.loopStartTime >= 2.5)
+          .filter(item => item.loopEndTime - item.loopStartTime >= 10)
           .sort((a, b) => a.loopStartTime - b.loopStartTime)
       }))
       .filter(position => position.movements.length)
@@ -1317,6 +1323,8 @@ function selectAdultMovement(movementId, shouldSeek = true) {
   if (!movement) return;
 
   state.activeMovementId = movement.id;
+  state.adultDubLoopMuted = false;
+  state.activeDubSegmentId = null;
   state.lastAdultMediaTime = null;
   els.movementChoices?.querySelectorAll(".movement-choice-card").forEach(button => {
     button.classList.toggle("active", button.dataset.movementId === movement.id);
@@ -1349,9 +1357,10 @@ function finishAdultScene() {
 }
 
 
-function seekAdultLoop(targetTime) {
+function seekAdultLoop(targetTime, isRepeatedLoop = false) {
   if (!els.video || state.adultLoopSeeking) return false;
   state.adultLoopSeeking = true;
+  if (isRepeatedLoop) state.adultDubLoopMuted = true;
   clearTimeout(state.adultSeekTimer);
 
   const finishSeek = () => {
@@ -1391,7 +1400,7 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
-    seekAdultLoop(movement.loopStartTime);
+    seekAdultLoop(movement.loopStartTime, true);
     state.lastAdultFrameNow = now;
     return;
   }
@@ -1435,6 +1444,7 @@ function futureActions() {
 
   const pool = state.analysis.actions.filter((a, idx) =>
     idx > state.currentActionIndex &&
+    !a.adultScene &&
     a.startTime >= state.gameCursorTime - 0.001 &&
     a.startTime <= windowEnd &&
     !state.consumedActionIds.has(a.actionId)
