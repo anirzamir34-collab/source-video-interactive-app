@@ -383,13 +383,18 @@ Rules:
 - Turkish labels must be short and directly describe the male action
 - Detect every verified adult scene boundary and mark adultScene true only inside that real scene.
 - Set one stable adultSceneId for every action belonging to the same adult scene.
-- Detect every visually distinct verified position as an actionType "position".
+- Detect a position only when the source visibly shows a stable adult-act body configuration sustained over time; then use actionType "position".
+- Never classify undressing, dressing, walking, approaching, preparation, conversation, camera changes, pauses or generic standing/sitting as positions.
+- Foreplay and non-position actions may remain chronological main/bonus actions, but must not receive a positionId or appear in position tabs.
+- Merge duplicate detections of the same stable position when their time ranges overlap; position ranges must be chronological, non-overlapping and contained inside the verified adult scene.
 - Give every verified position a stable positionId, exact Turkish positionLabel, positionStartTime and positionEndTime.
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
 - Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.
 - Do not split tiny repetitions into fake choices and do not merge genuinely different changes.
 - loopStartTime and loopEndTime must define a naturally repeatable real interval inside the action and position.
+- A loop must be at least 2.5 seconds long. It may be extended only across visibly continuous footage of the same movement and position; otherwise omit that internal choice.
+- Never return one-frame, frozen-frame, transition, cut, camera-change or seek-unstable loops.
 - adultSceneStartTime and adultSceneEndTime must cover the real scene; postSceneTime must point to its first real continuation.
 - maleProgressRate and femaleProgressRate are game pacing weights from 0.25 to 2.5 based on visible motion intensity and duration.
 - Never invent any position, movement, transition, outcome or label absent from the source frames.

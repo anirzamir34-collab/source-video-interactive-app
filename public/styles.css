@@ -2159,3 +2159,129 @@ pre {
   -webkit-backdrop-filter: none !important;
   pointer-events: none !important;
 }
+
+
+/* VIDEOQUEST compact fullscreen interaction panel */
+.video-stage:fullscreen .adult-interaction-panel,
+.video-stage:-webkit-full-screen .adult-interaction-panel {
+  position: absolute !important;
+  z-index: 30 !important;
+  left: 8px !important;
+  right: 8px !important;
+  bottom: 8px !important;
+  top: auto !important;
+  width: auto !important;
+  max-width: none !important;
+  max-height: min(44vh, 300px) !important;
+  margin: 0 !important;
+  padding: 10px !important;
+  border-radius: 16px !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  background: rgba(5, 10, 18, .88) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+.video-stage:fullscreen .adult-panel-header,
+.video-stage:-webkit-full-screen .adult-panel-header {
+  gap: 8px !important;
+  margin-bottom: 6px !important;
+}
+
+.video-stage:fullscreen .adult-panel-header h3,
+.video-stage:-webkit-full-screen .adult-panel-header h3 {
+  font-size: .92rem !important;
+  line-height: 1.1 !important;
+}
+
+.video-stage:fullscreen .adult-panel-kicker,
+.video-stage:-webkit-full-screen .adult-panel-kicker,
+.video-stage:fullscreen .adult-scene-time,
+.video-stage:-webkit-full-screen .adult-scene-time,
+.video-stage:fullscreen .choice-section-heading,
+.video-stage:-webkit-full-screen .choice-section-heading {
+  font-size: .62rem !important;
+}
+
+.video-stage:fullscreen .position-tabs,
+.video-stage:-webkit-full-screen .position-tabs {
+  gap: 6px !important;
+  padding: 4px 0 !important;
+}
+
+.video-stage:fullscreen .position-tab,
+.video-stage:-webkit-full-screen .position-tab {
+  min-width: 108px !important;
+  min-height: 38px !important;
+  padding: 7px 9px !important;
+  border-radius: 10px !important;
+  font-size: .7rem !important;
+  line-height: 1.15 !important;
+}
+
+.video-stage:fullscreen .movement-choice-grid,
+.video-stage:-webkit-full-screen .movement-choice-grid {
+  display: flex !important;
+  gap: 7px !important;
+  max-height: none !important;
+  padding: 3px 0 5px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+}
+
+.video-stage:fullscreen .movement-choice-card,
+.video-stage:-webkit-full-screen .movement-choice-card {
+  flex: 0 0 150px !important;
+  width: 150px !important;
+  min-width: 150px !important;
+  min-height: 54px !important;
+  height: 54px !important;
+  padding: 7px 9px !important;
+  border-radius: 11px !important;
+  font-size: .68rem !important;
+  line-height: 1.15 !important;
+}
+
+.video-stage:fullscreen .movement-choice-card strong,
+.video-stage:fullscreen .movement-choice-card span,
+.video-stage:-webkit-full-screen .movement-choice-card strong,
+.video-stage:-webkit-full-screen .movement-choice-card span {
+  font-size: .68rem !important;
+  line-height: 1.15 !important;
+  margin: 0 !important;
+}
+
+.video-stage:fullscreen .movement-choice-card small,
+.video-stage:-webkit-full-screen .movement-choice-card small {
+  font-size: .54rem !important;
+  margin-top: 3px !important;
+}
+
+.video-stage:fullscreen .scene-progress-bars,
+.video-stage:-webkit-full-screen .scene-progress-bars {
+  gap: 5px !important;
+  margin-top: 6px !important;
+  padding: 6px 8px !important;
+}
+
+.video-stage:fullscreen .scene-progress-label,
+.video-stage:-webkit-full-screen .scene-progress-label {
+  margin: 0 0 2px !important;
+  font-size: .58rem !important;
+}
+
+.video-stage:fullscreen .scene-progress-track,
+.video-stage:-webkit-full-screen .scene-progress-track {
+  height: 6px !important;
+}
+
+.video-stage:fullscreen .finish-adult-scene-btn,
+.video-stage:-webkit-full-screen .finish-adult-scene-btn {
+  min-height: 34px !important;
+  height: 34px !important;
+  margin-top: 6px !important;
+  padding: 6px 12px !important;
+  border-radius: 10px !important;
+  font-size: .68rem !important;
+}

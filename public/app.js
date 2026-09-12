@@ -1178,7 +1178,8 @@ function prepareAdultScenes() {
     scene.endTime = Math.max(scene.endTime, Number(action.adultSceneEndTime ?? action.endTime));
     scene.postSceneTime = Math.max(scene.endTime, Number(action.postSceneTime ?? scene.endTime));
 
-    const positionId = action.positionId || `position-${index}`;
+    const positionId = String(action.positionId || "").trim();
+    if (!positionId) return;
     if (!scene.positions.has(positionId)) {
       scene.positions.set(positionId, {
         id: positionId,
@@ -1193,7 +1194,7 @@ function prepareAdultScenes() {
     position.startTime = Math.min(position.startTime, Number(action.positionStartTime ?? action.startTime));
     position.endTime = Math.max(position.endTime, Number(action.positionEndTime ?? action.endTime));
 
-    if (action.actionType !== "position" || action.movementType) {
+    if (action.actionType !== "position" && action.movementType) {
       position.movements.push({
         ...action,
         id: action.actionId,
@@ -1210,7 +1211,7 @@ function prepareAdultScenes() {
       .map(position => ({
         ...position,
         movements: position.movements
-          .filter(item => item.loopEndTime > item.loopStartTime)
+          .filter(item => item.loopEndTime - item.loopStartTime >= 2.5)
           .sort((a, b) => a.loopStartTime - b.loopStartTime)
       }))
       .filter(position => position.movements.length)
@@ -1307,7 +1308,7 @@ function selectAdultMovement(movementId, shouldSeek = true) {
   });
 
   if (shouldSeek && els.video) {
-    els.video.currentTime = movement.loopStartTime;
+    seekAdultLoop(movement.loopStartTime);
     els.video.play().catch(() => {});
   }
 }
@@ -1331,6 +1332,23 @@ function finishAdultScene() {
 }
 
 
+function seekAdultLoop(targetTime) {
+  if (!els.video || state.adultLoopSeeking) return false;
+  state.adultLoopSeeking = true;
+  clearTimeout(state.adultSeekTimer);
+
+  const finishSeek = () => {
+    state.adultLoopSeeking = false;
+    state.lastAdultFrameNow = performance.now();
+    clearTimeout(state.adultSeekTimer);
+  };
+
+  els.video.addEventListener("seeked", finishSeek, { once: true });
+  els.video.currentTime = Math.max(0, Number(targetTime) || 0);
+  state.adultSeekTimer = setTimeout(finishSeek, 1500);
+  return true;
+}
+
 function updateAdultPlayback(now, mediaTime) {
   if (!state.adultMode) {
     const scene = findAdultSceneAt(mediaTime);
@@ -1350,8 +1368,13 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
+  if (state.adultLoopSeeking) {
+    state.lastAdultFrameNow = now;
+    return;
+  }
+
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
-    els.video.currentTime = movement.loopStartTime;
+    seekAdultLoop(movement.loopStartTime);
     state.lastAdultFrameNow = now;
     return;
   }
