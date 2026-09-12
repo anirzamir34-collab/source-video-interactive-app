@@ -678,7 +678,7 @@ async function ensureDubAudio(segment) {
 function prepareUpcomingDubs(currentIndex) {
   const segments = state.dialogue?.segments || [];
   segments
-    .slice(Math.max(0, currentIndex), currentIndex + 8)
+    .slice(Math.max(0, currentIndex), currentIndex + 2)
     .forEach(segment => ensureDubAudio(segment));
 }
 
