@@ -242,6 +242,12 @@ els.healthBtn.addEventListener('click', checkHealth);
 els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
   state.selectedFile = file;
+    dubAudio.pause();
+    dubAudio.removeAttribute("src");
+    dubAudio.load();
+    state.dubCache.clear();
+    state.dubRequests.clear();
+    state.activeDubSegmentId = null;
   if (file) {
     els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • ${file.type || 'video'}`;
     els.video.src = URL.createObjectURL(file);
@@ -1799,6 +1805,12 @@ async function resolveVideoUrl() {
     const file = new File([blob], fileName, { type: blob.type || 'video/mp4' });
 
     state.selectedFile = file;
+    dubAudio.pause();
+    dubAudio.removeAttribute("src");
+    dubAudio.load();
+    state.dubCache.clear();
+    state.dubRequests.clear();
+    state.activeDubSegmentId = null;
     els.video.src = URL.createObjectURL(file);
     els.fileMeta.textContent =
       `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • URL kaynağı`;
