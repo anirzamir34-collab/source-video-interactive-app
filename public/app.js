@@ -1722,13 +1722,24 @@ els.prevChoiceBtn?.addEventListener('click', () => jumpChoice(-1));
 els.nextChoiceBtn?.addEventListener('click', () => jumpChoice(1));
 
 els.video.addEventListener('seeking', () => {
+  if (state.adultMode || state.adultLoopSeeking) {
+    state.manualSeeking = false;
+    return;
+  }
+
   if (!state.activeAction && !state.navigationSeeking) {
     state.manualSeeking = true;
   }
 });
 
 els.video.addEventListener('seeked', () => {
-  if (!state.manualSeeking || state.activeAction || state.navigationSeeking) return;
+  if (
+    state.adultMode ||
+    state.adultLoopSeeking ||
+    !state.manualSeeking ||
+    state.activeAction ||
+    state.navigationSeeking
+  ) return;
   state.manualSeeking = false;
 
   const actions = state.analysis?.actions || [];
