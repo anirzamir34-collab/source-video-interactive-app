@@ -388,6 +388,12 @@ Rules:
 - Foreplay and non-position actions may remain chronological main/bonus actions, but must not receive a positionId or appear in position tabs.
 - Merge duplicate detections of the same stable position when their time ranges overlap; position ranges must be chronological, non-overlapping and contained inside the verified adult scene.
 - Give every verified position a stable positionId, exact Turkish positionLabel, positionStartTime and positionEndTime.
+- Verify every position and internal movement against its exact start frame, midpoint frame and end frame from the source video.
+- The Turkish label must directly describe what is visibly happening at the midpoint timestamp; if the midpoint does not visibly prove that label, omit the item.
+- All returned times are absolute source-video seconds, never scene-relative or chunk-relative seconds.
+- Never attach a label detected in one part of the video to an earlier or later segment.
+- Position and movement choices must seek to their own verified visible segment, not merely to the parent adult-scene start.
+- When evidence conflicts between sampled frames, prefer omission and add a warning instead of guessing.
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
 - Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.

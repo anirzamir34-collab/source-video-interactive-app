@@ -1142,6 +1142,7 @@ function initializeInteractive(analysis) {
   state.activeAction = null;
   state.adultMode = false;
   state.adultScene = null;
+  state.completedAdultSceneIds = new Set();
   state.activePositionId = null;
   state.activeMovementId = null;
   state.maleSceneProgress = 0;
@@ -1221,7 +1222,9 @@ function prepareAdultScenes() {
 
 function findAdultSceneAt(time) {
   return (state.adultScenes || []).find(scene =>
-    time >= scene.startTime - 0.15 && time < scene.endTime
+    !state.completedAdultSceneIds?.has(scene.id) &&
+    time >= scene.startTime - 0.15 &&
+    time < scene.endTime
   ) || null;
 }
 
@@ -1242,6 +1245,18 @@ function renderAdultProgress() {
 
 function renderAdultPanel(scene) {
   if (!scene || !els.adultInteractionPanel) return;
+
+  const videoStage = els.video?.closest('.video-stage');
+  if (videoStage && els.adultInteractionPanel.parentElement === videoStage) {
+    videoStage.insertAdjacentElement('afterend', els.adultInteractionPanel);
+  }
+
+  if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+    document.webkitExitFullscreen();
+  }
+
   state.adultScene = scene;
   state.adultMode = true;
   els.adultInteractionPanel.classList.remove("hidden");
@@ -1316,6 +1331,8 @@ function selectAdultMovement(movementId, shouldSeek = true) {
 function finishAdultScene() {
   const scene = state.adultScene;
   if (!scene) return;
+  if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
+  state.completedAdultSceneIds.add(scene.id);
   state.adultMode = false;
   state.adultScene = null;
   state.activePositionId = null;
