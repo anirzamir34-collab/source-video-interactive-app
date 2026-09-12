@@ -2145,3 +2145,17 @@ pre {
     padding: 11px;
   }
 }
+
+
+/* VIDEOQUEST empty choice overlay hard stop */
+.choices-overlay.hidden,
+.choices-overlay:empty,
+.video-stage:fullscreen .choices-overlay:empty,
+.video-stage:-webkit-full-screen .choices-overlay:empty {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  pointer-events: none !important;
+}

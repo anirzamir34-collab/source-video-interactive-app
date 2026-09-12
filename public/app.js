@@ -704,7 +704,21 @@ async function syncDubPlayback() {
   const segment = segments[index];
   prepareUpcomingDubs(index + 1);
 
-  if (state.activeDubSegmentId === segment.segmentId) return;
+  if (state.activeDubSegmentId === segment.segmentId) {
+    const videoNow = Number(els.video.currentTime) || 0;
+    const segmentDuration = Math.max(0.5, Number(segment.endTime) - Number(segment.startTime));
+    if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
+      const expectedAudioTime = Math.min(
+        Math.max(0, dubAudio.duration - 0.05),
+        Math.max(0, videoNow - Number(segment.startTime)) * (dubAudio.duration / segmentDuration)
+      );
+      if (Math.abs((dubAudio.currentTime || 0) - expectedAudioTime) > 0.55) {
+        dubAudio.currentTime = expectedAudioTime;
+      }
+    }
+    if (!els.video.paused && dubAudio.paused) dubAudio.play().catch(() => {});
+    return;
+  }
   state.activeDubSegmentId = segment.segmentId;
 
   if (!dubAudio.paused) dubAudio.pause();
@@ -732,6 +746,14 @@ async function syncDubPlayback() {
       dubAudio.playbackRate = Math.max(
         0.75,
         Math.min(1.5, dubAudio.duration / targetDuration)
+      );
+    }
+
+    const videoOffset = Math.max(0, currentTime - Number(segment.startTime));
+    if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
+      dubAudio.currentTime = Math.min(
+        Math.max(0, dubAudio.duration - 0.05),
+        videoOffset * (dubAudio.duration / targetDuration)
       );
     }
 
@@ -1394,6 +1416,7 @@ function futureActions() {
 }
 
 function renderChoices() {
+  els.choices.classList.remove('hidden');
   els.choices.innerHTML = '';
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
   let candidates = futureActions().slice(0, 4);
@@ -1435,6 +1458,7 @@ async function playAction(action) {
 
   state.activeAction = action;
   els.choices.innerHTML = '';
+  els.choices.classList.add('hidden');
   setGameState('SEGMENT_SEEKING');
   els.video.pause();
 
