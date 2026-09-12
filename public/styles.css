@@ -2332,3 +2332,76 @@ pre {
   margin-top: 8px !important;
   font-size: .72rem !important;
 }
+
+/* Compact adult interaction panel below video */
+.adult-interaction-panel {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 10px 0 0 !important;
+  padding: 10px !important;
+  position: relative !important;
+  inset: auto !important;
+  overflow: visible !important;
+}
+
+.adult-interaction-panel .position-tabs {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.adult-interaction-panel .position-tab {
+  flex: 0 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 7px 9px !important;
+  font-size: .76rem !important;
+  line-height: 1.15 !important;
+  white-space: normal !important;
+}
+
+.adult-interaction-panel .position-tab strong,
+.adult-interaction-panel .position-tab span {
+  margin: 0 !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.adult-interaction-panel .movement-choice-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 7px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.adult-interaction-panel .movement-choice-card {
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 8px !important;
+  font-size: .75rem !important;
+  line-height: 1.2 !important;
+  overflow-wrap: anywhere !important;
+}
+
+.adult-interaction-panel .movement-choice-card strong,
+.adult-interaction-panel .movement-choice-card span,
+.adult-interaction-panel .movement-choice-card small {
+  margin: 0 0 3px !important;
+  font-size: inherit !important;
+  line-height: 1.2 !important;
+  overflow-wrap: anywhere !important;
+}
+
+.adult-interaction-panel .finish-adult-scene-btn {
+  min-height: 38px !important;
+  height: auto !important;
+  padding: 8px 10px !important;
+  font-size: .75rem !important;
+}

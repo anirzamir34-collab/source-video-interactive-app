@@ -1106,19 +1106,80 @@ function initializeInteractive(analysis) {
 }
 
 
+function normalizeAdultLabel(value) {
+  return String(value || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function adultSemanticFamily(value) {
+  const text = normalizeAdultLabel(value);
+  if (/\b(oral|sakso|blowjob|yala|agiz)\b/.test(text)) return 'oral';
+  if (/\b(manuel|manual|elle|handjob|masturb)\b/.test(text)) return 'manual';
+  if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
+  if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
+  if (/\b(kasik|spoon|yan yatarak)\b/.test(text)) return 'spoon';
+  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text) && /\b(ayakta|standing)\b/.test(text)) {
+    return 'standing-rear';
+  }
+  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
+  if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
+  return '';
+}
+
+function canonicalAdultPosition(action) {
+  const source = [
+    action.positionLabel,
+    action.label,
+    action.positionId
+  ].filter(Boolean).join(' ');
+
+  const family = adultSemanticFamily(source);
+  const labels = {
+    oral: 'Oral Seks',
+    manual: 'Manuel Uyarım',
+    missionary: 'Misyoner Pozisyonu',
+    cowgirl: 'Kovboy Pozisyonu',
+    spoon: 'Kaşık Pozisyonu',
+    'standing-rear': 'Ayakta Arkadan Pozisyon',
+    rear: 'Arkadan Pozisyon',
+    standing: 'Ayakta Pozisyon'
+  };
+
+  if (family) return { id: family, label: labels[family] };
+
+  const fallback = normalizeAdultLabel(
+    action.positionId || action.positionLabel || action.label || 'pozisyon'
+  ).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  return {
+    id: fallback || `position-${Math.round(Number(action.startTime) || 0)}`,
+    label: action.positionLabel || action.label || 'Pozisyon'
+  };
+}
+
 function prepareAdultScenes() {
   const actions = state.analysis?.actions || [];
   const sceneMap = new Map();
 
   actions.filter(action => action.adultScene).forEach((action, index) => {
-    const sceneId = action.adultSceneId || `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
+    const sceneId = action.adultSceneId ||
+      `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
+
     if (!sceneMap.has(sceneId)) {
       sceneMap.set(sceneId, {
         id: sceneId,
-        title: "Etkileşimli Sahne",
+        title: 'Etkileşimli Sahne',
         startTime: Number(action.adultSceneStartTime ?? action.startTime),
         endTime: Number(action.adultSceneEndTime ?? action.endTime),
-        postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
+        postSceneTime: Number(action.postSceneEndTime ?? action.adultSceneEndTime ?? action.endTime),
         positions: new Map()
       });
     }
@@ -1126,47 +1187,70 @@ function prepareAdultScenes() {
     const scene = sceneMap.get(sceneId);
     scene.startTime = Math.min(scene.startTime, Number(action.adultSceneStartTime ?? action.startTime));
     scene.endTime = Math.max(scene.endTime, Number(action.adultSceneEndTime ?? action.endTime));
-    scene.postSceneTime = Math.max(scene.endTime, Number(action.postSceneTime ?? scene.endTime));
 
-    const positionId = String(action.positionId || "").trim();
-    if (!positionId) return;
-    if (!scene.positions.has(positionId)) {
-      scene.positions.set(positionId, {
-        id: positionId,
-        label: action.positionLabel || action.label || `Pozisyon ${scene.positions.size + 1}`,
+    const canonical = canonicalAdultPosition(action);
+    if (!canonical.id) return;
+
+    if (!scene.positions.has(canonical.id)) {
+      scene.positions.set(canonical.id, {
+        id: canonical.id,
+        label: canonical.label,
         startTime: Number(action.positionStartTime ?? action.startTime),
         endTime: Number(action.positionEndTime ?? action.endTime),
         movements: []
       });
     }
 
-    const position = scene.positions.get(positionId);
-    position.startTime = Math.min(position.startTime, Number(action.positionStartTime ?? action.startTime));
-    position.endTime = Math.max(position.endTime, Number(action.positionEndTime ?? action.endTime));
+    const position = scene.positions.get(canonical.id);
+    position.startTime = Math.min(
+      position.startTime,
+      Number(action.positionStartTime ?? action.startTime)
+    );
+    position.endTime = Math.max(
+      position.endTime,
+      Number(action.positionEndTime ?? action.endTime)
+    );
 
-    if (action.actionType !== "position" && action.movementType) {
-      position.movements.push({
-        ...action,
-        id: action.actionId,
-        label: action.label,
-        loopStartTime: Math.max(position.startTime, Number(action.loopStartTime ?? action.startTime)),
-        loopEndTime: Math.min(position.endTime, Number(action.loopEndTime ?? action.endTime))
-      });
+    if (action.actionType !== 'position' && action.movementType) {
+      const movementStart = Math.max(
+        position.startTime,
+        Number(action.loopStartTime ?? action.startTime)
+      );
+      const movementEnd = Math.min(
+        Number(action.positionEndTime ?? position.endTime),
+        Number(action.loopEndTime ?? action.endTime)
+      );
+      const movementFamily = adultSemanticFamily(
+        `${action.movementType || ''} ${action.label || ''}`
+      );
+
+      if (!movementFamily || movementFamily === canonical.id) {
+        position.movements.push({
+          ...action,
+          id: action.actionId || `movement-${index}`,
+          label: action.label,
+          loopStartTime: movementStart,
+          loopEndTime: movementEnd
+        });
+      }
     }
   });
 
-  state.adultScenes = [...sceneMap.values()].map(scene => ({
-    ...scene,
-    positions: [...scene.positions.values()]
-      .map(position => ({
-        ...position,
-        movements: position.movements
-          .filter(item => item.loopEndTime - item.loopStartTime >= 2.5)
-          .sort((a, b) => a.loopStartTime - b.loopStartTime)
-      }))
-      .filter(position => position.movements.length)
-      .sort((a, b) => a.startTime - b.startTime)
-  })).filter(scene => scene.positions.length).sort((a, b) => a.startTime - b.startTime);
+  state.adultScenes = [...sceneMap.values()]
+    .map(scene => ({
+      ...scene,
+      positions: [...scene.positions.values()]
+        .map(position => ({
+          ...position,
+          movements: position.movements
+            .filter(item => item.loopEndTime - item.loopStartTime >= 10)
+            .sort((a, b) => a.loopStartTime - b.loopStartTime)
+        }))
+        .filter(position => position.endTime - position.startTime >= 10)
+        .sort((a, b) => a.startTime - b.startTime)
+    }))
+    .filter(scene => scene.positions.length)
+    .sort((a, b) => a.startTime - b.startTime);
 }
 
 function findAdultSceneAt(time) {
@@ -1257,7 +1341,18 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   });
 
   const movement = position.movements.find(item => item.id === state.activeMovementId) || position.movements[0];
-  selectAdultMovement(movement.id, shouldSeek);
+
+  if (movement) {
+    selectAdultMovement(movement.id, shouldSeek);
+  } else {
+    state.activeMovementId = null;
+    if (els.movementChoices) els.movementChoices.innerHTML = '';
+    if (els.movementCount) els.movementCount.textContent = '10 saniyelik ek seçenek yok';
+    if (shouldSeek && els.video) {
+      seekAdultLoop(position.startTime);
+      els.video.play().catch(() => {});
+    }
+  }
 }
 
 function selectAdultMovement(movementId, shouldSeek = true) {
@@ -1418,6 +1513,27 @@ function renderChoices() {
         !state.consumedActions.has(action.actionId)
       )
       .slice(0, 4);
+  }
+
+  const adultCandidate = candidates.find(action => action.adultScene);
+  if (adultCandidate) {
+    const adultScene =
+      state.adultScenes.find(scene => scene.id === adultCandidate.adultSceneId) ||
+      state.adultScenes.find(scene =>
+        Number(scene.startTime) <= Number(adultCandidate.startTime) + 0.25 &&
+        Number(scene.endTime) >= Number(adultCandidate.startTime) - 0.25
+      );
+
+    if (adultScene) {
+      els.choices.classList.add('hidden');
+      document.querySelector('.choice-navigation')?.classList.add('hidden');
+      state.gameCursorTime = adultScene.startTime;
+      els.video.currentTime = adultScene.startTime;
+      els.video.pause();
+      renderAdultPanel(adultScene);
+      setGameState('SEGMENT_PLAYING');
+      return;
+    }
   }
 
   if (!candidates.length) {
