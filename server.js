@@ -345,6 +345,7 @@ Return ONLY valid JSON with this exact shape:
       "adultSceneEndTime": 0,
       "postSceneTime": 0,
       "positionId": "",
+      "activityType": "oral|manual|vaginal|anal|other",
       "positionLabel": "",
       "positionStartTime": 0,
       "positionEndTime": 0,
@@ -390,6 +391,7 @@ Rules:
 - Foreplay and non-position actions may remain chronological main/bonus actions, but must not receive a positionId or appear in position tabs.
 - Merge duplicate detections of the same stable position when their time ranges overlap; position ranges must be chronological, non-overlapping and contained inside the verified adult scene.
 - Give every verified position a stable positionId, exact Turkish positionLabel, positionStartTime and positionEndTime.
+- Set activityType to oral, manual, vaginal, anal, or other only from direct visible evidence; never guess when evidence is unclear.
 - Verify every position and internal movement against its exact start frame, midpoint frame and end frame from the source video.
 - The Turkish label must directly describe what is visibly happening at the midpoint timestamp; if the midpoint does not visibly prove that label, omit the item.
 - All returned times are absolute source-video seconds, never scene-relative or chunk-relative seconds.
@@ -462,6 +464,11 @@ Rules:
           adultSceneEndTime: Number(action.adultSceneEndTime ?? action.endTime),
           postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
           positionId: String(action.positionId || ''),
+          activityType: ['oral', 'manual', 'vaginal', 'anal'].includes(
+            String(action.activityType || '').toLowerCase()
+          )
+            ? String(action.activityType).toLowerCase()
+            : 'other',
           positionLabel: String(action.positionLabel || ''),
           positionStartTime: Number(action.positionStartTime ?? action.startTime),
           positionEndTime: Number(action.positionEndTime ?? action.endTime),

@@ -2405,3 +2405,30 @@ pre {
   padding: 8px 10px !important;
   font-size: .75rem !important;
 }
+
+/* Katmanlı yetişkin sahnesi kategori düğmeleri */
+.category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.category-tab {
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 999px;
+  color: #aeb9c7;
+  background: rgba(255, 255, 255, .035);
+  font-size: .72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.category-tab.active {
+  border-color: rgba(45, 226, 177, .72);
+  color: #effff9;
+  background: rgba(24, 115, 93, .34);
+  box-shadow: 0 5px 20px rgba(45, 226, 177, .1);
+}

@@ -21,6 +21,7 @@ const state = {
   adultScene: null,
   adultMode: false,
   activePositionId: null,
+  activeAdultCategory: null,
   activeMovementId: null,
   maleSceneProgress: 0,
   femaleSceneProgress: 0,
@@ -73,6 +74,8 @@ const els = {
   adultSceneTitle: $('adultSceneTitle'),
   adultSceneTime: $('adultSceneTime'),
   positionCount: $('positionCount'),
+  categoryCount: $('categoryCount'),
+  categoryTabs: $('categoryTabs'),
   positionTabs: $('positionTabs'),
   movementHeading: $('movementHeading'),
   movementCount: $('movementCount'),
@@ -1085,6 +1088,7 @@ function normalizeAnalysis(body) {
       adultSceneEndTime: Number(a.adultSceneEndTime ?? a.endTime),
       postSceneTime: Number(a.postSceneTime ?? a.endTime),
       positionId: String(a.positionId || ""),
+      activityType: String(a.activityType || ""),
       positionLabel: String(a.positionLabel || ""),
       positionStartTime: Number(a.positionStartTime ?? a.startTime),
       positionEndTime: Number(a.positionEndTime ?? a.endTime),
@@ -1146,6 +1150,7 @@ function initializeInteractive(analysis) {
   state.adultScene = null;
   state.completedAdultSceneIds = new Set();
   state.activePositionId = null;
+  state.activeAdultCategory = null;
   state.activeMovementId = null;
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
@@ -1218,6 +1223,34 @@ function canonicalAdultPosition(action) {
   };
 }
 
+function adultCategoryFor(action, positionId) {
+  const explicit = normalizeAdultLabel(action.activityType);
+
+  if (explicit === 'oral') return { id: 'oral', label: 'Oral' };
+  if (explicit === 'manual') return { id: 'manual', label: 'Manuel' };
+  if (explicit === 'vaginal') return { id: 'vaginal', label: 'Vajinal' };
+  if (explicit === 'anal') return { id: 'anal', label: 'Anal' };
+
+  if (positionId === 'oral') return { id: 'oral', label: 'Oral' };
+  if (positionId === 'manual') return { id: 'manual', label: 'Manuel' };
+
+  const source = normalizeAdultLabel([
+    action.positionLabel,
+    action.label,
+    action.movementType
+  ].filter(Boolean).join(' '));
+
+  if (/\b(anal|anus)\b/.test(source)) {
+    return { id: 'anal', label: 'Anal' };
+  }
+
+  if (/\b(vajinal|vaginal|vajina)\b/.test(source)) {
+    return { id: 'vaginal', label: 'Vajinal' };
+  }
+
+  return { id: 'other', label: 'Diğer gerçek sahneler' };
+}
+
 function prepareAdultScenes() {
   const actions = state.analysis?.actions || [];
   const sceneMap = new Map();
@@ -1244,17 +1277,23 @@ function prepareAdultScenes() {
     const canonical = canonicalAdultPosition(action);
     if (!canonical.id) return;
 
-    if (!scene.positions.has(canonical.id)) {
-      scene.positions.set(canonical.id, {
-        id: canonical.id,
+    const category = adultCategoryFor(action, canonical.id);
+    const positionKey = `${category.id}:${canonical.id}`;
+
+    if (!scene.positions.has(positionKey)) {
+      scene.positions.set(positionKey, {
+        id: positionKey,
+        familyId: canonical.id,
         label: canonical.label,
+        categoryId: category.id,
+        categoryLabel: category.label,
         startTime: Number(action.positionStartTime ?? action.startTime),
         endTime: Number(action.positionEndTime ?? action.endTime),
         movements: []
       });
     }
 
-    const position = scene.positions.get(canonical.id);
+    const position = scene.positions.get(positionKey);
     position.startTime = Math.min(
       position.startTime,
       Number(action.positionStartTime ?? action.startTime)
@@ -1345,28 +1384,92 @@ function renderAdultPanel(scene) {
 
   state.adultScene = scene;
   state.adultMode = true;
-  els.adultInteractionPanel.classList.remove("hidden");
-  document.querySelector(".choice-navigation")?.classList.add("hidden");
+  els.adultInteractionPanel.classList.remove('hidden');
+  document.querySelector('.choice-navigation')?.classList.add('hidden');
+
   if (els.adultSceneTitle) els.adultSceneTitle.textContent = scene.title;
   if (els.adultSceneTime) {
-    els.adultSceneTime.textContent = `${adultTimeLabel(scene.startTime)} – ${adultTimeLabel(scene.endTime)}`;
+    els.adultSceneTime.textContent =
+      `${adultTimeLabel(scene.startTime)} – ${adultTimeLabel(scene.endTime)}`;
   }
-  if (els.positionCount) els.positionCount.textContent = `${scene.positions.length} pozisyon`;
-  if (els.positionTabs) els.positionTabs.innerHTML = "";
 
-  scene.positions.forEach(position => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "position-tab";
+  if (els.categoryTabs) els.categoryTabs.innerHTML = '';
+  if (els.positionTabs) els.positionTabs.innerHTML = '';
+
+  const categories = [...new Map(scene.positions.map(position => [
+    position.categoryId,
+    {
+      id: position.categoryId,
+      label: position.categoryLabel
+    }
+  ])).values()];
+
+  if (els.categoryCount) {
+    els.categoryCount.textContent = `${categories.length} kategori`;
+  }
+
+  categories.forEach(category => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'category-tab';
+    button.textContent = category.label;
+    button.dataset.categoryId = category.id;
+    button.addEventListener(
+      'click',
+      () => selectAdultCategory(category.id, true)
+    );
+    els.categoryTabs?.appendChild(button);
+  });
+
+  const selectedCategory =
+    categories.find(item => item.id === state.activeAdultCategory) ||
+    categories[0];
+
+  selectAdultCategory(selectedCategory.id, false);
+  renderAdultProgress();
+}
+
+function selectAdultCategory(categoryId, shouldSeek = true) {
+  const scene = state.adultScene;
+  const positions =
+    scene?.positions.filter(item => item.categoryId === categoryId) || [];
+
+  if (!positions.length) return;
+
+  state.activeAdultCategory = categoryId;
+
+  els.categoryTabs
+    ?.querySelectorAll('.category-tab')
+    .forEach(button => {
+      button.classList.toggle(
+        'active',
+        button.dataset.categoryId === categoryId
+      );
+    });
+
+  if (els.positionTabs) els.positionTabs.innerHTML = '';
+  if (els.positionCount) {
+    els.positionCount.textContent = `${positions.length} pozisyon`;
+  }
+
+  positions.forEach(position => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'position-tab';
     button.textContent = position.label;
     button.dataset.positionId = position.id;
-    button.addEventListener("click", () => selectAdultPosition(position.id, true));
+    button.addEventListener(
+      'click',
+      () => selectAdultPosition(position.id, true)
+    );
     els.positionTabs?.appendChild(button);
   });
 
-  const selected = scene.positions.find(item => item.id === state.activePositionId) || scene.positions[0];
-  selectAdultPosition(selected.id, false);
-  renderAdultProgress();
+  const selected =
+    positions.find(item => item.id === state.activePositionId) ||
+    positions[0];
+
+  selectAdultPosition(selected.id, shouldSeek);
 }
 
 function selectAdultPosition(positionId, shouldSeek = true) {
@@ -1433,6 +1536,7 @@ function finishAdultScene() {
   state.adultMode = false;
   state.adultScene = null;
   state.activePositionId = null;
+  state.activeAdultCategory = null;
   state.activeMovementId = null;
   state.lastAdultMediaTime = null;
   els.adultInteractionPanel?.classList.add("hidden");
