@@ -164,6 +164,47 @@
           <button id="nextChoiceBtn" type="button">Sonraki seçim ⏭</button>
         </div>
 
+          <section id="adultInteractionPanel" class="adult-interaction-panel hidden" aria-label="Gelişmiş sahne seçimleri">
+            <div class="adult-panel-header">
+              <div>
+                <span class="adult-panel-kicker">ETKİLEŞİMLİ SAHNE</span>
+                <h3 id="adultSceneTitle">Sahne seçenekleri</h3>
+              </div>
+              <span id="adultSceneTime" class="adult-scene-time">0:00 – 0:00</span>
+            </div>
+
+            <div class="position-section">
+              <div class="choice-section-heading">
+                <strong>Pozisyonlar</strong>
+                <span id="positionCount">0 pozisyon</span>
+              </div>
+              <div id="positionTabs" class="position-tabs" role="tablist"></div>
+            </div>
+
+            <div class="movement-section">
+              <div class="choice-section-heading">
+                <strong id="movementHeading">Sahne içi değişimler</strong>
+                <span id="movementCount">0 gerçek değişim</span>
+              </div>
+              <div id="movementChoices" class="movement-choice-grid"></div>
+            </div>
+
+            <div class="scene-progress-bars">
+              <div class="scene-progress-item">
+                <div class="scene-progress-label"><span>Erkek</span><span id="maleProgressText">0%</span></div>
+                <div class="scene-progress-track"><span id="maleProgressBar" class="scene-progress-fill male"></span></div>
+              </div>
+              <div class="scene-progress-item">
+                <div class="scene-progress-label"><span>Kadın</span><span id="femaleProgressText">0%</span></div>
+                <div class="scene-progress-track"><span id="femaleProgressBar" class="scene-progress-fill female"></span></div>
+              </div>
+            </div>
+
+            <button id="finishAdultSceneBtn" class="finish-adult-scene-btn" type="button">
+              Sahneyi bitir ve hikâyeye dön
+            </button>
+          </section>
+
           <div class="cinema-shade"></div>
 
           <div class="game-hud">

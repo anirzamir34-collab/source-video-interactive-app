@@ -337,6 +337,20 @@ Return ONLY valid JSON with this exact shape:
       "sceneId": "scene-001",
       "actionLevel": "main|bonus",
       "actionType": "position|tempo_change|kiss|touch|clothing|body_transition|camera_transition|other",
+      "adultScene": false,
+      "adultSceneId": "",
+      "adultSceneStartTime": 0,
+      "adultSceneEndTime": 0,
+      "postSceneTime": 0,
+      "positionId": "",
+      "positionLabel": "",
+      "positionStartTime": 0,
+      "positionEndTime": 0,
+      "movementType": "",
+      "loopStartTime": 0,
+      "loopEndTime": 0,
+      "maleProgressRate": 1,
+      "femaleProgressRate": 1,
       "cameraMode": "third_person|male_pov|mixed|uncertain",
       "label": "short Turkish imperative",
       "startTime": number,
@@ -367,6 +381,18 @@ Rules:
 - playStartTime must equal introEndTime
 - MAIN and BONUS actions must reflect visible evidence
 - Turkish labels must be short and directly describe the male action
+- Detect every verified adult scene boundary and mark adultScene true only inside that real scene.
+- Set one stable adultSceneId for every action belonging to the same adult scene.
+- Detect every visually distinct verified position as an actionType "position".
+- Give every verified position a stable positionId, exact Turkish positionLabel, positionStartTime and positionEndTime.
+- Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
+- Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
+- Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.
+- Do not split tiny repetitions into fake choices and do not merge genuinely different changes.
+- loopStartTime and loopEndTime must define a naturally repeatable real interval inside the action and position.
+- adultSceneStartTime and adultSceneEndTime must cover the real scene; postSceneTime must point to its first real continuation.
+- maleProgressRate and femaleProgressRate are game pacing weights from 0.25 to 2.5 based on visible motion intensity and duration.
+- Never invent any position, movement, transition, outcome or label absent from the source frames.
 `;
 
     const parts = [
@@ -412,6 +438,20 @@ Rules:
         sceneId: String(action.sceneId || `scene-${String(index + 1).padStart(3, '0')}`),
         actionLevel: action.actionLevel === 'bonus' ? 'bonus' : 'main',
         actionType: String(action.actionType || 'other'),
+          adultScene: Boolean(action.adultScene),
+          adultSceneId: String(action.adultSceneId || ''),
+          adultSceneStartTime: Number(action.adultSceneStartTime ?? action.startTime),
+          adultSceneEndTime: Number(action.adultSceneEndTime ?? action.endTime),
+          postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
+          positionId: String(action.positionId || ''),
+          positionLabel: String(action.positionLabel || ''),
+          positionStartTime: Number(action.positionStartTime ?? action.startTime),
+          positionEndTime: Number(action.positionEndTime ?? action.endTime),
+          movementType: String(action.movementType || action.actionType || ''),
+          loopStartTime: Number(action.loopStartTime ?? action.startTime),
+          loopEndTime: Number(action.loopEndTime ?? action.endTime),
+          maleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.maleProgressRate) || 1)),
+          femaleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.femaleProgressRate) || 1)),
         cameraMode: ['third_person', 'male_pov', 'mixed', 'uncertain'].includes(action.cameraMode)
           ? action.cameraMode
           : 'uncertain',

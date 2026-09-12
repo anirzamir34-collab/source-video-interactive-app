@@ -18,6 +18,13 @@ const state = {
   consumedActionIds: new Set(),
   activeAction: null,
   stopListener: null,
+  adultScene: null,
+  adultMode: false,
+  activePositionId: null,
+  activeMovementId: null,
+  maleSceneProgress: 0,
+  femaleSceneProgress: 0,
+  lastAdultMediaTime: null,
 };
 
 const els = {
@@ -54,6 +61,19 @@ const els = {
   timelineList: $('timelineList'),
   videoPrompt: $('videoPrompt'),
   debugOutput: $('debugOutput'),
+  adultInteractionPanel: $('adultInteractionPanel'),
+  adultSceneTitle: $('adultSceneTitle'),
+  adultSceneTime: $('adultSceneTime'),
+  positionCount: $('positionCount'),
+  positionTabs: $('positionTabs'),
+  movementHeading: $('movementHeading'),
+  movementCount: $('movementCount'),
+  movementChoices: $('movementChoices'),
+  maleProgressText: $('maleProgressText'),
+  maleProgressBar: $('maleProgressBar'),
+  femaleProgressText: $('femaleProgressText'),
+  femaleProgressBar: $('femaleProgressBar'),
+  finishAdultSceneBtn: $('finishAdultSceneBtn'),
 };
 
 function setServiceStatus(kind, label, meta = '') {
@@ -1032,6 +1052,23 @@ function normalizeAnalysis(body) {
       sourceVerified: a.sourceVerified === true,
       confidence: Number(a.confidence ?? 0),
       subjectTrackId: a.subjectTrackId ?? a.subject ?? null,
+      actionLevel: a.actionLevel === "bonus" ? "bonus" : "main",
+      actionType: String(a.actionType || "other"),
+      cameraMode: String(a.cameraMode || "uncertain"),
+      adultScene: Boolean(a.adultScene),
+      adultSceneId: String(a.adultSceneId || ""),
+      adultSceneStartTime: Number(a.adultSceneStartTime ?? a.startTime),
+      adultSceneEndTime: Number(a.adultSceneEndTime ?? a.endTime),
+      postSceneTime: Number(a.postSceneTime ?? a.endTime),
+      positionId: String(a.positionId || ""),
+      positionLabel: String(a.positionLabel || ""),
+      positionStartTime: Number(a.positionStartTime ?? a.startTime),
+      positionEndTime: Number(a.positionEndTime ?? a.endTime),
+      movementType: String(a.movementType || a.actionType || ""),
+      loopStartTime: Number(a.loopStartTime ?? a.startTime),
+      loopEndTime: Number(a.loopEndTime ?? a.endTime),
+      maleProgressRate: Math.min(2.5, Math.max(0.25, Number(a.maleProgressRate) || 1)),
+      femaleProgressRate: Math.min(2.5, Math.max(0.25, Number(a.femaleProgressRate) || 1)),
     }))
     .filter(a => Number.isFinite(a.startTime) && Number.isFinite(a.endTime) && a.endTime > a.startTime && a.sourceVerified)
     .sort((a, b) => a.startTime - b.startTime);
@@ -1081,11 +1118,250 @@ function initializeInteractive(analysis) {
   state.currentActionIndex = -1;
   state.consumedActionIds.clear();
   state.activeAction = null;
+  state.adultMode = false;
+  state.adultScene = null;
+  state.activePositionId = null;
+  state.activeMovementId = null;
+  state.maleSceneProgress = 0;
+  state.femaleSceneProgress = 0;
+  prepareAdultScenes();
+  els.adultInteractionPanel?.classList.add("hidden");
   els.playerSection.classList.remove('hidden');
   els.videoPrompt.textContent = typeof analysis.videoPrompt === 'string' ? analysis.videoPrompt : JSON.stringify(analysis.videoPrompt, null, 2);
   renderTimeline();
   setGameState('DECISION_PENDING');
   renderChoices();
+}
+
+
+function prepareAdultScenes() {
+  const actions = state.analysis?.actions || [];
+  const sceneMap = new Map();
+
+  actions.filter(action => action.adultScene).forEach((action, index) => {
+    const sceneId = action.adultSceneId || `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
+    if (!sceneMap.has(sceneId)) {
+      sceneMap.set(sceneId, {
+        id: sceneId,
+        title: "Etkileşimli Sahne",
+        startTime: Number(action.adultSceneStartTime ?? action.startTime),
+        endTime: Number(action.adultSceneEndTime ?? action.endTime),
+        postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
+        positions: new Map()
+      });
+    }
+
+    const scene = sceneMap.get(sceneId);
+    scene.startTime = Math.min(scene.startTime, Number(action.adultSceneStartTime ?? action.startTime));
+    scene.endTime = Math.max(scene.endTime, Number(action.adultSceneEndTime ?? action.endTime));
+    scene.postSceneTime = Math.max(scene.endTime, Number(action.postSceneTime ?? scene.endTime));
+
+    const positionId = action.positionId || `position-${index}`;
+    if (!scene.positions.has(positionId)) {
+      scene.positions.set(positionId, {
+        id: positionId,
+        label: action.positionLabel || action.label || `Pozisyon ${scene.positions.size + 1}`,
+        startTime: Number(action.positionStartTime ?? action.startTime),
+        endTime: Number(action.positionEndTime ?? action.endTime),
+        movements: []
+      });
+    }
+
+    const position = scene.positions.get(positionId);
+    position.startTime = Math.min(position.startTime, Number(action.positionStartTime ?? action.startTime));
+    position.endTime = Math.max(position.endTime, Number(action.positionEndTime ?? action.endTime));
+
+    if (action.actionType !== "position" || action.movementType) {
+      position.movements.push({
+        ...action,
+        id: action.actionId,
+        label: action.label,
+        loopStartTime: Math.max(position.startTime, Number(action.loopStartTime ?? action.startTime)),
+        loopEndTime: Math.min(position.endTime, Number(action.loopEndTime ?? action.endTime))
+      });
+    }
+  });
+
+  state.adultScenes = [...sceneMap.values()].map(scene => ({
+    ...scene,
+    positions: [...scene.positions.values()]
+      .map(position => ({
+        ...position,
+        movements: position.movements
+          .filter(item => item.loopEndTime > item.loopStartTime)
+          .sort((a, b) => a.loopStartTime - b.loopStartTime)
+      }))
+      .filter(position => position.movements.length)
+      .sort((a, b) => a.startTime - b.startTime)
+  })).filter(scene => scene.positions.length).sort((a, b) => a.startTime - b.startTime);
+}
+
+function findAdultSceneAt(time) {
+  return (state.adultScenes || []).find(scene =>
+    time >= scene.startTime - 0.15 && time < scene.endTime
+  ) || null;
+}
+
+
+function adultTimeLabel(seconds) {
+  const safe = Math.max(0, Number(seconds) || 0);
+  return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
+}
+
+function renderAdultProgress() {
+  const male = Math.min(100, Math.max(0, state.maleSceneProgress || 0));
+  const female = Math.min(100, Math.max(0, state.femaleSceneProgress || 0));
+  if (els.maleProgressText) els.maleProgressText.textContent = `${Math.round(male)}%`;
+  if (els.femaleProgressText) els.femaleProgressText.textContent = `${Math.round(female)}%`;
+  if (els.maleProgressBar) els.maleProgressBar.style.width = `${male}%`;
+  if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${female}%`;
+}
+
+function renderAdultPanel(scene) {
+  if (!scene || !els.adultInteractionPanel) return;
+  state.adultScene = scene;
+  state.adultMode = true;
+  els.adultInteractionPanel.classList.remove("hidden");
+  document.querySelector(".choice-navigation")?.classList.add("hidden");
+  if (els.adultSceneTitle) els.adultSceneTitle.textContent = scene.title;
+  if (els.adultSceneTime) {
+    els.adultSceneTime.textContent = `${adultTimeLabel(scene.startTime)} – ${adultTimeLabel(scene.endTime)}`;
+  }
+  if (els.positionCount) els.positionCount.textContent = `${scene.positions.length} pozisyon`;
+  if (els.positionTabs) els.positionTabs.innerHTML = "";
+
+  scene.positions.forEach(position => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "position-tab";
+    button.textContent = position.label;
+    button.dataset.positionId = position.id;
+    button.addEventListener("click", () => selectAdultPosition(position.id, true));
+    els.positionTabs?.appendChild(button);
+  });
+
+  const selected = scene.positions.find(item => item.id === state.activePositionId) || scene.positions[0];
+  selectAdultPosition(selected.id, false);
+  renderAdultProgress();
+}
+
+function selectAdultPosition(positionId, shouldSeek = true) {
+  const scene = state.adultScene;
+  const position = scene?.positions.find(item => item.id === positionId);
+  if (!position) return;
+
+  state.activePositionId = position.id;
+  els.positionTabs?.querySelectorAll(".position-tab").forEach(button => {
+    button.classList.toggle("active", button.dataset.positionId === position.id);
+  });
+
+  if (els.movementHeading) els.movementHeading.textContent = position.label;
+  if (els.movementCount) els.movementCount.textContent = `${position.movements.length} gerçek değişim`;
+  if (els.movementChoices) els.movementChoices.innerHTML = "";
+
+  position.movements.forEach(movement => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "movement-choice-card";
+    button.dataset.movementId = movement.id;
+    button.innerHTML = `<span>${escapeHtml(movement.label)}</span><small>${adultTimeLabel(movement.loopStartTime)} – ${adultTimeLabel(movement.loopEndTime)}</small>`;
+    button.addEventListener("click", () => selectAdultMovement(movement.id, true));
+    els.movementChoices?.appendChild(button);
+  });
+
+  const movement = position.movements.find(item => item.id === state.activeMovementId) || position.movements[0];
+  selectAdultMovement(movement.id, shouldSeek);
+}
+
+function selectAdultMovement(movementId, shouldSeek = true) {
+  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
+  const movement = position?.movements.find(item => item.id === movementId);
+  if (!movement) return;
+
+  state.activeMovementId = movement.id;
+  state.lastAdultMediaTime = null;
+  els.movementChoices?.querySelectorAll(".movement-choice-card").forEach(button => {
+    button.classList.toggle("active", button.dataset.movementId === movement.id);
+  });
+
+  if (shouldSeek && els.video) {
+    els.video.currentTime = movement.loopStartTime;
+    els.video.play().catch(() => {});
+  }
+}
+
+function finishAdultScene() {
+  const scene = state.adultScene;
+  if (!scene) return;
+  state.adultMode = false;
+  state.adultScene = null;
+  state.activePositionId = null;
+  state.activeMovementId = null;
+  state.lastAdultMediaTime = null;
+  els.adultInteractionPanel?.classList.add("hidden");
+  document.querySelector(".choice-navigation")?.classList.remove("hidden");
+  if (els.video) {
+    els.video.currentTime = Math.min(scene.postSceneTime, els.video.duration || scene.postSceneTime);
+    els.video.play().catch(() => {});
+  }
+  state.gameCursorTime = scene.postSceneTime;
+  renderChoices();
+}
+
+
+function updateAdultPlayback(now, mediaTime) {
+  if (!state.adultMode) {
+    const scene = findAdultSceneAt(mediaTime);
+    if (scene) {
+      state.maleSceneProgress = 0;
+      state.femaleSceneProgress = 0;
+      state.lastAdultFrameNow = now;
+      renderAdultPanel(scene);
+    }
+    return;
+  }
+
+  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
+  const movement = position?.movements.find(item => item.id === state.activeMovementId);
+  if (!movement || !els.video || els.video.paused) {
+    state.lastAdultFrameNow = now;
+    return;
+  }
+
+  if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
+    els.video.currentTime = movement.loopStartTime;
+    state.lastAdultFrameNow = now;
+    return;
+  }
+
+  const elapsed = Math.min(0.25, Math.max(0, (now - (state.lastAdultFrameNow || now)) / 1000));
+  state.lastAdultFrameNow = now;
+  state.maleSceneProgress += elapsed * Number(movement.maleProgressRate || 1);
+  state.femaleSceneProgress += elapsed * Number(movement.femaleProgressRate || 1);
+  renderAdultProgress();
+
+  if (state.maleSceneProgress >= 100 || state.femaleSceneProgress >= 100) {
+    finishAdultScene();
+  }
+}
+
+function adultFrameLoop(now, metadata) {
+  updateAdultPlayback(now, Number(metadata?.mediaTime ?? els.video?.currentTime ?? 0));
+  if (els.video?.requestVideoFrameCallback) {
+    state.adultFrameRequest = els.video.requestVideoFrameCallback(adultFrameLoop);
+  }
+}
+
+if (els.finishAdultSceneBtn) {
+  els.finishAdultSceneBtn.addEventListener("click", finishAdultScene);
+}
+
+if (els.video?.requestVideoFrameCallback) {
+  state.adultFrameRequest = els.video.requestVideoFrameCallback(adultFrameLoop);
+} else if (els.video) {
+  els.video.addEventListener("timeupdate", () => {
+    updateAdultPlayback(performance.now(), els.video.currentTime);
+  });
 }
 
 function futureActions() {
