@@ -977,6 +977,31 @@ els.analyzeBtn.addEventListener('click', async () => {
       };
     }
 
+  if (
+    body?.available &&
+    (!Array.isArray(body.actions) || !body.actions.length) &&
+    state.selectedFile
+  ) {
+    els.analysisState.textContent = 'EXTERNAL_FALLBACK';
+    els.analysisTitle.textContent = 'Hareket motoru devreye giriyor';
+    const fallbackForm = new FormData();
+    fallbackForm.append('video', state.selectedFile, state.selectedFile.name);
+
+    try {
+      const fallbackResponse = await fetch('/api/external-analyze', {
+        method: 'POST',
+        body: fallbackForm,
+        signal: AbortSignal.timeout(900000)
+      });
+      const fallbackBody = await fallbackResponse.json();
+      if (fallbackResponse.ok && fallbackBody?.available) {
+        body = { ...fallbackBody, analysisMode: 'EXTERNAL_FALLBACK' };
+      }
+    } catch (error) {
+      console.warn('External fallback analysis failed:', error);
+    }
+  }
+
   const normalized = normalizeAnalysis(body);
   if (!normalized.actions.length) {
     els.analysisState.textContent = 'NO_ACTIONS';
