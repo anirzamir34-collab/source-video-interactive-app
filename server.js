@@ -786,8 +786,8 @@ app.get('/api/video-proxy', async (req, res) => {
       console.error('Video proxy stream error:', error?.message || error);
       if (!res.destroyed) res.destroy(error);
     });
-    req.on('close', () => {
-      if (!stream.destroyed) stream.destroy();
+    res.on('close', () => {
+      if (!res.writableEnded && !stream.destroyed) stream.destroy();
     });
     stream.pipe(res);
   } catch (error) {
