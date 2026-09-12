@@ -1190,6 +1190,103 @@ function pcmBase64ToWavBase64(pcmBase64, sampleRate = 24000) {
   return wav.toString('base64');
 }
 
+
+app.post('/api/gemini-dub-block', async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ available: false, reason: 'GEMINI_NOT_CONFIGURED' });
+    }
+
+    const blockStart = Math.max(0, Number(req.body?.blockStart) || 0);
+    const blockEnd = Math.max(blockStart + 1, Number(req.body?.blockEnd) || blockStart + 120);
+    const segments = (Array.isArray(req.body?.segments) ? req.body.segments : [])
+      .map((segment, index) => ({
+        speaker: String(segment?.gender || '').toLowerCase() === 'female' ? 'KADIN' : 'ERKEK',
+        text: String(segment?.turkishText || '').trim(),
+        startTime: Math.max(blockStart, Number(segment?.startTime) || blockStart),
+        endTime: Math.min(blockEnd, Math.max(Number(segment?.endTime) || blockStart, Number(segment?.startTime) || blockStart)),
+        index
+      }))
+      .filter(segment => segment.text && segment.startTime < blockEnd)
+      .sort((a, b) => a.startTime - b.startTime)
+      .slice(0, 100);
+
+    if (!segments.length) {
+      return res.status(400).json({ available: false, reason: 'EMPTY_DUB_BLOCK' });
+    }
+
+    let cursor = blockStart;
+    const script = [];
+    for (const segment of segments) {
+      const pause = Math.max(0, segment.startTime - cursor);
+      if (pause >= 0.25) script.push(`[${pause.toFixed(2)} saniye sessizlik]`);
+      script.push(`${segment.speaker}: ${segment.text}`);
+      cursor = Math.max(cursor, segment.endTime);
+    }
+    const tailPause = Math.max(0, blockEnd - cursor);
+    if (tailPause >= 0.25) script.push(`[${tailPause.toFixed(2)} saniye sessizlik]`);
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-tts-preview',
+      contents: [{
+        role: 'user',
+        parts: [{
+          text:
+            'Aşağıdaki zaman sıralı Türkçe dublaj metnini aynen seslendir. ' +
+            'ERKEK satırlarını yalnızca ERKEK, KADIN satırlarını yalnızca KADIN konuşsun. ' +
+            'Köşeli parantez içindeki sessizlik sürelerini konuşma; belirtilen süre kadar sessiz kal. ' +
+            'Hiçbir kelime ekleme, çıkarma, açıklama veya tekrar yapma.\n\n' +
+            script.join('\n')
+        }]
+      }],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          multiSpeakerVoiceConfig: {
+            speakerVoiceConfigs: [
+              {
+                speaker: 'ERKEK',
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } }
+              },
+              {
+                speaker: 'KADIN',
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    const parts = response?.candidates?.[0]?.content?.parts || [];
+    const audioPart = parts.find(part => part?.inlineData?.data);
+    const audioData = audioPart?.inlineData?.data;
+    const sourceMime = String(audioPart?.inlineData?.mimeType || 'audio/L16;rate=24000');
+
+    if (!audioData) throw new Error('GEMINI_TTS_BLOCK_AUDIO_MISSING');
+
+    const isRawPcm = /L16|pcm|raw/i.test(sourceMime) || !/wav|mpeg|ogg|webm/i.test(sourceMime);
+    const finalData = isRawPcm ? pcmBase64ToWavBase64(audioData, 24000) : audioData;
+
+    return res.json({
+      available: true,
+      blockStart,
+      blockEnd,
+      mimeType: isRawPcm ? 'audio/wav' : sourceMime,
+      audioBase64: finalData
+    });
+  } catch (error) {
+    console.error('Gemini dub block generation failed:', error);
+    return res.status(502).json({
+      available: false,
+      message: 'Toplu dublaj sesi üretilemedi.',
+      error: error?.message || String(error)
+    });
+  }
+});
+
 app.post('/api/gemini-dub-segment', async (req, res) => {
   try {
     const apiKey = process.env.GEMINI_API_KEY;

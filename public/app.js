@@ -635,169 +635,112 @@ function renderSubtitle() {
 
 const dubAudio = new Audio();
 dubAudio.preload = 'auto';
+const DUB_BLOCK_SECONDS = 120;
 
-async function ensureDubAudio(segment) {
-  if (!segment?.segmentId || !segment.turkishText) return null;
+function getDubBlockAt(videoTime) {
+  const duration = Math.max(0, Number(els.video.duration) || 0);
+  const time = Math.max(0, Number(videoTime) || 0);
+  const blockStart = Math.floor(time / DUB_BLOCK_SECONDS) * DUB_BLOCK_SECONDS;
+  const blockEnd = duration
+    ? Math.min(duration, blockStart + DUB_BLOCK_SECONDS)
+    : blockStart + DUB_BLOCK_SECONDS;
+  const segments = (state.dialogue?.segments || [])
+    .filter(s => {
+      const start = Number(s.startTime) || 0;
+      return start >= blockStart && start < blockEnd && s.turkishText;
+    })
+    .sort((x,y) => Number(x.startTime) - Number(y.startTime));
+  if (!segments.length) return null;
+  return {
+    blockId: `dub-${blockStart.toFixed(3)}-${blockEnd.toFixed(3)}`,
+    blockStart, blockEnd, segments
+  };
+}
 
-  if (state.dubCache.has(segment.segmentId)) {
-    return state.dubCache.get(segment.segmentId);
-  }
+async function ensureDubBlock(block) {
+  if (!block) return null;
+  if (state.dubCache.has(block.blockId)) return state.dubCache.get(block.blockId);
+  if (state.dubRequests.has(block.blockId)) return state.dubRequests.get(block.blockId);
 
-  if (state.dubRequests.has(segment.segmentId)) {
-    return state.dubRequests.get(segment.segmentId);
-  }
-
-  const request = fetch('/api/gemini-dub-segment', {
+  const request = fetch('/api/gemini-dub-block', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text: segment.turkishText,
-      gender: segment.gender,
-      emotion: segment.emotion,
-      speakerId: segment.speakerId
-    })
-  })
-    .then(async response => {
-      const body = await response.json();
-      if (!response.ok || !body.available || !body.audioBase64) {
-        throw new Error(body.error || body.message || `HTTP ${response.status}`);
-      }
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(block)
+  }).then(async response => {
+    const body = await response.json();
+    if (!response.ok || !body?.available || !body?.audioBase64) {
+      throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
+    }
+    const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
+    state.dubCache.set(block.blockId, source);
+    return source;
+  }).catch(error => {
+    console.error('Dub block failed:', block.blockId, error);
+    return null;
+  }).finally(() => state.dubRequests.delete(block.blockId));
 
-      const source =
-        `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
-
-      state.dubCache.set(segment.segmentId, source);
-      return source;
-    })
-    .catch(error => {
-      console.error('Dub segment failed:', segment.segmentId, error);
-      return null;
-    })
-    .finally(() => {
-      state.dubRequests.delete(segment.segmentId);
-    });
-
-  state.dubRequests.set(segment.segmentId, request);
+  state.dubRequests.set(block.blockId, request);
   return request;
 }
 
-function prepareUpcomingDubs(currentIndex) {
-  const segments = state.dialogue?.segments || [];
-  segments
-    .slice(Math.max(0, currentIndex), currentIndex + 2)
-    .forEach(segment => ensureDubAudio(segment));
+function stopDubPlayback() {
+  dubAudio.pause();
+  state.activeDubSegmentId = null;
 }
 
 async function syncDubPlayback() {
-  if (!state.dubbingEnabled) {
-    if (!dubAudio.paused) dubAudio.pause();
-    return;
-  }
+  if (!state.dubbingEnabled) return stopDubPlayback();
 
-  const segments = state.dialogue?.segments || [];
-  const now = Number(els.video.currentTime) || 0;
-  const index = segments.findIndex(segment =>
-    now >= Number(segment.startTime) &&
-    now <= Number(segment.endTime)
-  );
+  const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
+  const block = getDubBlockAt(videoTime);
+  if (!block) return stopDubPlayback();
 
-  if (index < 0) {
-    if (!dubAudio.paused) dubAudio.pause();
-    state.activeDubSegmentId = null;
-    return;
-  }
-
-  const segment = segments[index];
-  prepareUpcomingDubs(index + 1);
-
-  if (state.activeDubSegmentId === segment.segmentId) {
-    const videoNow = Number(els.video.currentTime) || 0;
-    const segmentDuration = Math.max(0.5, Number(segment.endTime) - Number(segment.startTime));
-    if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
-      const expectedAudioTime = Math.min(
-        Math.max(0, dubAudio.duration - 0.05),
-        Math.max(0, videoNow - Number(segment.startTime)) * (dubAudio.duration / segmentDuration)
-      );
-      if (Math.abs((dubAudio.currentTime || 0) - expectedAudioTime) > 0.55) {
-        dubAudio.currentTime = expectedAudioTime;
-      }
+  if (state.activeDubSegmentId === block.blockId && dubAudio.src) {
+    const expected = Math.max(0, videoTime - block.blockStart);
+    if (Number.isFinite(dubAudio.duration) && expected < dubAudio.duration &&
+        Math.abs((Number(dubAudio.currentTime)||0)-expected) > 0.45) {
+      dubAudio.currentTime = expected;
     }
-    if (!els.video.paused && dubAudio.paused) dubAudio.play().catch(() => {});
+    dubAudio.playbackRate = Math.max(0.9,Math.min(1.1,Number(els.video.playbackRate)||1));
+    if (!els.video.paused && dubAudio.paused && expected < (dubAudio.duration||Infinity)) {
+      dubAudio.play().catch(()=>{});
+    }
     return;
   }
-  state.activeDubSegmentId = segment.segmentId;
 
-  if (!dubAudio.paused) dubAudio.pause();
-
-  const source = await ensureDubAudio(segment);
+  stopDubPlayback();
+  const requestedId = block.blockId;
+  const source = await ensureDubBlock(block);
   if (!source || !state.dubbingEnabled) return;
 
-  const currentTime = Number(els.video.currentTime) || 0;
-  if (
-    currentTime < Number(segment.startTime) ||
-    currentTime > Number(segment.endTime)
-  ) {
-    return;
-  }
+  const current = getDubBlockAt(Number(els.video.currentTime)||0);
+  if (!current || current.blockId !== requestedId) return;
 
+  state.activeDubSegmentId = requestedId;
   dubAudio.src = source;
+  dubAudio.load();
 
-  const playWhenReady = () => {
-    const targetDuration = Math.max(
-      0.5,
-      Number(segment.endTime) - Number(segment.startTime)
-    );
-
+  const start = () => {
+    if (!state.dubbingEnabled || state.activeDubSegmentId !== requestedId) return;
+    const expected = Math.max(0,(Number(els.video.currentTime)||0)-block.blockStart);
     if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
-      dubAudio.playbackRate = Math.max(
-        0.75,
-        Math.min(1.5, dubAudio.duration / targetDuration)
-      );
+      dubAudio.currentTime = Math.min(Math.max(0,dubAudio.duration-0.05),expected);
     }
-
-    const videoOffset = Math.max(0, currentTime - Number(segment.startTime));
-    if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
-      dubAudio.currentTime = Math.min(
-        Math.max(0, dubAudio.duration - 0.05),
-        videoOffset * (dubAudio.duration / targetDuration)
-      );
-    }
-
-    dubAudio.play().catch(error => {
-      console.warn('Dub autoplay was blocked:', error);
-    });
+    dubAudio.playbackRate = Math.max(0.9,Math.min(1.1,Number(els.video.playbackRate)||1));
+    if (!els.video.paused) dubAudio.play().catch(()=>{});
   };
 
-  if (dubAudio.readyState >= 2) {
-    playWhenReady();
-  } else {
-    dubAudio.addEventListener('loadedmetadata', playWhenReady, { once: true });
-  }
+  if (dubAudio.readyState >= 1) start();
+  else dubAudio.addEventListener('loadedmetadata',start,{once:true});
 }
 
-els.dubToggleBtn?.addEventListener('click', () => {
-  state.dubbingEnabled = !state.dubbingEnabled;
-  els.dubToggleBtn.textContent =
-    `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
-
-  els.video.muted =
-    state.dubbingEnabled && !state.keepOriginalAudioEnabled;
-
-  if (!state.dubbingEnabled) {
-    dubAudio.pause();
-    state.activeDubSegmentId = null;
-  } else {
-    syncDubPlayback();
-  }
-});
-
-els.video.addEventListener('timeupdate', syncDubPlayback);
-els.video.addEventListener('pause', () => dubAudio.pause());
-els.video.addEventListener('seeking', () => {
+els.video.addEventListener('timeupdate',syncDubPlayback);
+els.video.addEventListener('pause',()=>dubAudio.pause());
+els.video.addEventListener('seeking',()=>{
   dubAudio.pause();
-  state.activeDubSegmentId = null;
+  state.activeDubSegmentId=null;
 });
-els.video.addEventListener('play', syncDubPlayback);
+els.video.addEventListener('play',syncDubPlayback);
 
 els.subtitleToggleBtn?.addEventListener('click', () => {
   state.subtitlesEnabled = !state.subtitlesEnabled;
