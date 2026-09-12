@@ -128,6 +128,8 @@ app.post('/logout', (_req, res) => {
 });
 
 app.use((req, res, next) => {
+  // Render ve uptime kontrolleri parola oturumu taşımaz.
+  if (req.path === '/health') return next();
   if (isAuthenticated(req)) return next();
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({

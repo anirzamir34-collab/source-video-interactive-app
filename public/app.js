@@ -25,6 +25,14 @@ const state = {
   maleSceneProgress: 0,
   femaleSceneProgress: 0,
   lastAdultMediaTime: null,
+  adultScenes: [],
+  completedAdultSceneIds: new Set(),
+  adultLoopSeeking: false,
+  adultSeekTimer: null,
+  lastAdultFrameNow: null,
+  adultFrameRequest: null,
+  navigationSeeking: false,
+  manualSeeking: false,
 };
 
 const els = {
@@ -242,12 +250,7 @@ els.healthBtn.addEventListener('click', checkHealth);
 els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
   state.selectedFile = file;
-    dubAudio.pause();
-    dubAudio.removeAttribute("src");
-    dubAudio.load();
-    state.dubCache.clear();
-    state.dubRequests.clear();
-    state.activeDubSegmentId = null;
+  resetDubState();
   if (file) {
     els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • ${file.type || 'video'}`;
     els.video.src = URL.createObjectURL(file);
@@ -688,6 +691,15 @@ function stopDubPlayback() {
   state.activeDubSegmentId = null;
 }
 
+function resetDubState() {
+  dubAudio.pause();
+  dubAudio.removeAttribute('src');
+  dubAudio.load();
+  state.dubCache.clear();
+  state.dubRequests.clear();
+  state.activeDubSegmentId = null;
+}
+
 async function syncDubPlayback() {
   if (!state.dubbingEnabled) return stopDubPlayback();
 
@@ -754,6 +766,7 @@ els.video.addEventListener('seeked', renderSubtitle);
 
 els.analyzeBtn.addEventListener('click', async () => {
   if (!state.selectedFile) return;
+  els.analyzeBtn.disabled = true;
   els.analysisCard.classList.remove('hidden');
   els.analysisTitle.textContent = 'Harici servis analiz isteği';
   els.analysisState.textContent = 'ANALYZING';
@@ -763,6 +776,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   const file = state.selectedFile;
   const modes = selectedAnalysisModes();
 
+  try {
   if (modes.subtitles || modes.dubbing) {
     try {
       const dialogue = await analyzeSelectedDialogue(file);
@@ -779,8 +793,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
         els.video.muted = !modes.keepOriginalAudio;
-        await Promise.all(dialogue.segments.slice(0, 8).map(ensureDubAudio));
-        prepareUpcomingDubs(8);
+        // İlk dublaj bloğunu arka planda hazırla.
+        void ensureDubBlock(getDubBlockAt(0));
       }
 
       if (!modes.motion) {
@@ -806,7 +820,10 @@ els.analyzeBtn.addEventListener('click', async () => {
       els.analysisOutput.textContent =
         `Diyalog analizi başarısız: ${error.message}`;
 
-      if (!modes.motion) return;
+      if (!modes.motion) {
+        setGameState('ERROR');
+        return;
+      }
     }
   }
   els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
@@ -1026,6 +1043,17 @@ els.analyzeBtn.addEventListener('click', async () => {
     'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
+  } catch (error) {
+    console.error('Analysis failed:', error);
+    els.analysisState.textContent = 'ANALYSIS_ERROR';
+    els.analysisTitle.textContent = 'Analiz tamamlanamadı';
+    els.analysisOutput.textContent =
+      error?.message || 'Beklenmeyen bir analiz hatası oluştu.';
+    setGameState('ERROR');
+    renderDebug({ analysisError: error?.message || String(error) });
+  } finally {
+    updateAnalyzeAvailability();
+  }
 });
 
 function normalizeAnalysis(body) {
@@ -1302,7 +1330,7 @@ function renderAdultProgress() {
 }
 
 function renderAdultPanel(scene) {
-  if (!scene || !els.adultInteractionPanel) return;
+  if (!scene || !scene.positions?.length || !els.adultInteractionPanel) return;
 
   const videoStage = els.video?.closest('.video-stage');
   if (videoStage && els.adultInteractionPanel.parentElement === videoStage) {
@@ -1535,7 +1563,7 @@ function renderChoices() {
       .filter((action, index) =>
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
-        !state.consumedActions.has(action.actionId)
+        !state.consumedActionIds.has(action.actionId)
       )
       .slice(0, 4);
   }
@@ -1639,7 +1667,7 @@ function resetGameAtAction(index) {
   state.activeAction = null;
   state.currentActionIndex = safeIndex - 1;
   state.gameCursorTime = Number(target.startTime) || 0;
-  state.consumedActions = new Set(
+  state.consumedActionIds = new Set(
     actions.slice(0, safeIndex).map(action => action.actionId)
   );
 
@@ -1751,7 +1779,7 @@ els.video.addEventListener('seeked', () => {
 
   state.currentActionIndex = index - 1;
   state.gameCursorTime = Number(actions[index].startTime) || now;
-  state.consumedActions = new Set(
+  state.consumedActionIds = new Set(
     actions.slice(0, index).map(action => action.actionId)
   );
 
@@ -1900,12 +1928,7 @@ async function resolveVideoUrl() {
     const file = new File([blob], fileName, { type: blob.type || 'video/mp4' });
 
     state.selectedFile = file;
-    dubAudio.pause();
-    dubAudio.removeAttribute("src");
-    dubAudio.load();
-    state.dubCache.clear();
-    state.dubRequests.clear();
-    state.activeDubSegmentId = null;
+    resetDubState();
     els.video.src = URL.createObjectURL(file);
     els.fileMeta.textContent =
       `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • URL kaynağı`;
