@@ -1331,24 +1331,65 @@ Rules:
           });
           const raw = String(response.text || '').trim();
           if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
-          parsed = JSON.parse(
-            raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '')
-          );
+          parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
           break;
         } catch (error) {
           lastDialogueError = error;
           const details = String(error?.message || error);
-          const retryable =
-            details.includes('Unexpected end of JSON input') ||
-            details.includes('GEMINI_EMPTY_JSON_RESPONSE') ||
-            details.includes('503') ||
-            details.includes('UNAVAILABLE') ||
-            details.includes('high demand');
-          if (!retryable || attempt === 3) throw error;
+          const retryable = details.includes('Unexpected end of JSON input') || details.includes('GEMINI_EMPTY_JSON_RESPONSE') || details.includes('503') || details.includes('UNAVAILABLE') || details.includes('high demand');
+          if (!retryable || attempt === 3) break;
           console.warn(`[gemini-dialogue-retry] attempt ${attempt}/3: ${details}`);
           await wait(attempt * 1400);
         }
       }
+
+      // If multimodal enrichment returns empty/truncated output but dedicated ASR succeeded,
+      // recover subtitles from text-only translation so timestamps/speakers are preserved.
+      if (!parsed && asr?.segments?.length) {
+        console.warn('[gemini-dialogue-fallback] switching to text-only Turkish translation');
+        const translationInput = asr.segments.map(({ segmentId, originalText }) => ({ segmentId, originalText }));
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            const translationResponse = await ai.models.generateContent({
+              model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
+              contents: [{
+                role: 'user',
+                parts: [{ text: `Translate every supplied dialogue segment into natural Turkish. Preserve segmentId exactly. Do not omit, censor, summarize, merge, split or reorder lines. Return JSON only as {\"segments\":[{\"segmentId\":\"...\",\"turkishText\":\"...\",\"gender\":\"male|female|uncertain\",\"emotion\":\"...\",\"confidence\":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(translationInput)}` }]
+              }],
+              config: { responseMimeType: 'application/json', temperature: 0.05, maxOutputTokens: 16384 }
+            });
+            const raw = String(translationResponse.text || '').trim();
+            if (!raw) throw new Error('GEMINI_EMPTY_TEXT_TRANSLATION');
+            parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
+            break;
+          } catch (error) {
+            lastDialogueError = error;
+            console.warn(`[gemini-dialogue-text-fallback-retry] attempt ${attempt}/3: ${error?.message || error}`);
+            if (attempt < 3) await wait(attempt * 1200);
+          }
+        }
+      }
+
+      if (!parsed && asr?.segments?.length) {
+        // Last-resort continuity: return grounded transcript segments instead of losing all subtitles.
+        // For already-Turkish speech this is correct; for other languages the UI still has timed dialogue.
+        parsed = {
+          hasDialogue: true,
+          segments: asr.segments.map(item => ({
+            segmentId: item.segmentId,
+            speakerId: item.speakerId,
+            startTime: item.startTime,
+            endTime: item.endTime,
+            originalText: item.originalText,
+            turkishText: item.originalText,
+            gender: 'uncertain',
+            emotion: 'uncertain',
+            confidence: 0.5
+          })),
+          fallbackMode: 'asr-original-text'
+        };
+      }
+
       if (!parsed) throw lastDialogueError || new Error('GEMINI_DIALOGUE_JSON_PARSE_FAILED');
 
       if (asr?.segments?.length) {
