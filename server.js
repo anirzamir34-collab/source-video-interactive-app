@@ -1238,6 +1238,11 @@ app.post(
       const prompt = `
 Analyze only the audible dialogue and speech in this video.
 
+SPEAKER IDENTITY CONTEXT:
+- User's locked protagonist description: ${String(req.body?.protagonistProfile || 'not provided').slice(0, 240)}
+- Use both visible scene continuity and voice continuity to keep each speaker distinct.
+- The visible locked male protagonist should be named "Başkarakter" when the evidence matches.
+
 LANGUAGE DETECTION AND TURKISH TRANSLATION:
 - Automatically identify the actual spoken source language from the audio; never assume it is English.
 - Support every detectable language and dialect, including multilingual conversations and speakers switching languages inside the same video.
@@ -1258,6 +1263,10 @@ Return valid JSON only, with this exact structure:
   "speakers": [
     {
       "speakerId": "speaker-01",
+      "speakerName": "Başkarakter|Baba|Anne|Kız kardeş|Erkek kardeş|Kadın 1|Erkek 1",
+      "relationshipRole": "scene-supported role or unknown",
+      "roleConfidence": 0.0,
+      "roleEvidence": "brief visible or spoken evidence",
       "gender": "female|male|uncertain",
       "description": "short stable Turkish description"
     }
@@ -1268,6 +1277,7 @@ Return valid JSON only, with this exact structure:
       "startTime": 0.0,
       "endTime": 2.5,
       "speakerId": "speaker-01",
+      "speakerName": "same stable name used for this speaker",
       "gender": "female|male|uncertain",
       "originalText": "exact spoken dialogue",
       "turkishText": "natural Turkish translation",
@@ -1282,6 +1292,12 @@ Rules:
 - Use seconds as numbers for startTime and endTime.
 - Preserve chronological order.
 - Identify and consistently separate different speakers.
+- Give every distinct speaker one stable Turkish speakerName and reuse it in every segment.
+- Name the locked male protagonist "Başkarakter" when his identity is supported by scene continuity.
+- Use relationship names such as "Baba", "Anne", "Kız kardeş" or "Erkek kardeş" only when spoken dialogue or strong visual story evidence supports that exact relationship.
+- Never infer a family relationship from age, gender, location or familiarity alone.
+- When the exact role is uncertain, keep people distinct with stable neutral names such as "Kadın 1", "Kadın 2", "Erkek 1" and "Erkek 2".
+- Do not reuse one speakerName for two different voices and do not change a person's name between segments.
 - Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
 - Transcribe speech faithfully without inventing words.
 - Transcribe and translate every clearly audible spoken word without censorship, sanitization, euphemism, summarization, or omission.
@@ -1413,20 +1429,54 @@ Rules:
       }
 
       const duration = Math.max(0, Number(req.body?.duration || 0));
+      const parsedSpeakers = Array.isArray(parsed.speakers) ? parsed.speakers : [];
+      const speakerProfiles = new Map();
+      let neutralFemaleCount = 0;
+      let neutralMaleCount = 0;
+      let neutralUnknownCount = 0;
+
+      for (const item of parsedSpeakers) {
+        const speakerId = String(item?.speakerId || '').trim();
+        if (!speakerId) continue;
+        const gender = ['female', 'male'].includes(item.gender) ? item.gender : 'uncertain';
+        let speakerName = String(item.speakerName || item.displayName || '').trim();
+        if (!speakerName) {
+          if (gender === 'female') speakerName = `Kadın ${++neutralFemaleCount}`;
+          else if (gender === 'male') speakerName = `Erkek ${++neutralMaleCount}`;
+          else speakerName = `Konuşmacı ${++neutralUnknownCount}`;
+        }
+        speakerProfiles.set(speakerId, { ...item, speakerId, gender, speakerName });
+      }
+
       const segments = (Array.isArray(parsed.segments) ? parsed.segments : [])
-        .map((segment, index) => ({
+        .map((segment, index) => {
+          const speakerId = String(segment.speakerId || 'speaker-uncertain');
+          const gender = ['female', 'male'].includes(segment.gender)
+            ? segment.gender
+            : (speakerProfiles.get(speakerId)?.gender || 'uncertain');
+          let profile = speakerProfiles.get(speakerId);
+          if (!profile) {
+            let speakerName = String(segment.speakerName || '').trim();
+            if (!speakerName) {
+              if (gender === 'female') speakerName = `Kadın ${++neutralFemaleCount}`;
+              else if (gender === 'male') speakerName = `Erkek ${++neutralMaleCount}`;
+              else speakerName = `Konuşmacı ${++neutralUnknownCount}`;
+            }
+            profile = { speakerId, gender, speakerName, relationshipRole: 'unknown', roleConfidence: 0 };
+            speakerProfiles.set(speakerId, profile);
+          }
+          return ({
           segmentId: `dlg-${String(index + 1).padStart(3, '0')}`,
           startTime: Math.max(0, Number(segment.startTime || 0)),
           endTime: Math.max(0, Number(segment.endTime || 0)),
-          speakerId: String(segment.speakerId || 'speaker-uncertain'),
-          gender: ['female', 'male'].includes(segment.gender)
-            ? segment.gender
-            : 'uncertain',
+          speakerId,
+          speakerName: profile.speakerName,
+          gender,
           originalText: String(segment.originalText || '').trim(),
           turkishText: String(segment.turkishText || '').trim(),
           emotion: String(segment.emotion || 'uncertain'),
           confidence: Math.max(0, Math.min(1, Number(segment.confidence || 0)))
-        }))
+        });})
         .filter(segment =>
           segment.originalText &&
           segment.turkishText &&
@@ -1440,7 +1490,7 @@ Rules:
         hasDialogue: segments.length > 0,
         sourceLanguage: String(parsed.sourceLanguage || 'unknown'),
         summaryTr: String(parsed.summaryTr || ''),
-        speakers: Array.isArray(parsed.speakers) ? parsed.speakers : [],
+        speakers: [...speakerProfiles.values()],
         segments,
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
         transcriptionEngine: String(parsed.transcriptionEngine || 'gemini-3.8-flash-fallback'),
