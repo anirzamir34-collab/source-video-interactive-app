@@ -881,6 +881,16 @@ els.analyzeBtn.addEventListener('click', async () => {
   const file = state.selectedFile;
   const modes = selectedAnalysisModes();
 
+  // Every analysis run must start from a clean dialogue/dub timeline.
+  // Reusing old segment ids or old translated dialogue can attach stale audio
+  // to new source-video timestamps after a re-analysis.
+  state.dialogue = null;
+  state.dubbingEnabled = false;
+  state.subtitlesEnabled = false;
+  resetDubState();
+  els.video.muted = false;
+  els.subtitleOverlay?.classList.add('hidden');
+
   try {
   if (modes.subtitles || modes.dubbing) {
     try {
