@@ -1,0 +1,154 @@
+const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, Number(value) || 0));
+
+const FACT_LEVELS = new Set(['fact', 'inference', 'unknown']);
+
+function cleanText(value, max = 320) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, max);
+}
+
+function uniqueByText(items = [], max = 24) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(items) ? items : []) {
+    const text = cleanText(raw?.text ?? raw?.label ?? raw, 420);
+    if (!text) continue;
+    const key = text.toLocaleLowerCase('tr-TR');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(typeof raw === 'object' && raw !== null ? { ...raw, text } : { text });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+export function normalizeEvidenceLevel(value) {
+  const level = cleanText(value, 24).toLowerCase();
+  return FACT_LEVELS.has(level) ? level : 'unknown';
+}
+
+export function normalizeStoryContext(input = {}) {
+  const context = input && typeof input === 'object' ? input : {};
+  const relationships = (Array.isArray(context.relationships) ? context.relationships : [])
+    .slice(0, 16)
+    .map(item => ({
+      from: cleanText(item?.from, 80),
+      to: cleanText(item?.to, 80),
+      relation: cleanText(item?.relation, 100),
+      evidenceLevel: normalizeEvidenceLevel(item?.evidenceLevel),
+      confidence: clamp(item?.confidence),
+      evidence: cleanText(item?.evidence, 360)
+    }))
+    .filter(item => item.from && item.to && item.relation);
+
+  const characters = (Array.isArray(context.characters) ? context.characters : [])
+    .slice(0, 16)
+    .map(item => ({
+      id: cleanText(item?.id, 80),
+      role: cleanText(item?.role, 100),
+      description: cleanText(item?.description, 280),
+      confidence: clamp(item?.confidence)
+    }))
+    .filter(item => item.id || item.role || item.description);
+
+  return {
+    synopsisTr: cleanText(context.synopsisTr, 900),
+    currentSceneTitle: cleanText(context.currentSceneTitle, 140),
+    currentSceneGoal: cleanText(context.currentSceneGoal, 320),
+    setting: cleanText(context.setting, 180),
+    emotionalTone: cleanText(context.emotionalTone, 140),
+    characters,
+    relationships,
+    facts: uniqueByText(context.facts, 24).map(item => ({
+      text: item.text,
+      confidence: clamp(item.confidence ?? 1),
+      evidence: cleanText(item.evidence, 360)
+    })),
+    inferences: uniqueByText(context.inferences, 24).map(item => ({
+      text: item.text,
+      confidence: clamp(item.confidence),
+      evidence: cleanText(item.evidence, 360)
+    })),
+    unknowns: uniqueByText(context.unknowns, 24).map(item => item.text)
+  };
+}
+
+export function mergeStoryContexts(results = []) {
+  const contexts = (Array.isArray(results) ? results : [])
+    .map(result => normalizeStoryContext(result?.storyContext || result))
+    .filter(context => context.synopsisTr || context.currentSceneTitle || context.facts.length || context.inferences.length);
+
+  if (!contexts.length) return normalizeStoryContext({});
+
+  const last = contexts[contexts.length - 1];
+  const facts = uniqueByText(contexts.flatMap(context => context.facts), 40)
+    .map(item => ({ text: item.text, confidence: clamp(item.confidence ?? 1), evidence: cleanText(item.evidence, 360) }));
+  const inferences = uniqueByText(contexts.flatMap(context => context.inferences), 40)
+    .map(item => ({ text: item.text, confidence: clamp(item.confidence), evidence: cleanText(item.evidence, 360) }));
+  const unknowns = [...new Set(contexts.flatMap(context => context.unknowns).map(item => cleanText(item, 260)).filter(Boolean))].slice(0, 30);
+
+  const relationships = [];
+  const relationshipKeys = new Set();
+  for (const context of contexts) {
+    for (const relationship of context.relationships) {
+      const key = `${relationship.from}|${relationship.to}|${relationship.relation}`.toLocaleLowerCase('tr-TR');
+      const existingIndex = relationships.findIndex(item => `${item.from}|${item.to}|${item.relation}`.toLocaleLowerCase('tr-TR') === key);
+      if (existingIndex >= 0) {
+        if (relationship.confidence > relationships[existingIndex].confidence) relationships[existingIndex] = relationship;
+      } else if (!relationshipKeys.has(key)) {
+        relationshipKeys.add(key);
+        relationships.push(relationship);
+      }
+    }
+  }
+
+  const characters = [];
+  const characterKeys = new Set();
+  for (const context of contexts) {
+    for (const character of context.characters) {
+      const key = (character.id || character.description || character.role).toLocaleLowerCase('tr-TR');
+      if (!key || characterKeys.has(key)) continue;
+      characterKeys.add(key);
+      characters.push(character);
+    }
+  }
+
+  const synopsisParts = contexts.map(context => context.synopsisTr).filter(Boolean);
+  return normalizeStoryContext({
+    synopsisTr: synopsisParts.slice(-4).join(' '),
+    currentSceneTitle: last.currentSceneTitle,
+    currentSceneGoal: last.currentSceneGoal,
+    setting: last.setting,
+    emotionalTone: last.emotionalTone,
+    characters,
+    relationships,
+    facts,
+    inferences,
+    unknowns
+  });
+}
+
+export function storyChoiceLabelForAction(action = {}) {
+  const fallback = cleanText(action.label, 180) || 'Devam et';
+  const narrative = cleanText(action.narrativeChoiceLabel, 180);
+  if (!narrative) return fallback;
+
+  const level = normalizeEvidenceLevel(action.storyEvidenceLevel);
+  const confidence = clamp(action.storyConfidence);
+  const evidence = cleanText(action.storyEvidence, 360);
+
+  if (level === 'fact' && confidence >= 0.68 && evidence) return narrative;
+  if (level === 'inference' && confidence >= 0.88 && evidence) return narrative;
+  return fallback;
+}
+
+export function storyActionMeta(action = {}) {
+  return {
+    sceneTitle: cleanText(action.sceneTitle, 140),
+    sceneGoal: cleanText(action.sceneGoal, 280),
+    relationshipContext: cleanText(action.relationshipContext, 200),
+    narrativeReason: cleanText(action.narrativeReason, 280),
+    storyEvidenceLevel: normalizeEvidenceLevel(action.storyEvidenceLevel),
+    storyConfidence: clamp(action.storyConfidence),
+    storyEvidence: cleanText(action.storyEvidence, 360)
+  };
+}
