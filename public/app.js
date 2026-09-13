@@ -2181,8 +2181,10 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     currentAdultFlow() + 0.001 < Number(position.unlockProgress || 0)
   ) return;
 
-  const selectionToken = beginAdultSelection();
-  state.activeAdultPreludeId = null;
+  const selectionToken = shouldSeek
+    ? beginAdultSelection()
+    : state.adultSelectionToken;
+  if (shouldSeek) state.activeAdultPreludeId = null;
   const changedPosition = state.activePositionId !== position.id;
   state.activePositionId = position.id;
   if (changedPosition) state.activeMovementId = null;
