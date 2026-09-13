@@ -21,6 +21,7 @@ const state = {
   adultScene: null,
   adultMode: false,
   activePositionId: null,
+  adultSelectionToken: 0,
   activeAdultCategory: null,
   activeMovementId: null,
   maleSceneProgress: 0,
@@ -30,6 +31,8 @@ const state = {
   completedAdultSceneIds: new Set(),
   adultLoopSeeking: false,
   adultSeekTimer: null,
+  adultSeekRequestId: 0,
+  adultSeekedHandler: null,
   lastAdultFrameNow: null,
   adultFrameRequest: null,
   navigationSeeking: false,
@@ -1088,6 +1091,7 @@ function normalizeAnalysis(body) {
       adultSceneEndTime: Number(a.adultSceneEndTime ?? a.endTime),
       postSceneTime: Number(a.postSceneTime ?? a.endTime),
       positionId: String(a.positionId || ""),
+      positionOccurrenceId: String(a.positionOccurrenceId || ""),
       activityType: String(a.activityType || ""),
       positionLabel: String(a.positionLabel || ""),
       positionStartTime: Number(a.positionStartTime ?? a.startTime),
@@ -1101,6 +1105,8 @@ function normalizeAnalysis(body) {
     .filter(a => Number.isFinite(a.startTime) && Number.isFinite(a.endTime) && a.endTime > a.startTime && a.sourceVerified)
     .sort((a, b) => a.startTime - b.startTime);
 
+  assignMissingPositionOccurrenceIds(cleaned);
+
   return {
     videoDuration: Number(body?.videoDuration ?? 0),
     mainMaleTrackId: body?.mainMaleTrackId ?? null,
@@ -1108,6 +1114,30 @@ function normalizeAnalysis(body) {
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
     actions: cleaned,
   };
+}
+
+function assignMissingPositionOccurrenceIds(actions) {
+  const latestByFamily = new Map();
+
+  actions.filter(action => action.adultScene && action.positionId).forEach(action => {
+    if (action.positionOccurrenceId) return;
+
+    const start = Number(action.positionStartTime ?? action.startTime);
+    const end = Number(action.positionEndTime ?? action.endTime);
+    const familyKey = `${action.adultSceneId || 'adult'}:${action.positionId}`;
+    const latest = latestByFamily.get(familyKey);
+    const isSameContinuousOccurrence = latest && start <= latest.end + 0.15;
+
+    if (isSameContinuousOccurrence) {
+      action.positionOccurrenceId = latest.id;
+      latest.end = Math.max(latest.end, end);
+      return;
+    }
+
+    const id = `${familyKey}:occurrence-${Math.max(0, start).toFixed(3)}`;
+    action.positionOccurrenceId = id;
+    latestByFamily.set(familyKey, { id, end });
+  });
 }
 
 function initializeInteractive(analysis) {
@@ -1150,6 +1180,7 @@ function initializeInteractive(analysis) {
   state.adultScene = null;
   state.completedAdultSceneIds = new Set();
   state.activePositionId = null;
+  state.adultSelectionToken += 1;
   state.activeAdultCategory = null;
   state.activeMovementId = null;
   state.maleSceneProgress = 0;
@@ -1278,12 +1309,15 @@ function prepareAdultScenes() {
     if (!canonical.id) return;
 
     const category = adultCategoryFor(action, canonical.id);
-    const positionKey = `${category.id}:${canonical.id}`;
+    const occurrenceId = action.positionOccurrenceId ||
+      `${canonical.id}:occurrence-${Math.max(0, Number(action.positionStartTime ?? action.startTime)).toFixed(3)}`;
+    const positionKey = `${category.id}:${occurrenceId}`;
 
     if (!scene.positions.has(positionKey)) {
       scene.positions.set(positionKey, {
         id: positionKey,
         familyId: canonical.id,
+        occurrenceId,
         label: canonical.label,
         categoryId: category.id,
         categoryLabel: category.label,
@@ -1343,6 +1377,21 @@ function prepareAdultScenes() {
     }))
     .filter(scene => scene.positions.length)
     .sort((a, b) => a.startTime - b.startTime);
+
+  state.adultScenes.forEach(scene => {
+    const totals = new Map();
+    scene.positions.forEach(position => {
+      totals.set(position.familyId, (totals.get(position.familyId) || 0) + 1);
+    });
+    const seen = new Map();
+    scene.positions.forEach(position => {
+      const number = (seen.get(position.familyId) || 0) + 1;
+      seen.set(position.familyId, number);
+      position.displayLabel = totals.get(position.familyId) > 1
+        ? `${position.label} · ${number}`
+        : position.label;
+    });
+  });
 }
 
 function findAdultSceneAt(time) {
@@ -1456,7 +1505,7 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'position-tab';
-    button.textContent = position.label;
+    button.textContent = position.displayLabel || position.label;
     button.dataset.positionId = position.id;
     button.addEventListener(
       'click',
@@ -1477,12 +1526,14 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position) return;
 
+  state.adultSelectionToken += 1;
+  invalidateAdultSeek();
   state.activePositionId = position.id;
   els.positionTabs?.querySelectorAll(".position-tab").forEach(button => {
     button.classList.toggle("active", button.dataset.positionId === position.id);
   });
 
-  if (els.movementHeading) els.movementHeading.textContent = position.label;
+  if (els.movementHeading) els.movementHeading.textContent = position.displayLabel || position.label;
   if (els.movementCount) els.movementCount.textContent = `${position.movements.length} gerçek değişim`;
   if (els.movementChoices) els.movementChoices.innerHTML = "";
 
@@ -1516,6 +1567,8 @@ function selectAdultMovement(movementId, shouldSeek = true) {
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement) return;
 
+  state.adultSelectionToken += 1;
+  invalidateAdultSeek();
   state.activeMovementId = movement.id;
   state.lastAdultMediaTime = null;
   els.movementChoices?.querySelectorAll(".movement-choice-card").forEach(button => {
@@ -1538,6 +1591,8 @@ function finishAdultScene() {
   state.activePositionId = null;
   state.activeAdultCategory = null;
   state.activeMovementId = null;
+  state.adultSelectionToken += 1;
+  invalidateAdultSeek();
   state.lastAdultMediaTime = null;
   els.adultInteractionPanel?.classList.add("hidden");
   document.querySelector(".choice-navigation")?.classList.remove("hidden");
@@ -1550,20 +1605,43 @@ function finishAdultScene() {
 }
 
 
-function seekAdultLoop(targetTime) {
-  if (!els.video || state.adultLoopSeeking) return false;
-  state.adultLoopSeeking = true;
+function invalidateAdultSeek() {
+  state.adultSeekRequestId += 1;
+  state.adultLoopSeeking = false;
   clearTimeout(state.adultSeekTimer);
+  if (state.adultSeekedHandler) {
+    els.video?.removeEventListener("seeked", state.adultSeekedHandler);
+    state.adultSeekedHandler = null;
+  }
+}
+
+function seekAdultLoop(targetTime) {
+  if (!els.video) return false;
+  invalidateAdultSeek();
+  const requestId = state.adultSeekRequestId;
+  const selectionToken = state.adultSelectionToken;
+  const target = Math.max(0, Number(targetTime) || 0);
+  state.adultLoopSeeking = true;
 
   const finishSeek = () => {
+    if (requestId !== state.adultSeekRequestId || selectionToken !== state.adultSelectionToken) return;
+    if (Math.abs(Number(els.video.currentTime) - target) > 0.35) return;
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
     clearTimeout(state.adultSeekTimer);
+    els.video.removeEventListener("seeked", finishSeek);
+    if (state.adultSeekedHandler === finishSeek) state.adultSeekedHandler = null;
   };
 
-  els.video.addEventListener("seeked", finishSeek, { once: true });
-  els.video.currentTime = Math.max(0, Number(targetTime) || 0);
-  state.adultSeekTimer = setTimeout(finishSeek, 1500);
+  state.adultSeekedHandler = finishSeek;
+  els.video.addEventListener("seeked", finishSeek);
+  els.video.currentTime = target;
+  state.adultSeekTimer = setTimeout(() => {
+    if (requestId !== state.adultSeekRequestId || selectionToken !== state.adultSelectionToken) return;
+    state.adultLoopSeeking = false;
+    els.video.removeEventListener("seeked", finishSeek);
+    if (state.adultSeekedHandler === finishSeek) state.adultSeekedHandler = null;
+  }, 1500);
   return true;
 }
 
