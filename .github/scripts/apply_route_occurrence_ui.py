@@ -33,10 +33,21 @@ app = replace_once(
 )
 app = replace_once(
     app,
-    "        const familySlug = normalizeAdultLabel(group.familyId)\n          .replace(/[^a-z0-9]+/g, '-')\n          .replace(/^-|-$/g, '') || 'position';\n        occurrence = {\n          id: `${sceneSlug}:${familySlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
-",
-    "        const familySlug = normalizeAdultLabel(group.familyId)\n          .replace(/[^a-z0-9]+/g, '-')\n          .replace(/^-|-$/g, '') || 'position';\n        const routeSlug = normalizeAdultLabel(group.routeNamespace || 'other')\n          .replace(/[^a-z0-9]+/g, '-')\n          .replace(/^-|-$/g, '') || 'other';\n        occurrence = {\n          id: `${sceneSlug}:${familySlug}:${routeSlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
-",
+    '''        const familySlug = normalizeAdultLabel(group.familyId)
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'position';
+        occurrence = {
+          id: `${sceneSlug}:${familySlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
+''',
+    '''        const familySlug = normalizeAdultLabel(group.familyId)
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'position';
+        const routeSlug = normalizeAdultLabel(group.routeNamespace || 'other')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'other';
+        occurrence = {
+          id: `${sceneSlug}:${familySlug}:${routeSlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
+''',
     'generated occurrence route slug'
 )
 app = replace_once(
@@ -67,8 +78,8 @@ test = replace_once(
     "  ANALYSIS_SCHEMA_VERSION,\n  ENGINE_VERSION,\n  activityDisplayLabel,\n  activityOccurrenceNamespace,\n  actionConfidence,",
     'test route helper imports'
 )
-insert_after = "test('same position with conflicting anal and vaginal claims forces route review', () => {\n"
-idx = test.index(insert_after)
+marker = "test('same position with conflicting anal and vaginal claims forces route review', () => {\n"
+idx = test.index(marker)
 new_tests = """test('verified activity route gets its own occurrence namespace and display label', () => {\n  const vaginal = {\n    activityType: 'vaginal', activityTypeConfidence: 0.96, activityEvidence: 'direct visible evidence'\n  };\n  const anal = {\n    activityType: 'anal', activityTypeConfidence: 0.97, activityEvidence: 'direct visible evidence'\n  };\n  assert.equal(activityOccurrenceNamespace(vaginal), 'vaginal');\n  assert.equal(activityOccurrenceNamespace(anal), 'anal');\n  assert.equal(activityDisplayLabel('Misyoner', vaginal), 'Misyoner · Vajinal');\n  assert.equal(activityDisplayLabel('Misyoner', anal), 'Misyoner · Anal');\n});\n\ntest('uncertain penetrative route never creates an explicit UI route label', () => {\n  const uncertain = {\n    activityType: 'vaginal', activityTypeConfidence: 0.72, activityEvidence: ''\n  };\n  assert.equal(activityOccurrenceNamespace(uncertain), 'other');\n  assert.equal(activityDisplayLabel('Misyoner', uncertain), 'Misyoner');\n});\n\n"""
 test = test[:idx] + new_tests + test[idx:]
 test_path.write_text(test)
