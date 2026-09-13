@@ -1,0 +1,41 @@
+name: Reset stale analysis audio state
+
+on:
+  push:
+    branches:
+      - fix/full-analysis-and-segment-dub
+    paths:
+      - '.github/scripts/reset_analysis_audio_state.py'
+      - '.github/workflows/reset-analysis-audio-state.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/full-analysis-and-segment-dub
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Apply state reset
+        run: python .github/scripts/reset_analysis_audio_state.py
+      - name: Run tests
+        run: npm test
+      - name: Check whitespace
+        run: git diff --check
+      - name: Commit product change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/app.js
+          if git diff --cached --quiet; then
+            echo "No product changes to commit."
+          else
+            git commit -m "Reset stale dialogue state before reanalysis"
+            git push origin HEAD:fix/full-analysis-and-segment-dub
+          fi
