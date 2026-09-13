@@ -1182,6 +1182,9 @@ els.analyzeBtn.addEventListener('click', async () => {
               reason: 'CHUNK_ANALYSIS_FAILED',
               message: `Bölüm ${chunkIndex + 1} analiz edilemedi.`
             };
+            if (failureBody?.retryable === false || failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
+              break;
+            }
           } else {
             const criticalReviewCandidates = secondPassReviewCandidates(body);
             if (criticalReviewCandidates.length) {
@@ -1201,6 +1204,9 @@ els.analyzeBtn.addEventListener('click', async () => {
                   reason: 'SECOND_PASS_REVIEW_FAILED',
                   message: `Bölüm ${chunkIndex + 1} ikinci doğrulamadan geçemedi.`
                 };
+                if (failureBody?.retryable === false || failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
+                  break;
+                }
                 continue;
               }
               body = mergeSecondPassReview(body, reviewBody, criticalReviewCandidates);
@@ -1222,6 +1228,10 @@ els.analyzeBtn.addEventListener('click', async () => {
           };
         }
 
+        if (failureBody?.retryable === false || failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
+          break;
+        }
+
         if (attempt < 3) {
           await new Promise(resolve => setTimeout(resolve, attempt * 1800));
         }
@@ -1237,17 +1247,27 @@ els.analyzeBtn.addEventListener('click', async () => {
     });
 
     if (!completeChunkAnalysis) {
-      body = {
-        available: false,
-        reason: 'INCOMPLETE_CHUNK_ANALYSIS',
-        message:
-          `Analiz eksik kaldı: ${chunkResults.length}/${chunkCount} bölüm tamamlandı. ` +
-          `Eksik video hiçbir zaman hazır oyun olarak açılmayacak.`,
-        completedChunkCount: chunkResults.length,
-        expectedChunkCount: chunkCount,
-        failedChunk: Math.min(chunkCount, chunkResults.length + 1),
-        failure: failureBody
-      };
+      if (failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
+        body = {
+          ...failureBody,
+          available: false,
+          completedChunkCount: chunkResults.length,
+          expectedChunkCount: chunkCount,
+          failedChunk: Math.min(chunkCount, chunkResults.length + 1)
+        };
+      } else {
+        body = {
+          available: false,
+          reason: 'INCOMPLETE_CHUNK_ANALYSIS',
+          message:
+            `Analiz eksik kaldı: ${chunkResults.length}/${chunkCount} bölüm tamamlandı. ` +
+            `Eksik video hiçbir zaman hazır oyun olarak açılmayacak.`,
+          completedChunkCount: chunkResults.length,
+          expectedChunkCount: chunkCount,
+          failedChunk: Math.min(chunkCount, chunkResults.length + 1),
+          failure: failureBody
+        };
+      }
     } else {
       const mergedActions = chunkResults
         .flatMap(result =>
@@ -1319,9 +1339,18 @@ els.analyzeBtn.addEventListener('click', async () => {
   }
 
   if (!body?.available) {
+    const creditsDepleted = body?.reason === 'GEMINI_CREDITS_DEPLETED';
     els.analysisState.textContent = body?.reason || 'ANALYSIS_INCOMPLETE';
-    els.analysisTitle.textContent = 'Video analizi eksik kaldı';
-    els.analysisOutput.textContent = body?.message || 'Tüm video bölümleri doğrulanmadan oyun başlatılmadı.';
+    els.analysisTitle.textContent = creditsDepleted
+      ? 'Gemini API kredisi tükendi'
+      : 'Video analizi eksik kaldı';
+    els.analysisOutput.textContent = creditsDepleted
+      ? [
+          'Gemini API kredisi tükendi. Analiz başlatılamadı.',
+          'Yeni kredi ekle veya geçerli bakiyesi olan başka bir Gemini API anahtarı kullan.',
+          'Bu hata için otomatik tekrar deneme yapılmadı.'
+        ].join('\n')
+      : (body?.message || 'Tüm video bölümleri doğrulanmadan oyun başlatılmadı.');
     setGameState('ERROR');
     renderDebug({ lastAnalyzeBody: body });
     return;
