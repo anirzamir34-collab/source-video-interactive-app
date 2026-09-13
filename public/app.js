@@ -25,6 +25,8 @@ import {
 import {
   ANALYSIS_SCHEMA_VERSION,
   ENGINE_VERSION,
+  activityDisplayLabel,
+  activityOccurrenceNamespace,
   advanceAdultPhase,
   analysisFingerprint,
   appendEngineEvent,
@@ -1410,10 +1412,11 @@ function assignPositionOccurrenceIds(actions) {
       ? rawEnd
       : Number(action.endTime) || startTime;
     const endTime = Math.max(startTime, endCandidate);
-    const key = `${sceneId}::${familyId}`;
+    const routeNamespace = activityOccurrenceNamespace(action);
+    const key = `${sceneId}::${familyId}::${routeNamespace}`;
 
     if (!groups.has(key)) {
-      groups.set(key, { sceneId, familyId, entries: [] });
+      groups.set(key, { sceneId, familyId, routeNamespace, entries: [] });
     }
 
     groups.get(key).entries.push({
@@ -1473,8 +1476,11 @@ function assignPositionOccurrenceIds(actions) {
         const familySlug = normalizeAdultLabel(group.familyId)
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '') || 'position';
+        const routeSlug = normalizeAdultLabel(group.routeNamespace || 'other')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'other';
         occurrence = {
-          id: `${sceneSlug}:${familySlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
+          id: `${sceneSlug}:${familySlug}:${routeSlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
           startTime: entry.startTime,
           endTime: entry.endTime
         };
@@ -1876,14 +1882,17 @@ function prepareAdultScenes() {
       action.positionOccurrenceId ||
       `${sceneId}:${canonical.id}:legacy-${Math.round((Number(action.positionStartTime ?? action.startTime) || 0) * 1000)}`
     );
-    const positionKey = `${category.id}:${canonical.id}:${occurrenceId}`;
+    const routeNamespace = activityOccurrenceNamespace(action);
+    const positionKey = `${category.id}:${canonical.id}:${routeNamespace}:${occurrenceId}`;
 
     if (!scene.positions.has(positionKey)) {
       scene.positions.set(positionKey, {
         id: positionKey,
         familyId: canonical.id,
         occurrenceId,
-        label: canonical.label,
+        activityType: routeNamespace,
+        activityTypeConfidence: Number(action.activityTypeConfidence || 0),
+        label: activityDisplayLabel(canonical.label, action),
         categoryId: category.id,
         categoryLabel: category.label,
         startTime: Number(action.positionStartTime ?? action.startTime),
@@ -1985,12 +1994,12 @@ function prepareAdultScenes() {
     const indexes = new Map();
 
     scene.positions.forEach(position => {
-      const key = `${position.categoryId}:${position.familyId}`;
+      const key = `${position.categoryId}:${position.familyId}:${position.activityType || 'other'}`;
       totals.set(key, (totals.get(key) || 0) + 1);
     });
 
     scene.positions.forEach(position => {
-      const key = `${position.categoryId}:${position.familyId}`;
+      const key = `${position.categoryId}:${position.familyId}:${position.activityType || 'other'}`;
       if ((totals.get(key) || 0) > 1) {
         const occurrenceNumber = (indexes.get(key) || 0) + 1;
         indexes.set(key, occurrenceNumber);

@@ -146,9 +146,32 @@ function isCorePositionCritical(action = {}) {
   return Boolean(family && !['oral', 'manual'].includes(family));
 }
 
-function normalizedActivityType(action = {}) {
+export function normalizedActivityType(action = {}) {
   const value = String(action.activityType || '').trim().toLowerCase();
   return ['oral', 'manual', 'vaginal', 'anal', 'other'].includes(value) ? value : 'other';
+}
+
+export function verifiedActivityRoute(action = {}) {
+  const route = normalizedActivityType(action);
+  if (['oral', 'manual'].includes(route)) return route;
+  if (!['vaginal', 'anal'].includes(route)) return 'other';
+  const confidence = Number(action.activityTypeConfidence);
+  const evidence = String(action.activityEvidence || '').trim();
+  return Number.isFinite(confidence) && confidence >= SECOND_PASS_ACTIVITY_CONFIDENCE && evidence
+    ? route
+    : 'other';
+}
+
+export function activityOccurrenceNamespace(action = {}) {
+  return verifiedActivityRoute(action);
+}
+
+export function activityDisplayLabel(baseLabel, action = {}) {
+  const base = String(baseLabel || 'Pozisyon').trim() || 'Pozisyon';
+  const route = verifiedActivityRoute(action);
+  if (route === 'vaginal') return `${base} · Vajinal`;
+  if (route === 'anal') return `${base} · Anal`;
+  return base;
 }
 
 function isPenetrativeActivity(action = {}) {
