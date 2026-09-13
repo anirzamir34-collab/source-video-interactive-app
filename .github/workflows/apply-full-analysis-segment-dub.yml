@@ -26,6 +26,19 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Preserve patch replacement escapes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply_full_analysis_segment_dub.py')
+          text = path.read_text()
+          old = "updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)"
+          new = "updated, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=flags)"
+          if old not in text:
+              raise SystemExit('sub_once implementation not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
       - name: Apply product fix
         run: python .github/scripts/apply_full_analysis_segment_dub.py
 
