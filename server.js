@@ -345,6 +345,7 @@ Return ONLY valid JSON with this exact shape:
       "adultSceneEndTime": 0,
       "postSceneTime": 0,
       "positionId": "",
+      "positionOccurrenceId": "",
       "activityType": "oral|manual|vaginal|anal|other",
       "positionLabel": "",
       "positionStartTime": 0,
@@ -389,8 +390,9 @@ Rules:
 - Detect a position only when the source visibly shows a stable adult-act body configuration sustained over time; then use actionType "position".
 - Never classify undressing, dressing, walking, approaching, preparation, conversation, camera changes, pauses or generic standing/sitting as positions.
 - Foreplay and non-position actions may remain chronological main/bonus actions, but must not receive a positionId or appear in position tabs.
-- Merge duplicate detections of the same stable position when their time ranges overlap; position ranges must be chronological, non-overlapping and contained inside the verified adult scene.
+- Merge duplicate detections only when they describe the same continuous occurrence and their time ranges overlap; never bridge separate appearances of the same position into one long range.
 - Give every verified position a stable positionId, exact Turkish positionLabel, positionStartTime and positionEndTime.
+- Keep positionId as the canonical semantic position family. Give each uninterrupted occurrence of that family a stable positionOccurrenceId; if the same position returns later after another position, transition, or gap, it must have a different positionOccurrenceId.
 - Set activityType to oral, manual, vaginal, anal, or other only from direct visible evidence; never guess when evidence is unclear.
 - Verify every position and internal movement against its exact start frame, midpoint frame and end frame from the source video.
 - The Turkish label must directly describe what is visibly happening at the midpoint timestamp; if the midpoint does not visibly prove that label, omit the item.
@@ -464,6 +466,7 @@ Rules:
           adultSceneEndTime: Number(action.adultSceneEndTime ?? action.endTime),
           postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
           positionId: String(action.positionId || ''),
+          positionOccurrenceId: String(action.positionOccurrenceId || ''),
           activityType: ['oral', 'manual', 'vaginal', 'anal'].includes(
             String(action.activityType || '').toLowerCase()
           )
