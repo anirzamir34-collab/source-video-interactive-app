@@ -362,6 +362,8 @@ Return ONLY valid JSON with this exact shape:
       "positionId": "",
       "positionOccurrenceId": "",
       "activityType": "oral|manual|vaginal|anal|other",
+      "activityTypeConfidence": 0.0,
+      "activityEvidence": "brief directly visible evidence or empty string",
       "positionLabel": "",
       "positionStartTime": 0,
       "positionEndTime": 0,
@@ -416,6 +418,13 @@ Rules:
 - Give every verified position a stable positionId, exact Turkish positionLabel, positionStartTime and positionEndTime.
 - Keep positionId as the canonical semantic position family. Give each uninterrupted occurrence of that family a stable positionOccurrenceId; if the same position returns later after another position, transition, cut, or real time gap, it must have a different positionOccurrenceId.
 - Set activityType to oral, manual, vaginal, anal, or other only from direct visible evidence; never guess when evidence is unclear.
+- CRITICAL: positionId never determines penetration route. Missionary, cowgirl, rear, standing-rear, standing, spoon and any other body position can be vaginal or anal. Never default a penetrative position to vaginal.
+- Classify vaginal only when the source frames directly verify vaginal penetration; classify anal only when the source frames directly verify anal penetration. Body angle, position name, dialogue, prior activity, or statistical likelihood are not sufficient by themselves.
+- For vaginal or anal, require the route to remain visually supported at the action start, midpoint and end. If the exact penetration route is occluded, ambiguous, changes off-camera, or cannot be directly distinguished, set activityType to other rather than guessing.
+- Set activityTypeConfidence from 0.0 to 1.0 for the penetration-route classification specifically, independent of general action confidence. Be conservative. A vaginal/anal claim should reach 0.90 only when direct visual evidence is clear and consistent.
+- Set activityEvidence to a brief description of the directly visible evidence supporting activityType. Leave it empty for other/uncertain route. Never use dialogue alone as activityEvidence.
+- The Turkish label may say "vajinal" only when activityType is vaginal with activityTypeConfidence >= 0.90 and direct activityEvidence. It may say "anal" only when activityType is anal with the same evidence standard. Otherwise the label must name only the verified position/action without claiming penetration route.
+- If the visible route changes between vaginal and anal while the body position stays the same, end the previous action at the verified transition and create a new action with a new positionOccurrenceId. Never carry the previous activityType across that transition.
 - Verify every position and internal movement against its exact start frame, midpoint frame and end frame from the source video.
 - The Turkish label must directly describe what is visibly happening at the midpoint timestamp; if the midpoint does not visibly prove that label, omit the item.
 - All returned times are absolute source-video seconds, never scene-relative or chunk-relative seconds.
@@ -502,6 +511,8 @@ Rules:
           )
             ? String(action.activityType).toLowerCase()
             : 'other',
+          activityTypeConfidence: Math.max(0, Math.min(1, Number(action.activityTypeConfidence) || 0)),
+          activityEvidence: String(action.activityEvidence || '').trim(),
           positionLabel: String(action.positionLabel || ''),
           positionStartTime: Number(action.positionStartTime ?? action.startTime),
           positionEndTime: Number(action.positionEndTime ?? action.endTime),

@@ -131,6 +131,7 @@ function chooseHigherConfidence(a, b) {
 }
 
 export const SECOND_PASS_POSITION_CONFIDENCE = 0.84;
+export const SECOND_PASS_ACTIVITY_CONFIDENCE = 0.90;
 
 function isOutcomeCritical(action = {}) {
   const type = String(action.actionType || '').toLowerCase();
@@ -145,6 +146,24 @@ function isCorePositionCritical(action = {}) {
   return Boolean(family && !['oral', 'manual'].includes(family));
 }
 
+function normalizedActivityType(action = {}) {
+  const value = String(action.activityType || '').trim().toLowerCase();
+  return ['oral', 'manual', 'vaginal', 'anal', 'other'].includes(value) ? value : 'other';
+}
+
+function isPenetrativeActivity(action = {}) {
+  return ['vaginal', 'anal'].includes(normalizedActivityType(action));
+}
+
+function activityTypeConfidence(action = {}) {
+  const raw = Number(action.activityTypeConfidence);
+  return Number.isFinite(raw) ? clamp(raw, 0, 1) : 0;
+}
+
+function activityTypeEvidence(action = {}) {
+  return String(action.activityEvidence || '').trim();
+}
+
 export function secondPassReviewCandidates(result = {}) {
   const actions = Array.isArray(result.actions) ? result.actions : [];
   if (!actions.length) return [];
@@ -155,6 +174,13 @@ export function secondPassReviewCandidates(result = {}) {
   // one visual verification pass. Ordinary foreplay and generic actions do not.
   actions.forEach(action => {
     if (isOutcomeCritical(action)) {
+      selected.add(action);
+      return;
+    }
+    if (isCorePositionCritical(action) && isPenetrativeActivity(action) && (
+      activityTypeConfidence(action) < SECOND_PASS_ACTIVITY_CONFIDENCE ||
+      !activityTypeEvidence(action)
+    )) {
       selected.add(action);
       return;
     }
@@ -177,10 +203,19 @@ export function secondPassReviewCandidates(result = {}) {
       if (String(a.adultSceneId || '') !== String(b.adultSceneId || '')) continue;
       const familyA = semanticPositionFamily(a);
       const familyB = semanticPositionFamily(b);
-      if (!familyA || !familyB || familyA === familyB) continue;
-      if (overlapSeconds(a, b) < 1.5) continue;
-      selected.add(a);
-      selected.add(b);
+      if (!familyA || !familyB) continue;
+      const overlap = overlapSeconds(a, b);
+      if (overlap < 1.5) continue;
+      const activityA = normalizedActivityType(a);
+      const activityB = normalizedActivityType(b);
+      const routeConflict = familyA === familyB &&
+        ['vaginal', 'anal'].includes(activityA) &&
+        ['vaginal', 'anal'].includes(activityB) &&
+        activityA !== activityB;
+      if (familyA !== familyB || routeConflict) {
+        selected.add(a);
+        selected.add(b);
+      }
     }
   }
 
@@ -257,6 +292,22 @@ export function reviewAndHardenAnalysis(input = {}) {
     }
 
     const { __index, ...clean } = action;
+    const route = normalizedActivityType(clean);
+    if (['vaginal', 'anal'].includes(route) && (
+      activityTypeConfidence(clean) < SECOND_PASS_ACTIVITY_CONFIDENCE ||
+      !activityTypeEvidence(clean)
+    )) {
+      clean.activityType = 'other';
+      clean.activityTypeConfidence = activityTypeConfidence(clean);
+      const explicitRouteLabel = /\b(vajinal|vaginal|anal)\b/i.test(String(clean.label || ''));
+      if (explicitRouteLabel) clean.label = String(clean.positionLabel || 'Pozisyon').trim();
+      issues.push({
+        severity: 'repair',
+        code: 'UNVERIFIED_ACTIVITY_TYPE',
+        actionId: id,
+        claimedActivityType: route
+      });
+    }
     accepted.push({ ...clean, confidence });
   }
 
