@@ -613,6 +613,7 @@ async function uploadDialogueWithProgress(
 ) {
   const file = form.get('video');
   const duration = String(form.get('duration') || '0');
+  const protagonistProfile = String(form.get('protagonistProfile') || '');
 
   if (!(file instanceof Blob)) {
     throw new Error('Yüklenecek ses dosyası bulunamadı.');
@@ -700,6 +701,7 @@ async function uploadDialogueWithProgress(
   const finishForm = new FormData();
   finishForm.append('uploadId', uploadId);
   finishForm.append('duration', duration);
+  finishForm.append('protagonistProfile', protagonistProfile);
 
   const response = await fetch('/api/gemini-dialogue-analyze', {
     method: 'POST',
@@ -724,15 +726,9 @@ async function analyzeSelectedDialogue(file) {
     `${(file.size / 1024 / 1024).toFixed(1)} MB`;
 
   const form = new FormData();
-  let dialogueFile = file;
-
-  try {
-    dialogueFile = await extractDialogueAudio(file);
-  } catch (error) {
-    console.warn('Ses ayrılamadı; özgün video kullanılacak:', error);
-    els.analysisOutput.textContent =
-      'Ses telefonda ayrılamadı. Özgün video gönderiliyor...';
-  }
+  // Keep the visual track: speaker roles and stable character identities need
+  // faces, scene continuity and visible interactions as well as the audio.
+  const dialogueFile = file;
 
   form.append(
     'video',
@@ -740,6 +736,7 @@ async function analyzeSelectedDialogue(file) {
     dialogueFile.name || 'dialogue.wav'
   );
   form.append('duration', String(Number(els.video.duration) || 0));
+  form.append('protagonistProfile', String(els.protagonistInput?.value || '').trim());
 
   const upload = await uploadDialogueWithProgress(
     form,
@@ -789,25 +786,24 @@ function renderSubtitle() {
     return;
   }
 
-  const segment = segments.find(item =>
-    now >= Number(item.startTime) &&
-    now <= Number(item.endTime)
-  );
+  const segment = dialogueSegmentAt(segments, now, 0.015);
 
   if (!segment) {
     els.subtitleOverlay?.classList.add('hidden');
     return;
   }
 
-  const speaker =
-    segment.gender === 'female'
-      ? 'KADIN'
-      : segment.gender === 'male'
-        ? 'ERKEK'
-        : 'KONUŞMACI';
+  const speakerProfile = (state.dialogue?.speakers || []).find(item =>
+    String(item.speakerId) === String(segment.speakerId)
+  );
+  const speaker = String(
+    segment.speakerName ||
+    speakerProfile?.speakerName ||
+    speakerProfile?.displayName ||
+    (segment.gender === 'female' ? 'Kadın' : segment.gender === 'male' ? 'Erkek' : 'Konuşmacı')
+  ).trim();
 
-  els.subtitleSpeaker.textContent =
-    `${speaker} · ${String(segment.emotion || 'neutral').toUpperCase()}`;
+  els.subtitleSpeaker.textContent = speaker;
   els.subtitleText.textContent = segment.turkishText;
   els.subtitleOverlay.classList.remove('hidden');
 }
