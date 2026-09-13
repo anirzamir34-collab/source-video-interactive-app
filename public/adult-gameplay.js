@@ -1,6 +1,8 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 82;
+export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
+export const DEFAULT_BONUS_UNLOCK_PROGRESS = 72;
 
 export function averageAdultProgress(maleProgress, femaleProgress) {
   const male = clamp(maleProgress, 0, 100);
@@ -16,6 +18,59 @@ export function normalizeOutcomeUnlockProgress(value, fallback = DEFAULT_OUTCOME
 export function isOutcomeUnlocked(outcome, maleProgress, femaleProgress) {
   const required = normalizeOutcomeUnlockProgress(outcome?.unlockProgress);
   return averageAdultProgress(maleProgress, femaleProgress) >= required;
+}
+
+export function positionUnlockProgress({
+  categoryId = '',
+  familyId = '',
+  index = 0,
+  bootstrap = false
+} = {}) {
+  if (bootstrap) return 0;
+  const category = String(categoryId || '').toLowerCase();
+  const family = String(familyId || '').toLowerCase();
+  const order = Math.max(0, Number(index) || 0);
+
+  if (category === 'oral' || category === 'manual' || family === 'oral' || family === 'manual') {
+    return 0;
+  }
+  if (category === 'anal') {
+    return clamp(DEFAULT_BONUS_UNLOCK_PROGRESS + order * 8, 72, 94);
+  }
+  if (category === 'other') {
+    return clamp(58 + order * 10, 58, 90);
+  }
+  return clamp(DEFAULT_POSITION_UNLOCK_PROGRESS + order * 12, 35, 82);
+}
+
+export function adultDiscoveryPhase({
+  flow = 0,
+  hasCoreUnlocked = false,
+  hasBonusUnlocked = false,
+  hasOutcomeUnlocked = false
+} = {}) {
+  const progress = clamp(flow, 0, 100);
+  if (hasOutcomeUnlocked) return 'final';
+  if (hasBonusUnlocked || progress >= DEFAULT_BONUS_UNLOCK_PROGRESS) return 'reward';
+  if (hasCoreUnlocked || progress >= DEFAULT_POSITION_UNLOCK_PROGRESS) return 'positions';
+  return 'foreplay';
+}
+
+export function computeWarmupSelectionDelta({
+  repeatCount = 0,
+  comboCount = 0,
+  maleRate = 1,
+  femaleRate = 1
+} = {}) {
+  const repeats = Math.max(0, Number(repeatCount) || 0);
+  const repeatFactor = Math.max(0.35, 1 - repeats * 0.18);
+  const comboBonus = Math.min(2, Math.max(0, Number(comboCount) || 0) * 0.35);
+  const base = 5.5 * repeatFactor + comboBonus;
+
+  return {
+    male: clamp(base * clamp(maleRate, 0.25, 2.5), 0.75, 11),
+    female: clamp(base * clamp(femaleRate, 0.25, 2.5), 0.75, 11)
+  };
 }
 
 export function computeAdultSelectionDelta({
