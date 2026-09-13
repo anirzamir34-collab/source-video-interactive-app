@@ -130,15 +130,96 @@ function chooseHigherConfidence(a, b) {
   return da >= db ? a : b;
 }
 
-export function shouldSecondPassReview(result = {}) {
+export const SECOND_PASS_POSITION_CONFIDENCE = 0.84;
+
+function isOutcomeCritical(action = {}) {
+  const type = String(action.actionType || '').toLowerCase();
+  const outcome = String(action.outcomeType || '').toLowerCase();
+  return type === 'outcome' || outcome === 'climax';
+}
+
+function isCorePositionCritical(action = {}) {
+  const hasPosition = Boolean(action.positionId || action.positionLabel || String(action.actionType || '').toLowerCase() === 'position');
+  if (!hasPosition) return false;
+  const family = semanticPositionFamily(action);
+  return Boolean(family && !['oral', 'manual'].includes(family));
+}
+
+export function secondPassReviewCandidates(result = {}) {
   const actions = Array.isArray(result.actions) ? result.actions : [];
-  if (!actions.length) return false;
-  if (actions.some(action => action.adultScene)) return true;
-  if (actions.some(action => actionConfidence(action) < 0.78)) return true;
-  for (let index = 1; index < actions.length; index += 1) {
-    if (numberOr(actions[index].startTime) < numberOr(actions[index - 1].endTime) - 0.1) return true;
+  if (!actions.length) return [];
+
+  const selected = new Set();
+
+  // Final/outcome mistakes are expensive in gameplay, so they always receive
+  // one visual verification pass. Ordinary foreplay and generic actions do not.
+  actions.forEach(action => {
+    if (isOutcomeCritical(action)) {
+      selected.add(action);
+      return;
+    }
+    if (isCorePositionCritical(action) && actionConfidence(action) < SECOND_PASS_POSITION_CONFIDENCE) {
+      selected.add(action);
+    }
+  });
+
+  // Even high-confidence position labels are rechecked when two incompatible
+  // canonical positions claim the same source-video interval.
+  const positions = actions
+    .filter(action => Boolean(action.positionId || action.positionLabel || String(action.actionType || '').toLowerCase() === 'position'))
+    .sort((a, b) => numberOr(a.startTime) - numberOr(b.startTime));
+
+  for (let left = 0; left < positions.length; left += 1) {
+    const a = positions[left];
+    for (let right = left + 1; right < positions.length; right += 1) {
+      const b = positions[right];
+      if (numberOr(b.startTime) >= numberOr(a.endTime)) break;
+      if (String(a.adultSceneId || '') !== String(b.adultSceneId || '')) continue;
+      const familyA = semanticPositionFamily(a);
+      const familyB = semanticPositionFamily(b);
+      if (!familyA || !familyB || familyA === familyB) continue;
+      if (overlapSeconds(a, b) < 1.5) continue;
+      selected.add(a);
+      selected.add(b);
+    }
   }
-  return false;
+
+  return actions.filter(action => selected.has(action));
+}
+
+export function shouldSecondPassReview(result = {}) {
+  return secondPassReviewCandidates(result).length > 0;
+}
+
+export function mergeSecondPassReview(firstPass = {}, reviewPass = {}, candidates = []) {
+  const firstActions = Array.isArray(firstPass.actions) ? firstPass.actions : [];
+  const reviewedActions = Array.isArray(reviewPass.actions) ? reviewPass.actions : [];
+  const candidateIds = new Set(
+    (Array.isArray(candidates) ? candidates : [])
+      .map(action => String(action?.actionId || ''))
+      .filter(Boolean)
+  );
+
+  const untouched = firstActions.filter(action => !candidateIds.has(String(action?.actionId || '')));
+  // A second pass may verify, correct, or omit only the supplied candidates.
+  // It is never allowed to invent a brand-new action id.
+  const verified = reviewedActions.filter(action => candidateIds.has(String(action?.actionId || '')));
+  const actions = [...untouched, ...verified]
+    .sort((a, b) => numberOr(a.startTime) - numberOr(b.startTime));
+  const warnings = [...new Set([
+    ...(Array.isArray(firstPass.warnings) ? firstPass.warnings : []),
+    ...(Array.isArray(reviewPass.warnings) ? reviewPass.warnings : [])
+  ])];
+
+  return {
+    ...firstPass,
+    ...reviewPass,
+    actions,
+    warnings,
+    secondPassReviewed: true,
+    secondPassCandidateCount: candidateIds.size,
+    firstPassActionCount: firstActions.length
+  };
 }
 
 export function reviewAndHardenAnalysis(input = {}) {

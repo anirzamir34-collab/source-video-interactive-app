@@ -12,7 +12,9 @@ import {
   canPlayAction,
   createRuntimeSnapshot,
   isCompatibleRuntimeSnapshot,
+  mergeSecondPassReview,
   reviewAndHardenAnalysis,
+  secondPassReviewCandidates,
   shouldSecondPassReview,
   validateActionInterval
 } from '../public/engine-hardening.js';
@@ -31,10 +33,53 @@ test('timeline validator rejects broken ranges and movement outside parent posit
   assert.ok(validateActionInterval(action, 30).reasons.includes('LOOP_OUTSIDE_POSITION'));
 });
 
-test('adult or low-confidence chunks request a visual second review pass', () => {
-  assert.equal(shouldSecondPassReview({ actions: [{ startTime: 0, endTime: 1, confidence: 0.9 }] }), false);
-  assert.equal(shouldSecondPassReview({ actions: [{ startTime: 0, endTime: 1, confidence: 0.7 }] }), true);
-  assert.equal(shouldSecondPassReview({ actions: [{ startTime: 0, endTime: 1, confidence: 0.95, adultScene: true }] }), true);
+test('second visual pass is selective: only critical positions, conflicts and finals', () => {
+  const genericLow = { actionId: 'g', startTime: 0, endTime: 2, confidence: 0.6 };
+  const foreplayHigh = { actionId: 'f', startTime: 2, endTime: 5, confidence: 0.95, adultScene: true, actionType: 'touch' };
+  const coreHigh = {
+    actionId: 'p-high', startTime: 10, endTime: 25, confidence: 0.95, adultScene: true,
+    adultSceneId: 's', actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner'
+  };
+  const coreLow = { ...coreHigh, actionId: 'p-low', startTime: 30, endTime: 45, confidence: 0.78 };
+  const oralLow = {
+    actionId: 'oral', startTime: 46, endTime: 58, confidence: 0.76, adultScene: true,
+    adultSceneId: 's', actionType: 'position', positionId: 'oral', positionLabel: 'Oral'
+  };
+  const final = {
+    actionId: 'final', startTime: 60, endTime: 65, confidence: 0.96, adultScene: true,
+    adultSceneId: 's', actionType: 'outcome', outcomeType: 'climax'
+  };
+
+  assert.equal(shouldSecondPassReview({ actions: [genericLow, foreplayHigh, coreHigh, oralLow] }), false);
+  assert.deepEqual(secondPassReviewCandidates({ actions: [genericLow, coreLow, final] }).map(x => x.actionId), ['p-low', 'final']);
+  assert.equal(shouldSecondPassReview({ actions: [final] }), true);
+});
+
+test('overlapping incompatible positions force a second pass even at high confidence', () => {
+  const missionary = {
+    actionId: 'm', startTime: 10, endTime: 25, confidence: 0.95, adultSceneId: 's',
+    actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner'
+  };
+  const cowgirl = {
+    actionId: 'c', startTime: 12, endTime: 24, confidence: 0.94, adultSceneId: 's',
+    actionType: 'position', positionId: 'cowgirl', positionLabel: 'Kovboy'
+  };
+  assert.deepEqual(secondPassReviewCandidates({ actions: [missionary, cowgirl] }).map(x => x.actionId), ['m', 'c']);
+});
+
+test('selective review preserves safe first-pass actions and rejects invented review ids', () => {
+  const safe = { actionId: 'safe', label: 'Dokun', startTime: 1, endTime: 3, confidence: 0.95 };
+  const risky = { actionId: 'risky', label: 'Misyoner', startTime: 10, endTime: 20, confidence: 0.78 };
+  const reviewedRisky = { ...risky, confidence: 0.93, positionId: 'missionary' };
+  const invented = { actionId: 'invented', label: 'Uydurma', startTime: 30, endTime: 40, confidence: 1 };
+  const merged = mergeSecondPassReview(
+    { actions: [safe, risky], warnings: ['first'] },
+    { actions: [reviewedRisky, invented], warnings: ['review'] },
+    [risky]
+  );
+  assert.deepEqual(merged.actions.map(x => x.actionId), ['safe', 'risky']);
+  assert.equal(merged.actions.find(x => x.actionId === 'risky').confidence, 0.93);
+  assert.deepEqual(merged.warnings, ['first', 'review']);
 });
 
 test('hardening rejects incomplete chunk coverage', () => {
