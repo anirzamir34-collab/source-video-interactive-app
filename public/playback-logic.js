@@ -11,12 +11,19 @@ export function dialogueSegmentAt(segments, videoTime, tolerance = 0.04) {
   const pad = Math.max(0, Number(tolerance) || 0);
   const list = Array.isArray(segments) ? segments : [];
 
-  return list.find(segment => {
+  const active = list.filter(segment => {
     const start = Number(segment?.startTime);
     const end = Number(segment?.endTime);
     return Number.isFinite(start) && Number.isFinite(end) && end > start &&
       time >= start - pad && time < end + pad;
-  }) || null;
+  });
+
+  // When timestamp estimates overlap, the newest utterance owns the screen.
+  // This switches the caption immediately instead of keeping the previous
+  // speaker visible until their estimated end time.
+  return active.sort((left, right) =>
+    Number(right.startTime) - Number(left.startTime)
+  )[0] || null;
 }
 
 export function dubSegmentKey(segment, fallbackIndex = 0) {
