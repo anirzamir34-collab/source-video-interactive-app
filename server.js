@@ -11,8 +11,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const ANALYSIS_SCHEMA_VERSION = 4;
-const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-hardening-v1';
+const ANALYSIS_SCHEMA_VERSION = 5;
+const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
 const upload = multer({
@@ -198,7 +198,7 @@ const storyboardUpload = multer({
   limits: {
     fileSize: 2 * 1024 * 1024,
     files: 20,
-    fields: 14
+    fields: 16
   }
 });
 
@@ -239,6 +239,7 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const qualityMode = String(req.body?.qualityMode || 'ultra');
   const reviewMode = String(req.body?.reviewMode || '') === '1';
   const reviewCandidates = String(req.body?.reviewCandidates || '[]').slice(0, 18000);
+  const storyContextMemory = String(req.body?.storyContextMemory || '{}').slice(0, 24000);
   const reviewInstructions = reviewMode ? `
 SECOND PASS VISUAL REVIEW MODE:
 - Re-inspect the SAME storyboard frames against these first-pass candidates:
@@ -253,6 +254,7 @@ ${reviewCandidates}
 - Body position never proves route: missionary, cowgirl, rear, standing-rear, spoon and similar configurations can be vaginal or anal.
 - Return vaginal or anal only when the visible contact/penetration location is directly distinguishable and consistent at the candidate start, midpoint and end. Otherwise return activityType other with low activityTypeConfidence, or omit the candidate.
 - Never default an ambiguous penetrative candidate to vaginal. Correct activityType, activityTypeConfidence, activityEvidence and the Turkish label together so they cannot contradict one another.
+- Re-check narrativeChoiceLabel, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence for supplied candidates. Preserve them only when the same frames/dialogue still support them; otherwise downgrade to neutral wording.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
   const targetActionCount = Math.max(
@@ -287,6 +289,26 @@ ${dialogueContext}
 - Dialogue never overrides contradictory visual evidence.
 - Never invent speech, responses or outcomes.
 - Connect dialogue choices only to matching visible MAIN_MALE actions.
+
+STORY ENGINE V1 — EVIDENCE-AWARE NARRATIVE UNDERSTANDING:
+Prior verified story memory from earlier chunks:
+${storyContextMemory}
+
+- Understand the scene as a story, not merely a motion list: identify setting, immediate scene purpose, emotional tone, character roles, relationship clues, goals, conflict/tension and meaningful narrative progression.
+- Build story continuity across chunks, but PRIOR MEMORY NEVER OVERRIDES current source frames or current time-aligned dialogue.
+- Separate knowledge into three levels only: fact, inference, unknown.
+- FACT means directly visible or explicitly stated in time-aligned dialogue. Include a short evidence string and confidence.
+- INFERENCE means strongly suggested but not explicit. It must remain phrased as an inference and include evidence/confidence.
+- UNKNOWN means the source does not establish it. Never silently promote unknown information into a fact.
+- Sensitive relationship/background labels such as ex-partner, spouse, step-parent, parent, sibling, relative, boss, employee, teacher, landlord or neighbor may be FACT only when dialogue explicitly states it or unmistakable source evidence proves it. Mere age difference, familiarity, location, clothing, intimacy or body language is never enough.
+- Example: two familiar people meeting at a house does NOT prove 'ex-girlfriend' or 'stepfather'. If dialogue explicitly says they broke up, 'ex-partner' may be a fact. Otherwise keep the exact relationship unknown or as a cautious inference.
+- Return top-level storyContext with synopsisTr, currentSceneTitle, currentSceneGoal, setting, emotionalTone, characters[], relationships[], facts[], inferences[], unknowns[].
+- Every relationship entry must contain from, to, relation, evidenceLevel, confidence and evidence.
+- Every returned action must additionally contain narrativeChoiceLabel, narrativeReason, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence.
+- narrativeChoiceLabel is the player-facing Turkish story choice. It must describe the meaning of the REAL playable action in context, not invent a branch.
+- narrativeChoiceLabel must still map to that action's exact startTime/endTime. Never write a choice whose promised consequence is absent from that exact source segment.
+- If relationship/background context is uncertain, use neutral story wording such as 'Onunla konuşmaya devam et', 'Neden geldiğini sor' or another source-grounded action instead of asserting an unsupported relationship.
+- Prefer story-aware wording over mechanical wording when evidence supports it: scene intention + interaction + verified action. Do not replace precise sexual-position controls with fictional dialogue or outcomes.
 
 PROTAGONIST IDENTITY LOCK:
 Current locked profile:
@@ -536,6 +558,16 @@ Rules:
           ? action.cameraMode
           : 'uncertain',
         label: String(action.label || '').trim(),
+        narrativeChoiceLabel: String(action.narrativeChoiceLabel || '').trim(),
+        narrativeReason: String(action.narrativeReason || '').trim(),
+        sceneTitle: String(action.sceneTitle || '').trim(),
+        sceneGoal: String(action.sceneGoal || '').trim(),
+        relationshipContext: String(action.relationshipContext || '').trim(),
+        storyEvidenceLevel: ['fact', 'inference', 'unknown'].includes(String(action.storyEvidenceLevel || '').toLowerCase())
+          ? String(action.storyEvidenceLevel).toLowerCase()
+          : 'unknown',
+        storyConfidence: Math.max(0, Math.min(1, Number(action.storyConfidence) || 0)),
+        storyEvidence: String(action.storyEvidence || '').trim(),
         startTime: Number(action.startTime),
         endTime: Number(action.endTime),
         sourceVerified: action.sourceVerified !== false,
@@ -586,6 +618,7 @@ Rules:
       playStartTime: introEndTime,
       protagonistProfile: String(parsed.protagonistProfile || protagonistProfile || ''),
       videoPrompt: String(parsed.videoPrompt || ''),
+      storyContext: parsed.storyContext && typeof parsed.storyContext === 'object' ? parsed.storyContext : {},
       actions,
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []
     });
