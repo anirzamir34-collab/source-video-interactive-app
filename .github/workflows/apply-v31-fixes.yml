@@ -6,6 +6,7 @@ on:
       - feature/fix-progressive-sequence-dub-v31
     paths:
       - '.github/scripts/apply_v31_fixes.py'
+      - '.github/scripts/prepare_v31_patch.py'
       - '.github/workflows/apply-v31-fixes.yml'
 
 permissions:
@@ -25,6 +26,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Prepare patch for current code
+        run: python .github/scripts/prepare_v31_patch.py
 
       - name: Apply v3.1 fixes
         run: python .github/scripts/apply_v31_fixes.py
