@@ -27,6 +27,14 @@ test('dialogueSegmentAt returns only the segment matching the current video time
   assert.equal(dialogueSegmentAt(segments, 15), null);
 });
 
+test('dialogueSegmentAt immediately switches to the newest overlapping speaker', () => {
+  const segments = [
+    { segmentId: 'father', startTime: 10, endTime: 13, speakerName: 'Baba' },
+    { segmentId: 'son', startTime: 12.4, endTime: 15, speakerName: 'Erkek kardeş' }
+  ];
+  assert.equal(dialogueSegmentAt(segments, 12.5)?.segmentId, 'son');
+});
+
 test('dub time maps proportionally inside the matching dialogue segment', () => {
   assert.equal(mapVideoTimeToDubTime({
     videoTime: 21.5,
