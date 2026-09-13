@@ -1,0 +1,33 @@
+name: Apply subtitle text fallback
+on:
+  push:
+    branches: [fix/subtitle-text-fallback]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[subtitle-fallback-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/subtitle-text-fallback
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: python3 scripts/patch_subtitle_text_fallback.py
+      - name: Validate
+        run: |
+          node --check server.js
+          npm test
+          git diff --check
+          grep -q "gemini-dialogue-fallback" server.js
+      - name: Commit product change
+        run: |
+          git config user.name "videoquest-bot"
+          git config user.email "videoquest-bot@users.noreply.github.com"
+          git add server.js
+          git commit -m "Add text-only subtitle translation fallback [subtitle-fallback-patched]"
+          git push origin HEAD:fix/subtitle-text-fallback
