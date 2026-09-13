@@ -195,7 +195,8 @@ function persistRuntimeSnapshot(reason = 'runtime', force = false) {
   state.lastRuntimeSaveAt = now;
   try {
     const snapshot = createRuntimeSnapshot(state, state.analysisFingerprint);
-    localStorage.setItem(RUNTIME_SAVE_KEY, JSON.stringify(snapshot));
+    // Session persistence intentionally disabled: refresh must start clean.
+    return;
   } catch (error) {
     console.warn('Runtime state could not be saved:', error);
   }
@@ -770,10 +771,8 @@ async function analyzeSelectedDialogue(file) {
   };
 
   try {
-    localStorage.setItem(
-      'videoquest:last-dialogue',
-      JSON.stringify(state.dialogue)
-    );
+    // Dialogue persistence intentionally disabled: refresh must start clean.
+    localStorage.removeItem('videoquest:last-dialogue');
   } catch (error) {
     console.warn('Dialogue could not be saved:', error);
   }
@@ -1427,7 +1426,8 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   state.analysis = normalized;
   try {
-    localStorage.setItem("videoquest:last-analysis", JSON.stringify(normalized));
+    // Analysis persistence intentionally disabled: refresh must start clean.
+    localStorage.removeItem("videoquest:last-analysis");
   } catch (error) {
     console.warn("Analysis could not be saved locally:", error);
   }
@@ -3354,7 +3354,49 @@ function restoreSavedAnalysis() {
   }
 }
 
-restoreSavedAnalysis();
+function clearPreviousGameResidue() {
+  localStorage.removeItem('videoquest:last-analysis');
+  localStorage.removeItem('videoquest:last-dialogue');
+  localStorage.removeItem(RUNTIME_SAVE_KEY);
+  sessionStorage.removeItem('videoquest:last-analysis');
+  sessionStorage.removeItem('videoquest:last-dialogue');
+  sessionStorage.removeItem(RUNTIME_SAVE_KEY);
+  state.analysis = null;
+  state.dialogue = null;
+  state.analysisFingerprint = '';
+  state.integrityReport = null;
+  state.consumedActionIds = new Set();
+  state.currentActionIndex = -1;
+  state.gameCursorTime = 0;
+  state.adultScenes = [];
+  state.completedAdultSceneIds = new Set();
+  state.adultVisitedPositionIds = new Set();
+  state.adultMovementPlayCounts = new Map();
+  state.adultPreludePlayCounts = new Map();
+  state.adultRevealedPositionIds = new Set();
+  state.adultUnlockedOutcomeIds = new Set();
+  state.adultMode = false;
+  state.adultScene = null;
+  state.activeAction = null;
+  state.activePositionId = null;
+  state.activeMovementId = null;
+  state.engineEvents = [];
+  els.choices.innerHTML = '';
+  els.timelineList.innerHTML = '';
+  els.videoPrompt.textContent = '';
+  els.adultInteractionPanel?.classList.add('hidden');
+  els.playerSection?.classList.add('hidden');
+  els.analysisCard?.classList.add('hidden');
+  if (els.video) {
+    els.video.pause();
+    els.video.removeAttribute('src');
+    els.video.load();
+  }
+  resetDubState();
+  setGameState('IDLE');
+}
+
+clearPreviousGameResidue();
 
 
 // FULLSCREEN GAME MODE
