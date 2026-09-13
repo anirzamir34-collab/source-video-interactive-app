@@ -38,6 +38,12 @@ import {
   reviewAndHardenAnalysis,
   secondPassReviewCandidates
 } from './engine-hardening.js';
+import {
+  mergeStoryContexts,
+  normalizeStoryContext,
+  storyActionMeta,
+  storyChoiceLabelForAction
+} from './story-engine.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -328,6 +334,7 @@ function renderDebug(extra = {}) {
     schemaVersion: state.analysis?.schemaVersion ?? null,
     engineVersion: state.analysis?.engineVersion ?? ENGINE_VERSION,
     integrityReport: state.integrityReport,
+    storyContext: state.analysis?.storyContext ?? null,
     adultPhaseMachine: state.adultPhaseMachine,
     recentEngineEvents: state.engineEvents.slice(-30),
     ...extra,
@@ -1087,6 +1094,7 @@ els.analyzeBtn.addEventListener('click', async () => {
 
     let protagonistProfile =
     String(els.protagonistInput?.value || '').trim();
+    let storyContextMemory = normalizeStoryContext({});
 
   for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
       const firstSheet = chunkIndex * sheetsPerChunk;
@@ -1144,6 +1152,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     form.append('dialogueContext', JSON.stringify(chunkDialogue));
     form.append('qualityMode', modes.quality);
     form.append('protagonistProfile', protagonistProfile);
+    form.append('storyContextMemory', JSON.stringify(storyContextMemory));
 
       els.analysisTitle.textContent =
         `Derin analiz: bölüm ${chunkIndex + 1}/${chunkCount}`;
@@ -1212,6 +1221,7 @@ els.analyzeBtn.addEventListener('click', async () => {
               body = mergeSecondPassReview(body, reviewBody, criticalReviewCandidates);
             }
             chunkResults.push(body);
+            storyContextMemory = mergeStoryContexts(chunkResults);
             if (body.protagonistProfile) {
               protagonistProfile = String(body.protagonistProfile).trim();
             }
@@ -1286,6 +1296,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       const prompts = chunkResults
         .map(result => String(result.videoPrompt || '').trim())
         .filter(Boolean);
+      const mergedStoryContext = mergeStoryContexts(chunkResults);
 
       const firstResult = chunkResults[0] || {};
 
@@ -1298,7 +1309,11 @@ els.analyzeBtn.addEventListener('click', async () => {
           firstResult.introEndTime ??
           0
         ),
-        videoPrompt: prompts.join('\n\n'),
+        videoPrompt: [
+          mergedStoryContext.synopsisTr ? `HİKÂYE ÖZETİ: ${mergedStoryContext.synopsisTr}` : '',
+          prompts.join('\n\n')
+        ].filter(Boolean).join('\n\n'),
+        storyContext: mergedStoryContext,
         actions: mergedActions,
         warnings: chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
@@ -1530,6 +1545,14 @@ function normalizeAnalysis(body) {
     .map((a, i) => ({
       actionId: String(a.actionId ?? a.id ?? `ACTION_${String(i + 1).padStart(3, '0')}`),
       label: String(a.label ?? a.action ?? 'Unnamed action'),
+      narrativeChoiceLabel: String(a.narrativeChoiceLabel || ''),
+      narrativeReason: String(a.narrativeReason || ''),
+      sceneTitle: String(a.sceneTitle || ''),
+      sceneGoal: String(a.sceneGoal || ''),
+      relationshipContext: String(a.relationshipContext || ''),
+      storyEvidenceLevel: String(a.storyEvidenceLevel || 'unknown'),
+      storyConfidence: Math.max(0, Math.min(1, Number(a.storyConfidence) || 0)),
+      storyEvidence: String(a.storyEvidence || ''),
       choiceKey: String(
         a.choiceKey ??
         a.afterState?.choiceKey ??
@@ -1589,6 +1612,7 @@ function normalizeAnalysis(body) {
     mainMaleTrackId: body?.mainMaleTrackId ?? null,
     semanticVideoMap: body?.semanticVideoMap ?? [],
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
+    storyContext: normalizeStoryContext(body?.storyContext || {}),
     actions: cleaned,
   };
 }
@@ -3070,9 +3094,12 @@ function renderChoices() {
   candidates.forEach((action) => {
     const button = document.createElement('button');
     button.className = 'choice';
+    const storyLabel = storyChoiceLabelForAction(action);
+    const storyMeta = storyActionMeta(action);
+    const scenePrefix = storyMeta.sceneTitle ? `${escapeHtml(storyMeta.sceneTitle)} · ` : '';
     button.innerHTML = `
-      <div class="choice-title">${escapeHtml(action.label)}</div>
-      <div class="choice-meta">${action.startTime.toFixed(2)} → ${action.endTime.toFixed(2)} sn • ${(action.confidence * 100).toFixed(0)}%</div>
+      <div class="choice-title">${escapeHtml(storyLabel)}</div>
+      <div class="choice-meta">${scenePrefix}${action.startTime.toFixed(2)} → ${action.endTime.toFixed(2)} sn • ${(action.confidence * 100).toFixed(0)}%</div>
     `;
     button.addEventListener('click', () => playAction(action));
     els.choices.appendChild(button);
@@ -3192,7 +3219,7 @@ function renderTimeline() {
   state.analysis.actions.forEach((a, i) => {
     const div = document.createElement('div');
     div.className = 'timeline-item';
-    div.innerHTML = `<b>${String(i + 1).padStart(2, '0')} • ${escapeHtml(a.label)}</b><div class="meta">${a.startTime.toFixed(3)} → ${a.endTime.toFixed(3)} • ${escapeHtml(a.actionId)}</div>`;
+    div.innerHTML = `<b>${String(i + 1).padStart(2, '0')} • ${escapeHtml(storyChoiceLabelForAction(a))}</b><div class="meta">${a.startTime.toFixed(3)} → ${a.endTime.toFixed(3)} • ${escapeHtml(a.actionId)}</div>`;
     els.timelineList.appendChild(div);
   });
 }

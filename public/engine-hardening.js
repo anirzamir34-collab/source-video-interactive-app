@@ -1,7 +1,7 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
-export const ANALYSIS_SCHEMA_VERSION = 4;
-export const ENGINE_VERSION = 'videoquest-hardening-v1';
+export const ANALYSIS_SCHEMA_VERSION = 5;
+export const ENGINE_VERSION = 'videoquest-story-v1';
 export const SAVE_VERSION = 2;
 
 export const ADULT_PHASE_ORDER = Object.freeze({
