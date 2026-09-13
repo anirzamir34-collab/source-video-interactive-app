@@ -49,10 +49,10 @@ export function adultDiscoveryPhase({
   hasBonusUnlocked = false,
   hasOutcomeUnlocked = false
 } = {}) {
-  const progress = clamp(flow, 0, 100);
+  clamp(flow, 0, 100);
   if (hasOutcomeUnlocked) return 'final';
-  if (hasBonusUnlocked || progress >= DEFAULT_BONUS_UNLOCK_PROGRESS) return 'reward';
-  if (hasCoreUnlocked || progress >= DEFAULT_POSITION_UNLOCK_PROGRESS) return 'positions';
+  if (hasBonusUnlocked) return 'reward';
+  if (hasCoreUnlocked) return 'positions';
   return 'foreplay';
 }
 
