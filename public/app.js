@@ -722,13 +722,17 @@ async function analyzeSelectedDialogue(file) {
   els.analysisTitle.textContent = 'Video diyaloğu analiz ediliyor';
   els.analysisState.textContent = 'AUDIO_ANALYSIS';
   els.analysisOutput.textContent =
-    `Video ve ses Gemini'ye gönderiliyor...\n` +
+    `Konuşma sesi hazırlanıyor...\n` +
     `${(file.size / 1024 / 1024).toFixed(1)} MB`;
 
   const form = new FormData();
-  // Keep the visual track: speaker roles and stable character identities need
-  // faces, scene continuity and visible interactions as well as the audio.
-  const dialogueFile = file;
+  let dialogueFile = file;
+  try {
+    dialogueFile = await extractDialogueAudio(file);
+  } catch (error) {
+    console.warn('Ses ayrılamadı; özgün video yedek olarak kullanılacak:', error);
+    els.analysisOutput.textContent = 'Ses ayrılamadı. Videonun ses kanalı doğrudan işleniyor...';
+  }
 
   form.append(
     'video',
