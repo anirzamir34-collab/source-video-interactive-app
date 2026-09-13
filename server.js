@@ -591,11 +591,27 @@ Rules:
     });
   } catch (error) {
     console.error('[gemini-storyboard-error]', error);
+    const details = String(error?.message || error);
+    const creditsDepleted =
+      details.includes('prepayment credits are depleted') ||
+      (details.includes('RESOURCE_EXHAUSTED') && details.includes('429'));
+
+    if (creditsDepleted) {
+      return res.status(429).json({
+        available: false,
+        reason: 'GEMINI_CREDITS_DEPLETED',
+        message: 'Gemini API kredisi tükendi. Analiz başlatılamadı. AI Studio proje faturalandırmasını veya API anahtarını kontrol et.',
+        retryable: false,
+        error: details
+      });
+    }
+
     return res.status(502).json({
       available: false,
       reason: 'GEMINI_STORYBOARD_ERROR',
       message: 'Storyboard analizi sırasında hata oluştu.',
-      error: error?.message || String(error)
+      retryable: true,
+      error: details
     });
   }
 });
