@@ -12,6 +12,14 @@ import {
   positionUnlockProgress,
   requiredWarmupDiscoveries
 } from './adult-gameplay.js';
+import {
+  dialogueSegmentAt,
+  dubSegmentKey,
+  fittedDubPlaybackRate,
+  isCompleteChunkAnalysis,
+  mapVideoTimeToDubTime,
+  nextDialogueSegments
+} from './playback-logic.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -688,51 +696,48 @@ function renderSubtitle() {
 
 const dubAudio = new Audio();
 dubAudio.preload = 'auto';
-const DUB_BLOCK_SECONDS = 120;
 
-function getDubBlockAt(videoTime) {
-  const duration = Math.max(0, Number(els.video.duration) || 0);
-  const time = Math.max(0, Number(videoTime) || 0);
-  const blockStart = Math.floor(time / DUB_BLOCK_SECONDS) * DUB_BLOCK_SECONDS;
-  const blockEnd = duration
-    ? Math.min(duration, blockStart + DUB_BLOCK_SECONDS)
-    : blockStart + DUB_BLOCK_SECONDS;
-  const segments = (state.dialogue?.segments || [])
-    .filter(s => {
-      const start = Number(s.startTime) || 0;
-      return start >= blockStart && start < blockEnd && s.turkishText;
-    })
-    .sort((x,y) => Number(x.startTime) - Number(y.startTime));
-  if (!segments.length) return null;
-  return {
-    blockId: `dub-${blockStart.toFixed(3)}-${blockEnd.toFixed(3)}`,
-    blockStart, blockEnd, segments
-  };
+function getDubSegmentAt(videoTime) {
+  return dialogueSegmentAt(state.dialogue?.segments || [], videoTime);
 }
 
-async function ensureDubBlock(block) {
-  if (!block) return null;
-  if (state.dubCache.has(block.blockId)) return state.dubCache.get(block.blockId);
-  if (state.dubRequests.has(block.blockId)) return state.dubRequests.get(block.blockId);
+function getDubSegmentId(segment) {
+  if (!segment) return '';
+  const segments = state.dialogue?.segments || [];
+  const index = Math.max(0, segments.indexOf(segment));
+  return dubSegmentKey(segment, index);
+}
 
-  const request = fetch('/api/gemini-dub-block', {
+async function ensureDubSegment(segment) {
+  if (!segment?.turkishText) return null;
+  const segmentId = getDubSegmentId(segment);
+  if (!segmentId) return null;
+  if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
+  if (state.dubRequests.has(segmentId)) return state.dubRequests.get(segmentId);
+
+  const request = fetch('/api/gemini-dub-segment', {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(block)
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: segment.turkishText,
+      gender: segment.gender,
+      emotion: segment.emotion,
+      speakerId: segment.speakerId || segmentId
+    })
   }).then(async response => {
     const body = await response.json();
     if (!response.ok || !body?.available || !body?.audioBase64) {
       throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
     }
     const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
-    state.dubCache.set(block.blockId, source);
+    state.dubCache.set(segmentId, source);
     return source;
   }).catch(error => {
-    console.error('Dub block failed:', block.blockId, error);
+    console.error('Dub segment failed:', segmentId, error);
     return null;
-  }).finally(() => state.dubRequests.delete(block.blockId));
+  }).finally(() => state.dubRequests.delete(segmentId));
 
-  state.dubRequests.set(block.blockId, request);
+  state.dubRequests.set(segmentId, request);
   return request;
 }
 
@@ -751,18 +756,34 @@ function resetDubState() {
   state.activeDubSegmentId = null;
 }
 
-function prefetchDubAround(videoTime) {
+function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  const current = getDubBlockAt(videoTime);
-  if (current) void ensureDubBlock(current);
+  nextDialogueSegments(state.dialogue?.segments || [], videoTime, 3)
+    .forEach(segment => void ensureDubSegment(segment));
+}
 
-  const nextTime = current
-    ? current.blockEnd + 0.01
-    : Math.max(0, Number(videoTime) || 0) + DUB_BLOCK_SECONDS;
-  const next = getDubBlockAt(nextTime);
-  if (next && (!current || next.blockId !== current.blockId)) {
-    void ensureDubBlock(next);
+function alignDubAudioToSegment(segment, videoTime) {
+  const audioDuration = Number(dubAudio.duration);
+  if (!Number.isFinite(audioDuration) || audioDuration <= 0) return;
+
+  const segmentStart = Number(segment.startTime) || 0;
+  const segmentEnd = Math.max(segmentStart + 0.05, Number(segment.endTime) || segmentStart + 0.05);
+  const expected = mapVideoTimeToDubTime({
+    videoTime,
+    segmentStart,
+    segmentEnd,
+    audioDuration
+  });
+
+  if (Math.abs((Number(dubAudio.currentTime) || 0) - expected) > 0.22) {
+    dubAudio.currentTime = expected;
   }
+
+  dubAudio.playbackRate = fittedDubPlaybackRate({
+    audioDuration,
+    segmentDuration: segmentEnd - segmentStart,
+    videoPlaybackRate: Number(els.video.playbackRate) || 1
+  });
 }
 
 async function syncDubPlayback() {
@@ -770,51 +791,51 @@ async function syncDubPlayback() {
 
   const generation = state.dubSyncGeneration;
   const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
-  const block = getDubBlockAt(videoTime);
-  if (!block) return stopDubPlayback();
+  const segment = getDubSegmentAt(videoTime);
 
-  if (state.activeDubSegmentId === block.blockId && dubAudio.src) {
-    const expected = Math.max(0, videoTime - block.blockStart);
-    if (Number.isFinite(dubAudio.duration) && expected < dubAudio.duration &&
-        Math.abs((Number(dubAudio.currentTime) || 0) - expected) > 0.45) {
-      dubAudio.currentTime = expected;
-    }
-    dubAudio.playbackRate = Math.max(0.9, Math.min(1.1, Number(els.video.playbackRate) || 1));
-    if (!els.video.paused && dubAudio.paused && expected < (dubAudio.duration || Infinity)) {
+  if (!segment) {
+    stopDubPlayback();
+    prefetchDubSegmentsAround(videoTime);
+    return;
+  }
+
+  const segmentId = getDubSegmentId(segment);
+
+  if (state.activeDubSegmentId === segmentId && dubAudio.src) {
+    alignDubAudioToSegment(segment, videoTime);
+    if (!els.video.paused && dubAudio.paused) {
       dubAudio.play().catch(() => {});
     }
-    prefetchDubAround(videoTime);
+    prefetchDubSegmentsAround(videoTime);
     return;
   }
 
   stopDubPlayback();
-  const requestedId = block.blockId;
-  const source = await ensureDubBlock(block);
+  const source = await ensureDubSegment(segment);
   if (!source || !state.dubbingEnabled || generation !== state.dubSyncGeneration) return;
 
-  const current = getDubBlockAt(Number(els.video.currentTime) || 0);
-  if (!current || current.blockId !== requestedId) return;
+  const currentTime = Math.max(0, Number(els.video.currentTime) || 0);
+  const currentSegment = getDubSegmentAt(currentTime);
+  if (!currentSegment || getDubSegmentId(currentSegment) !== segmentId) return;
 
-  state.activeDubSegmentId = requestedId;
+  state.activeDubSegmentId = segmentId;
   dubAudio.src = source;
   dubAudio.load();
 
   const start = () => {
     if (
       !state.dubbingEnabled ||
-      state.activeDubSegmentId !== requestedId ||
+      state.activeDubSegmentId !== segmentId ||
       generation !== state.dubSyncGeneration
     ) return;
 
-    const expected = Math.max(0, (Number(els.video.currentTime) || 0) - block.blockStart);
-    if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
-      dubAudio.currentTime = Math.min(Math.max(0, dubAudio.duration - 0.05), expected);
-    }
-    dubAudio.playbackRate = Math.max(0.9, Math.min(1.1, Number(els.video.playbackRate) || 1));
-    if (!els.video.paused && expected < (dubAudio.duration || Infinity)) {
-      dubAudio.play().catch(() => {});
-    }
-    prefetchDubAround(Number(els.video.currentTime) || 0);
+    const now = Math.max(0, Number(els.video.currentTime) || 0);
+    const stillCurrent = getDubSegmentAt(now);
+    if (!stillCurrent || getDubSegmentId(stillCurrent) !== segmentId) return;
+
+    alignDubAudioToSegment(stillCurrent, now);
+    if (!els.video.paused) dubAudio.play().catch(() => {});
+    prefetchDubSegmentsAround(now);
   };
 
   if (dubAudio.readyState >= 1) start();
@@ -831,11 +852,11 @@ els.video.addEventListener('seeking', () => {
 els.video.addEventListener('seeked', () => {
   if (!state.dubbingEnabled) return;
   void syncDubPlayback();
-  prefetchDubAround(Number(els.video.currentTime) || 0);
+  prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
 });
 els.video.addEventListener('play', () => {
   void syncDubPlayback();
-  prefetchDubAround(Number(els.video.currentTime) || 0);
+  prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
 });
 
 els.subtitleToggleBtn?.addEventListener('click', () => {
@@ -877,8 +898,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
         els.video.muted = !modes.keepOriginalAudio;
-        // İlk dublaj bloğunu arka planda hazırla.
-        void ensureDubBlock(getDubBlockAt(0));
+        // İlk gerçek konuşma segmentlerini arka planda hazırla.
+        prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
       }
 
       if (!modes.motion) {
@@ -1003,41 +1024,73 @@ els.analyzeBtn.addEventListener('click', async () => {
       els.analysisOutput.textContent =
         `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...`;
 
-      try {
-        response = await fetch('/api/gemini-storyboard-analyze', {
-          method: 'POST',
-          body: form,
-          signal: AbortSignal.timeout(200000)
-        });
+      let chunkSucceeded = false;
+      failureBody = null;
 
-        body = await response.json();
+      for (let attempt = 1; attempt <= 3 && !chunkSucceeded; attempt += 1) {
+        els.analysisOutput.textContent =
+          `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...\n` +
+          `Deneme ${attempt}/3 · tamamlanan ${chunkResults.length}/${chunkCount}`;
 
-        if (!response.ok || !body?.available) {
-          failureBody = body || {
+        try {
+          response = await fetch('/api/gemini-storyboard-analyze', {
+            method: 'POST',
+            body: form,
+            signal: AbortSignal.timeout(240000)
+          });
+
+          body = await response.json();
+
+          if (!response.ok || !body?.available) {
+            failureBody = body || {
+              available: false,
+              reason: 'CHUNK_ANALYSIS_FAILED',
+              message: `Bölüm ${chunkIndex + 1} analiz edilemedi.`
+            };
+          } else {
+            chunkResults.push(body);
+            if (body.protagonistProfile) {
+              protagonistProfile = String(body.protagonistProfile).trim();
+            }
+            chunkSucceeded = true;
+            failureBody = null;
+            break;
+          }
+        } catch (error) {
+          failureBody = {
             available: false,
-            reason: 'CHUNK_ANALYSIS_FAILED',
-            message: `Bölüm ${chunkIndex + 1} analiz edilemedi.`
+            reason: 'NETWORK_ERROR',
+            message: `Bölüm ${chunkIndex + 1} sırasında bağlantı hatası oluştu.`,
+            error: error?.message || String(error)
           };
-          break;
         }
 
-        chunkResults.push(body);
-      if (body.protagonistProfile) {
-        protagonistProfile = String(body.protagonistProfile).trim();
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, attempt * 1800));
+        }
       }
-      } catch (error) {
-        failureBody = {
-          available: false,
-          reason: 'NETWORK_ERROR',
-          message: `Bölüm ${chunkIndex + 1} sırasında bağlantı hatası oluştu.`,
-          error: error?.message || String(error)
-        };
-        break;
-      }
+
+      if (!chunkSucceeded) break;
     }
 
-    if (failureBody && !chunkResults.length) {
-      body = failureBody;
+    const completeChunkAnalysis = isCompleteChunkAnalysis({
+      completedChunkCount: chunkResults.length,
+      expectedChunkCount: chunkCount,
+      failed: Boolean(failureBody)
+    });
+
+    if (!completeChunkAnalysis) {
+      body = {
+        available: false,
+        reason: 'INCOMPLETE_CHUNK_ANALYSIS',
+        message:
+          `Analiz eksik kaldı: ${chunkResults.length}/${chunkCount} bölüm tamamlandı. ` +
+          `Eksik video hiçbir zaman hazır oyun olarak açılmayacak.`,
+        completedChunkCount: chunkResults.length,
+        expectedChunkCount: chunkCount,
+        failedChunk: Math.min(chunkCount, chunkResults.length + 1),
+        failure: failureBody
+      };
     } else {
       const mergedActions = chunkResults
         .flatMap(result =>
@@ -1074,7 +1127,8 @@ els.analyzeBtn.addEventListener('click', async () => {
           Array.isArray(result.warnings) ? result.warnings : []
         ),
         analysisMode: 'MULTI_PASS_DEEP',
-        chunkCount
+        chunkCount: chunkResults.length,
+        expectedChunkCount: chunkCount
       };
     }
 
@@ -1103,6 +1157,15 @@ els.analyzeBtn.addEventListener('click', async () => {
     }
   }
 
+  if (!body?.available) {
+    els.analysisState.textContent = body?.reason || 'ANALYSIS_INCOMPLETE';
+    els.analysisTitle.textContent = 'Video analizi eksik kaldı';
+    els.analysisOutput.textContent = body?.message || 'Tüm video bölümleri doğrulanmadan oyun başlatılmadı.';
+    setGameState('ERROR');
+    renderDebug({ lastAnalyzeBody: body });
+    return;
+  }
+
   const normalized = normalizeAnalysis(body);
   if (!normalized.actions.length) {
     els.analysisState.textContent = 'NO_ACTIONS';
@@ -1123,7 +1186,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisOutput.textContent = [
     'Derin analiz tamamlandı.',
     `${normalized.actions.length} doğrulanmış aksiyon hazır.`,
-    `${Number(body.chunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
+    `${Number(body.chunkCount || 0)}/${Number(body.expectedChunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
     'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
