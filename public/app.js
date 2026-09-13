@@ -32,8 +32,9 @@ import {
   canPlayAction,
   createRuntimeSnapshot,
   isCompatibleRuntimeSnapshot,
+  mergeSecondPassReview,
   reviewAndHardenAnalysis,
-  shouldSecondPassReview
+  secondPassReviewCandidates
 } from './engine-hardening.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1180,11 +1181,12 @@ els.analyzeBtn.addEventListener('click', async () => {
               message: `Bölüm ${chunkIndex + 1} analiz edilemedi.`
             };
           } else {
-            if (shouldSecondPassReview(body)) {
+            const criticalReviewCandidates = secondPassReviewCandidates(body);
+            if (criticalReviewCandidates.length) {
               form.set('reviewMode', '1');
-              form.set('reviewCandidates', JSON.stringify(body.actions || []));
+              form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
               els.analysisOutput.textContent =
-                `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ikinci kez doğrulanıyor...`;
+                `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} kritik aday ikinci kez doğrulanıyor...`;
               const reviewResponse = await fetch('/api/gemini-storyboard-analyze', {
                 method: 'POST',
                 body: form,
@@ -1199,11 +1201,7 @@ els.analyzeBtn.addEventListener('click', async () => {
                 };
                 continue;
               }
-              body = {
-                ...reviewBody,
-                secondPassReviewed: true,
-                firstPassActionCount: Array.isArray(body.actions) ? body.actions.length : 0
-              };
+              body = mergeSecondPassReview(body, reviewBody, criticalReviewCandidates);
             }
             chunkResults.push(body);
             if (body.protagonistProfile) {
