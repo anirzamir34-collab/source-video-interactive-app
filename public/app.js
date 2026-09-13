@@ -1,9 +1,12 @@
 import {
+  adultDiscoveryPhase,
   averageAdultProgress,
   computeAdultSelectionDelta,
+  computeWarmupSelectionDelta,
   isOutcomeUnlocked,
   normalizeOutcomeUnlockProgress,
-  pickNextVariant
+  pickNextVariant,
+  positionUnlockProgress
 } from './adult-gameplay.js';
 
 const $ = (id) => document.getElementById(id);
@@ -43,10 +46,15 @@ const state = {
   adultSelectionToken: 0,
   adultVisitedPositionIds: new Set(),
   adultMovementPlayCounts: new Map(),
+  adultPreludePlayCounts: new Map(),
   adultComboCount: 0,
   adultOutcomePhase: 'idle',
   activeAdultOutcomeId: null,
+  activeAdultPreludeId: null,
   adultUnlockedOutcomeIds: new Set(),
+  adultRevealedPositionIds: new Set(),
+  adultUiSignature: '',
+  adultLastUiPhase: 'foreplay',
   lastAdultFrameNow: null,
   adultFrameRequest: null,
   navigationSeeking: false,
@@ -90,6 +98,18 @@ const els = {
   adultInteractionPanel: $('adultInteractionPanel'),
   adultSceneTitle: $('adultSceneTitle'),
   adultSceneTime: $('adultSceneTime'),
+  adultPhaseBadge: $('adultPhaseBadge'),
+  adultPhaseTitle: $('adultPhaseTitle'),
+  adultPhaseHint: $('adultPhaseHint'),
+  discoveryGate: $('discoveryGate'),
+  discoveryGateText: $('discoveryGateText'),
+  discoveryGateMeta: $('discoveryGateMeta'),
+  foreplaySection: $('foreplaySection'),
+  foreplayCount: $('foreplayCount'),
+  foreplayChoices: $('foreplayChoices'),
+  categorySection: $('categorySection'),
+  positionSection: $('positionSection'),
+  movementSection: $('movementSection'),
   positionCount: $('positionCount'),
   categoryCount: $('categoryCount'),
   categoryTabs: $('categoryTabs'),
@@ -1290,10 +1310,15 @@ function initializeInteractive(analysis) {
   state.femaleSceneProgress = 0;
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
+  state.adultPreludePlayCounts = new Map();
   state.adultComboCount = 0;
   state.adultOutcomePhase = 'idle';
   state.activeAdultOutcomeId = null;
+  state.activeAdultPreludeId = null;
   state.adultUnlockedOutcomeIds = new Set();
+  state.adultRevealedPositionIds = new Set();
+  state.adultUiSignature = '';
+  state.adultLastUiPhase = 'foreplay';
   prepareAdultScenes();
   els.adultInteractionPanel?.classList.add("hidden");
   els.playerSection.classList.remove('hidden');
@@ -1391,6 +1416,16 @@ function adultCategoryFor(action, positionId) {
   return { id: 'other', label: 'Diğer gerçek sahneler' };
 }
 
+function isWarmupPosition(position) {
+  return ['oral', 'manual'].includes(String(position?.categoryId || '')) ||
+    ['oral', 'manual'].includes(String(position?.familyId || ''));
+}
+
+function isBonusPosition(position) {
+  const category = String(position?.categoryId || '');
+  return category === 'anal' || category === 'other';
+}
+
 function prepareAdultScenes() {
   const actions = state.analysis?.actions || [];
   const sceneMap = new Map();
@@ -1406,6 +1441,7 @@ function prepareAdultScenes() {
         startTime: Number(action.adultSceneStartTime ?? action.startTime),
         endTime: Number(action.adultSceneEndTime ?? action.endTime),
         postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
+        foreplay: [],
         positions: new Map(),
         outcomes: [],
         aftermath: null
@@ -1454,7 +1490,32 @@ function prepareAdultScenes() {
     }
 
     const hasPositionEvidence = Boolean(action.positionId || action.positionLabel);
-    if (!hasPositionEvidence) return;
+    if (!hasPositionEvidence) {
+      const actionType = String(action.actionType || '').toLowerCase();
+      const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
+      const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition'].includes(actionType);
+      const labelWarmup = /\b(op|opus|dokun|oksa|soyun|cikar|saril|elle|elini|tenine)\b/.test(labelKey);
+      const startTime = Math.max(scene.startTime, Number(action.startTime));
+      const endTime = Math.min(scene.endTime, Number(action.endTime));
+
+      if (
+        (explicitWarmup || (actionType === 'other' && labelWarmup)) &&
+        action.label &&
+        Number.isFinite(startTime) &&
+        Number.isFinite(endTime) &&
+        endTime - startTime >= 2
+      ) {
+        scene.foreplay.push({
+          id: action.actionId || `${sceneId}:warmup-${index}`,
+          label: action.label,
+          startTime,
+          endTime,
+          maleProgressRate: Number(action.maleProgressRate || 1),
+          femaleProgressRate: Number(action.femaleProgressRate || 1)
+        });
+      }
+      return;
+    }
 
     const canonical = canonicalAdultPosition(action);
     if (!canonical.id) return;
@@ -1476,6 +1537,7 @@ function prepareAdultScenes() {
         categoryLabel: category.label,
         startTime: Number(action.positionStartTime ?? action.startTime),
         endTime: Number(action.positionEndTime ?? action.endTime),
+        unlockProgress: 0,
         movements: []
       });
     }
@@ -1517,6 +1579,20 @@ function prepareAdultScenes() {
 
   state.adultScenes = [...sceneMap.values()]
     .map(scene => {
+      const foreplay = [...scene.foreplay]
+        .sort((a, b) => a.startTime - b.startTime)
+        .reduce((items, item) => {
+          const previous = items[items.length - 1];
+          const sameLabel = previous &&
+            normalizeAdultLabel(previous.label) === normalizeAdultLabel(item.label);
+          if (previous && sameLabel && item.startTime <= previous.endTime + 0.25) {
+            previous.endTime = Math.max(previous.endTime, item.endTime);
+            return items;
+          }
+          items.push({ ...item });
+          return items;
+        }, []);
+
       const outcomes = [...scene.outcomes]
         .filter(item => item.endTime - item.startTime >= 2)
         .sort((a, b) => a.startTime - b.startTime)
@@ -1535,6 +1611,7 @@ function prepareAdultScenes() {
 
       return {
         ...scene,
+        foreplay,
         outcomes,
         positions: [...scene.positions.values()]
           .map(position => ({
@@ -1547,7 +1624,7 @@ function prepareAdultScenes() {
           .sort((a, b) => a.startTime - b.startTime)
       };
     })
-    .filter(scene => scene.positions.length)
+    .filter(scene => scene.positions.length || scene.foreplay.length)
     .sort((a, b) => a.startTime - b.startTime);
 
   state.adultScenes.forEach(scene => {
@@ -1561,14 +1638,30 @@ function prepareAdultScenes() {
 
     scene.positions.forEach(position => {
       const key = `${position.categoryId}:${position.familyId}`;
-      if ((totals.get(key) || 0) <= 1) return;
+      if ((totals.get(key) || 0) > 1) {
+        const occurrenceNumber = (indexes.get(key) || 0) + 1;
+        indexes.set(key, occurrenceNumber);
+        const baseLabel = String(position.label || 'Pozisyon')
+          .replace(/\s+·\s+\d+$/u, '')
+          .replace(/\s+Pozisyon(?:u)?$/iu, '');
+        position.label = `${baseLabel} · ${occurrenceNumber}`;
+      }
+    });
 
-      const occurrenceNumber = (indexes.get(key) || 0) + 1;
-      indexes.set(key, occurrenceNumber);
-      const baseLabel = String(position.label || 'Pozisyon')
-        .replace(/\s+·\s+\d+$/u, '')
-        .replace(/\s+Pozisyon(?:u)?$/iu, '');
-      position.label = `${baseLabel} · ${occurrenceNumber}`;
+    const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
+    let coreIndex = 0;
+    let bonusIndex = 0;
+
+    scene.positions.forEach((position, index) => {
+      const isWarmup = isWarmupPosition(position);
+      const isBonus = isBonusPosition(position);
+      const order = isWarmup ? 0 : (isBonus ? bonusIndex++ : coreIndex++);
+      position.unlockProgress = positionUnlockProgress({
+        categoryId: position.categoryId,
+        familyId: position.familyId,
+        index: order,
+        bootstrap: !hasWarmup && index === 0
+      });
     });
   });
 }
@@ -1587,50 +1680,64 @@ function adultTimeLabel(seconds) {
   return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
 }
 
-function refreshAdultOutcomeLocks() {
-  const scene = state.adultScene;
-  const buttons = els.outcomeChoices?.querySelectorAll('[data-outcome-id]') || [];
-  let unlockedCount = 0;
+function currentAdultFlow() {
+  return averageAdultProgress(
+    state.maleSceneProgress,
+    state.femaleSceneProgress
+  );
+}
 
-  buttons.forEach(button => {
-    const outcome = scene?.outcomes?.find(item => item.id === button.dataset.outcomeId);
-    if (!outcome) return;
-    const unlocked = isOutcomeUnlocked(
+function unlockedAdultPositions(scene = state.adultScene) {
+  const flow = currentAdultFlow();
+  return (scene?.positions || []).filter(
+    position => flow + 0.001 >= Number(position.unlockProgress || 0)
+  );
+}
+
+function unlockedAdultOutcomes(scene = state.adultScene) {
+  return (scene?.outcomes || []).filter(outcome =>
+    isOutcomeUnlocked(
       outcome,
       state.maleSceneProgress,
       state.femaleSceneProgress
-    );
-    button.disabled = !unlocked;
-    button.classList.toggle('locked', !unlocked);
-    if (unlocked) {
-      unlockedCount += 1;
-      state.adultUnlockedOutcomeIds.add(outcome.id);
-    }
-    const status = button.querySelector('[data-outcome-status]');
-    if (status) {
-      status.textContent = unlocked
-        ? 'Açık · gerçek video segmenti'
-        : `%${Math.round(outcome.unlockProgress)} akışta açılır`;
-    }
-  });
+    )
+  );
+}
 
-  if (els.outcomeCount && scene?.outcomes?.length) {
-    els.outcomeCount.textContent = `${unlockedCount}/${scene.outcomes.length} açık`;
+function nextAdultDiscovery(scene = state.adultScene) {
+  const flow = currentAdultFlow();
+  const positionTarget = (scene?.positions || [])
+    .filter(position =>
+      !isWarmupPosition(position) &&
+      Number(position.unlockProgress || 0) > flow + 0.001
+    )
+    .sort((a, b) => Number(a.unlockProgress) - Number(b.unlockProgress))[0];
+
+  const outcomeTarget = (scene?.outcomes || [])
+    .filter(outcome => Number(outcome.unlockProgress || 82) > flow + 0.001)
+    .sort((a, b) => Number(a.unlockProgress) - Number(b.unlockProgress))[0];
+
+  const candidates = [];
+  if (positionTarget) {
+    candidates.push({
+      type: 'position',
+      progress: Number(positionTarget.unlockProgress || 0)
+    });
   }
+  if (outcomeTarget) {
+    candidates.push({
+      type: 'outcome',
+      progress: Number(outcomeTarget.unlockProgress || 82)
+    });
+  }
+  return candidates.sort((a, b) => a.progress - b.progress)[0] || null;
 }
 
 function renderAdultFlowStatus() {
   if (!els.adultFlowStatus) return;
-  const flow = averageAdultProgress(
-    state.maleSceneProgress,
-    state.femaleSceneProgress
-  );
-  const visited = state.adultVisitedPositionIds.size;
-  const played = [...state.adultMovementPlayCounts.values()]
-    .filter(count => Number(count) > 0).length;
+  const flow = currentAdultFlow();
   els.adultFlowStatus.textContent =
-    `Akış %${Math.round(flow)} · ${visited} pozisyon · ${played} varyasyon · combo ${state.adultComboCount}`;
-  refreshAdultOutcomeLocks();
+    `Lust %${Math.round(flow)} · combo ${state.adultComboCount}`;
 }
 
 function renderAdultProgress() {
@@ -1643,6 +1750,7 @@ function renderAdultProgress() {
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${male}%`;
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${female}%`;
   renderAdultFlowStatus();
+  renderAdultProgressiveUI(false);
 }
 
 function resetAdultSceneGameplay() {
@@ -1650,42 +1758,226 @@ function resetAdultSceneGameplay() {
   state.femaleSceneProgress = 0;
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
+  state.adultPreludePlayCounts = new Map();
   state.adultComboCount = 0;
   state.adultOutcomePhase = 'idle';
   state.activeAdultOutcomeId = null;
+  state.activeAdultPreludeId = null;
   state.adultUnlockedOutcomeIds = new Set();
+  state.adultRevealedPositionIds = new Set();
+  state.adultUiSignature = '';
+  state.adultLastUiPhase = 'foreplay';
+}
+
+function renderAdultWarmupChoices(scene) {
+  if (!els.foreplayChoices || !els.foreplaySection) return;
+  const flow = currentAdultFlow();
+  const warmupPositions = (scene?.positions || [])
+    .filter(position => isWarmupPosition(position) && flow >= Number(position.unlockProgress || 0))
+    .map(position => ({
+      kind: 'position',
+      id: position.id,
+      label: position.label,
+      startTime: position.startTime,
+      playCount: state.adultVisitedPositionIds.has(position.id) ? 1 : 0
+    }));
+
+  const warmupActions = (scene?.foreplay || []).map(item => ({
+    kind: 'foreplay',
+    id: item.id,
+    label: item.label,
+    startTime: item.startTime,
+    playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
+  }));
+
+  const choices = [...warmupActions, ...warmupPositions]
+    .sort((a, b) => a.playCount - b.playCount || a.startTime - b.startTime)
+    .slice(0, 4);
+
+  els.foreplayChoices.innerHTML = '';
+  if (els.foreplayCount) {
+    els.foreplayCount.textContent = `${choices.length} seçenek`;
+  }
+
+  choices.forEach(choice => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'discovery-choice-card';
+    button.dataset.discoveryId = choice.id;
+    button.innerHTML = `
+      <span>${escapeHtml(choice.label)}</span>
+      <small>${choice.playCount ? 'Tekrar · daha az Lust' : 'Yeni keşif · Lust kazan'}</small>
+    `;
+    if (choice.id === state.activeAdultPreludeId || choice.id === state.activePositionId) {
+      button.classList.add('active');
+    }
+    button.addEventListener('click', () => {
+      if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
+      else selectAdultPosition(choice.id, true);
+    });
+    els.foreplayChoices.appendChild(button);
+  });
+
+  els.foreplaySection.classList.toggle('hidden', !choices.length);
 }
 
 function renderAdultOutcomes(scene) {
   if (!els.outcomeSection || !els.outcomeChoices) return;
-  const outcomes = scene?.outcomes || [];
+  const outcomes = unlockedAdultOutcomes(scene);
   els.outcomeChoices.innerHTML = '';
   els.outcomeSection.classList.toggle('hidden', !outcomes.length);
 
   if (!outcomes.length) {
-    if (els.outcomeCount) els.outcomeCount.textContent = '0 final';
+    if (els.outcomeCount) els.outcomeCount.textContent = '0 açık';
     return;
   }
 
   outcomes.forEach((outcome, index) => {
+    state.adultUnlockedOutcomeIds.add(outcome.id);
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'outcome-choice-card locked';
+    button.className = 'outcome-choice-card unlock-reveal';
     button.dataset.outcomeId = outcome.id;
     button.innerHTML = `
       <span>${escapeHtml(outcome.label || `Final ${index + 1}`)}</span>
       <small>${adultTimeLabel(outcome.startTime)} – ${adultTimeLabel(outcome.endTime)}</small>
-      <small data-outcome-status>%${Math.round(outcome.unlockProgress)} akışta açılır</small>
+      <small>Yeni açıldı · gerçek video segmenti</small>
     `;
     button.addEventListener('click', () => playAdultOutcome(outcome.id));
     els.outcomeChoices.appendChild(button);
   });
 
-  refreshAdultOutcomeLocks();
+  if (els.outcomeCount) els.outcomeCount.textContent = `${outcomes.length} açık`;
+}
+
+function renderAdultProgressiveUI(force = false) {
+  const scene = state.adultScene;
+  if (!scene || !els.adultInteractionPanel) return;
+
+  const flow = currentAdultFlow();
+  const unlockedPositions = unlockedAdultPositions(scene);
+  const unlockedCore = unlockedPositions.filter(position => !isWarmupPosition(position));
+  const unlockedBonus = unlockedCore.filter(isBonusPosition);
+  const outcomes = unlockedAdultOutcomes(scene);
+  const phase = adultDiscoveryPhase({
+    flow,
+    hasCoreUnlocked: unlockedCore.some(position => !isBonusPosition(position)),
+    hasBonusUnlocked: unlockedBonus.length > 0,
+    hasOutcomeUnlocked: outcomes.length > 0
+  });
+
+  const signature = [
+    phase,
+    Math.floor(flow),
+    unlockedCore.map(item => item.id).join(','),
+    outcomes.map(item => item.id).join(','),
+    state.adultVisitedPositionIds.size,
+    [...state.adultPreludePlayCounts.values()].reduce((sum, value) => sum + Number(value || 0), 0)
+  ].join('|');
+
+  const phaseCopy = {
+    foreplay: {
+      badge: 'YAKINLAŞMA',
+      title: 'Önce yakınlaş',
+      hint: 'Basit seçimlerle Lust yükselt. Sahnedeki asıl seçenekler henüz gizli.'
+    },
+    positions: {
+      badge: 'YENİ AŞAMA',
+      title: 'Pozisyonlar açılıyor',
+      hint: 'Yalnızca kazandığın ve kaynak videoda gerçekten bulunan seçenekler gösteriliyor.'
+    },
+    reward: {
+      badge: 'ÖDÜL AŞAMASI',
+      title: 'Yeni bir şey keşfettin',
+      hint: 'Yüksek Lust sahnedeki daha özel gerçek seçenekleri açıyor.'
+    },
+    final: {
+      badge: 'FİNAL HAZIR',
+      title: 'Sahnenin son aşaması açıldı',
+      hint: 'Final seçeneği artık görünür. Önceden adı gösterilmedi.'
+    }
+  }[phase];
+
+  if (els.adultPhaseBadge) els.adultPhaseBadge.textContent = phaseCopy.badge;
+  if (els.adultPhaseTitle) els.adultPhaseTitle.textContent = phaseCopy.title;
+  if (els.adultPhaseHint) els.adultPhaseHint.textContent = phaseCopy.hint;
+  els.adultInteractionPanel.dataset.phase = phase;
+
+  const next = nextAdultDiscovery(scene);
+  if (els.discoveryGate) {
+    const hideGate = phase === 'final' || !next;
+    els.discoveryGate.classList.toggle('hidden', hideGate);
+    if (!hideGate) {
+      if (els.discoveryGateText) {
+        els.discoveryGateText.textContent = next.type === 'outcome'
+          ? 'Sahnenin son aşaması hâlâ gizli'
+          : 'Yeni bir seçenek yaklaşıyor';
+      }
+      if (els.discoveryGateMeta) {
+        const remaining = Math.max(0, Math.ceil(next.progress - flow));
+        els.discoveryGateMeta.textContent =
+          `%${Math.round(next.progress)} Lust seviyesinde açılır · ${remaining} puan kaldı`;
+      }
+    }
+  }
+
+  if (!force && signature === state.adultUiSignature) return;
+  state.adultUiSignature = signature;
+  state.adultLastUiPhase = phase;
+
+  const showWarmup = phase === 'foreplay';
+  if (showWarmup) {
+    renderAdultWarmupChoices(scene);
+  } else {
+    els.foreplaySection?.classList.add('hidden');
+  }
+
+  if (phase === 'final') {
+    els.categorySection?.classList.add('hidden');
+    els.positionSection?.classList.add('hidden');
+    els.movementSection?.classList.add('hidden');
+    renderAdultOutcomes(scene);
+    return;
+  }
+
+  els.outcomeSection?.classList.add('hidden');
+  els.outcomeChoices && (els.outcomeChoices.innerHTML = '');
+
+  if (showWarmup || !unlockedCore.length) {
+    els.categorySection?.classList.add('hidden');
+    els.positionSection?.classList.add('hidden');
+    els.movementSection?.classList.add('hidden');
+    return;
+  }
+
+  const categories = [...new Map(unlockedCore.map(position => [
+    position.categoryId,
+    { id: position.categoryId, label: position.categoryLabel }
+  ])).values()];
+
+  if (els.categoryTabs) els.categoryTabs.innerHTML = '';
+  categories.forEach(category => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'category-tab';
+    button.textContent = category.label;
+    button.dataset.categoryId = category.id;
+    button.addEventListener('click', () => selectAdultCategory(category.id, true));
+    els.categoryTabs?.appendChild(button);
+  });
+
+  if (els.categoryCount) els.categoryCount.textContent = `${categories.length} açık`;
+  els.categorySection?.classList.toggle('hidden', categories.length <= 1);
+  els.positionSection?.classList.remove('hidden');
+
+  const selectedCategory = categories.find(item => item.id === state.activeAdultCategory) || categories[0];
+  if (selectedCategory) {
+    selectAdultCategory(selectedCategory.id, false);
+  }
 }
 
 function renderAdultPanel(scene) {
-  if (!scene || !scene.positions?.length || !els.adultInteractionPanel) return;
+  if (!scene || (!scene.positions?.length && !scene.foreplay?.length) || !els.adultInteractionPanel) return;
 
   const previousSceneId = state.adultScene?.id || null;
   const videoStage = els.video?.closest('.video-stage');
@@ -1719,46 +2011,15 @@ function renderAdultPanel(scene) {
 
   if (els.categoryTabs) els.categoryTabs.innerHTML = '';
   if (els.positionTabs) els.positionTabs.innerHTML = '';
-
-  const categories = [...new Map(scene.positions.map(position => [
-    position.categoryId,
-    {
-      id: position.categoryId,
-      label: position.categoryLabel
-    }
-  ])).values()];
-
-  if (els.categoryCount) {
-    els.categoryCount.textContent = `${categories.length} kategori`;
-  }
-
-  categories.forEach(category => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'category-tab';
-    button.textContent = category.label;
-    button.dataset.categoryId = category.id;
-    button.addEventListener(
-      'click',
-      () => selectAdultCategory(category.id, true)
-    );
-    els.categoryTabs?.appendChild(button);
-  });
-
-  renderAdultOutcomes(scene);
-
-  const selectedCategory =
-    categories.find(item => item.id === state.activeAdultCategory) ||
-    categories[0];
-
-  selectAdultCategory(selectedCategory.id, false);
+  if (els.movementChoices) els.movementChoices.innerHTML = '';
   renderAdultProgress();
+  renderAdultProgressiveUI(true);
 }
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
-  const positions =
-    scene?.positions.filter(item => item.categoryId === categoryId) || [];
+  const positions = unlockedAdultPositions(scene)
+    .filter(item => !isWarmupPosition(item) && item.categoryId === categoryId);
 
   if (!positions.length) return;
 
@@ -1775,7 +2036,7 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
 
   if (els.positionTabs) els.positionTabs.innerHTML = '';
   if (els.positionCount) {
-    els.positionCount.textContent = `${positions.length} pozisyon`;
+    els.positionCount.textContent = `${positions.length} açık`;
   }
 
   positions.forEach(position => {
@@ -1784,6 +2045,10 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     button.className = 'position-tab';
     button.textContent = position.label;
     button.dataset.positionId = position.id;
+    if (!state.adultRevealedPositionIds.has(position.id)) {
+      state.adultRevealedPositionIds.add(position.id);
+      button.classList.add('unlock-reveal');
+    }
     button.addEventListener(
       'click',
       () => selectAdultPosition(position.id, true)
@@ -1795,7 +2060,7 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     positions.find(item => item.id === state.activePositionId) ||
     positions[0];
 
-  selectAdultPosition(selected.id, shouldSeek);
+  if (selected) selectAdultPosition(selected.id, shouldSeek);
 }
 
 function cancelAdultSeek() {
@@ -1815,6 +2080,42 @@ function beginAdultSelection() {
   state.adultSelectionToken += 1;
   cancelAdultSeek();
   return state.adultSelectionToken;
+}
+
+function applyAdultPreludeProgress(item) {
+  if (!item) return;
+  const repeatCount = Number(state.adultPreludePlayCounts.get(item.id) || 0);
+  state.adultComboCount = repeatCount === 0
+    ? Math.min(6, state.adultComboCount + 1)
+    : Math.max(0, state.adultComboCount - 1);
+
+  const delta = computeWarmupSelectionDelta({
+    repeatCount,
+    comboCount: state.adultComboCount,
+    maleRate: item.maleProgressRate || 1,
+    femaleRate: item.femaleProgressRate || 1
+  });
+
+  state.adultPreludePlayCounts.set(item.id, repeatCount + 1);
+  state.maleSceneProgress = Math.min(100, state.maleSceneProgress + delta.male);
+  state.femaleSceneProgress = Math.min(100, state.femaleSceneProgress + delta.female);
+  renderAdultProgress();
+}
+
+function playAdultPrelude(preludeId) {
+  const scene = state.adultScene;
+  const item = scene?.foreplay?.find(entry => entry.id === preludeId);
+  if (!item || !els.video || state.adultOutcomePhase !== 'idle') return;
+
+  const token = beginAdultSelection();
+  state.activeAdultPreludeId = item.id;
+  state.activePositionId = null;
+  state.activeMovementId = null;
+  applyAdultPreludeProgress(item);
+  renderAdultProgressiveUI(true);
+  els.video.pause();
+  seekAdultLoop(item.startTime, token);
+  els.video.play().catch(() => {});
 }
 
 function applyAdultSelectionProgress(position, movement, { positionChanged = false } = {}) {
@@ -1874,9 +2175,16 @@ function playNextAdultVariant() {
 function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
-  if (!position || state.adultOutcomePhase !== 'idle') return;
+  if (
+    !position ||
+    state.adultOutcomePhase !== 'idle' ||
+    currentAdultFlow() + 0.001 < Number(position.unlockProgress || 0)
+  ) return;
 
-  const selectionToken = beginAdultSelection();
+  const selectionToken = shouldSeek
+    ? beginAdultSelection()
+    : state.adultSelectionToken;
+  if (shouldSeek) state.activeAdultPreludeId = null;
   const changedPosition = state.activePositionId !== position.id;
   state.activePositionId = position.id;
   if (changedPosition) state.activeMovementId = null;
@@ -1940,6 +2248,7 @@ function selectAdultMovement(
   if (!movement || state.adultOutcomePhase !== 'idle') return;
 
   const effectiveToken = selectionToken ?? beginAdultSelection();
+  state.activeAdultPreludeId = null;
   state.activeMovementId = movement.id;
   state.lastAdultMediaTime = null;
   els.movementChoices?.querySelectorAll('.movement-choice-card').forEach(button => {
@@ -1968,6 +2277,7 @@ function playAdultOutcome(outcomeId) {
   const selectionToken = beginAdultSelection();
   state.adultOutcomePhase = 'outcome';
   state.activeAdultOutcomeId = outcome.id;
+  state.activeAdultPreludeId = null;
   state.activeMovementId = null;
   updateVariantButton(null);
   renderAdultFlowStatus();
@@ -1989,6 +2299,7 @@ function finishAdultScene() {
   state.activeAdultCategory = null;
   state.activeMovementId = null;
   state.activeAdultOutcomeId = null;
+  state.activeAdultPreludeId = null;
   state.adultOutcomePhase = 'idle';
   state.lastAdultMediaTime = null;
   els.adultInteractionPanel?.classList.add('hidden');
@@ -2099,21 +2410,44 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
+  const elapsed = Math.min(0.25, Math.max(0, (now - (state.lastAdultFrameNow || now)) / 1000));
+  state.lastAdultFrameNow = now;
+
+  if (state.activeAdultPreludeId) {
+    const item = state.adultScene?.foreplay?.find(
+      entry => entry.id === state.activeAdultPreludeId
+    );
+    if (!item) {
+      state.activeAdultPreludeId = null;
+      return;
+    }
+    if (mediaTime >= item.endTime - 0.04 || mediaTime < item.startTime - 0.15) {
+      seekAdultLoop(item.startTime, state.adultSelectionToken);
+      return;
+    }
+    state.maleSceneProgress = Math.min(
+      100,
+      state.maleSceneProgress + elapsed * 0.35 * Number(item.maleProgressRate || 1)
+    );
+    state.femaleSceneProgress = Math.min(
+      100,
+      state.femaleSceneProgress + elapsed * 0.35 * Number(item.femaleProgressRate || 1)
+    );
+    renderAdultProgress();
+    return;
+  }
+
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === state.activeMovementId);
   if (!movement) {
-    state.lastAdultFrameNow = now;
     return;
   }
 
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
     seekAdultLoop(movement.loopStartTime, state.adultSelectionToken);
-    state.lastAdultFrameNow = now;
     return;
   }
 
-  const elapsed = Math.min(0.25, Math.max(0, (now - (state.lastAdultFrameNow || now)) / 1000));
-  state.lastAdultFrameNow = now;
   state.maleSceneProgress = Math.min(
     100,
     state.maleSceneProgress + elapsed * Number(movement.maleProgressRate || 1)

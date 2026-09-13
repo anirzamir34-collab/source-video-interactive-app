@@ -2521,3 +2521,275 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* VIDEOQUEST PROGRESSIVE DISCOVERY UI V3 */
+.adult-interaction-panel {
+  --adult-panel-bg: rgba(7, 13, 23, .985);
+  --adult-card-bg: rgba(10, 17, 29, .96);
+  --adult-card-line: rgba(255, 255, 255, .10);
+  --adult-accent: #35e0b2;
+}
+
+.adult-stage-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 4px 0 14px;
+  padding: 13px 14px;
+  border: 1px solid rgba(53, 224, 178, .14);
+  border-radius: 17px;
+  background: linear-gradient(135deg, rgba(53, 224, 178, .08), rgba(8, 14, 24, .78));
+}
+
+.adult-phase-copy {
+  min-width: 0;
+}
+
+.adult-phase-badge {
+  display: inline-flex;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border: 1px solid rgba(53, 224, 178, .28);
+  border-radius: 999px;
+  color: #77f4d2;
+  background: rgba(53, 224, 178, .08);
+  font-size: .58rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.adult-phase-copy strong,
+.adult-phase-copy small {
+  display: block;
+}
+
+.adult-phase-copy strong {
+  color: #f7fbff;
+  font-size: .98rem;
+}
+
+.adult-phase-copy small {
+  margin-top: 4px;
+  color: #8f9cae;
+  font-size: .68rem;
+  line-height: 1.4;
+}
+
+.adult-flow-status {
+  flex: 0 0 auto;
+  padding: 7px 9px;
+  border-radius: 999px;
+  color: #d7fff3 !important;
+  background: rgba(53, 224, 178, .09);
+  font-size: .64rem !important;
+  white-space: nowrap;
+}
+
+.adult-lust-bars {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 13px;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, .16);
+}
+
+.adult-discovery-gate {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 0 0 14px;
+  padding: 11px 12px;
+  border: 1px dashed rgba(255, 255, 255, .14);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.adult-discovery-gate.hidden {
+  display: none !important;
+}
+
+.adult-discovery-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: #7b8797;
+  background: rgba(255, 255, 255, .055);
+  font-size: 1rem;
+}
+
+.adult-discovery-gate strong,
+.adult-discovery-gate small {
+  display: block;
+}
+
+.adult-discovery-gate strong {
+  color: #dbe4ee;
+  font-size: .76rem;
+}
+
+.adult-discovery-gate small {
+  margin-top: 2px;
+  color: #7e8b9c;
+  font-size: .64rem;
+}
+
+.progressive-stage-section,
+.position-section,
+.movement-section,
+.outcome-section {
+  animation: adultStageIn .26s ease both;
+}
+
+.discovery-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.discovery-choice-card,
+.adult-interaction-panel .movement-choice-card,
+.adult-interaction-panel .position-tab,
+.adult-interaction-panel .category-tab {
+  border: 1px solid var(--adult-card-line) !important;
+  color: #edf4fb !important;
+  background: var(--adult-card-bg) !important;
+  box-shadow: none !important;
+}
+
+.discovery-choice-card {
+  min-height: 68px !important;
+  padding: 11px 12px !important;
+  border-radius: 15px !important;
+  text-align: left !important;
+}
+
+.discovery-choice-card span,
+.discovery-choice-card small {
+  display: block;
+}
+
+.discovery-choice-card span {
+  color: #f6fbff !important;
+  font-size: .78rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.discovery-choice-card small {
+  margin-top: 5px;
+  color: #7f8c9d !important;
+  font-size: .62rem;
+}
+
+.discovery-choice-card.active,
+.adult-interaction-panel .movement-choice-card.active,
+.adult-interaction-panel .position-tab.active,
+.adult-interaction-panel .category-tab.active {
+  border-color: rgba(53, 224, 178, .62) !important;
+  background: linear-gradient(135deg, rgba(53, 224, 178, .14), rgba(10, 24, 28, .94)) !important;
+  color: #effff9 !important;
+  box-shadow: 0 0 0 1px rgba(53, 224, 178, .08) !important;
+}
+
+.adult-interaction-panel .movement-choice-card span,
+.adult-interaction-panel .movement-choice-card strong {
+  color: #f4f8fc !important;
+  opacity: 1 !important;
+}
+
+.adult-interaction-panel .movement-choice-card small {
+  color: #7eeacb !important;
+  opacity: 1 !important;
+}
+
+.adult-variant-toolbar {
+  margin-top: 9px !important;
+}
+
+.next-variant-btn {
+  border: 1px solid rgba(53, 224, 178, .32) !important;
+  color: #bffff0 !important;
+  background: rgba(53, 224, 178, .08) !important;
+  box-shadow: none !important;
+}
+
+.outcome-section {
+  margin-top: 6px !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.outcome-choice-card {
+  border: 1px solid rgba(53, 224, 178, .55) !important;
+  color: #03130e !important;
+  background: linear-gradient(135deg, #35e0b2, #76f1d2) !important;
+  box-shadow: 0 12px 28px rgba(53, 224, 178, .14) !important;
+}
+
+.finish-adult-scene-btn {
+  min-height: 34px !important;
+  margin-top: 14px !important;
+  padding: 6px 10px !important;
+  border: 0 !important;
+  color: #748294 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: .66rem !important;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.adult-interaction-panel[data-phase="final"] .adult-stage-summary {
+  border-color: rgba(53, 224, 178, .42);
+  background: linear-gradient(135deg, rgba(53, 224, 178, .18), rgba(8, 26, 25, .92));
+}
+
+.unlock-reveal {
+  animation: adultUnlockReveal .42s cubic-bezier(.2, .9, .25, 1.25) both;
+}
+
+@keyframes adultStageIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes adultUnlockReveal {
+  0% { opacity: 0; transform: translateY(9px) scale(.96); }
+  70% { opacity: 1; transform: translateY(-2px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 600px) {
+  .adult-interaction-panel {
+    padding: 13px !important;
+  }
+
+  .adult-stage-summary {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .adult-flow-status {
+    align-self: flex-start;
+  }
+
+  .discovery-choice-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .adult-interaction-panel .movement-choice-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .adult-interaction-panel .movement-choice-card,
+  .discovery-choice-card {
+    min-height: 58px !important;
+  }
+}
