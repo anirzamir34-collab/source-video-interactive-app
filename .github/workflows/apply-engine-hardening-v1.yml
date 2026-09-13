@@ -1,0 +1,60 @@
+name: Apply Engine Hardening v1
+
+on:
+  push:
+    branches:
+      - hardening/engine-v1
+    paths:
+      - '.github/scripts/apply_engine_hardening_v1.py'
+      - '.github/workflows/apply-engine-hardening-v1.yml'
+      - 'public/engine-hardening.js'
+      - 'public/playback-logic.js'
+      - 'test/engine-hardening.test.js'
+      - 'test/playback-logic.test.js'
+      - 'package.json'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hardening/engine-v1
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Apply hardening patch
+        run: python .github/scripts/apply_engine_hardening_v1.py
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Verify hardening contracts
+        run: |
+          grep -q "reviewAndHardenAnalysis" public/app.js
+          grep -q "RUNTIME_SAVE_KEY" public/app.js
+          grep -q "dubMasterClockCorrection" public/app.js
+          grep -q "SECOND PASS VISUAL REVIEW MODE" server.js
+          grep -q "adultPhaseMachine" public/app.js
+          grep -q "canPlayAction" public/app.js
+
+      - name: Commit verified product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/app.js server.js
+          if git diff --cached --quiet; then
+            echo "No product changes to commit."
+          else
+            git commit -m "Integrate Engine Hardening v1"
+            git push origin HEAD:hardening/engine-v1
+          fi
