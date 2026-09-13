@@ -15,12 +15,26 @@ import {
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
+  dubMasterClockCorrection,
   dubSegmentKey,
   fittedDubPlaybackRate,
   isCompleteChunkAnalysis,
   mapVideoTimeToDubTime,
   nextDialogueSegments
 } from './playback-logic.js';
+import {
+  ANALYSIS_SCHEMA_VERSION,
+  ENGINE_VERSION,
+  advanceAdultPhase,
+  analysisFingerprint,
+  appendEngineEvent,
+  applyRuntimeSnapshot,
+  canPlayAction,
+  createRuntimeSnapshot,
+  isCompatibleRuntimeSnapshot,
+  reviewAndHardenAnalysis,
+  shouldSecondPassReview
+} from './engine-hardening.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -75,6 +89,11 @@ const state = {
   adultFrameRequest: null,
   navigationSeeking: false,
   manualSeeking: false,
+  adultPhaseMachine: 'foreplay',
+  engineEvents: [],
+  integrityReport: null,
+  analysisFingerprint: '',
+  lastRuntimeSaveAt: 0,
 };
 
 const els = {
@@ -151,6 +170,77 @@ function setServiceStatus(kind, label, meta = '') {
   els.serviceMeta.textContent = meta;
 }
 
+const RUNTIME_SAVE_KEY = 'videoquest:runtime-state-v2';
+
+function logEngineEvent(type, data = {}) {
+  appendEngineEvent(state.engineEvents, type, data);
+}
+
+function persistRuntimeSnapshot(reason = 'runtime', force = false) {
+  if (!state.analysis || !state.analysisFingerprint || state.gameState === 'ANALYZING') return;
+  const now = Date.now();
+  if (!force && now - state.lastRuntimeSaveAt < 750) return;
+  state.lastRuntimeSaveAt = now;
+  try {
+    const snapshot = createRuntimeSnapshot(state, state.analysisFingerprint);
+    localStorage.setItem(RUNTIME_SAVE_KEY, JSON.stringify(snapshot));
+  } catch (error) {
+    console.warn('Runtime state could not be saved:', error);
+  }
+}
+
+function restoreRuntimeSnapshot(analysis) {
+  state.analysisFingerprint = analysisFingerprint(analysis);
+  try {
+    const raw = localStorage.getItem(RUNTIME_SAVE_KEY);
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw);
+    if (!isCompatibleRuntimeSnapshot(snapshot, state.analysisFingerprint)) {
+      localStorage.removeItem(RUNTIME_SAVE_KEY);
+      return null;
+    }
+    applyRuntimeSnapshot(state, snapshot);
+    logEngineEvent('RUNTIME_RESTORED', {
+      cursor: state.gameCursorTime,
+      actionIndex: state.currentActionIndex
+    });
+    return snapshot;
+  } catch (error) {
+    console.warn('Runtime state could not be restored:', error);
+    localStorage.removeItem(RUNTIME_SAVE_KEY);
+    return null;
+  }
+}
+
+function setAdultMachinePhase(proposed) {
+  const previous = state.adultPhaseMachine || 'foreplay';
+  const next = advanceAdultPhase(previous, proposed);
+  if (next !== previous) {
+    state.adultPhaseMachine = next;
+    logEngineEvent('ADULT_PHASE_CHANGED', { from: previous, to: next });
+    persistRuntimeSnapshot('adult-phase');
+  }
+  return state.adultPhaseMachine || next;
+}
+
+function guardPlayable(kind, action, options = {}) {
+  const result = canPlayAction({
+    kind,
+    action,
+    phase: state.adultPhaseMachine || state.adultLastUiPhase || 'foreplay',
+    videoDuration: Number(state.analysis?.videoDuration || els.video?.duration || 0),
+    ...options
+  });
+  if (!result.allowed) {
+    logEngineEvent('ACTION_REJECTED', {
+      kind,
+      actionId: action?.id || action?.actionId || null,
+      reason: result.reason
+    });
+  }
+  return result;
+}
+
 let analysisWakeLock = null;
 
 async function acquireAnalysisWakeLock() {
@@ -197,8 +287,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function setGameState(next) {
+  const previous = state.gameState;
   state.gameState = next;
   els.gameState.textContent = next;
+  if (previous !== next) {
+    logEngineEvent('GAME_STATE_CHANGED', { from: previous, to: next });
+  }
 
   if (next === 'ANALYZING') {
     acquireAnalysisWakeLock();
@@ -211,6 +305,9 @@ function setGameState(next) {
     stage.dataset.state = next;
   }
 
+  if (['DECISION_PENDING', 'ENDED', 'DIALOGUE_READY'].includes(next)) {
+    persistRuntimeSnapshot('game-state');
+  }
   renderDebug();
 }
 
@@ -224,6 +321,11 @@ function renderDebug(extra = {}) {
     activeActionId: state.activeAction?.actionId ?? null,
     consumedActionIds: [...state.consumedActionIds],
     videoCurrentTime: Number((els.video.currentTime || 0).toFixed(3)),
+    schemaVersion: state.analysis?.schemaVersion ?? null,
+    engineVersion: state.analysis?.engineVersion ?? ENGINE_VERSION,
+    integrityReport: state.integrityReport,
+    adultPhaseMachine: state.adultPhaseMachine,
+    recentEngineEvents: state.engineEvents.slice(-30),
     ...extra,
   };
   els.debugOutput.textContent = JSON.stringify(payload, null, 2);
@@ -771,22 +873,23 @@ function alignDubAudioToSegment(segment, videoTime) {
 
   const segmentStart = Number(segment.startTime) || 0;
   const segmentEnd = Math.max(segmentStart + 0.05, Number(segment.endTime) || segmentStart + 0.05);
-  const expected = mapVideoTimeToDubTime({
+  const correction = dubMasterClockCorrection({
     videoTime,
+    audioTime: Number(dubAudio.currentTime) || 0,
     segmentStart,
     segmentEnd,
-    audioDuration
-  });
-
-  if (Math.abs((Number(dubAudio.currentTime) || 0) - expected) > 0.22) {
-    dubAudio.currentTime = expected;
-  }
-
-  dubAudio.playbackRate = fittedDubPlaybackRate({
     audioDuration,
-    segmentDuration: segmentEnd - segmentStart,
     videoPlaybackRate: Number(els.video.playbackRate) || 1
   });
+
+  if (correction.mode === 'seek') {
+    dubAudio.currentTime = correction.targetTime;
+    logEngineEvent('DUB_HARD_RESYNC', {
+      drift: Number(correction.drift.toFixed(3)),
+      videoTime: Number(videoTime.toFixed(3))
+    });
+  }
+  dubAudio.playbackRate = correction.playbackRate;
 }
 
 async function syncDubPlayback() {
@@ -846,6 +949,11 @@ async function syncDubPlayback() {
 }
 
 els.video.addEventListener('timeupdate', () => void syncDubPlayback());
+setInterval(() => {
+  if (state.dubbingEnabled && !els.video.paused && !els.video.seeking) {
+    void syncDubPlayback();
+  }
+}, 300);
 els.video.addEventListener('pause', () => dubAudio.pause());
 els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
@@ -888,6 +996,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Reusing old segment ids or old translated dialogue can attach stale audio
   // to new source-video timestamps after a re-analysis.
   state.dialogue = null;
+  localStorage.removeItem(RUNTIME_SAVE_KEY);
+  state.analysisFingerprint = '';
+  state.engineEvents = [];
+  state.integrityReport = null;
   state.dubbingEnabled = false;
   state.subtitlesEnabled = false;
   resetDubState();
@@ -1061,6 +1173,31 @@ els.analyzeBtn.addEventListener('click', async () => {
               message: `Bölüm ${chunkIndex + 1} analiz edilemedi.`
             };
           } else {
+            if (shouldSecondPassReview(body)) {
+              form.set('reviewMode', '1');
+              form.set('reviewCandidates', JSON.stringify(body.actions || []));
+              els.analysisOutput.textContent =
+                `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ikinci kez doğrulanıyor...`;
+              const reviewResponse = await fetch('/api/gemini-storyboard-analyze', {
+                method: 'POST',
+                body: form,
+                signal: AbortSignal.timeout(240000)
+              });
+              const reviewBody = await reviewResponse.json();
+              if (!reviewResponse.ok || !reviewBody?.available) {
+                failureBody = reviewBody || {
+                  available: false,
+                  reason: 'SECOND_PASS_REVIEW_FAILED',
+                  message: `Bölüm ${chunkIndex + 1} ikinci doğrulamadan geçemedi.`
+                };
+                continue;
+              }
+              body = {
+                ...reviewBody,
+                secondPassReviewed: true,
+                firstPassActionCount: Array.isArray(body.actions) ? body.actions.length : 0
+              };
+            }
             chunkResults.push(body);
             if (body.protagonistProfile) {
               protagonistProfile = String(body.protagonistProfile).trim();
@@ -1139,9 +1276,13 @@ els.analyzeBtn.addEventListener('click', async () => {
         warnings: chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
         ),
-        analysisMode: 'MULTI_PASS_DEEP',
+        analysisMode: 'MULTI_PASS_DEEP_HARDENED',
         chunkCount: chunkResults.length,
-        expectedChunkCount: chunkCount
+        expectedChunkCount: chunkCount,
+        analysisCoverage: chunkCount ? chunkResults.length / chunkCount : 0,
+        secondPassChunkCount: chunkResults.filter(result => result.secondPassReviewed).length,
+        schemaVersion: ANALYSIS_SCHEMA_VERSION,
+        engineVersion: ENGINE_VERSION
       };
     }
 
@@ -1179,7 +1320,32 @@ els.analyzeBtn.addEventListener('click', async () => {
     return;
   }
 
-  const normalized = normalizeAnalysis(body);
+  let normalized = normalizeAnalysis(body);
+  const hardened = reviewAndHardenAnalysis({
+    ...body,
+    ...normalized,
+    chunkCount: Number(body.chunkCount || 0),
+    expectedChunkCount: Number(body.expectedChunkCount || 0)
+  });
+  normalized = hardened.analysis;
+  state.integrityReport = hardened.integrity;
+  state.analysisFingerprint = analysisFingerprint(normalized);
+  logEngineEvent('ANALYSIS_REVIEWED', {
+    fatal: hardened.integrity.fatal,
+    issues: hardened.integrity.issueCount,
+    before: hardened.integrity.actionCountBefore,
+    after: hardened.integrity.actionCountAfter
+  });
+
+  if (hardened.integrity.fatal) {
+    els.analysisState.textContent = 'INTEGRITY_FAILED';
+    els.analysisTitle.textContent = 'Analiz bütünlük kontrolünden geçemedi';
+    els.analysisOutput.textContent = 'Eksik veya tutarsız analiz oyun olarak açılmadı. Videoyu yeniden analiz et.';
+    setGameState('ERROR');
+    renderDebug({ integrity: hardened.integrity });
+    return;
+  }
+
   if (!normalized.actions.length) {
     els.analysisState.textContent = 'NO_ACTIONS';
     els.analysisTitle.textContent = 'Doğrulanmış action bulunmadı';
@@ -1200,6 +1366,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     'Derin analiz tamamlandı.',
     `${normalized.actions.length} doğrulanmış aksiyon hazır.`,
     `${Number(body.chunkCount || 0)}/${Number(body.expectedChunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
+    `${Number(body.secondPassChunkCount || 0)} bölüm görsel ikinci kontrolden geçti.`,
+    `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
     'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
@@ -1369,6 +1537,12 @@ function normalizeAnalysis(body) {
   assignPositionOccurrenceIds(cleaned);
 
   return {
+    schemaVersion: Number(body?.schemaVersion || ANALYSIS_SCHEMA_VERSION),
+    engineVersion: String(body?.engineVersion || ENGINE_VERSION),
+    chunkCount: Number(body?.chunkCount || 0),
+    expectedChunkCount: Number(body?.expectedChunkCount || 0),
+    analysisCoverage: Number(body?.analysisCoverage || 0),
+    secondPassChunkCount: Number(body?.secondPassChunkCount || 0),
     videoDuration: Number(body?.videoDuration ?? 0),
     mainMaleTrackId: body?.mainMaleTrackId ?? null,
     semanticVideoMap: body?.semanticVideoMap ?? [],
@@ -1436,7 +1610,20 @@ function initializeInteractive(analysis) {
   state.adultRevealedPositionIds = new Set();
   state.adultUiSignature = '';
   state.adultLastUiPhase = 'foreplay';
+  state.adultPhaseMachine = 'foreplay';
   prepareAdultScenes();
+  const restoredSnapshot = restoreRuntimeSnapshot(analysis);
+  if (restoredSnapshot) {
+    const restoreTarget = Math.max(0, Number(state.gameCursorTime) || 0);
+    const applyRestoreSeek = () => {
+      if (Number.isFinite(els.video.duration)) {
+        els.video.pause();
+        els.video.currentTime = Math.min(restoreTarget, Math.max(0, els.video.duration - 0.05));
+      }
+    };
+    if (els.video.readyState >= 1) applyRestoreSeek();
+    else els.video.addEventListener('loadedmetadata', applyRestoreSeek, { once: true });
+  }
   els.adultInteractionPanel?.classList.add("hidden");
   els.playerSection.classList.remove('hidden');
   els.videoPrompt.textContent = typeof analysis.videoPrompt === 'string' ? analysis.videoPrompt : JSON.stringify(analysis.videoPrompt, null, 2);
@@ -1954,6 +2141,7 @@ function renderAdultProgress() {
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${male}%`;
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${female}%`;
   renderAdultFlowStatus();
+  persistRuntimeSnapshot('adult-progress');
   renderAdultProgressiveUI(false);
 }
 
@@ -1973,6 +2161,7 @@ function resetAdultSceneGameplay() {
   state.adultRevealedPositionIds = new Set();
   state.adultUiSignature = '';
   state.adultLastUiPhase = 'foreplay';
+  state.adultPhaseMachine = 'foreplay';
 }
 
 function renderAdultWarmupChoices(scene) {
@@ -2071,7 +2260,8 @@ function renderAdultProgressiveUI(force = false) {
     hasBonusUnlocked: unlockedBonus.length > 0,
     hasOutcomeUnlocked: outcomes.length > 0
   });
-  const phase = monotonicAdultPhase(proposedPhase, state.adultLastUiPhase);
+  const monotonicPhase = monotonicAdultPhase(proposedPhase, state.adultLastUiPhase);
+  const phase = setAdultMachinePhase(monotonicPhase);
 
   const signature = [
     phase,
@@ -2330,6 +2520,9 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scene?.foreplay?.find(entry => entry.id === preludeId);
   if (!item || !els.video || state.adultOutcomePhase !== 'idle') return;
+  const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
+  if (!guard.allowed) return;
+  logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
 
   const token = beginAdultSelection();
   state.activeAdultPreludeId = item.id;
@@ -2403,11 +2596,15 @@ function playNextAdultVariant() {
 function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
-  if (
-    !position ||
-    state.adultOutcomePhase !== 'idle' ||
-    currentAdultFlow() + 0.001 < Number(position.unlockProgress || 0)
-  ) return;
+  if (!position || state.adultOutcomePhase !== 'idle') return;
+  const positionUnlocked = unlockedAdultPositions(scene).some(item => item.id === position.id);
+  const positionGuard = guardPlayable(
+    isWarmupPosition(position) ? 'foreplay' : 'position',
+    position,
+    { scene, unlocked: positionUnlocked }
+  );
+  if (!positionGuard.allowed) return;
+  if (shouldSeek) logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
 
   const selectionToken = shouldSeek
     ? beginAdultSelection()
@@ -2474,6 +2671,13 @@ function selectAdultMovement(
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || state.adultOutcomePhase !== 'idle') return;
+  const movementGuard = guardPlayable('movement', movement, {
+    scene: state.adultScene,
+    parentPosition: position,
+    unlocked: true
+  });
+  if (!movementGuard.allowed) return;
+  if (shouldSeek) logEngineEvent('MOVEMENT_SELECTED', { id: movement.id, positionId: position?.id || null });
 
   const effectiveToken = selectionToken ?? beginAdultSelection();
   state.activeAdultPreludeId = null;
@@ -2500,9 +2704,13 @@ function playAdultOutcome(outcomeId) {
   const scene = state.adultScene;
   const outcome = scene?.outcomes?.find(item => item.id === outcomeId);
   if (!outcome || !els.video) return;
-  if (!unlockedAdultOutcomes(scene).some(item => item.id === outcome.id)) return;
+  const outcomeReady = unlockedAdultOutcomes(scene).some(item => item.id === outcome.id);
+  const outcomeGuard = guardPlayable('outcome', outcome, { scene, unlocked: outcomeReady, outcomeReady });
+  if (!outcomeGuard.allowed) return;
 
   const selectionToken = beginAdultSelection();
+  setAdultMachinePhase('outcome');
+  logEngineEvent('OUTCOME_SELECTED', { id: outcome.id });
   state.adultOutcomePhase = 'outcome';
   state.activeAdultOutcomeId = outcome.id;
   state.activeAdultPreludeId = null;
@@ -2519,6 +2727,8 @@ function finishAdultScene() {
   if (!scene) return;
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
   state.completedAdultSceneIds.add(scene.id);
+  setAdultMachinePhase('complete');
+  logEngineEvent('ADULT_SCENE_COMPLETED', { sceneId: scene.id });
   state.adultSelectionToken += 1;
   cancelAdultSeek();
   state.adultMode = false;
@@ -2538,6 +2748,7 @@ function finishAdultScene() {
     els.video.play().catch(() => {});
   }
   state.gameCursorTime = scene.postSceneTime;
+  persistRuntimeSnapshot('adult-scene-complete', true);
   renderChoices();
 }
 
@@ -2618,6 +2829,8 @@ function updateAdultPlayback(now, mediaTime) {
       if (aftermath) {
         const token = beginAdultSelection();
         state.adultOutcomePhase = 'aftermath';
+        setAdultMachinePhase('aftermath');
+        logEngineEvent('AFTERMATH_STARTED', { sceneId: state.adultScene?.id || null });
         els.video.pause();
         seekAdultLoop(aftermath.startTime, token);
         els.video.play().catch(() => {});
@@ -2816,6 +3029,12 @@ function renderChoices() {
 }
 
 async function playAction(action) {
+  const guard = guardPlayable('timeline', action, { unlocked: true });
+  if (!guard.allowed) {
+    renderChoices();
+    return;
+  }
+  logEngineEvent('TIMELINE_ACTION_SELECTED', { actionId: action.actionId });
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
@@ -2856,6 +3075,7 @@ function finishAction(action) {
   state.currentActionIndex = Math.max(state.currentActionIndex, state.analysis.actions.findIndex(a => a.actionId === action.actionId));
   state.activeAction = null;
   setGameState('DECISION_PENDING');
+  persistRuntimeSnapshot('action-finished', true);
   renderChoices();
 }
 
@@ -3013,10 +3233,19 @@ function restoreSavedAnalysis() {
     const raw = localStorage.getItem("videoquest:last-analysis");
     if (!raw) return;
 
-    const normalized = normalizeAnalysis(JSON.parse(raw));
-    if (!normalized.actions.length) return;
+    const saved = JSON.parse(raw);
+    let normalized = normalizeAnalysis(saved);
+    const hardened = reviewAndHardenAnalysis({ ...saved, ...normalized });
+    normalized = hardened.analysis;
+    if (hardened.integrity.fatal || !normalized.actions.length) {
+      localStorage.removeItem("videoquest:last-analysis");
+      localStorage.removeItem(RUNTIME_SAVE_KEY);
+      return;
+    }
 
     state.analysis = normalized;
+    state.integrityReport = hardened.integrity;
+    state.analysisFingerprint = analysisFingerprint(normalized);
     els.analysisState.textContent = "TIMELINE_RESTORED";
     els.analysisTitle.textContent = `${normalized.actions.length} kayıtlı eylem geri yüklendi`;
     initializeInteractive(normalized);
