@@ -11,6 +11,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const ANALYSIS_SCHEMA_VERSION = 4;
+const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-hardening-v1';
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
 const upload = multer({
@@ -196,7 +198,7 @@ const storyboardUpload = multer({
   limits: {
     fileSize: 2 * 1024 * 1024,
     files: 20,
-    fields: 10
+    fields: 14
   }
 });
 
@@ -235,6 +237,19 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   ).trim();
   const dialogueContext = String(req.body?.dialogueContext || '[]');
   const qualityMode = String(req.body?.qualityMode || 'ultra');
+  const reviewMode = String(req.body?.reviewMode || '') === '1';
+  const reviewCandidates = String(req.body?.reviewCandidates || '[]').slice(0, 18000);
+  const reviewInstructions = reviewMode ? `
+SECOND PASS VISUAL REVIEW MODE:
+- Re-inspect the SAME storyboard frames against these first-pass candidates:
+${reviewCandidates}
+- Return only candidates that are visibly re-verified at start, midpoint and end.
+- Correct timestamps, canonical position id/label and confidence when the frames prove a correction.
+- Preserve actionId/sceneId for the same candidate.
+- Do not add a new action merely because it sounds plausible.
+- If a candidate conflicts with the frames, another position label, scene chronology, or its parent range, OMIT it and add a warning.
+- Outcome/final candidates require stronger evidence than ordinary actions.
+` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
   const targetActionCount = Math.max(
     5,
@@ -257,7 +272,7 @@ Video duration: ${duration} seconds
 Timestamp metadata for this chunk: ${timestamps}
 Local visual-change profile for this chunk: ${motionProfile}
 Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
-
+${reviewInstructions}
 DIALOGUE AND SCENE CONTEXT:
 Quality mode: ${qualityMode}
 Time-aligned dialogue segments:
@@ -522,6 +537,25 @@ Rules:
         action.endTime > action.startTime &&
         (!duration || action.endTime <= duration + 0.5)
       )
+      .filter((action) => {
+        const type = String(action.actionType || '').toLowerCase();
+        const outcome = String(action.outcomeType || '').toLowerCase();
+        const strictMinimum =
+          type === 'outcome' || type === 'aftermath' || outcome === 'climax' || outcome === 'aftermath'
+            ? 0.82
+            : action.positionId || action.positionLabel || type === 'position'
+              ? 0.72
+              : action.adultScene
+                ? 0.64
+                : 0.52;
+        // First pass is deliberately permissive enough to preserve uncertain
+        // candidates for the visual review pass. Review mode applies the full
+        // confidence threshold before a candidate can reach gameplay.
+        const minimum = reviewMode
+          ? strictMinimum
+          : Math.max(0.4, strictMinimum - 0.18);
+        return Number(action.confidence || 0) >= minimum;
+      })
       .sort((a, b) => a.startTime - b.startTime)
       .filter((action, index, list) =>
         index === 0 || action.startTime >= list[index - 1].endTime
@@ -529,9 +563,13 @@ Rules:
 
     return res.json({
       available: true,
+      schemaVersion: ANALYSIS_SCHEMA_VERSION,
+      engineVersion: ANALYSIS_ENGINE_VERSION,
+      reviewPass: reviewMode ? 'visual-second-pass' : 'first-pass',
       videoDuration: resolvedDuration,
       introEndTime,
       playStartTime: introEndTime,
+      protagonistProfile: String(parsed.protagonistProfile || protagonistProfile || ''),
       videoPrompt: String(parsed.videoPrompt || ''),
       actions,
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []

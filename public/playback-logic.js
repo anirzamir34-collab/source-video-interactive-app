@@ -49,6 +49,45 @@ export function fittedDubPlaybackRate({ audioDuration = 0, segmentDuration = 0, 
   return clamp((audio / segment) * videoRate, 0.8, 1.35);
 }
 
+export function dubMasterClockCorrection({
+  videoTime = 0,
+  audioTime = 0,
+  segmentStart = 0,
+  segmentEnd = 0,
+  audioDuration = 0,
+  videoPlaybackRate = 1,
+  softDrift = 0.15,
+  hardDrift = 0.4
+} = {}) {
+  const targetTime = mapVideoTimeToDubTime({
+    videoTime,
+    segmentStart,
+    segmentEnd,
+    audioDuration
+  });
+  const baseRate = fittedDubPlaybackRate({
+    audioDuration,
+    segmentDuration: Math.max(0.05, Number(segmentEnd) - Number(segmentStart)),
+    videoPlaybackRate
+  });
+  const drift = (Number(audioTime) || 0) - targetTime;
+  const magnitude = Math.abs(drift);
+
+  if (magnitude >= Math.max(softDrift, hardDrift)) {
+    return { mode: 'seek', targetTime, playbackRate: baseRate, drift };
+  }
+  if (magnitude >= Math.max(0.01, softDrift)) {
+    const correction = clamp(-drift * 0.55, -0.12, 0.12);
+    return {
+      mode: 'rate',
+      targetTime,
+      playbackRate: clamp(baseRate + correction, 0.8, 1.35),
+      drift
+    };
+  }
+  return { mode: 'hold', targetTime, playbackRate: baseRate, drift };
+}
+
 export function nextDialogueSegments(segments, videoTime, count = 2) {
   const list = Array.isArray(segments) ? segments : [];
   const time = Math.max(0, Number(videoTime) || 0);

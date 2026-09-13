@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   dialogueSegmentAt,
+  dubMasterClockCorrection,
   dubSegmentKey,
   fittedDubPlaybackRate,
   isCompleteChunkAnalysis,
@@ -39,6 +40,21 @@ test('dub playback rate is bounded and follows segment duration', () => {
   assert.equal(fittedDubPlaybackRate({ audioDuration: 3, segmentDuration: 3, videoPlaybackRate: 1 }), 1);
   assert.equal(fittedDubPlaybackRate({ audioDuration: 10, segmentDuration: 2, videoPlaybackRate: 1 }), 1.35);
   assert.equal(fittedDubPlaybackRate({ audioDuration: 1, segmentDuration: 4, videoPlaybackRate: 1 }), 0.8);
+});
+
+test('master clock holds small drift, rate-corrects medium drift and seeks large drift', () => {
+  const common = {
+    videoTime: 21.5,
+    segmentStart: 20,
+    segmentEnd: 23,
+    audioDuration: 6,
+    videoPlaybackRate: 1
+  };
+  assert.equal(dubMasterClockCorrection({ ...common, audioTime: 3.05 }).mode, 'hold');
+  assert.equal(dubMasterClockCorrection({ ...common, audioTime: 3.25 }).mode, 'rate');
+  const hard = dubMasterClockCorrection({ ...common, audioTime: 4 });
+  assert.equal(hard.mode, 'seek');
+  assert.equal(hard.targetTime, 3);
 });
 
 test('next dialogue prefetch starts from current or future segments', () => {
