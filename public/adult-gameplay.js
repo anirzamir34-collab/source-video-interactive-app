@@ -43,17 +43,59 @@ export function positionUnlockProgress({
   return clamp(DEFAULT_POSITION_UNLOCK_PROGRESS + order * 12, 35, 82);
 }
 
+export const ADULT_PHASE_ORDER = Object.freeze({
+  foreplay: 0,
+  positions: 1,
+  reward: 2,
+  final: 3
+});
+
 export function adultDiscoveryPhase({
-  flow = 0,
   hasCoreUnlocked = false,
   hasBonusUnlocked = false,
   hasOutcomeUnlocked = false
 } = {}) {
-  clamp(flow, 0, 100);
   if (hasOutcomeUnlocked) return 'final';
   if (hasBonusUnlocked) return 'reward';
   if (hasCoreUnlocked) return 'positions';
   return 'foreplay';
+}
+
+export function requiredWarmupDiscoveries(totalChoices = 0) {
+  const total = Math.max(0, Math.floor(Number(totalChoices) || 0));
+  if (!total) return 0;
+  return Math.min(total, Math.max(1, Math.ceil(total * 0.7)));
+}
+
+export function canUnlockCorePositions({
+  flow = 0,
+  warmupTotal = 0,
+  warmupUniquePlayed = 0
+} = {}) {
+  const total = Math.max(0, Math.floor(Number(warmupTotal) || 0));
+  if (!total) return true;
+  const played = Math.max(0, Math.floor(Number(warmupUniquePlayed) || 0));
+  return clamp(flow, 0, 100) >= DEFAULT_POSITION_UNLOCK_PROGRESS &&
+    played >= requiredWarmupDiscoveries(total);
+}
+
+export function canUnlockBonusPositions({
+  flow = 0,
+  coreVisitedCount = 0,
+  corePositionCount = 0,
+  bootstrap = false
+} = {}) {
+  if (bootstrap) return true;
+  const coreCount = Math.max(0, Math.floor(Number(corePositionCount) || 0));
+  const visited = Math.max(0, Math.floor(Number(coreVisitedCount) || 0));
+  return clamp(flow, 0, 100) >= DEFAULT_BONUS_UNLOCK_PROGRESS &&
+    (coreCount === 0 || visited >= 1);
+}
+
+export function monotonicAdultPhase(proposed = 'foreplay', previous = 'foreplay') {
+  const proposedRank = ADULT_PHASE_ORDER[proposed] ?? 0;
+  const previousRank = ADULT_PHASE_ORDER[previous] ?? 0;
+  return proposedRank >= previousRank ? proposed : previous;
 }
 
 export function computeWarmupSelectionDelta({

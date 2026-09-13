@@ -1,12 +1,16 @@
 import {
   adultDiscoveryPhase,
   averageAdultProgress,
+  canUnlockBonusPositions,
+  canUnlockCorePositions,
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
   isOutcomeUnlocked,
+  monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
   pickNextVariant,
-  positionUnlockProgress
+  positionUnlockProgress,
+  requiredWarmupDiscoveries
 } from './adult-gameplay.js';
 
 const $ = (id) => document.getElementById(id);
@@ -23,6 +27,7 @@ const state = {
   activeDubSegmentId: null,
   dubCache: new Map(),
   dubRequests: new Map(),
+  dubSyncGeneration: 0,
   gameState: 'IDLE',
   gameCursorTime: 0,
   currentActionIndex: -1,
@@ -742,12 +747,28 @@ function resetDubState() {
   dubAudio.load();
   state.dubCache.clear();
   state.dubRequests.clear();
+  state.dubSyncGeneration += 1;
   state.activeDubSegmentId = null;
+}
+
+function prefetchDubAround(videoTime) {
+  if (!state.dubbingEnabled) return;
+  const current = getDubBlockAt(videoTime);
+  if (current) void ensureDubBlock(current);
+
+  const nextTime = current
+    ? current.blockEnd + 0.01
+    : Math.max(0, Number(videoTime) || 0) + DUB_BLOCK_SECONDS;
+  const next = getDubBlockAt(nextTime);
+  if (next && (!current || next.blockId !== current.blockId)) {
+    void ensureDubBlock(next);
+  }
 }
 
 async function syncDubPlayback() {
   if (!state.dubbingEnabled) return stopDubPlayback();
 
+  const generation = state.dubSyncGeneration;
   const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
   const block = getDubBlockAt(videoTime);
   if (!block) return stopDubPlayback();
@@ -755,22 +776,23 @@ async function syncDubPlayback() {
   if (state.activeDubSegmentId === block.blockId && dubAudio.src) {
     const expected = Math.max(0, videoTime - block.blockStart);
     if (Number.isFinite(dubAudio.duration) && expected < dubAudio.duration &&
-        Math.abs((Number(dubAudio.currentTime)||0)-expected) > 0.45) {
+        Math.abs((Number(dubAudio.currentTime) || 0) - expected) > 0.45) {
       dubAudio.currentTime = expected;
     }
-    dubAudio.playbackRate = Math.max(0.9,Math.min(1.1,Number(els.video.playbackRate)||1));
-    if (!els.video.paused && dubAudio.paused && expected < (dubAudio.duration||Infinity)) {
-      dubAudio.play().catch(()=>{});
+    dubAudio.playbackRate = Math.max(0.9, Math.min(1.1, Number(els.video.playbackRate) || 1));
+    if (!els.video.paused && dubAudio.paused && expected < (dubAudio.duration || Infinity)) {
+      dubAudio.play().catch(() => {});
     }
+    prefetchDubAround(videoTime);
     return;
   }
 
   stopDubPlayback();
   const requestedId = block.blockId;
   const source = await ensureDubBlock(block);
-  if (!source || !state.dubbingEnabled) return;
+  if (!source || !state.dubbingEnabled || generation !== state.dubSyncGeneration) return;
 
-  const current = getDubBlockAt(Number(els.video.currentTime)||0);
+  const current = getDubBlockAt(Number(els.video.currentTime) || 0);
   if (!current || current.blockId !== requestedId) return;
 
   state.activeDubSegmentId = requestedId;
@@ -778,26 +800,43 @@ async function syncDubPlayback() {
   dubAudio.load();
 
   const start = () => {
-    if (!state.dubbingEnabled || state.activeDubSegmentId !== requestedId) return;
-    const expected = Math.max(0,(Number(els.video.currentTime)||0)-block.blockStart);
+    if (
+      !state.dubbingEnabled ||
+      state.activeDubSegmentId !== requestedId ||
+      generation !== state.dubSyncGeneration
+    ) return;
+
+    const expected = Math.max(0, (Number(els.video.currentTime) || 0) - block.blockStart);
     if (Number.isFinite(dubAudio.duration) && dubAudio.duration > 0) {
-      dubAudio.currentTime = Math.min(Math.max(0,dubAudio.duration-0.05),expected);
+      dubAudio.currentTime = Math.min(Math.max(0, dubAudio.duration - 0.05), expected);
     }
-    dubAudio.playbackRate = Math.max(0.9,Math.min(1.1,Number(els.video.playbackRate)||1));
-    if (!els.video.paused) dubAudio.play().catch(()=>{});
+    dubAudio.playbackRate = Math.max(0.9, Math.min(1.1, Number(els.video.playbackRate) || 1));
+    if (!els.video.paused && expected < (dubAudio.duration || Infinity)) {
+      dubAudio.play().catch(() => {});
+    }
+    prefetchDubAround(Number(els.video.currentTime) || 0);
   };
 
   if (dubAudio.readyState >= 1) start();
-  else dubAudio.addEventListener('loadedmetadata',start,{once:true});
+  else dubAudio.addEventListener('loadedmetadata', start, { once: true });
 }
 
-els.video.addEventListener('timeupdate',syncDubPlayback);
-els.video.addEventListener('pause',()=>dubAudio.pause());
-els.video.addEventListener('seeking',()=>{
+els.video.addEventListener('timeupdate', () => void syncDubPlayback());
+els.video.addEventListener('pause', () => dubAudio.pause());
+els.video.addEventListener('seeking', () => {
+  state.dubSyncGeneration += 1;
   dubAudio.pause();
-  state.activeDubSegmentId=null;
+  state.activeDubSegmentId = null;
 });
-els.video.addEventListener('play',syncDubPlayback);
+els.video.addEventListener('seeked', () => {
+  if (!state.dubbingEnabled) return;
+  void syncDubPlayback();
+  prefetchDubAround(Number(els.video.currentTime) || 0);
+});
+els.video.addEventListener('play', () => {
+  void syncDubPlayback();
+  prefetchDubAround(Number(els.video.currentTime) || 0);
+});
 
 els.subtitleToggleBtn?.addEventListener('click', () => {
   state.subtitlesEnabled = !state.subtitlesEnabled;
@@ -1358,13 +1397,14 @@ function adultSemanticFamily(value) {
 }
 
 function canonicalAdultPosition(action) {
-  const source = [
-    action.positionLabel,
-    action.label,
-    action.positionId
-  ].filter(Boolean).join(' ');
+  // Prefer human-readable visual evidence over a conflicting machine id.
+  // This prevents a stale/wrong positionId from turning a visibly labelled
+  // cowgirl segment into a missionary button (or the reverse).
+  const family =
+    adultSemanticFamily(action.positionLabel) ||
+    adultSemanticFamily(action.label) ||
+    adultSemanticFamily(action.positionId);
 
-  const family = adultSemanticFamily(source);
   const labels = {
     oral: 'Oral Seks',
     manual: 'Manuel Uyarım',
@@ -1379,7 +1419,7 @@ function canonicalAdultPosition(action) {
   if (family) return { id: family, label: labels[family] };
 
   const fallback = normalizeAdultLabel(
-    action.positionId || action.positionLabel || action.label || 'pozisyon'
+    action.positionLabel || action.positionId || action.label || 'pozisyon'
   ).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
   return {
@@ -1424,6 +1464,45 @@ function isWarmupPosition(position) {
 function isBonusPosition(position) {
   const category = String(position?.categoryId || '');
   return category === 'anal' || category === 'other';
+}
+
+
+const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 8;
+
+function mergeAdultSceneFragments(scenes) {
+  const sorted = [...(Array.isArray(scenes) ? scenes : [])]
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const merged = [];
+
+  for (const scene of sorted) {
+    const previous = merged[merged.length - 1];
+    if (!previous) {
+      merged.push({ ...scene });
+      continue;
+    }
+
+    const gap = Number(scene.startTime) - Number(previous.endTime);
+    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS) {
+      merged.push({ ...scene });
+      continue;
+    }
+
+    previous.startTime = Math.min(Number(previous.startTime), Number(scene.startTime));
+    previous.endTime = Math.max(Number(previous.endTime), Number(scene.endTime));
+    previous.postSceneTime = Math.max(Number(previous.postSceneTime), Number(scene.postSceneTime));
+    previous.foreplay = [...(previous.foreplay || []), ...(scene.foreplay || [])]
+      .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+    previous.positions = [...(previous.positions || []), ...(scene.positions || [])]
+      .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+    previous.outcomes = [...(previous.outcomes || []), ...(scene.outcomes || [])]
+      .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+
+    if (!previous.aftermath || (scene.aftermath && Number(scene.aftermath.startTime) > Number(previous.aftermath.startTime))) {
+      previous.aftermath = scene.aftermath || previous.aftermath;
+    }
+  }
+
+  return merged;
 }
 
 function prepareAdultScenes() {
@@ -1627,6 +1706,8 @@ function prepareAdultScenes() {
     .filter(scene => scene.positions.length || scene.foreplay.length)
     .sort((a, b) => a.startTime - b.startTime);
 
+  state.adultScenes = mergeAdultSceneFragments(state.adultScenes);
+
   state.adultScenes.forEach(scene => {
     const totals = new Map();
     const indexes = new Map();
@@ -1687,11 +1768,48 @@ function currentAdultFlow() {
   );
 }
 
+function adultWarmupStats(scene = state.adultScene) {
+  const warmupPositions = (scene?.positions || []).filter(isWarmupPosition);
+  const warmupActionIds = new Set((scene?.foreplay || []).map(item => item.id));
+  let warmupUniquePlayed = 0;
+
+  warmupActionIds.forEach(id => {
+    if (Number(state.adultPreludePlayCounts.get(id) || 0) > 0) warmupUniquePlayed += 1;
+  });
+  warmupPositions.forEach(position => {
+    if (state.adultVisitedPositionIds.has(position.id)) warmupUniquePlayed += 1;
+  });
+
+  return {
+    warmupTotal: warmupActionIds.size + warmupPositions.length,
+    warmupUniquePlayed
+  };
+}
+
 function unlockedAdultPositions(scene = state.adultScene) {
   const flow = currentAdultFlow();
-  return (scene?.positions || []).filter(
-    position => flow + 0.001 >= Number(position.unlockProgress || 0)
-  );
+  const positions = scene?.positions || [];
+  const { warmupTotal, warmupUniquePlayed } = adultWarmupStats(scene);
+  const corePositions = positions.filter(position => !isWarmupPosition(position) && !isBonusPosition(position));
+  const coreVisitedCount = corePositions.filter(position => state.adultVisitedPositionIds.has(position.id)).length;
+  const coreAllowed = canUnlockCorePositions({
+    flow,
+    warmupTotal,
+    warmupUniquePlayed
+  });
+  const bonusAllowed = canUnlockBonusPositions({
+    flow,
+    coreVisitedCount,
+    corePositionCount: corePositions.length,
+    bootstrap: warmupTotal === 0 && corePositions.length === 0
+  });
+
+  return positions.filter(position => {
+    if (flow + 0.001 < Number(position.unlockProgress || 0)) return false;
+    if (isWarmupPosition(position)) return true;
+    if (isBonusPosition(position)) return coreAllowed && bonusAllowed;
+    return coreAllowed;
+  });
 }
 
 function unlockedAdultOutcomes(scene = state.adultScene) {
@@ -1792,7 +1910,7 @@ function renderAdultWarmupChoices(scene) {
 
   const choices = [...warmupActions, ...warmupPositions]
     .sort((a, b) => a.playCount - b.playCount || a.startTime - b.startTime)
-    .slice(0, 4);
+    .slice(0, 3);
 
   els.foreplayChoices.innerHTML = '';
   if (els.foreplayCount) {
@@ -1859,12 +1977,13 @@ function renderAdultProgressiveUI(force = false) {
   const unlockedCore = unlockedPositions.filter(position => !isWarmupPosition(position));
   const unlockedBonus = unlockedCore.filter(isBonusPosition);
   const outcomes = unlockedAdultOutcomes(scene);
-  const phase = adultDiscoveryPhase({
+  const proposedPhase = adultDiscoveryPhase({
     flow,
     hasCoreUnlocked: unlockedCore.some(position => !isBonusPosition(position)),
     hasBonusUnlocked: unlockedBonus.length > 0,
     hasOutcomeUnlocked: outcomes.length > 0
   });
+  const phase = monotonicAdultPhase(proposedPhase, state.adultLastUiPhase);
 
   const signature = [
     phase,
@@ -1904,19 +2023,28 @@ function renderAdultProgressiveUI(force = false) {
   els.adultInteractionPanel.dataset.phase = phase;
 
   const next = nextAdultDiscovery(scene);
+  const warmupStats = adultWarmupStats(scene);
+  const warmupRequired = requiredWarmupDiscoveries(warmupStats.warmupTotal);
+  const warmupRemaining = Math.max(0, warmupRequired - warmupStats.warmupUniquePlayed);
   if (els.discoveryGate) {
-    const hideGate = phase === 'final' || !next;
+    const hideGate = phase === 'final' || (!next && warmupRemaining === 0);
     els.discoveryGate.classList.toggle('hidden', hideGate);
     if (!hideGate) {
       if (els.discoveryGateText) {
-        els.discoveryGateText.textContent = next.type === 'outcome'
-          ? 'Sahnenin son aşaması hâlâ gizli'
-          : 'Yeni bir seçenek yaklaşıyor';
+        els.discoveryGateText.textContent = warmupRemaining > 0
+          ? 'Yakınlaşmayı biraz daha keşfet'
+          : next?.type === 'outcome'
+            ? 'Sahnenin son aşaması hâlâ gizli'
+            : 'Yeni bir seçenek yaklaşıyor';
       }
       if (els.discoveryGateMeta) {
-        const remaining = Math.max(0, Math.ceil(next.progress - flow));
-        els.discoveryGateMeta.textContent =
-          `%${Math.round(next.progress)} Lust seviyesinde açılır · ${remaining} puan kaldı`;
+        if (warmupRemaining > 0) {
+          els.discoveryGateMeta.textContent = `${warmupRemaining} yeni yakınlaşma seçimi daha keşfet`;
+        } else if (next) {
+          const remaining = Math.max(0, Math.ceil(next.progress - flow));
+          els.discoveryGateMeta.textContent =
+            `%${Math.round(next.progress)} Lust seviyesinde açılır · ${remaining} puan kaldı`;
+        }
       }
     }
   }

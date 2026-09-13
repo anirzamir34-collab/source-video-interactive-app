@@ -392,6 +392,8 @@ Rules:
 - Turkish labels must be short and directly describe the male action
 - Detect every verified adult scene boundary and mark adultScene true only inside that real scene.
 - Set one stable adultSceneId for every action belonging to the same adult scene.
+- Treat one continuous consensual intimate encounter as one adultScene across foreplay, oral/manual activity, position changes, climax and aftermath. Do not create a new adultSceneId merely because the interaction changes from touching/undressing to a sexual position or from one position to another.
+- Start a new adultSceneId only after a clear narrative, location, participant or substantial time break.
 - Detect a position only when the source visibly shows a stable adult-act body configuration sustained over time; then use actionType "position".
 - Never classify undressing, dressing, walking, approaching, preparation, conversation, camera changes, pauses or generic standing/sitting as positions.
 - Foreplay and non-position actions may remain chronological main/bonus actions, but must not receive a positionId or appear in position tabs.
@@ -407,6 +409,10 @@ Rules:
 - When evidence conflicts between sampled frames, prefer omission and add a warning instead of guessing.
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
 - Use canonical positionId values consistently: oral, manual, missionary, cowgirl, spoon, standing-rear, rear, standing, or other-stable-N.
+- positionId, positionLabel and the visible body configuration described by label must agree. If they conflict, omit the position instead of guessing.
+- Use missionary only when the receiving partner is visibly below/on their back and MAIN_MALE is visibly above/front-facing in that configuration.
+- Use cowgirl only when the partner is visibly on top/straddling MAIN_MALE. Never reuse missionary for a cowgirl segment or cowgirl for a missionary segment.
+- When the visible body configuration changes from one canonical position to another, end the previous occurrence before the change and start a new occurrence at the first clearly verified frame of the new position.
 - Two labels describing the same visible body configuration must reuse one canonical positionId; wording, tempo, camera angle, or minor pose variation must never create another position.
 - Oral activity, manual activity, undressing, and transitions are separate position families and must never appear beneath missionary, rear, standing-rear, cowgirl, spoon, or another penetrative position.
 - A movement may belong to a position only when its entire loopStartTime-loopEndTime interval is visibly contained inside that exact positionStartTime-positionEndTime range.
