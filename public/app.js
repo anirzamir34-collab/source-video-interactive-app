@@ -1044,7 +1044,11 @@ els.analyzeBtn.addEventListener('click', async () => {
       state.subtitlesEnabled = Boolean(modes.subtitles && dialogue.segments.length);
       els.subtitleToggleBtn.classList.toggle('hidden', !state.subtitlesEnabled);
       if (!state.subtitlesEnabled) {
-        els.subtitleOverlay.textContent = '';
+        // Keep the speaker/text nodes mounted. Removing the overlay contents
+        // leaves the cached element references detached, so a later successful
+        // analysis updates invisible nodes and subtitles never return.
+        els.subtitleSpeaker.textContent = '';
+        els.subtitleText.textContent = '';
         els.subtitleOverlay.classList.add('hidden');
       }
 
