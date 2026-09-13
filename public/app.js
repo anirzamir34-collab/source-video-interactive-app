@@ -1158,6 +1158,12 @@ els.analyzeBtn.addEventListener('click', async () => {
           `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...\n` +
           `Deneme ${attempt}/3 · tamamlanan ${chunkResults.length}/${chunkCount}`;
 
+        // Every retry starts from a clean first pass. Review metadata is added
+        // only after that first pass succeeds, so a failed review cannot poison
+        // the next retry.
+        form.delete('reviewMode');
+        form.delete('reviewCandidates');
+
         try {
           response = await fetch('/api/gemini-storyboard-analyze', {
             method: 'POST',

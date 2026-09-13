@@ -540,7 +540,7 @@ Rules:
       .filter((action) => {
         const type = String(action.actionType || '').toLowerCase();
         const outcome = String(action.outcomeType || '').toLowerCase();
-        const minimum =
+        const strictMinimum =
           type === 'outcome' || type === 'aftermath' || outcome === 'climax' || outcome === 'aftermath'
             ? 0.82
             : action.positionId || action.positionLabel || type === 'position'
@@ -548,6 +548,12 @@ Rules:
               : action.adultScene
                 ? 0.64
                 : 0.52;
+        // First pass is deliberately permissive enough to preserve uncertain
+        // candidates for the visual review pass. Review mode applies the full
+        // confidence threshold before a candidate can reach gameplay.
+        const minimum = reviewMode
+          ? strictMinimum
+          : Math.max(0.4, strictMinimum - 0.18);
         return Number(action.confidence || 0) >= minimum;
       })
       .sort((a, b) => a.startTime - b.startTime)
