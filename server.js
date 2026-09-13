@@ -948,7 +948,7 @@ const dialogueUpload = multer({
 const dialogueUploadSessions = new Map();
 const dialogueChunkParser = express.raw({
   type: 'application/octet-stream',
-  limit: '2mb'
+  limit: '10mb'
 });
 
 app.post('/api/dialogue-upload/start', async (req, res) => {

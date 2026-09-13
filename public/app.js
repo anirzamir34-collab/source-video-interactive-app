@@ -556,7 +556,7 @@ function sendDialogueChunk({
     );
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
-    xhr.timeout = 60000;
+    xhr.timeout = 120000;
     xhr.responseType = 'json';
 
     xhr.upload.addEventListener('progress', event => {
@@ -640,7 +640,8 @@ async function uploadDialogueWithProgress(
   }
 
   const uploadId = startBody.uploadId;
-  const chunkSize = 1024 * 1024;
+  // Always-on aggressive upload: fewer round trips, larger sustained network writes.
+  const chunkSize = 8 * 1024 * 1024;
   const chunkCount = Math.ceil(file.size / chunkSize);
   const startedAt = performance.now();
 
@@ -667,7 +668,7 @@ async function uploadDialogueWithProgress(
       } catch (error) {
         retryCount += 1;
 
-        if (retryCount >= 8) throw error;
+        if (retryCount >= 5) throw error;
 
         els.analysisTitle.textContent =
           `Bağlantı bekleniyor · parça ${chunkIndex + 1}/${chunkCount}`;
@@ -675,7 +676,7 @@ async function uploadDialogueWithProgress(
           'Yükleme kesildi veya uygulama arka plana alındı.\n' +
           'Sayfaya dönüldüğünde kaldığı parçadan devam edilecek.';
 
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        await new Promise(resolve => setTimeout(resolve, 650));
       }
     }
 
