@@ -198,7 +198,7 @@ const storyboardUpload = multer({
   limits: {
     fileSize: 2 * 1024 * 1024,
     files: 20,
-    fields: 10
+    fields: 14
   }
 });
 
