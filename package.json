@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --check server.js && node --check public/app.js && node --check public/storyboard.js"
+    "test": "node --check server.js && node --check public/app.js && node --check public/storyboard.js && node --check public/adult-gameplay.js && node --test test/adult-gameplay.test.js"
   },
   "engines": {
     "node": ">=20"

@@ -338,7 +338,7 @@ Return ONLY valid JSON with this exact shape:
       "actionId": "tl-001",
       "sceneId": "scene-001",
       "actionLevel": "main|bonus",
-      "actionType": "position|tempo_change|kiss|touch|clothing|body_transition|camera_transition|other",
+      "actionType": "position|tempo_change|kiss|touch|clothing|body_transition|camera_transition|outcome|aftermath|other",
       "adultScene": false,
       "adultSceneId": "",
       "adultSceneStartTime": 0,
@@ -355,6 +355,11 @@ Return ONLY valid JSON with this exact shape:
       "loopEndTime": 0,
       "maleProgressRate": 1,
       "femaleProgressRate": 1,
+      "outcomeType": "none|climax|aftermath",
+      "outcomeLabel": "",
+      "outcomeStartTime": 0,
+      "outcomeEndTime": 0,
+      "outcomeUnlockProgress": 82,
       "cameraMode": "third_person|male_pov|mixed|uncertain",
       "label": "short Turkish imperative",
       "startTime": number,
@@ -414,6 +419,10 @@ Rules:
 - Never return one-frame, frozen-frame, transition, cut, camera-change or seek-unstable loops.
 - adultSceneStartTime and adultSceneEndTime must cover the real scene; postSceneTime must point to its first real continuation.
 - maleProgressRate and femaleProgressRate are game pacing weights from 0.25 to 2.5 based on visible motion intensity and duration.
+- When the source visibly contains a real climax/final segment inside the adult scene, emit it as actionType "outcome", outcomeType "climax", with exact outcomeStartTime/outcomeEndTime and a short outcomeLabel. Do not assign positionId to an outcome.
+- When the source visibly contains a distinct post-final continuation inside the same adult scene, emit it as actionType "aftermath", outcomeType "aftermath", with exact outcomeStartTime/outcomeEndTime. Do not convert aftermath into a position or movement loop.
+- outcomeUnlockProgress is a gameplay hint only; use 82 by default and never use it to invent or extend footage. If no verified outcome or aftermath exists, keep outcomeType "none" and do not fabricate one.
+- Outcome and aftermath boundaries must be directly source-verified and must never overlap a selectable movement loop.
 - Never invent any position, movement, transition, outcome or label absent from the source frames.
 `;
 
@@ -480,6 +489,13 @@ Rules:
           loopEndTime: Number(action.loopEndTime ?? action.endTime),
           maleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.maleProgressRate) || 1)),
           femaleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.femaleProgressRate) || 1)),
+          outcomeType: ['climax', 'aftermath'].includes(String(action.outcomeType || '').toLowerCase())
+            ? String(action.outcomeType).toLowerCase()
+            : 'none',
+          outcomeLabel: String(action.outcomeLabel || ''),
+          outcomeStartTime: Number(action.outcomeStartTime ?? action.startTime),
+          outcomeEndTime: Number(action.outcomeEndTime ?? action.endTime),
+          outcomeUnlockProgress: Math.min(100, Math.max(60, Number(action.outcomeUnlockProgress) || 82)),
         cameraMode: ['third_person', 'male_pov', 'mixed', 'uncertain'].includes(action.cameraMode)
           ? action.cameraMode
           : 'uncertain',

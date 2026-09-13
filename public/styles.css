@@ -2432,3 +2432,92 @@ pre {
   background: rgba(24, 115, 93, .34);
   box-shadow: 0 5px 20px rgba(45, 226, 177, .1);
 }
+
+
+/* VIDEOQUEST ADULT GAMEPLAY V2 */
+.adult-variant-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.next-variant-btn {
+  min-height: 42px !important;
+  padding: 9px 13px !important;
+  border-radius: 13px !important;
+}
+
+.adult-flow-status {
+  color: rgba(236, 255, 249, .72);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.outcome-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+}
+
+.outcome-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.outcome-choice-card {
+  min-height: 76px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  padding: 12px 14px !important;
+  text-align: left !important;
+  border-radius: 15px !important;
+}
+
+.outcome-choice-card span {
+  color: #06150f;
+  font-weight: 900;
+}
+
+.outcome-choice-card small {
+  color: rgba(3, 19, 14, .68);
+  font-size: 10px;
+}
+
+.outcome-choice-card.locked,
+.outcome-choice-card:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+  filter: saturate(.45);
+}
+
+.outcome-choice-card.locked span,
+.outcome-choice-card:disabled span {
+  color: rgba(255, 255, 255, .78);
+}
+
+.outcome-choice-card.locked small,
+.outcome-choice-card:disabled small {
+  color: rgba(255, 255, 255, .48);
+}
+
+@media (max-width: 600px) {
+  .adult-variant-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .next-variant-btn {
+    width: 100%;
+  }
+
+  .outcome-choice-grid {
+    grid-template-columns: 1fr;
+  }
+}
