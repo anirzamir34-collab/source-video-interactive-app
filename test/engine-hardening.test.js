@@ -67,6 +67,42 @@ test('overlapping incompatible positions force a second pass even at high confid
   assert.deepEqual(secondPassReviewCandidates({ actions: [missionary, cowgirl] }).map(x => x.actionId), ['m', 'c']);
 });
 
+test('penetration route uses its own confidence and evidence gate', () => {
+  const ambiguous = {
+    actionId: 'route-low', startTime: 10, endTime: 25, confidence: 0.98, adultSceneId: 's',
+    actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner',
+    activityType: 'vaginal', activityTypeConfidence: 0.72, activityEvidence: ''
+  };
+  const clear = { ...ambiguous, actionId: 'route-high', activityTypeConfidence: 0.96, activityEvidence: 'direct visible route evidence' };
+  assert.deepEqual(secondPassReviewCandidates({ actions: [ambiguous] }).map(x => x.actionId), ['route-low']);
+  assert.deepEqual(secondPassReviewCandidates({ actions: [clear] }).map(x => x.actionId), []);
+});
+
+test('same position with conflicting anal and vaginal claims forces route review', () => {
+  const vaginal = {
+    actionId: 'v', startTime: 10, endTime: 25, confidence: 0.97, adultSceneId: 's',
+    actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner',
+    activityType: 'vaginal', activityTypeConfidence: 0.97, activityEvidence: 'direct visible route evidence'
+  };
+  const anal = { ...vaginal, actionId: 'a', startTime: 12, endTime: 24, activityType: 'anal' };
+  assert.deepEqual(secondPassReviewCandidates({ actions: [vaginal, anal] }).map(x => x.actionId), ['v', 'a']);
+});
+
+test('hardening downgrades unsupported penetrative route instead of keeping a false explicit label', () => {
+  const { analysis, integrity } = reviewAndHardenAnalysis({
+    videoDuration: 40,
+    actions: [{
+      actionId: 'route', label: 'Vajinal seks', startTime: 10, endTime: 25, confidence: 0.98,
+      adultScene: true, adultSceneId: 's', actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner',
+      positionStartTime: 10, positionEndTime: 25, loopStartTime: 10, loopEndTime: 25,
+      activityType: 'vaginal', activityTypeConfidence: 0.55, activityEvidence: ''
+    }]
+  });
+  assert.equal(analysis.actions[0].activityType, 'other');
+  assert.equal(analysis.actions[0].label, 'Misyoner');
+  assert.ok(integrity.issues.some(issue => issue.code === 'UNVERIFIED_ACTIVITY_TYPE'));
+});
+
 test('selective review preserves safe first-pass actions and rejects invented review ids', () => {
   const safe = { actionId: 'safe', label: 'Dokun', startTime: 1, endTime: 3, confidence: 0.95 };
   const risky = { actionId: 'risky', label: 'Misyoner', startTime: 10, endTime: 20, confidence: 0.78 };

@@ -1520,6 +1520,8 @@ function normalizeAnalysis(body) {
       positionId: String(a.positionId || ""),
       positionOccurrenceId: String(a.positionOccurrenceId || ""),
       activityType: String(a.activityType || ""),
+      activityTypeConfidence: Math.max(0, Math.min(1, Number(a.activityTypeConfidence) || 0)),
+      activityEvidence: String(a.activityEvidence || ""),
       positionLabel: String(a.positionLabel || ""),
       positionStartTime: Number(a.positionStartTime ?? a.startTime),
       positionEndTime: Number(a.positionEndTime ?? a.endTime),
