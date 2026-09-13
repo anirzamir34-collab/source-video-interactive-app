@@ -1238,10 +1238,9 @@ app.post(
       const prompt = `
 Analyze only the audible dialogue and speech in this video.
 
-SPEAKER IDENTITY CONTEXT:
-- User's locked protagonist description: ${String(req.body?.protagonistProfile || 'not provided').slice(0, 240)}
-- Use both visible scene continuity and voice continuity to keep each speaker distinct.
-- The visible locked male protagonist should be named "Başkarakter" when the evidence matches.
+VOICE IDENTITY CONTEXT:
+- Use voice continuity and diarization to keep every audible speaker distinct.
+- This is an audio-first subtitle pass. Do not guess family relationships or character identities.
 
 LANGUAGE DETECTION AND TURKISH TRANSLATION:
 - Automatically identify the actual spoken source language from the audio; never assume it is English.
@@ -1263,8 +1262,8 @@ Return valid JSON only, with this exact structure:
   "speakers": [
     {
       "speakerId": "speaker-01",
-      "speakerName": "Başkarakter|Baba|Anne|Kız kardeş|Erkek kardeş|Kadın 1|Erkek 1",
-      "relationshipRole": "scene-supported role or unknown",
+      "speakerName": "Kadın sesi A|Kadın sesi B|Erkek sesi A|Erkek sesi B|Ses A",
+      "relationshipRole": "unknown",
       "roleConfidence": 0.0,
       "roleEvidence": "brief visible or spoken evidence",
       "gender": "female|male|uncertain",
@@ -1293,10 +1292,8 @@ Rules:
 - Preserve chronological order.
 - Identify and consistently separate different speakers.
 - Give every distinct speaker one stable Turkish speakerName and reuse it in every segment.
-- Name the locked male protagonist "Başkarakter" when his identity is supported by scene continuity.
-- Use relationship names such as "Baba", "Anne", "Kız kardeş" or "Erkek kardeş" only when spoken dialogue or strong visual story evidence supports that exact relationship.
-- Never infer a family relationship from age, gender, location or familiarity alone.
-- When the exact role is uncertain, keep people distinct with stable neutral names such as "Kadın 1", "Kadın 2", "Erkek 1" and "Erkek 2".
+- Keep people distinct with stable voice labels such as "Kadın sesi A", "Kadın sesi B", "Erkek sesi A" and "Erkek sesi B".
+- Never guess personal names or family roles from voice alone.
 - Do not reuse one speakerName for two different voices and do not change a person's name between segments.
 - Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
 - Transcribe speech faithfully without inventing words.
@@ -1421,8 +1418,37 @@ Rules:
 
       if (asr?.segments?.length) {
         const enriched = new Map((Array.isArray(parsed.segments) ? parsed.segments : []).map(item => [String(item.segmentId || ''), item]));
-        parsed.segments = asr.segments.map((grounded, index) => {
-          const item = enriched.get(grounded.segmentId) || parsed.segments?.[index] || {};
+        const missingTranslations = asr.segments.filter(item =>
+          !String(enriched.get(item.segmentId)?.turkishText || '').trim()
+        );
+
+        // Translate omitted ASR lines in small batches. This prevents a long
+        // JSON response from silently dropping speech near the end of a video.
+        for (let offset = 0; offset < missingTranslations.length; offset += 40) {
+          const batch = missingTranslations.slice(offset, offset + 40)
+            .map(({ segmentId, originalText }) => ({ segmentId, originalText }));
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+              const response = await ai.models.generateContent({
+                model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
+                contents: [{ role: 'user', parts: [{ text: `Translate ALL supplied speech lines into natural Turkish. Preserve every segmentId. Never omit, merge, censor, summarize or reorder a line. Return JSON only as {"segments":[{"segmentId":"...","turkishText":"...","gender":"male|female|uncertain","emotion":"...","confidence":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(batch)}` }] }],
+                config: { responseMimeType: 'application/json', temperature: 0.02, maxOutputTokens: 8192 }
+              });
+              const recovered = JSON.parse(String(response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
+              for (const item of recovered.segments || []) {
+                const id = String(item.segmentId || '');
+                if (id) enriched.set(id, { ...(enriched.get(id) || {}), ...item });
+              }
+              break;
+            } catch (error) {
+              console.warn(`[missing-subtitle-translation-retry] batch ${offset / 40 + 1}, attempt ${attempt}: ${error?.message || error}`);
+              if (attempt < 3) await wait(attempt * 900);
+            }
+          }
+        }
+
+        parsed.segments = asr.segments.map(grounded => {
+          const item = enriched.get(grounded.segmentId) || {};
           return { ...item, segmentId: grounded.segmentId, speakerId: grounded.speakerId, startTime: grounded.startTime, endTime: grounded.endTime, originalText: grounded.originalText, turkishText: String(item.turkishText || grounded.originalText).trim() };
         });
         parsed.transcriptionEngine = process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe';
@@ -1441,9 +1467,9 @@ Rules:
         const gender = ['female', 'male'].includes(item.gender) ? item.gender : 'uncertain';
         let speakerName = String(item.speakerName || item.displayName || '').trim();
         if (!speakerName) {
-          if (gender === 'female') speakerName = `Kadın ${++neutralFemaleCount}`;
-          else if (gender === 'male') speakerName = `Erkek ${++neutralMaleCount}`;
-          else speakerName = `Konuşmacı ${++neutralUnknownCount}`;
+          if (gender === 'female') speakerName = `Kadın sesi ${String.fromCharCode(64 + ++neutralFemaleCount)}`;
+          else if (gender === 'male') speakerName = `Erkek sesi ${String.fromCharCode(64 + ++neutralMaleCount)}`;
+          else speakerName = `Ses ${String.fromCharCode(64 + ++neutralUnknownCount)}`;
         }
         speakerProfiles.set(speakerId, { ...item, speakerId, gender, speakerName });
       }
@@ -1458,9 +1484,9 @@ Rules:
           if (!profile) {
             let speakerName = String(segment.speakerName || '').trim();
             if (!speakerName) {
-              if (gender === 'female') speakerName = `Kadın ${++neutralFemaleCount}`;
-              else if (gender === 'male') speakerName = `Erkek ${++neutralMaleCount}`;
-              else speakerName = `Konuşmacı ${++neutralUnknownCount}`;
+              if (gender === 'female') speakerName = `Kadın sesi ${String.fromCharCode(64 + ++neutralFemaleCount)}`;
+              else if (gender === 'male') speakerName = `Erkek sesi ${String.fromCharCode(64 + ++neutralMaleCount)}`;
+              else speakerName = `Ses ${String.fromCharCode(64 + ++neutralUnknownCount)}`;
             }
             profile = { speakerId, gender, speakerName, relationshipRole: 'unknown', roleConfidence: 0 };
             speakerProfiles.set(speakerId, profile);
