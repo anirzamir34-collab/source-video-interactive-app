@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  adultDiscoveryPhase,
   averageAdultProgress,
   computeAdultSelectionDelta,
+  computeWarmupSelectionDelta,
   isOutcomeUnlocked,
   normalizeOutcomeUnlockProgress,
-  pickNextVariant
+  pickNextVariant,
+  positionUnlockProgress
 } from '../public/adult-gameplay.js';
 
 test('averageAdultProgress clamps both values and averages them', () => {
@@ -37,6 +40,28 @@ test('selection progress rewards novelty and reduces repeated farming', () => {
   assert.ok(novel.male > repeated.male);
   assert.ok(novel.female > repeated.female);
   assert.ok(repeated.male >= 0.75);
+});
+
+test('warmup progress can build lust but repeated farming loses value', () => {
+  const first = computeWarmupSelectionDelta({ repeatCount: 0, comboCount: 2 });
+  const repeated = computeWarmupSelectionDelta({ repeatCount: 5, comboCount: 0 });
+  assert.ok(first.male > repeated.male);
+  assert.ok(first.female > repeated.female);
+});
+
+test('position unlocks are progressive and special categories arrive later', () => {
+  assert.equal(positionUnlockProgress({ categoryId: 'oral', index: 3 }), 0);
+  assert.equal(positionUnlockProgress({ categoryId: 'vaginal', index: 0 }), 35);
+  assert.equal(positionUnlockProgress({ categoryId: 'vaginal', index: 1 }), 47);
+  assert.equal(positionUnlockProgress({ categoryId: 'anal', index: 0 }), 72);
+  assert.equal(positionUnlockProgress({ categoryId: 'vaginal', bootstrap: true }), 0);
+});
+
+test('discovery phase moves from warmup to positions, rewards, then final', () => {
+  assert.equal(adultDiscoveryPhase({ flow: 18 }), 'foreplay');
+  assert.equal(adultDiscoveryPhase({ flow: 40, hasCoreUnlocked: true }), 'positions');
+  assert.equal(adultDiscoveryPhase({ flow: 74, hasBonusUnlocked: true }), 'reward');
+  assert.equal(adultDiscoveryPhase({ flow: 85, hasOutcomeUnlocked: true }), 'final');
 });
 
 test('pickNextVariant avoids the active variant and prefers least-played real segment', () => {
