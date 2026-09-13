@@ -1,0 +1,45 @@
+name: Link fullscreen game CSS
+on:
+  push:
+    branches: [fix/fullscreen-corner-controls]
+    paths:
+      - 'public/fullscreen-game.css'
+      - '.github/workflows/link-fullscreen-game-css.yml'
+permissions:
+  contents: write
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Link fullscreen override stylesheet
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('public/index.html')
+          s=p.read_text()
+          old='  <link rel="stylesheet" href="/styles.css" />'
+          new=old+'\n  <link rel="stylesheet" href="/fullscreen-game.css" />'
+          if new not in s:
+              if s.count(old) != 1: raise SystemExit('styles.css link not uniquely found')
+              p.write_text(s.replace(old,new,1))
+          PY
+      - name: Run tests
+        run: npm test
+      - name: Verify fullscreen contracts
+        run: |
+          git diff --check
+          grep -q 'fullscreen-game.css' public/index.html
+          grep -q 'orientation: landscape' public/fullscreen-game.css
+          grep -q 'adult-interaction-panel' public/fullscreen-game.css
+          grep -q 'right: max(10px' public/fullscreen-game.css
+      - name: Commit verified integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/index.html
+          git commit -m "Load fullscreen corner interaction layout" || exit 0
+          git push
