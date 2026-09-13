@@ -1390,6 +1390,23 @@ Rules:
 );
 
 
+
+let ttsQuotaBlockedUntil = 0;
+
+function ttsQuotaRetrySeconds(details) {
+  const retry = String(details || '').match(/retry(?:Delay| in)?[^0-9]*(\d+(?:\.\d+)?)s/i);
+  if (retry) return Math.max(1, Math.ceil(Number(retry[1])));
+  const human = String(details || '').match(/Please retry in\s+(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?/i);
+  if (!human) return 0;
+  return Math.max(1, Math.ceil((Number(human[1]) || 0) * 3600 + (Number(human[2]) || 0) * 60 + (Number(human[3]) || 0)));
+}
+
+function isTtsDailyQuotaError(details) {
+  const text = String(details || '');
+  return text.includes('generate_requests_per_model_per_day') ||
+    (text.includes('RESOURCE_EXHAUSTED') && text.includes('gemini-3.1-flash-tts'));
+}
+
 function pcmBase64ToWavBase64(pcmBase64, sampleRate = 24000) {
   const pcm = Buffer.from(pcmBase64, 'base64');
   const wav = Buffer.alloc(44 + pcm.length);
@@ -1511,6 +1528,15 @@ app.post('/api/gemini-dub-block', async (req, res) => {
 
 app.post('/api/gemini-dub-segment', async (req, res) => {
   try {
+    if (ttsQuotaBlockedUntil > Date.now()) {
+      return res.status(429).json({
+        available: false,
+        reason: 'GEMINI_TTS_DAILY_LIMIT',
+        message: 'Gemini TTS günlük kotası doldu. Kota yenilendiğinde dublaj otomatik tekrar kullanılabilir.',
+        retryAfterSeconds: Math.max(1, Math.ceil((ttsQuotaBlockedUntil - Date.now()) / 1000)),
+        retryable: false
+      });
+    }
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(503).json({
@@ -1600,11 +1626,23 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
     });
   } catch (error) {
     console.error('Gemini dub generation failed:', error);
+    const details = String(error?.message || error);
+    if (isTtsDailyQuotaError(details)) {
+      const retryAfterSeconds = ttsQuotaRetrySeconds(details) || 3600;
+      ttsQuotaBlockedUntil = Date.now() + retryAfterSeconds * 1000;
+      return res.status(429).json({
+        available: false,
+        reason: 'GEMINI_TTS_DAILY_LIMIT',
+        message: 'Gemini 3.1 Flash TTS günlük 100 istek kotası doldu.',
+        retryAfterSeconds,
+        retryable: false
+      });
+    }
     return res.status(502).json({
       available: false,
       reason: 'GEMINI_DUB_ERROR',
       message: 'Türkçe dublaj sesi üretilemedi.',
-      error: error?.message || String(error)
+      error: details
     });
   }
 });

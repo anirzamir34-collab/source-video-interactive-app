@@ -3019,3 +3019,180 @@ pre {
     display: none !important;
   }
 }
+
+
+/* VIDEOQUEST FULLSCREEN HUD FIX V5 — final cascade guard */
+#playerSection .video-stage:fullscreen,
+#playerSection .video-stage:-webkit-full-screen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #000 !important;
+}
+
+#playerSection .video-stage:fullscreen #video,
+#playerSection .video-stage:-webkit-full-screen #video {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  object-fit: contain !important;
+}
+
+#playerSection .video-stage:fullscreen #dubToggleBtn,
+#playerSection .video-stage:-webkit-full-screen #dubToggleBtn {
+  position: absolute !important;
+  z-index: 90 !important;
+  top: max(10px, env(safe-area-inset-top)) !important;
+  left: 12px !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 0 !important;
+  min-height: 34px !important;
+  padding: 6px 10px !important;
+  font-size: 11px !important;
+  border-radius: 10px !important;
+}
+
+#playerSection .video-stage:fullscreen #subtitleToggleBtn,
+#playerSection .video-stage:-webkit-full-screen #subtitleToggleBtn {
+  position: absolute !important;
+  z-index: 90 !important;
+  top: max(10px, env(safe-area-inset-top)) !important;
+  left: 150px !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 0 !important;
+}
+
+#playerSection .video-stage:fullscreen #choices,
+#playerSection .video-stage:-webkit-full-screen #choices {
+  position: absolute !important;
+  z-index: 60 !important;
+  top: 56px !important;
+  left: 12px !important;
+  right: auto !important;
+  bottom: 12px !important;
+  width: min(43vw, 620px) !important;
+  height: auto !important;
+  max-height: calc(100dvh - 72px) !important;
+  padding: 6px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+  gap: 6px !important;
+  overflow-y: auto !important;
+  transform: none !important;
+  border: 1px solid rgba(255,255,255,.09) !important;
+  border-radius: 14px !important;
+  background: rgba(4,8,12,.74) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+#playerSection .video-stage:fullscreen #choices::before,
+#playerSection .video-stage:fullscreen #choices::after,
+#playerSection .video-stage:-webkit-full-screen #choices::before,
+#playerSection .video-stage:-webkit-full-screen #choices::after,
+#playerSection .video-stage:fullscreen #choices .choice::before,
+#playerSection .video-stage:-webkit-full-screen #choices .choice::before {
+  display: none !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .choice,
+#playerSection .video-stage:-webkit-full-screen #choices .choice {
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 9px 30px 9px 11px !important;
+  overflow: visible !important;
+  border-radius: 11px !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .choice-title,
+#playerSection .video-stage:-webkit-full-screen #choices .choice-title {
+  font-size: clamp(13px, 1.8vw, 18px) !important;
+  line-height: 1.15 !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .choice-meta,
+#playerSection .video-stage:-webkit-full-screen #choices .choice-meta {
+  margin-top: 3px !important;
+  font-size: clamp(10px, 1.25vw, 13px) !important;
+  line-height: 1.15 !important;
+  white-space: normal !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+  position: absolute !important;
+  z-index: 70 !important;
+  top: 56px !important;
+  right: 12px !important;
+  bottom: 12px !important;
+  left: auto !important;
+  width: min(50vw, 760px) !important;
+  max-width: min(50vw, 760px) !important;
+  max-height: calc(100dvh - 72px) !important;
+  margin: 0 !important;
+  padding: 9px !important;
+  overflow-y: auto !important;
+  border-radius: 14px !important;
+  background: rgba(5,10,18,.90) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tabs,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tabs {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-grid,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+  gap: 6px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+@media (orientation: portrait) {
+  #playerSection .video-stage:fullscreen #choices,
+  #playerSection .video-stage:-webkit-full-screen #choices {
+    top: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    width: auto !important;
+    max-height: 46dvh !important;
+  }
+  #playerSection .video-stage:fullscreen #adultInteractionPanel,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+    top: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 55dvh !important;
+  }
+}
+
+#dubToggleBtn[data-unavailable="true"] {
+  color: #ffd0d5 !important;
+  border-color: rgba(255,90,110,.58) !important;
+  background: rgba(62,8,17,.90) !important;
+}

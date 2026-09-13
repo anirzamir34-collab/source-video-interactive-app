@@ -60,6 +60,8 @@ const state = {
   dubCache: new Map(),
   dubRequests: new Map(),
   dubSyncGeneration: 0,
+  dubUnavailableUntil: 0,
+  dubFailureReason: '',
   gameState: 'IDLE',
   gameCursorTime: 0,
   currentActionIndex: -1,
@@ -826,6 +828,7 @@ function getDubSegmentId(segment) {
 
 async function ensureDubSegment(segment) {
   if (!segment?.turkishText) return null;
+  if (state.dubUnavailableUntil > Date.now()) return null;
   const segmentId = getDubSegmentId(segment);
   if (!segmentId) return null;
   if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
@@ -843,6 +846,20 @@ async function ensureDubSegment(segment) {
   }).then(async response => {
     const body = await response.json();
     if (!response.ok || !body?.available || !body?.audioBase64) {
+      if (body?.reason === 'GEMINI_TTS_DAILY_LIMIT') {
+        const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
+        state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
+        state.dubFailureReason = 'GEMINI_TTS_DAILY_LIMIT';
+        state.dubbingEnabled = false;
+        stopDubPlayback();
+        if (els.dubToggleBtn) {
+          els.dubToggleBtn.textContent = `TR DUBLAJ: LİMİT DOLDU`;
+          els.dubToggleBtn.classList.remove('hidden');
+          els.dubToggleBtn.dataset.unavailable = 'true';
+        }
+        logEngineEvent('DUB_QUOTA_EXHAUSTED', { retrySeconds });
+        return null;
+      }
       throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
     }
     const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
@@ -870,11 +887,13 @@ function resetDubState() {
   state.dubRequests.clear();
   state.dubSyncGeneration += 1;
   state.activeDubSegmentId = null;
+  state.dubFailureReason = '';
+  state.dubUnavailableUntil = 0;
 }
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  nextDialogueSegments(state.dialogue?.segments || [], videoTime, 3)
+  nextDialogueSegments(state.dialogue?.segments || [], videoTime, 1)
     .forEach(segment => void ensureDubSegment(segment));
 }
 
