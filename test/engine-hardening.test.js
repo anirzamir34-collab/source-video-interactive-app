@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   ANALYSIS_SCHEMA_VERSION,
   ENGINE_VERSION,
+  activityDisplayLabel,
+  activityOccurrenceNamespace,
   actionConfidence,
   advanceAdultPhase,
   analysisFingerprint,
@@ -77,6 +79,27 @@ test('every explicit vaginal or anal claim receives one visual route recheck', (
   const anal = { ...clear, actionId: 'route-anal', startTime: 30, endTime: 45, activityType: 'anal' };
   assert.deepEqual(secondPassReviewCandidates({ actions: [ambiguous] }).map(x => x.actionId), ['route-low']);
   assert.deepEqual(secondPassReviewCandidates({ actions: [clear, anal] }).map(x => x.actionId), ['route-high', 'route-anal']);
+});
+
+test('verified activity route gets its own occurrence namespace and display label', () => {
+  const vaginal = {
+    activityType: 'vaginal', activityTypeConfidence: 0.96, activityEvidence: 'direct visible evidence'
+  };
+  const anal = {
+    activityType: 'anal', activityTypeConfidence: 0.97, activityEvidence: 'direct visible evidence'
+  };
+  assert.equal(activityOccurrenceNamespace(vaginal), 'vaginal');
+  assert.equal(activityOccurrenceNamespace(anal), 'anal');
+  assert.equal(activityDisplayLabel('Misyoner', vaginal), 'Misyoner · Vajinal');
+  assert.equal(activityDisplayLabel('Misyoner', anal), 'Misyoner · Anal');
+});
+
+test('uncertain penetrative route never creates an explicit UI route label', () => {
+  const uncertain = {
+    activityType: 'vaginal', activityTypeConfidence: 0.72, activityEvidence: ''
+  };
+  assert.equal(activityOccurrenceNamespace(uncertain), 'other');
+  assert.equal(activityDisplayLabel('Misyoner', uncertain), 'Misyoner');
 });
 
 test('same position with conflicting anal and vaginal claims forces route review', () => {
