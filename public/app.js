@@ -30,6 +30,9 @@ const state = {
   completedAdultSceneIds: new Set(),
   adultLoopSeeking: false,
   adultSeekTimer: null,
+  adultSeekListener: null,
+  adultSeekRequestId: 0,
+  adultSelectionToken: 0,
   lastAdultFrameNow: null,
   adultFrameRequest: null,
   navigationSeeking: false,
@@ -1059,6 +1062,106 @@ els.analyzeBtn.addEventListener('click', async () => {
   }
 });
 
+function assignPositionOccurrenceIds(actions) {
+  const groups = new Map();
+
+  actions.forEach((action, index) => {
+    if (!action.adultScene || !action.positionId) return;
+
+    const canonical = canonicalAdultPosition(action);
+    const familyId = canonical.id || normalizeAdultLabel(action.positionId);
+    if (!familyId) return;
+
+    const sceneId = action.adultSceneId ||
+      `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
+    const rawStart = Number(action.positionStartTime);
+    const rawEnd = Number(action.positionEndTime);
+    const startTime = Number.isFinite(rawStart)
+      ? rawStart
+      : Number(action.startTime) || 0;
+    const endCandidate = Number.isFinite(rawEnd)
+      ? rawEnd
+      : Number(action.endTime) || startTime;
+    const endTime = Math.max(startTime, endCandidate);
+    const key = `${sceneId}::${familyId}`;
+
+    if (!groups.has(key)) {
+      groups.set(key, { sceneId, familyId, entries: [] });
+    }
+
+    groups.get(key).entries.push({
+      action,
+      index,
+      startTime,
+      endTime
+    });
+  });
+
+  groups.forEach(group => {
+    const occurrences = [];
+
+    group.entries.forEach(entry => {
+      const explicitId = String(
+        entry.action.positionOccurrenceId || ''
+      ).trim();
+      if (!explicitId) return;
+
+      let occurrence = occurrences.find(item => item.id === explicitId);
+      if (!occurrence) {
+        occurrence = {
+          id: explicitId,
+          startTime: entry.startTime,
+          endTime: entry.endTime
+        };
+        occurrences.push(occurrence);
+      } else {
+        occurrence.startTime = Math.min(occurrence.startTime, entry.startTime);
+        occurrence.endTime = Math.max(occurrence.endTime, entry.endTime);
+      }
+    });
+
+    let generatedCount = 0;
+    const sortedEntries = [...group.entries]
+      .sort((a, b) => a.startTime - b.startTime || a.index - b.index);
+
+    sortedEntries.forEach(entry => {
+      if (String(entry.action.positionOccurrenceId || '').trim()) return;
+
+      const matching = occurrences
+        .filter(occurrence =>
+          entry.startTime <= occurrence.endTime + 0.15 &&
+          entry.endTime >= occurrence.startTime - 0.15
+        )
+        .sort((a, b) =>
+          Math.abs(a.startTime - entry.startTime) -
+          Math.abs(b.startTime - entry.startTime)
+        )[0];
+
+      let occurrence = matching;
+      if (!occurrence) {
+        generatedCount += 1;
+        const sceneSlug = normalizeAdultLabel(group.sceneId)
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'adult';
+        const familySlug = normalizeAdultLabel(group.familyId)
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'position';
+        occurrence = {
+          id: `${sceneSlug}:${familySlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
+          startTime: entry.startTime,
+          endTime: entry.endTime
+        };
+        occurrences.push(occurrence);
+      } else {
+        occurrence.startTime = Math.min(occurrence.startTime, entry.startTime);
+        occurrence.endTime = Math.max(occurrence.endTime, entry.endTime);
+      }
+
+      entry.action.positionOccurrenceId = occurrence.id;
+    });
+  });
+}
+
 function normalizeAnalysis(body) {
   const actions = Array.isArray(body?.actions) ? body.actions : [];
   const cleaned = actions
@@ -1088,6 +1191,7 @@ function normalizeAnalysis(body) {
       adultSceneEndTime: Number(a.adultSceneEndTime ?? a.endTime),
       postSceneTime: Number(a.postSceneTime ?? a.endTime),
       positionId: String(a.positionId || ""),
+      positionOccurrenceId: String(a.positionOccurrenceId || ""),
       activityType: String(a.activityType || ""),
       positionLabel: String(a.positionLabel || ""),
       positionStartTime: Number(a.positionStartTime ?? a.startTime),
@@ -1100,6 +1204,8 @@ function normalizeAnalysis(body) {
     }))
     .filter(a => Number.isFinite(a.startTime) && Number.isFinite(a.endTime) && a.endTime > a.startTime && a.sourceVerified)
     .sort((a, b) => a.startTime - b.startTime);
+
+  assignPositionOccurrenceIds(cleaned);
 
   return {
     videoDuration: Number(body?.videoDuration ?? 0),
@@ -1152,6 +1258,8 @@ function initializeInteractive(analysis) {
   state.activePositionId = null;
   state.activeAdultCategory = null;
   state.activeMovementId = null;
+  state.adultSelectionToken += 1;
+  cancelAdultSeek();
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
   prepareAdultScenes();
@@ -1278,12 +1386,17 @@ function prepareAdultScenes() {
     if (!canonical.id) return;
 
     const category = adultCategoryFor(action, canonical.id);
-    const positionKey = `${category.id}:${canonical.id}`;
+    const occurrenceId = String(
+      action.positionOccurrenceId ||
+      `${sceneId}:${canonical.id}:legacy-${Math.round((Number(action.positionStartTime ?? action.startTime) || 0) * 1000)}`
+    );
+    const positionKey = `${category.id}:${canonical.id}:${occurrenceId}`;
 
     if (!scene.positions.has(positionKey)) {
       scene.positions.set(positionKey, {
         id: positionKey,
         familyId: canonical.id,
+        occurrenceId,
         label: canonical.label,
         categoryId: category.id,
         categoryLabel: category.label,
@@ -1343,6 +1456,28 @@ function prepareAdultScenes() {
     }))
     .filter(scene => scene.positions.length)
     .sort((a, b) => a.startTime - b.startTime);
+
+  state.adultScenes.forEach(scene => {
+    const totals = new Map();
+    const indexes = new Map();
+
+    scene.positions.forEach(position => {
+      const key = `${position.categoryId}:${position.familyId}`;
+      totals.set(key, (totals.get(key) || 0) + 1);
+    });
+
+    scene.positions.forEach(position => {
+      const key = `${position.categoryId}:${position.familyId}`;
+      if ((totals.get(key) || 0) <= 1) return;
+
+      const occurrenceNumber = (indexes.get(key) || 0) + 1;
+      indexes.set(key, occurrenceNumber);
+      const baseLabel = String(position.label || 'Pozisyon')
+        .replace(/\s+·\s+\d+$/u, '')
+        .replace(/\s+Pozisyon(?:u)?$/iu, '');
+      position.label = `${baseLabel} · ${occurrenceNumber}`;
+    });
+  });
 }
 
 function findAdultSceneAt(time) {
@@ -1472,12 +1607,35 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
   selectAdultPosition(selected.id, shouldSeek);
 }
 
+function cancelAdultSeek() {
+  state.adultSeekRequestId += 1;
+  clearTimeout(state.adultSeekTimer);
+  state.adultSeekTimer = null;
+
+  if (state.adultSeekListener && els.video) {
+    els.video.removeEventListener("seeked", state.adultSeekListener);
+  }
+
+  state.adultSeekListener = null;
+  state.adultLoopSeeking = false;
+}
+
+function beginAdultSelection() {
+  state.adultSelectionToken += 1;
+  cancelAdultSeek();
+  return state.adultSelectionToken;
+}
+
 function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position) return;
 
+  const selectionToken = beginAdultSelection();
+  const changedPosition = state.activePositionId !== position.id;
   state.activePositionId = position.id;
+  if (changedPosition) state.activeMovementId = null;
+
   els.positionTabs?.querySelectorAll(".position-tab").forEach(button => {
     button.classList.toggle("active", button.dataset.positionId === position.id);
   });
@@ -1499,23 +1657,25 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const movement = position.movements.find(item => item.id === state.activeMovementId) || position.movements[0];
 
   if (movement) {
-    selectAdultMovement(movement.id, shouldSeek);
+    selectAdultMovement(movement.id, shouldSeek, selectionToken);
   } else {
     state.activeMovementId = null;
     if (els.movementChoices) els.movementChoices.innerHTML = '';
     if (els.movementCount) els.movementCount.textContent = '10 saniyelik ek seçenek yok';
     if (shouldSeek && els.video) {
-      seekAdultLoop(position.startTime);
+      els.video.pause();
+      seekAdultLoop(position.startTime, selectionToken);
       els.video.play().catch(() => {});
     }
   }
 }
 
-function selectAdultMovement(movementId, shouldSeek = true) {
+function selectAdultMovement(movementId, shouldSeek = true, selectionToken = null) {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement) return;
 
+  const effectiveToken = selectionToken ?? beginAdultSelection();
   state.activeMovementId = movement.id;
   state.lastAdultMediaTime = null;
   els.movementChoices?.querySelectorAll(".movement-choice-card").forEach(button => {
@@ -1523,7 +1683,8 @@ function selectAdultMovement(movementId, shouldSeek = true) {
   });
 
   if (shouldSeek && els.video) {
-    seekAdultLoop(movement.loopStartTime);
+    els.video.pause();
+    seekAdultLoop(movement.loopStartTime, effectiveToken);
     els.video.play().catch(() => {});
   }
 }
@@ -1533,6 +1694,8 @@ function finishAdultScene() {
   if (!scene) return;
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
   state.completedAdultSceneIds.add(scene.id);
+  state.adultSelectionToken += 1;
+  cancelAdultSeek();
   state.adultMode = false;
   state.adultScene = null;
   state.activePositionId = null;
@@ -1549,21 +1712,45 @@ function finishAdultScene() {
   renderChoices();
 }
 
+function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
+  if (!els.video) return false;
 
-function seekAdultLoop(targetTime) {
-  if (!els.video || state.adultLoopSeeking) return false;
+  cancelAdultSeek();
+  const requestId = state.adultSeekRequestId;
+  const target = Math.max(0, Number(targetTime) || 0);
   state.adultLoopSeeking = true;
-  clearTimeout(state.adultSeekTimer);
 
-  const finishSeek = () => {
+  const finishSeek = (force = false) => {
+    if (
+      requestId !== state.adultSeekRequestId ||
+      selectionToken !== state.adultSelectionToken
+    ) {
+      return;
+    }
+
+    if (
+      !force &&
+      (els.video.seeking || Math.abs((Number(els.video.currentTime) || 0) - target) > 0.25)
+    ) {
+      return;
+    }
+
+    if (state.adultSeekListener === onSeeked) {
+      els.video.removeEventListener("seeked", onSeeked);
+      state.adultSeekListener = null;
+    }
+
+    clearTimeout(state.adultSeekTimer);
+    state.adultSeekTimer = null;
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
-    clearTimeout(state.adultSeekTimer);
   };
 
-  els.video.addEventListener("seeked", finishSeek, { once: true });
-  els.video.currentTime = Math.max(0, Number(targetTime) || 0);
-  state.adultSeekTimer = setTimeout(finishSeek, 1500);
+  const onSeeked = () => finishSeek(false);
+  state.adultSeekListener = onSeeked;
+  els.video.addEventListener("seeked", onSeeked);
+  els.video.currentTime = target;
+  state.adultSeekTimer = setTimeout(() => finishSeek(true), 1500);
   return true;
 }
 
@@ -1592,7 +1779,7 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
-    seekAdultLoop(movement.loopStartTime);
+    seekAdultLoop(movement.loopStartTime, state.adultSelectionToken);
     state.lastAdultFrameNow = now;
     return;
   }
