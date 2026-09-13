@@ -6,9 +6,11 @@ import {
   averageAdultProgress,
   canUnlockBonusPositions,
   canUnlockCorePositions,
+  canUnlockOutcome,
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
   isOutcomeUnlocked,
+  MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
   pickNextVariant,
@@ -87,6 +89,33 @@ test('outcomes unlock only after the configured verified-scene progress threshol
   assert.equal(normalizeOutcomeUnlockProgress(150), 100);
 });
 
+test('final cannot unlock from Lust alone before real core-position play', () => {
+  const outcome = { unlockProgress: 82 };
+  assert.equal(canUnlockOutcome({
+    outcome,
+    climaxProgress: 100,
+    coreVisitedCount: 0,
+    corePlaySeconds: 999
+  }), false);
+  assert.equal(canUnlockOutcome({
+    outcome,
+    climaxProgress: 100,
+    coreVisitedCount: 1,
+    corePlaySeconds: MIN_CORE_PLAY_SECONDS_FOR_OUTCOME - 0.1
+  }), false);
+  assert.equal(canUnlockOutcome({
+    outcome,
+    climaxProgress: 81,
+    coreVisitedCount: 1,
+    corePlaySeconds: MIN_CORE_PLAY_SECONDS_FOR_OUTCOME + 5
+  }), false);
+  assert.equal(canUnlockOutcome({
+    outcome,
+    climaxProgress: 82,
+    coreVisitedCount: 1,
+    corePlaySeconds: MIN_CORE_PLAY_SECONDS_FOR_OUTCOME
+  }), true);
+});
 
 test('core positions wait for both Lust and enough unique warm-up discovery', () => {
   assert.equal(requiredWarmupDiscoveries(8), 6);
