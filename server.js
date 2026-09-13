@@ -1298,7 +1298,18 @@ Rules:
       const audioMime = String(remoteFile.mimeType || req.file.mimetype || '').toLowerCase();
       let asr = null;
       if (audioMime.startsWith('audio/')) {
-        asr = await transcribeDialogueGemini35(ai, remoteFile);
+        try {
+          asr = await transcribeDialogueGemini35(ai, remoteFile);
+        } catch (error) {
+          // Interactions/transcribe may be unavailable for an account, region or
+          // model rollout. It is an enhancement, not a hard dependency: the
+          // multimodal dialogue request below can still produce timed Turkish
+          // subtitles directly from the uploaded audio.
+          console.warn(
+            '[gemini-transcribe-fallback] dedicated transcription unavailable:',
+            error?.message || error
+          );
+        }
       }
 
       const transcriptGrounding = asr?.segments?.length
