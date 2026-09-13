@@ -387,5 +387,6 @@ export function applyRuntimeSnapshot(state, snapshot) {
   state.activePositionId = snapshot.activePositionId || null;
   state.activeAdultCategory = snapshot.activeAdultCategory || null;
   state.activeMovementId = snapshot.activeMovementId || null;
+  state.restoredAdultSceneId = snapshot.adultSceneId || null;
   return state;
 }

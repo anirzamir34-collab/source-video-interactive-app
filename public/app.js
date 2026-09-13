@@ -94,6 +94,7 @@ const state = {
   integrityReport: null,
   analysisFingerprint: '',
   lastRuntimeSaveAt: 0,
+  restoredAdultSceneId: null,
 };
 
 const els = {
@@ -2405,11 +2406,16 @@ function renderAdultPanel(scene) {
     document.webkitExitFullscreen();
   }
 
-  if (previousSceneId !== scene.id) {
+  const restoringSameScene = state.restoredAdultSceneId === scene.id;
+  if (previousSceneId !== scene.id && !restoringSameScene) {
     resetAdultSceneGameplay();
     state.activePositionId = null;
     state.activeAdultCategory = null;
     state.activeMovementId = null;
+  }
+  if (restoringSameScene) {
+    state.restoredAdultSceneId = null;
+    logEngineEvent('ADULT_SCENE_RUNTIME_RESTORED', { sceneId: scene.id });
   }
 
   state.adultScene = scene;
@@ -2798,7 +2804,9 @@ function updateAdultPlayback(now, mediaTime) {
   if (!state.adultMode) {
     const scene = findAdultSceneAt(mediaTime);
     if (scene) {
-      resetAdultSceneGameplay();
+      if (state.restoredAdultSceneId !== scene.id) {
+        resetAdultSceneGameplay();
+      }
       state.lastAdultFrameNow = now;
       renderAdultPanel(scene);
     }

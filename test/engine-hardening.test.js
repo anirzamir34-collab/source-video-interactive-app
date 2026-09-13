@@ -108,7 +108,8 @@ test('runtime save only restores into the exact analysis/engine version', () => 
     maleSceneProgress: 55, femaleSceneProgress: 48, adultClimaxProgress: 21,
     adultCorePlaySeconds: 31, adultVisitedPositionIds: new Set(['p1']),
     adultMovementPlayCounts: new Map([['m1', 2]]), adultPreludePlayCounts: new Map([['f1', 1]]),
-    adultComboCount: 2, adultPhaseMachine: 'positions', adultLastUiPhase: 'positions'
+    adultComboCount: 2, adultPhaseMachine: 'positions', adultLastUiPhase: 'positions',
+    adultScene: { id: 'scene-active' }
   };
   const snapshot = createRuntimeSnapshot(sourceState, 'fingerprint');
   assert.equal(isCompatibleRuntimeSnapshot(snapshot, 'fingerprint'), true);
@@ -118,6 +119,7 @@ test('runtime save only restores into the exact analysis/engine version', () => 
   assert.equal(target.gameCursorTime, 44);
   assert.equal(target.adultVisitedPositionIds.has('p1'), true);
   assert.equal(target.adultMovementPlayCounts.get('m1'), 2);
+  assert.equal(target.restoredAdultSceneId, 'scene-active');
 });
 
 test('event log is bounded and fingerprint is stable', () => {
