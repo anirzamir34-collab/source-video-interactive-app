@@ -3,6 +3,7 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 82;
 export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
 export const DEFAULT_BONUS_UNLOCK_PROGRESS = 72;
+export const MIN_CORE_PLAY_SECONDS_FOR_OUTCOME = 18;
 
 export function averageAdultProgress(maleProgress, femaleProgress) {
   const male = clamp(maleProgress, 0, 100);
@@ -18,6 +19,19 @@ export function normalizeOutcomeUnlockProgress(value, fallback = DEFAULT_OUTCOME
 export function isOutcomeUnlocked(outcome, maleProgress, femaleProgress) {
   const required = normalizeOutcomeUnlockProgress(outcome?.unlockProgress);
   return averageAdultProgress(maleProgress, femaleProgress) >= required;
+}
+
+export function canUnlockOutcome({
+  outcome,
+  climaxProgress = 0,
+  coreVisitedCount = 0,
+  corePlaySeconds = 0
+} = {}) {
+  const visited = Math.max(0, Math.floor(Number(coreVisitedCount) || 0));
+  const playedSeconds = Math.max(0, Number(corePlaySeconds) || 0);
+  if (visited < 1) return false;
+  if (playedSeconds < MIN_CORE_PLAY_SECONDS_FOR_OUTCOME) return false;
+  return isOutcomeUnlocked(outcome, climaxProgress, climaxProgress);
 }
 
 export function positionUnlockProgress({
