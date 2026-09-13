@@ -177,10 +177,11 @@ export function secondPassReviewCandidates(result = {}) {
       selected.add(action);
       return;
     }
-    if (isCorePositionCritical(action) && isPenetrativeActivity(action) && (
-      activityTypeConfidence(action) < SECOND_PASS_ACTIVITY_CONFIDENCE ||
-      !activityTypeEvidence(action)
-    )) {
+    if (isCorePositionCritical(action) && isPenetrativeActivity(action)) {
+      // Route classification is gameplay-critical. Re-check every explicit
+      // vaginal/anal claim once, even when first-pass confidence is high.
+      // Candidates are batched per storyboard chunk, so this does not double
+      // every adult-analysis request.
       selected.add(action);
       return;
     }

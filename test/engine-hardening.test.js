@@ -67,15 +67,16 @@ test('overlapping incompatible positions force a second pass even at high confid
   assert.deepEqual(secondPassReviewCandidates({ actions: [missionary, cowgirl] }).map(x => x.actionId), ['m', 'c']);
 });
 
-test('penetration route uses its own confidence and evidence gate', () => {
+test('every explicit vaginal or anal claim receives one visual route recheck', () => {
   const ambiguous = {
     actionId: 'route-low', startTime: 10, endTime: 25, confidence: 0.98, adultSceneId: 's',
     actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner',
     activityType: 'vaginal', activityTypeConfidence: 0.72, activityEvidence: ''
   };
   const clear = { ...ambiguous, actionId: 'route-high', activityTypeConfidence: 0.96, activityEvidence: 'direct visible route evidence' };
+  const anal = { ...clear, actionId: 'route-anal', startTime: 30, endTime: 45, activityType: 'anal' };
   assert.deepEqual(secondPassReviewCandidates({ actions: [ambiguous] }).map(x => x.actionId), ['route-low']);
-  assert.deepEqual(secondPassReviewCandidates({ actions: [clear] }).map(x => x.actionId), []);
+  assert.deepEqual(secondPassReviewCandidates({ actions: [clear, anal] }).map(x => x.actionId), ['route-high', 'route-anal']);
 });
 
 test('same position with conflicting anal and vaginal claims forces route review', () => {

@@ -249,6 +249,10 @@ ${reviewCandidates}
 - Do not add a new action merely because it sounds plausible.
 - If a candidate conflicts with the frames, another position label, scene chronology, or its parent range, OMIT it and add a warning.
 - Outcome/final candidates require stronger evidence than ordinary actions.
+- For any candidate whose first-pass activityType is vaginal or anal, independently classify the route again from the SAME visible frames. Treat the first-pass route as untrusted; do not preserve it merely for consistency.
+- Body position never proves route: missionary, cowgirl, rear, standing-rear, spoon and similar configurations can be vaginal or anal.
+- Return vaginal or anal only when the visible contact/penetration location is directly distinguishable and consistent at the candidate start, midpoint and end. Otherwise return activityType other with low activityTypeConfidence, or omit the candidate.
+- Never default an ambiguous penetrative candidate to vaginal. Correct activityType, activityTypeConfidence, activityEvidence and the Turkish label together so they cannot contradict one another.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
   const targetActionCount = Math.max(
