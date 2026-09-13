@@ -1,0 +1,39 @@
+name: Apply selective second pass optimization
+
+on:
+  push:
+    branches:
+      - optimize/selective-second-pass
+    paths:
+      - '.github/scripts/apply_selective_second_pass.py'
+      - '.github/workflows/apply-selective-second-pass.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Apply selective review patch
+        run: python .github/scripts/apply_selective_second_pass.py
+      - name: Run full tests
+        run: npm test
+      - name: Check whitespace
+        run: git diff --check
+      - name: Verify selective review contracts
+        run: |
+          grep -q "secondPassReviewCandidates" public/engine-hardening.js
+          grep -q "mergeSecondPassReview" public/app.js
+          grep -q "criticalReviewCandidates" public/app.js
+      - name: Commit verified product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/engine-hardening.js public/app.js test/engine-hardening.test.js
+          git commit -m "Make Gemini second pass selective" || exit 0
+          git push
