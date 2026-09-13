@@ -1,0 +1,35 @@
+name: Apply aggressive upload
+on:
+  push:
+    branches: [perf/aggressive-upload]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[aggressive-upload-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/aggressive-upload
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: python3 scripts/patch_aggressive_upload.py
+      - name: Validate
+        run: |
+          node --check server.js
+          node --check public/app.js
+          npm test
+          git diff --check
+          grep -q "8 \* 1024 \* 1024" public/app.js
+          grep -q "limit: '10mb'" server.js
+      - name: Commit product change
+        run: |
+          git config user.name "videoquest-bot"
+          git config user.email "videoquest-bot@users.noreply.github.com"
+          git add server.js public/app.js
+          git commit -m "Enable always-on aggressive dialogue upload [aggressive-upload-patched]"
+          git push origin HEAD:perf/aggressive-upload
