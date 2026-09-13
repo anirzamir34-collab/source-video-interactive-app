@@ -4,12 +4,16 @@ import assert from 'node:assert/strict';
 import {
   adultDiscoveryPhase,
   averageAdultProgress,
+  canUnlockBonusPositions,
+  canUnlockCorePositions,
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
   isOutcomeUnlocked,
+  monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
   pickNextVariant,
-  positionUnlockProgress
+  positionUnlockProgress,
+  requiredWarmupDiscoveries
 } from '../public/adult-gameplay.js';
 
 test('averageAdultProgress clamps both values and averages them', () => {
@@ -81,4 +85,28 @@ test('outcomes unlock only after the configured verified-scene progress threshol
   assert.equal(isOutcomeUnlocked(outcome, 80, 70), false);
   assert.equal(normalizeOutcomeUnlockProgress(10), 60);
   assert.equal(normalizeOutcomeUnlockProgress(150), 100);
+});
+
+
+test('core positions wait for both Lust and enough unique warm-up discovery', () => {
+  assert.equal(requiredWarmupDiscoveries(8), 6);
+  assert.equal(canUnlockCorePositions({ flow: 50, warmupTotal: 8, warmupUniquePlayed: 5 }), false);
+  assert.equal(canUnlockCorePositions({ flow: 34, warmupTotal: 8, warmupUniquePlayed: 8 }), false);
+  assert.equal(canUnlockCorePositions({ flow: 50, warmupTotal: 8, warmupUniquePlayed: 6 }), true);
+  assert.equal(canUnlockCorePositions({ flow: 0, warmupTotal: 0, warmupUniquePlayed: 0 }), true);
+});
+
+test('bonus positions require reward-level Lust and at least one core visit when core positions exist', () => {
+  assert.equal(canUnlockBonusPositions({ flow: 80, coreVisitedCount: 0, corePositionCount: 3 }), false);
+  assert.equal(canUnlockBonusPositions({ flow: 71, coreVisitedCount: 2, corePositionCount: 3 }), false);
+  assert.equal(canUnlockBonusPositions({ flow: 80, coreVisitedCount: 1, corePositionCount: 3 }), true);
+  assert.equal(canUnlockBonusPositions({ flow: 0, coreVisitedCount: 0, corePositionCount: 0, bootstrap: true }), true);
+});
+
+test('discovery phases are content-driven and never regress once a later phase was reached', () => {
+  assert.equal(adultDiscoveryPhase({ flow: 99 }), 'foreplay');
+  assert.equal(adultDiscoveryPhase({ hasCoreUnlocked: true }), 'positions');
+  assert.equal(adultDiscoveryPhase({ hasCoreUnlocked: true, hasBonusUnlocked: true }), 'reward');
+  assert.equal(monotonicAdultPhase('foreplay', 'positions'), 'positions');
+  assert.equal(monotonicAdultPhase('positions', 'reward'), 'reward');
 });
