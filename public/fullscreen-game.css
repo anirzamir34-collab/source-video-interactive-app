@@ -1,0 +1,194 @@
+/* VIDEOQUEST fullscreen game overlay
+   Keep interactive scene controls inside the fullscreen video surface without
+   covering the centre of the picture. Landscape uses a right-side rail;
+   portrait uses a compact bottom drawer. */
+
+.video-stage:fullscreen .adult-interaction-panel,
+.video-stage:-webkit-full-screen .adult-interaction-panel {
+  position: absolute !important;
+  z-index: 80 !important;
+  top: max(64px, calc(env(safe-area-inset-top) + 54px)) !important;
+  right: max(10px, env(safe-area-inset-right)) !important;
+  bottom: max(10px, env(safe-area-inset-bottom)) !important;
+  left: auto !important;
+  width: min(340px, 34vw) !important;
+  max-width: 340px !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 10px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  border-radius: 15px !important;
+  background: rgba(5,9,15,.72) !important;
+  box-shadow: 0 16px 44px rgba(0,0,0,.36) !important;
+  backdrop-filter: blur(12px) saturate(120%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(120%) !important;
+  scrollbar-width: thin;
+}
+
+.video-stage:fullscreen .adult-stage-summary,
+.video-stage:-webkit-full-screen .adult-stage-summary,
+.video-stage:fullscreen .adult-discovery-gate,
+.video-stage:-webkit-full-screen .adult-discovery-gate {
+  padding: 7px !important;
+  margin-block: 5px !important;
+}
+
+.video-stage:fullscreen .adult-phase-hint,
+.video-stage:-webkit-full-screen .adult-phase-hint,
+.video-stage:fullscreen #adultPhaseHint,
+.video-stage:-webkit-full-screen #adultPhaseHint {
+  display: none !important;
+}
+
+.video-stage:fullscreen .category-tabs,
+.video-stage:-webkit-full-screen .category-tabs,
+.video-stage:fullscreen .position-tabs,
+.video-stage:-webkit-full-screen .position-tabs {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 5px !important;
+  margin: 0 !important;
+  padding: 3px 0 !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  scrollbar-width: none;
+}
+
+.video-stage:fullscreen .category-tabs::-webkit-scrollbar,
+.video-stage:-webkit-full-screen .category-tabs::-webkit-scrollbar,
+.video-stage:fullscreen .position-tabs::-webkit-scrollbar,
+.video-stage:-webkit-full-screen .position-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.video-stage:fullscreen .category-tab,
+.video-stage:-webkit-full-screen .category-tab,
+.video-stage:fullscreen .position-tab,
+.video-stage:-webkit-full-screen .position-tab {
+  flex: 0 0 auto !important;
+  min-width: 86px !important;
+  min-height: 34px !important;
+  padding: 6px 8px !important;
+  border-radius: 9px !important;
+  font-size: .64rem !important;
+}
+
+.video-stage:fullscreen .movement-choice-grid,
+.video-stage:-webkit-full-screen .movement-choice-grid,
+.video-stage:fullscreen .discovery-choice-grid,
+.video-stage:-webkit-full-screen .discovery-choice-grid,
+.video-stage:fullscreen .outcome-choice-grid,
+.video-stage:-webkit-full-screen .outcome-choice-grid {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 5px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.video-stage:fullscreen .movement-choice-card,
+.video-stage:-webkit-full-screen .movement-choice-card {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 42px !important;
+  padding: 6px 8px !important;
+  border-radius: 9px !important;
+}
+
+.video-stage:fullscreen .scene-progress-bars,
+.video-stage:-webkit-full-screen .scene-progress-bars {
+  margin-top: 5px !important;
+  padding: 5px 7px !important;
+}
+
+.video-stage:fullscreen .finish-adult-scene-btn,
+.video-stage:-webkit-full-screen .finish-adult-scene-btn {
+  min-height: 32px !important;
+  height: 32px !important;
+  margin-top: 5px !important;
+}
+
+/* Normal choices stay in the lower-left quarter in fullscreen so they do not
+   fight the scene rail on the right. */
+.video-stage:fullscreen .choices-overlay,
+.video-stage:-webkit-full-screen .choices-overlay {
+  right: auto !important;
+  left: max(10px, env(safe-area-inset-left)) !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  width: min(420px, 42vw) !important;
+  max-height: 46vh !important;
+  transform: none !important;
+  padding: 9px !important;
+  border-radius: 14px !important;
+}
+
+/* Phones held upright do not have enough horizontal room for a side rail.
+   Use a shallow bottom drawer while leaving most of the video visible. */
+@media (orientation: portrait), (max-width: 700px) and (min-height: 601px) {
+  .video-stage:fullscreen .adult-interaction-panel,
+  .video-stage:-webkit-full-screen .adult-interaction-panel {
+    top: auto !important;
+    right: max(8px, env(safe-area-inset-right)) !important;
+    bottom: max(8px, env(safe-area-inset-bottom)) !important;
+    left: max(8px, env(safe-area-inset-left)) !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: min(34vh, 310px) !important;
+    padding: 8px !important;
+  }
+
+  .video-stage:fullscreen .movement-choice-grid,
+  .video-stage:-webkit-full-screen .movement-choice-grid,
+  .video-stage:fullscreen .discovery-choice-grid,
+  .video-stage:-webkit-full-screen .discovery-choice-grid,
+  .video-stage:fullscreen .outcome-choice-grid,
+  .video-stage:-webkit-full-screen .outcome-choice-grid {
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+  }
+
+  .video-stage:fullscreen .movement-choice-card,
+  .video-stage:-webkit-full-screen .movement-choice-card {
+    flex: 0 0 145px !important;
+    width: 145px !important;
+  }
+
+  .video-stage:fullscreen .choices-overlay,
+  .video-stage:-webkit-full-screen .choices-overlay {
+    right: max(8px, env(safe-area-inset-right)) !important;
+    left: max(8px, env(safe-area-inset-left)) !important;
+    width: auto !important;
+    max-height: 32vh !important;
+  }
+}
+
+/* Landscape phone: compact right rail is the least obstructive placement. */
+@media (orientation: landscape) and (max-height: 600px) {
+  .video-stage:fullscreen .adult-interaction-panel,
+  .video-stage:-webkit-full-screen .adult-interaction-panel {
+    top: max(54px, calc(env(safe-area-inset-top) + 46px)) !important;
+    right: max(7px, env(safe-area-inset-right)) !important;
+    bottom: max(7px, env(safe-area-inset-bottom)) !important;
+    width: min(300px, 38vw) !important;
+    padding: 7px !important;
+  }
+
+  .video-stage:fullscreen .adult-panel-header,
+  .video-stage:-webkit-full-screen .adult-panel-header,
+  .video-stage:fullscreen .adult-stage-summary,
+  .video-stage:-webkit-full-screen .adult-stage-summary {
+    margin-bottom: 3px !important;
+  }
+
+  .video-stage:fullscreen .choices-overlay,
+  .video-stage:-webkit-full-screen .choices-overlay {
+    width: min(360px, 40vw) !important;
+    max-height: 54vh !important;
+  }
+}
