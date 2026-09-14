@@ -26,6 +26,57 @@ function numberOr(value, fallback = 0) {
   return Number.isFinite(resolved) ? resolved : fallback;
 }
 
+export function normalizeChunkActionTimes(actions = [], chunkStart = 0, chunkEnd = 0) {
+  const source = Array.isArray(actions) ? actions : [];
+  const start = Math.max(0, numberOr(chunkStart));
+  const end = Math.max(start, numberOr(chunkEnd, start));
+  const duration = Math.max(0, end - start);
+  if (!source.length || start < 1 || duration <= 0) {
+    return { actions: source, rebased: false };
+  }
+
+  const starts = source.map(action => numberOr(action?.startTime, NaN))
+    .filter(Number.isFinite);
+  const absoluteCount = starts.filter(value => value >= start - 1 && value <= end + 1).length;
+  const relativeCount = starts.filter(value => value >= -1 && value <= duration + 1).length;
+  const clearlyBeforeChunk = starts.filter(value => value < start - 1).length;
+  const rebased = relativeCount > absoluteCount &&
+    clearlyBeforeChunk >= Math.ceil(starts.length * 0.6);
+
+  if (!rebased) return { actions: source, rebased: false };
+
+  const offset = value => Number.isFinite(Number(value)) ? Number(value) + start : value;
+  return {
+    rebased: true,
+    actions: source.map(action => {
+      const next = {
+        ...action,
+        startTime: offset(action.startTime),
+        endTime: offset(action.endTime),
+        chunkTimeRebased: true
+      };
+      if (action.adultScene === true) {
+        next.adultSceneStartTime = offset(action.adultSceneStartTime);
+        next.adultSceneEndTime = offset(action.adultSceneEndTime);
+        next.postSceneTime = offset(action.postSceneTime);
+      }
+      if (action.positionId || action.positionLabel || action.actionType === 'position') {
+        next.positionStartTime = offset(action.positionStartTime);
+        next.positionEndTime = offset(action.positionEndTime);
+        next.loopStartTime = offset(action.loopStartTime);
+        next.loopEndTime = offset(action.loopEndTime);
+      }
+      const outcome = String(action.outcomeType || '').toLowerCase();
+      if (['outcome', 'aftermath'].includes(String(action.actionType || '').toLowerCase()) ||
+          ['climax', 'aftermath'].includes(outcome)) {
+        next.outcomeStartTime = offset(action.outcomeStartTime);
+        next.outcomeEndTime = offset(action.outcomeEndTime);
+      }
+      return next;
+    })
+  };
+}
+
 function normalizedText(value) {
   return String(value || '')
     .toLocaleLowerCase('tr-TR')
