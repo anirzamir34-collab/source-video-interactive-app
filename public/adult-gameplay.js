@@ -397,8 +397,10 @@ export function consolidateVerifiedPositions(positions = []) {
   for (const position of Array.isArray(positions) ? positions : []) {
     if (!position?.familyId) continue;
     const key = String(position.familyId);
+    const sourceId = String(position.id || key);
+    const movements = (Array.isArray(position.movements) ? position.movements : [])
+      .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
     const existing = groups.get(key);
-    const movements = Array.isArray(position.movements) ? position.movements : [];
     if (!existing) {
       groups.set(key, {
         ...position,
@@ -406,19 +408,21 @@ export function consolidateVerifiedPositions(positions = []) {
         occurrenceId: key,
         startTime: Number(position.startTime),
         endTime: Number(position.endTime),
-        sourcePositionIds: [position.id],
+        sourcePositionIds: [sourceId],
         sourceRanges: [{
+          id: sourceId,
           startTime: Number(position.startTime),
           endTime: Number(position.endTime)
         }],
-        movements: [...movements]
+        movements
       });
       continue;
     }
     existing.startTime = Math.min(existing.startTime, Number(position.startTime));
     existing.endTime = Math.max(existing.endTime, Number(position.endTime));
-    existing.sourcePositionIds.push(position.id);
+    existing.sourcePositionIds.push(sourceId);
     existing.sourceRanges.push({
+      id: sourceId,
       startTime: Number(position.startTime),
       endTime: Number(position.endTime)
     });
@@ -469,29 +473,27 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     const meaningfulLabel = rawLabel && normalize(rawLabel) !== positionKey &&
       !normalize(rawLabel).startsWith(positionKey + ' ·');
     const label = meaningfulLabel ? rawLabel : tempoLabels[tempo];
-    const key = `${tempo}:${normalize(label)}`;
+    // Never pool clips from separate uninterrupted occurrences. This keeps a
+    // touch/tempo choice inside the exact position block that produced it.
+    const occurrence = String(movement.sourcePositionId || 'single-occurrence');
+    const key = `${occurrence}:${tempo}:${normalize(label)}`;
     if (!groups.has(key)) {
       groups.set(key, {
         id: `movement-choice:${key}`,
         label,
         tempo,
+        sourcePositionId: occurrence,
         variants: []
       });
     }
-    groups.get(key).variants.push(movement);
+    const variants = groups.get(key).variants;
+    if (variants.length < 4) variants.push(movement);
   }
 
-  const choices = [...groups.values()]
-    .sort((a, b) => Number(a.variants[0]?.loopStartTime) - Number(b.variants[0]?.loopStartTime));
-  if (choices.length <= limit) return choices;
-
-  const kept = choices.slice(0, limit);
-  for (const extra of choices.slice(limit)) {
-    const target = kept.find(choice => choice.tempo === extra.tempo) ||
-      [...kept].sort((a, b) => a.variants.length - b.variants.length)[0];
-    target.variants.push(...extra.variants);
-  }
-  return kept;
+  return [...groups.values()]
+    .filter(choice => choice.variants.length)
+    .sort((a, b) => Number(a.variants[0]?.loopStartTime) - Number(b.variants[0]?.loopStartTime))
+    .slice(0, limit);
 }
 
 export function dedupeVerifiedTimelineActions(actions = []) {
