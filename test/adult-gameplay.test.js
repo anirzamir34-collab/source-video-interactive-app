@@ -28,7 +28,10 @@ import {
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
   nearestAvailableTempo,
-  tapRhythm
+  tapRhythm,
+  isEnergeticFireMoment,
+  nextFireAdvance,
+  fireMomentCopy
 } from '../public/adult-gameplay.js';
 
 test('averageAdultProgress clamps both values and averages them', () => {
@@ -273,7 +276,7 @@ test('discovery phases are content-driven and never regress once a later phase w
 });
 
 
-test('consolidates repeated occurrences into one canonical position', () => {
+test('keeps gapped returns as separate playable occurrences to avoid timeline jumps', () => {
   const positions = [
     {
       id: 'cowgirl-1',
@@ -296,15 +299,16 @@ test('consolidates repeated occurrences into one canonical position', () => {
   ];
 
   const result = consolidateVerifiedPositions(positions);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].id, 'position:cowgirl');
+  assert.equal(result.length, 2);
   assert.equal(result[0].startTime, 10);
-  assert.equal(result[0].endTime, 58);
-  assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1', 'cowgirl-2']);
-  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a', 'fast-a']);
+  assert.equal(result[0].endTime, 25);
+  assert.equal(result[1].startTime, 40);
+  assert.equal(result[1].endTime, 58);
+  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a']);
+  assert.deepEqual(result[1].movements.map(item => item.id), ['fast-a']);
 });
 
-test('builds at most four subchoices and keeps multiple clips in each choice pool', () => {
+test('builds at most eight subchoices and keeps multiple clips in each choice pool', () => {
   const movements = [
     { id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 0, sourceVerified: true },
     { id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 12, sourceVerified: true },
@@ -313,8 +317,8 @@ test('builds at most four subchoices and keeps multiple clips in each choice poo
     { id: 'e', label: 'Temas değişimi', movementTempo: 'fast', loopStartTime: 48, sourceVerified: true }
   ];
 
-  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.ok(choices.length <= 4);
+  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 8);
+  assert.ok(choices.length <= 8);
   const slow = choices.find(choice => choice.tempo === 'slow');
   const kiss = choices.find(choice => choice.label === 'Öpüşerek devam');
   assert.equal(slow.label, 'Yavaş tempo');
@@ -343,8 +347,8 @@ test('never mixes separate position occurrences or exposes twenty clips in one s
 });
 
 
-test('joins overlapping raw detections but keeps later returns in a separate clip pool', () => {
-  const [position] = consolidateVerifiedPositions([
+test('joins overlapping raw detections but keeps later returns as a separate occurrence', () => {
+  const result = consolidateVerifiedPositions([
     {
       id: 'raw-a', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
       startTime: 10, endTime: 24,
@@ -362,10 +366,21 @@ test('joins overlapping raw detections but keeps later returns in a separate cli
     }
   ]);
 
-  const choices = buildVerifiedMovementChoices(position.movements, position.label, 4);
-  assert.equal(position.sourcePositionIds.length, 2);
-  assert.deepEqual(choices.map(choice => choice.variants.map(item => item.id)), [
-    ['a', 'b'],
-    ['c']
+  assert.equal(result.length, 2);
+  assert.deepEqual(result[0].movements.map(item => item.id), ['a', 'b']);
+  assert.deepEqual(result[1].movements.map(item => item.id), ['c']);
+  const firstChoices = buildVerifiedMovementChoices(result[0].movements, result[0].label, 8);
+  assert.deepEqual(firstChoices.map(choice => choice.variants.map(item => item.id)), [
+    ['a', 'b']
   ]);
+});
+
+test('fire button arms only on fast or deep verified moments and advances forward', () => {
+  const slow = { id: 'slow', movementTempo: 'slow', sourceVerified: true, label: 'Yavaş tempo', loopStartTime: 10, loopEndTime: 24 };
+  const fast = { id: 'fast', movementTempo: 'fast', sourceVerified: true, label: 'Hızlı derin ritim', loopStartTime: 24, loopEndTime: 40 };
+  assert.equal(isEnergeticFireMoment(slow), false);
+  assert.equal(isEnergeticFireMoment(fast), true);
+  assert.equal(nextFireAdvance([slow, fast], 'slow')?.id, 'fast');
+  assert.equal(nextFireAdvance([slow, fast], 'fast'), null);
+  assert.match(fireMomentCopy(fast), /Hızlı/);
 });
