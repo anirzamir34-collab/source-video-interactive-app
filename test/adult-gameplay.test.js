@@ -8,6 +8,8 @@ import {
   canUnlockBonusPositions,
   canUnlockCorePositions,
   canUnlockOutcome,
+  buildVerifiedMovementChoices,
+  consolidateVerifiedPositions,
   computeAdultSelectionDelta,
   dedupeVerifiedTimelineActions,
   expandVerifiedMovementVariants,
@@ -268,4 +270,54 @@ test('discovery phases are content-driven and never regress once a later phase w
   assert.equal(adultDiscoveryPhase({ hasCoreUnlocked: true, hasBonusUnlocked: true }), 'reward');
   assert.equal(monotonicAdultPhase('foreplay', 'positions'), 'positions');
   assert.equal(monotonicAdultPhase('positions', 'reward'), 'reward');
+});
+
+
+test('consolidates repeated occurrences into one canonical position', () => {
+  const positions = [
+    {
+      id: 'cowgirl-1',
+      familyId: 'cowgirl',
+      label: 'Kovboy Pozisyonu',
+      categoryId: 'vaginal',
+      startTime: 10,
+      endTime: 25,
+      movements: [{ id: 'slow-a', loopStartTime: 10, loopEndTime: 20, sourceVerified: true }]
+    },
+    {
+      id: 'cowgirl-2',
+      familyId: 'cowgirl',
+      label: 'Kovboy Pozisyonu',
+      categoryId: 'vaginal',
+      startTime: 40,
+      endTime: 58,
+      movements: [{ id: 'fast-a', loopStartTime: 42, loopEndTime: 54, sourceVerified: true }]
+    }
+  ];
+
+  const result = consolidateVerifiedPositions(positions);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 'position:cowgirl');
+  assert.equal(result[0].startTime, 10);
+  assert.equal(result[0].endTime, 58);
+  assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1', 'cowgirl-2']);
+  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a', 'fast-a']);
+});
+
+test('builds at most four subchoices and keeps multiple clips in each choice pool', () => {
+  const movements = [
+    { id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 0, sourceVerified: true },
+    { id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 12, sourceVerified: true },
+    { id: 'c', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 24, sourceVerified: true },
+    { id: 'd', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 36, sourceVerified: true },
+    { id: 'e', label: 'Temas değişimi', movementTempo: 'fast', loopStartTime: 48, sourceVerified: true }
+  ];
+
+  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
+  assert.ok(choices.length <= 4);
+  const slow = choices.find(choice => choice.tempo === 'slow');
+  const kiss = choices.find(choice => choice.label === 'Öpüşerek devam');
+  assert.equal(slow.label, 'Yavaş tempo');
+  assert.deepEqual(slow.variants.map(item => item.id), ['a', 'b']);
+  assert.deepEqual(kiss.variants.map(item => item.id), ['c', 'd']);
 });

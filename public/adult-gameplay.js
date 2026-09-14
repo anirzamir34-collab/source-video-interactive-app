@@ -392,6 +392,108 @@ export function findAdultSceneForTimeline(
     .sort((a, b) => b.overlap - a.overlap)[0]?.scene || null;
 }
 
+export function consolidateVerifiedPositions(positions = []) {
+  const groups = new Map();
+  for (const position of Array.isArray(positions) ? positions : []) {
+    if (!position?.familyId) continue;
+    const key = String(position.familyId);
+    const existing = groups.get(key);
+    const movements = Array.isArray(position.movements) ? position.movements : [];
+    if (!existing) {
+      groups.set(key, {
+        ...position,
+        id: `position:${key}`,
+        occurrenceId: key,
+        startTime: Number(position.startTime),
+        endTime: Number(position.endTime),
+        sourcePositionIds: [position.id],
+        sourceRanges: [{
+          startTime: Number(position.startTime),
+          endTime: Number(position.endTime)
+        }],
+        movements: [...movements]
+      });
+      continue;
+    }
+    existing.startTime = Math.min(existing.startTime, Number(position.startTime));
+    existing.endTime = Math.max(existing.endTime, Number(position.endTime));
+    existing.sourcePositionIds.push(position.id);
+    existing.sourceRanges.push({
+      startTime: Number(position.startTime),
+      endTime: Number(position.endTime)
+    });
+    existing.movements.push(...movements);
+    if (Number(position.activityTypeConfidence || 0) > Number(existing.activityTypeConfidence || 0)) {
+      existing.activityType = position.activityType;
+      existing.activityTypeConfidence = position.activityTypeConfidence;
+      existing.categoryId = position.categoryId;
+      existing.categoryLabel = position.categoryLabel;
+    }
+  }
+
+  return [...groups.values()].map(position => {
+    const seen = new Set();
+    position.movements = position.movements
+      .filter(movement => {
+        const key = String(movement.id || [
+          Number(movement.loopStartTime).toFixed(3),
+          Number(movement.loopEndTime).toFixed(3),
+          String(movement.label || '')
+        ].join('|'));
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+    position.sourcePositionIds = [...new Set(position.sourcePositionIds)];
+    return position;
+  }).sort((a, b) => Number(a.startTime) - Number(b.startTime));
+}
+
+export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
+  const limit = Math.max(1, Math.min(4, Math.floor(Number(maxChoices) || 4)));
+  const clean = value => String(value || '')
+    .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
+    .replace(/\s+·\s+Gerçek sekans$/iu, '')
+    .trim();
+  const normalize = value => clean(value).toLocaleLowerCase('tr-TR')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const positionKey = normalize(positionLabel);
+  const tempoLabels = { slow: 'Yavaş tempo', moderate: 'Orta tempo', fast: 'Hızlı tempo', unclear: 'Gerçek hareket' };
+  const groups = new Map();
+
+  for (const movement of Array.isArray(movements) ? movements : []) {
+    if (movement?.sourceVerified !== true) continue;
+    const tempo = normalizeMovementTempo(movement.movementTempo);
+    const rawLabel = clean(movement.label);
+    const meaningfulLabel = rawLabel && normalize(rawLabel) !== positionKey &&
+      !normalize(rawLabel).startsWith(positionKey + ' ·');
+    const label = meaningfulLabel ? rawLabel : tempoLabels[tempo];
+    const key = `${tempo}:${normalize(label)}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        id: `movement-choice:${key}`,
+        label,
+        tempo,
+        variants: []
+      });
+    }
+    groups.get(key).variants.push(movement);
+  }
+
+  const choices = [...groups.values()]
+    .sort((a, b) => Number(a.variants[0]?.loopStartTime) - Number(b.variants[0]?.loopStartTime));
+  if (choices.length <= limit) return choices;
+
+  const kept = choices.slice(0, limit);
+  for (const extra of choices.slice(limit)) {
+    const target = kept.find(choice => choice.tempo === extra.tempo) ||
+      [...kept].sort((a, b) => a.variants.length - b.variants.length)[0];
+    target.variants.push(...extra.variants);
+  }
+  return kept;
+}
+
 export function dedupeVerifiedTimelineActions(actions = []) {
   const byId = new Map();
   const withoutId = new Map();
