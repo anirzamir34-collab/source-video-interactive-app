@@ -1245,6 +1245,12 @@ els.analyzeBtn.addEventListener('click', async () => {
         Number(entry.time) >= chunkStart &&
         Number(entry.time) <= chunkEnd
       );
+      const chunkSceneBoundaries = (
+        storyboard.sceneBoundaries || []
+      ).filter(entry =>
+        Number(entry.time) >= chunkStart &&
+        Number(entry.time) <= chunkEnd
+      );
 
       const form = new FormData();
 
@@ -1259,6 +1265,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       form.append('duration', String(storyboard.duration));
       form.append('timestamps', JSON.stringify(chunkTimestamps));
       form.append('motionProfile', JSON.stringify(chunkMotionProfile));
+      form.append('sceneBoundaries', JSON.stringify(chunkSceneBoundaries));
       form.append('chunkStart', String(chunkStart));
       form.append('chunkEnd', String(chunkEnd));
       form.append('chunkIndex', String(chunkIndex));
