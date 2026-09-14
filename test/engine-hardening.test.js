@@ -18,7 +18,8 @@ import {
   reviewAndHardenAnalysis,
   secondPassReviewCandidates,
   shouldSecondPassReview,
-  validateActionInterval
+  validateActionInterval,
+  normalizeChunkActionTimes
 } from '../public/engine-hardening.js';
 
 test('timeline validator rejects broken ranges and movement outside parent position', () => {
@@ -234,4 +235,43 @@ test('event log is bounded and fingerprint is stable', () => {
   const analysis = { videoDuration: 10, actions: [{ actionId: 'a', startTime: 1, endTime: 2 }] };
   assert.equal(analysisFingerprint(analysis), analysisFingerprint(analysis));
   assert.equal(actionConfidence({ confidence: 2 }), 1);
+});
+
+
+test('rebases relative chunk times into the absolute video timeline', () => {
+  const result = normalizeChunkActionTimes([
+    {
+      actionId: 'local-1',
+      startTime: 4,
+      endTime: 18,
+      adultScene: true,
+      adultSceneStartTime: 0,
+      adultSceneEndTime: 80,
+      postSceneTime: 82,
+      actionType: 'position',
+      positionId: 'cowgirl',
+      positionStartTime: 4,
+      positionEndTime: 35,
+      loopStartTime: 6,
+      loopEndTime: 16
+    },
+    { actionId: 'local-2', startTime: 42, endTime: 70 }
+  ], 180, 270);
+
+  assert.equal(result.rebased, true);
+  assert.equal(result.actions[0].startTime, 184);
+  assert.equal(result.actions[0].endTime, 198);
+  assert.equal(result.actions[0].positionStartTime, 184);
+  assert.equal(result.actions[0].loopEndTime, 196);
+  assert.equal(result.actions[1].startTime, 222);
+});
+
+test('leaves already absolute chunk times unchanged', () => {
+  const actions = [
+    { actionId: 'absolute-1', startTime: 184, endTime: 198 },
+    { actionId: 'absolute-2', startTime: 222, endTime: 250 }
+  ];
+  const result = normalizeChunkActionTimes(actions, 180, 270);
+  assert.equal(result.rebased, false);
+  assert.strictEqual(result.actions, actions);
 });
