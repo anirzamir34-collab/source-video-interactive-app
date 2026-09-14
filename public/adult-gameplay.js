@@ -657,7 +657,8 @@ export function nearestAvailableTempo(requestedTempo, groups = {}) {
 export function isEnergeticFireMoment(movement = null) {
   if (!movement || movement.sourceVerified === false) return false;
   const tempo = normalizeMovementTempo(movement.movementTempo);
-  if (tempo === 'fast' || tempo === 'moderate' || movement.corePosition === true) return true;
+  if (tempo === 'fast' || tempo === 'moderate') return true;
+  if (movement.corePosition === true && movement.warmup !== true) return true;
   const text = String(movement.label || movement.movementType || movement.activityType || '')
     .toLocaleLowerCase('tr-TR')
     .replace(/[ıİ]/g, 'i')
@@ -668,10 +669,7 @@ export function isEnergeticFireMoment(movement = null) {
     .replace(/ö/g, 'o')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
-  if (/\b(ritmik|ritim|ritm|tempo|hizli|derin|sert|thrust|pound|slam|deep|hard|intense)\b/.test(text)) {
-    return true;
-  }
-  if (/\b(hizli|derin|sert)\b/.test(text) && /\b(ritim|ritm|tempo)\b/.test(text)) {
+  if (/\b(ritmik|hizli|derin|sert|thrust)\b/.test(text)) {
     return true;
   }
   return false;
