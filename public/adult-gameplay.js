@@ -508,8 +508,8 @@ export function consolidateVerifiedPositions(positions = []) {
   return clustered.sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
-export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 8) {
-  const limit = Math.max(1, Math.min(8, Math.floor(Number(maxChoices) || 8)));
+export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 3) {
+  const limit = Math.max(1, Math.min(3, Math.floor(Number(maxChoices) || 3)));
   const clean = value => String(value || '')
     .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
@@ -518,34 +518,48 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const positionKey = normalize(positionLabel);
   const tempoLabels = { slow: 'Yavaş tempo', moderate: 'Orta tempo', fast: 'Hızlı tempo', unclear: 'Gerçek hareket' };
-  const groups = new Map();
+  const occurrences = new Map();
 
   for (const movement of Array.isArray(movements) ? movements : []) {
     if (movement?.sourceVerified !== true) continue;
-    const tempo = normalizeMovementTempo(movement.movementTempo);
-    const rawLabel = clean(movement.label);
-    const meaningfulLabel = rawLabel && normalize(rawLabel) !== positionKey &&
-      !normalize(rawLabel).startsWith(positionKey + ' ·');
-    const label = meaningfulLabel ? rawLabel : tempoLabels[tempo];
-    // Never pool clips from separate uninterrupted occurrences. This keeps a
-    // touch/tempo choice inside the exact position block that produced it.
     const occurrence = String(movement.sourcePositionId || 'single-occurrence');
-    const key = `${occurrence}:${tempo}:${normalize(label)}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        id: `movement-choice:${key}`,
-        label,
-        tempo,
-        sourcePositionId: occurrence,
-        variants: []
-      });
-    }
-    const variants = groups.get(key).variants;
-    if (variants.length < 4) variants.push(movement);
+    if (!occurrences.has(occurrence)) occurrences.set(occurrence, []);
+    occurrences.get(occurrence).push(movement);
   }
 
-  return [...groups.values()]
-    .filter(choice => choice.variants.length)
+  const choices = [];
+  const occurrenceEntries = [...occurrences.entries()];
+  for (let occurrenceIndex = 0; occurrenceIndex < occurrenceEntries.length; occurrenceIndex += 1) {
+    const [occurrence, items] = occurrenceEntries[occurrenceIndex];
+    const ordered = items.sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+    const remainingOccurrences = occurrenceEntries.length - occurrenceIndex - 1;
+    const availableCards = Math.max(1, limit - choices.length - remainingOccurrences);
+    const cardCount = Math.min(availableCards, Math.max(1, Math.ceil(ordered.length / 3)));
+    let cursor = 0;
+    for (let cardIndex = 0; cardIndex < cardCount && cursor < ordered.length; cardIndex += 1) {
+      const remaining = ordered.length - cursor;
+      const remainingCards = cardCount - cardIndex;
+      const size = Math.min(3, Math.max(1, Math.ceil(remaining / remainingCards)));
+      const variants = ordered.slice(cursor, cursor + size);
+      cursor += size;
+      const first = variants[0];
+      const tempo = normalizeMovementTempo(first.movementTempo);
+      const rawLabel = clean(first.label);
+      const meaningfulLabel = rawLabel && normalize(rawLabel) !== positionKey &&
+        !normalize(rawLabel).startsWith(positionKey + ' ·');
+      choices.push({
+        id: `movement-choice:${occurrence}:${cardIndex + 1}`,
+        label: meaningfulLabel ? rawLabel : tempoLabels[tempo],
+        tempo,
+        sourcePositionId: occurrence,
+        variants
+      });
+    }
+    if (choices.length >= limit) break;
+  }
+
+  return choices
+    .filter(choice => choice.variants.length && choice.variants.length <= 3)
     .sort((a, b) => Number(a.variants[0]?.loopStartTime) - Number(b.variants[0]?.loopStartTime))
     .slice(0, limit);
 }
@@ -643,7 +657,7 @@ export function nearestAvailableTempo(requestedTempo, groups = {}) {
 export function isEnergeticFireMoment(movement = null) {
   if (!movement || movement.sourceVerified === false) return false;
   const tempo = normalizeMovementTempo(movement.movementTempo);
-  if (tempo === 'fast') return true;
+  if (tempo === 'fast' || tempo === 'moderate' || movement.corePosition === true) return true;
   const text = String(movement.label || movement.movementType || movement.activityType || '')
     .toLocaleLowerCase('tr-TR')
     .replace(/[ıİ]/g, 'i')
@@ -654,13 +668,13 @@ export function isEnergeticFireMoment(movement = null) {
     .replace(/ö/g, 'o')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
-  if (/\b(hizli|derin|sert|thrust|pound|slam|deep|hard|intense)\b/.test(text)) {
+  if (/\b(ritmik|ritim|ritm|tempo|hizli|derin|sert|thrust|pound|slam|deep|hard|intense)\b/.test(text)) {
     return true;
   }
   if (/\b(hizli|derin|sert)\b/.test(text) && /\b(ritim|ritm|tempo)\b/.test(text)) {
     return true;
   }
-  return tempo === 'moderate' && String(movement.audioIntensity || '').toLowerCase() === 'high';
+  return false;
 }
 
 export function movementsInSameOccurrence(movements = [], current = null) {

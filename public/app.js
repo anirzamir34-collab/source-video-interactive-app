@@ -2276,6 +2276,7 @@ function prepareAdultScenes() {
           ...action,
           id: action.actionId || `movement-${index}`,
           label: action.label,
+          corePosition: !isWarmupPosition(position),
           loopStartTime: movementStart,
           loopEndTime: movementEnd
         });
@@ -2341,6 +2342,7 @@ function prepareAdultScenes() {
                 loopEndTime: position.endTime,
                 movementType: position.familyId,
                 movementTempo: 'unclear',
+                corePosition: !isWarmupPosition(position),
                 sourceVerified: true,
                 maleProgressRate: 1,
                 femaleProgressRate: 1
@@ -2384,7 +2386,7 @@ function prepareAdultScenes() {
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 8)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -2467,6 +2469,25 @@ function unlockedAdultPositions(scene = state.adultScene) {
     if (isBonusPosition(position)) return coreAllowed && bonusAllowed;
     return coreAllowed;
   });
+}
+
+function reachableAdultPositions(scene = state.adultScene) {
+  const unlocked = unlockedAdultPositions(scene);
+  const now = Number(els.video?.currentTime ?? state.gameCursorTime) || 0;
+  const active = (scene?.positions || []).find(item => item.id === state.activePositionId) || null;
+  const playing = (scene?.positions || []).find(position =>
+    now >= Number(position.startTime) - 0.15 && now < Number(position.endTime) - 0.04
+  ) || null;
+  const forwardLimit = Math.max(
+    now + 12,
+    active ? Number(active.endTime) + 18 : Number.NEGATIVE_INFINITY
+  );
+
+  return unlocked.filter(position =>
+    position.id === active?.id ||
+    position.id === playing?.id ||
+    (Number(position.startTime) >= now - 0.15 && Number(position.startTime) <= forwardLimit)
+  );
 }
 
 function unlockedAdultOutcomes(scene = state.adultScene) {
@@ -2882,7 +2903,7 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
-  const positions = unlockedAdultPositions(scene)
+  const positions = reachableAdultPositions(scene)
     .filter(item => {
       if (isWarmupPosition(item)) return false;
       if (categoryId === 'all') return true;
@@ -3064,7 +3085,10 @@ function updateFireControl(position = null) {
     state.adultScene?.positions.find(item => item.id === state.activePositionId) ||
     null;
   const movement = currentAdultMovement();
-  const energetic = Boolean(movement && isEnergeticFireMoment(movement));
+  const energetic = Boolean(movement && (
+    isEnergeticFireMoment(movement) ||
+    (activePosition && !isWarmupPosition(activePosition))
+  ));
   const showControl = Boolean(
     activePosition &&
     !isWarmupPosition(activePosition) &&
@@ -3163,7 +3187,16 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
-  const positionUnlocked = unlockedAdultPositions(scene).some(item => item.id === position.id);
+  const positionUnlocked = reachableAdultPositions(scene).some(item => item.id === position.id);
+  if (shouldSeek && !positionUnlocked) {
+    logEngineEvent('POSITION_JUMP_BLOCKED', {
+      positionId: position.id,
+      positionStart: position.startTime,
+      mediaTime: Number(els.video?.currentTime) || 0,
+      activePositionId: state.activePositionId || null
+    });
+    return;
+  }
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
     position,
@@ -3187,7 +3220,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   const movementChoices = position.movementChoices?.length
     ? position.movementChoices
-    : buildVerifiedMovementChoices(position.movements, position.label, 8);
+    : buildVerifiedMovementChoices(position.movements, position.label, 3);
   position.movementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
@@ -3208,9 +3241,23 @@ function selectAdultPosition(positionId, shouldSeek = true) {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
         : null;
-      const movement = pickNextChronologicalVariant(choice.variants, currentId) ||
-        choice.variants[0];
+      const movement = currentId
+        ? pickNextChronologicalVariant(choice.variants, currentId)
+        : choice.variants[0];
+      if (currentId && !movement) {
+        els.video?.pause();
+        return;
+      }
       if (!movement) return;
+      if (Number(movement.loopStartTime) < Number(els.video?.currentTime || 0) - 0.35) {
+        logEngineEvent('MOVEMENT_JUMP_BLOCKED', {
+          movementId: movement.id,
+          movementStart: movement.loopStartTime,
+          mediaTime: Number(els.video?.currentTime) || 0
+        });
+        els.video?.pause();
+        return;
+      }
       state.activeMovementChoiceId = choice.id;
       selectAdultMovement(movement.id, true);
     });

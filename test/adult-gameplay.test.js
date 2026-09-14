@@ -324,7 +324,7 @@ test('keeps gapped returns as separate playable occurrences to avoid timeline ju
   assert.equal(inferred[0].id, 'position:rear:continuous-70000');
 });
 
-test('builds at most eight subchoices and keeps multiple clips in each choice pool', () => {
+test('builds at most three chronological subchoices with at most three linked clips', () => {
   const movements = [
     { id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 0, sourceVerified: true },
     { id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 12, sourceVerified: true },
@@ -333,13 +333,10 @@ test('builds at most eight subchoices and keeps multiple clips in each choice po
     { id: 'e', label: 'Temas değişimi', movementTempo: 'fast', loopStartTime: 48, sourceVerified: true }
   ];
 
-  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 8);
-  assert.ok(choices.length <= 8);
-  const slow = choices.find(choice => choice.tempo === 'slow');
-  const kiss = choices.find(choice => choice.label === 'Öpüşerek devam');
-  assert.equal(slow.label, 'Yavaş tempo');
-  assert.deepEqual(slow.variants.map(item => item.id), ['a', 'b']);
-  assert.deepEqual(kiss.variants.map(item => item.id), ['c', 'd']);
+  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 3);
+  assert.ok(choices.length <= 3);
+  assert.ok(choices.every(choice => choice.variants.length <= 3));
+  assert.deepEqual(choices.flatMap(choice => choice.variants.map(item => item.id)), ['a', 'b', 'c', 'd', 'e']);
 });
 
 
@@ -355,8 +352,8 @@ test('never mixes separate position occurrences or exposes twenty clips in one s
   }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 2);
-  assert.ok(choices.every(choice => choice.variants.length <= 4));
+  assert.equal(choices.length, 3);
+  assert.ok(choices.every(choice => choice.variants.length <= 3));
   assert.ok(choices.every(choice =>
     new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
   ));
@@ -393,8 +390,12 @@ test('joins overlapping raw detections but keeps later returns as a separate occ
 
 test('fire button arms only on fast or deep verified moments and advances forward', () => {
   const slow = { id: 'slow', movementTempo: 'slow', sourceVerified: true, label: 'Yavaş tempo', loopStartTime: 10, loopEndTime: 24 };
+  const moderate = { id: 'moderate', movementTempo: 'moderate', sourceVerified: true, label: 'Orta tempo', loopStartTime: 14, loopEndTime: 22 };
+  const core = { id: 'core', movementTempo: 'slow', sourceVerified: true, corePosition: true, label: 'Sabit', loopStartTime: 16, loopEndTime: 23 };
   const fast = { id: 'fast', movementTempo: 'fast', sourceVerified: true, label: 'Hızlı derin ritim', loopStartTime: 24, loopEndTime: 40 };
-  assert.equal(isEnergeticFireMoment(slow), false);
+  assert.equal(isEnergeticFireMoment(slow), true);
+  assert.equal(isEnergeticFireMoment(moderate), true);
+  assert.equal(isEnergeticFireMoment(core), true);
   assert.equal(isEnergeticFireMoment(fast), true);
   assert.equal(nextFireAdvance([slow, fast], 'slow')?.id, 'fast');
   assert.equal(nextFireAdvance([slow, fast], 'fast'), null);
