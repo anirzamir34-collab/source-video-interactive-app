@@ -483,23 +483,21 @@ Rules:
 - Never invent any position, movement, transition, outcome or label absent from the source frames.
 `;
 
-    const parts = [
-      { text: prompt },
-      ...files.map((file) => ({
-        inlineData: {
-          mimeType: file.mimetype || 'image/jpeg',
-          data: file.buffer.toString('base64')
-        }
-      }))
-    ];
-
     const ai = new GoogleGenAI({ apiKey });
-    let response;
-    let parsed = null;
-    let lastGenerationError = null;
-    for (let attempt = 1; attempt <= 4; attempt++) {
-      try {
-        response = await ai.models.generateContent({
+    const generateStoryboardJson = async (requestPrompt, requestFiles, retryLabel = 'full') => {
+      const parts = [
+        { text: requestPrompt },
+        ...requestFiles.map((file) => ({
+          inlineData: {
+            mimeType: file.mimetype || 'image/jpeg',
+            data: file.buffer.toString('base64')
+          }
+        }))
+      ];
+      let lastGenerationError = null;
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
           model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
           contents: [{ role: "user", parts }],
           config: {
@@ -507,26 +505,82 @@ Rules:
             temperature: 0.1,
             maxOutputTokens: 16384
           }
-        });
-        const raw = String(response.text || '').trim();
-        if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
-        parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
-        break;
-      } catch (error) {
-        lastGenerationError = error;
-        const details = String(error?.message || error);
-        const retryable =
-          details.includes("503") ||
-          details.includes("UNAVAILABLE") ||
-          details.includes("high demand") ||
-          details.includes("Unexpected end of JSON input") ||
-          details.includes("GEMINI_EMPTY_JSON_RESPONSE");
-        if (!retryable || attempt === 4) throw error;
-        console.warn(`[gemini-storyboard-retry] attempt ${attempt}/4: ${details}`);
-        await new Promise(resolve => setTimeout(resolve, attempt * 1800));
+          });
+          const raw = String(response.text || '').trim();
+          if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
+          return JSON.parse(raw.replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
+        } catch (error) {
+          lastGenerationError = error;
+          const details = String(error?.message || error);
+          const retryable =
+            details.includes("503") ||
+            details.includes("UNAVAILABLE") ||
+            details.includes("high demand") ||
+            details.includes("Unexpected end of JSON input") ||
+            details.includes("Unexpected token") ||
+            details.includes("not valid JSON") ||
+            details.includes("GEMINI_EMPTY_JSON_RESPONSE");
+          if (!retryable || attempt === 4) throw error;
+          console.warn(`[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/4: ${details}`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 1800));
+        }
       }
+      throw lastGenerationError || new Error('GEMINI_JSON_PARSE_FAILED');
+    };
+
+    let parsed;
+    try {
+      parsed = await generateStoryboardJson(prompt, files);
+    } catch (fullChunkError) {
+      if (files.length < 2) throw fullChunkError;
+
+      const allTimestamps = (() => {
+        try {
+          const value = JSON.parse(timestamps);
+          return Array.isArray(value) ? value.map(Number).filter(Number.isFinite) : [];
+        } catch {
+          return [];
+        }
+      })();
+      const framesPerSheet = Math.max(1, Math.ceil(allTimestamps.length / files.length));
+      const recoveredParts = [];
+      console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${files.length} smaller requests`);
+
+      for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+        const splitTimestamps = allTimestamps.slice(
+          fileIndex * framesPerSheet,
+          (fileIndex + 1) * framesPerSheet
+        );
+        const splitStart = Number(splitTimestamps[0] ?? chunkStart);
+        const splitLast = Number(splitTimestamps[splitTimestamps.length - 1] ?? splitStart);
+        const splitEnd = Math.min(chunkEnd, Math.max(splitStart + 0.1, splitLast + Math.max(0.1, (chunkEnd - chunkStart) / Math.max(1, allTimestamps.length))));
+        const splitPrompt = prompt
+          .replace(`Timestamp metadata for this chunk: ${timestamps}`, `Timestamp metadata for this recovery segment: ${JSON.stringify(splitTimestamps)}`)
+          .replace(`Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.`, `Analyze ONLY the interval ${splitStart} to ${splitEnd} seconds.`)
+          .replace('Examine this short interval deeply instead of summarizing the whole video.', 'This is one smaller recovery segment. Examine only these supplied frames and timestamps.');
+        recoveredParts.push(await generateStoryboardJson(
+          splitPrompt,
+          [files[fileIndex]],
+          `split-${fileIndex + 1}`
+        ));
+      }
+
+      parsed = {
+        ...recoveredParts[0],
+        available: true,
+        videoDuration: duration,
+        protagonistProfile: String(
+          [...recoveredParts].reverse().find(item => item?.protagonistProfile)?.protagonistProfile ||
+          protagonistProfile
+        ),
+        videoPrompt: recoveredParts.map(item => String(item?.videoPrompt || '').trim()).filter(Boolean).join('\n\n'),
+        actions: recoveredParts.flatMap(item => Array.isArray(item?.actions) ? item.actions : []),
+        warnings: [
+          ...recoveredParts.flatMap(item => Array.isArray(item?.warnings) ? item.warnings : []),
+          `Chunk ${chunkIndex + 1} recovered from ${files.length} smaller verified segments.`
+        ]
+      };
     }
-    if (!parsed) throw lastGenerationError || new Error('GEMINI_JSON_PARSE_FAILED');
     const resolvedDuration = Math.max(0, duration || Number(parsed.videoDuration || 0));
     const introEndTime = Math.min(
       resolvedDuration,
