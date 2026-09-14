@@ -3943,7 +3943,11 @@ async function resolveVideoUrl() {
 
     const result = await resolveResponse.json().catch(() => ({}));
     if (!resolveResponse.ok || !result.ok) {
-      throw new Error(result.message || 'Bu sayfada kullanılabilir video bulunamadı.');
+      const detail = String(result.technicalDetail || '').trim();
+      throw new Error(
+        (result.message || 'Bu sayfada kullanılabilir video bulunamadı.') +
+        (detail ? `\nTeknik neden: ${detail}` : '')
+      );
     }
 
     setUrlStatus(result.type === 'hls'
