@@ -5,6 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import fs from 'fs';
+import ffmpegPath from 'ffmpeg-static';
+import { spawn } from 'node:child_process';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -927,6 +929,9 @@ function decodeMediaUrl(value, baseUrl) {
     .replace(/\\\//g, '/')
     .replace(/&amp;|&#038;/gi, '&')
     .replace(/&quot;|&#34;/gi, '"')
+    .replace(/&#x2f;/gi, '/')
+    .replace(/&#x3a;/gi, ':')
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)))
     .trim();
 
   try {
@@ -943,20 +948,122 @@ function findVideoCandidates(html, baseUrl) {
     if (resolved && !candidates.includes(resolved)) candidates.push(resolved);
   };
 
-  for (const match of html.matchAll(/<(?:video|source)\b[^>]*\bsrc=["']([^"']+)["']/gi)) add(match[1]);
-  for (const match of html.matchAll(/"contentUrl"\s*:\s*"([^"]+)"/gi)) add(match[1]);
-  for (const match of html.matchAll(/https?:\\?\/\\?\/[^"'<> ]+\.(?:mp4|webm|m4v|mov|m3u8)(?:\?[^"'<> ]*)?/gi)) add(match[0]);
+  for (const match of html.matchAll(/<(?:video|source)\b[^>]*\b(?:src|data-src)=["']([^"']+)["']/gi)) add(match[1]);
+  for (const match of html.matchAll(/\b(?:src|file|data-src|data-video|data-url|data-file|data-mp4|data-hls|data-stream)=["']([^"']+)["']/gi)) add(match[1]);
+  for (const match of html.matchAll(/["'](?:contentUrl|content_url|videoUrl|video_url|videoSource|video_source|playUrl|play_url|streamUrl|stream_url|file|src)["']\s*[:=]\s*["']([^"']+)["']/gi)) add(match[1]);
+  for (const match of html.matchAll(/https?:\\?\/\\?\/[^"'<>\s]+(?:\.(?:mp4|webm|m4v|mov|m3u8|mpd)(?:\?[^"'<>\s]*)?|[?&](?:mime|type)=video(?:%2F|\/)[^"'<>\s&]+)/gi)) add(match[0]);
 
   for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
     const tag = match[0];
     const key = tag.match(/(?:property|name)=["']([^"']+)["']/i)?.[1]?.toLowerCase();
     const content = tag.match(/content=["']([^"']+)["']/i)?.[1];
-    if (content && ['og:video', 'og:video:url', 'og:video:secure_url', 'twitter:player:stream'].includes(key)) {
+    if (content && ['og:video', 'og:video:url', 'og:video:secure_url', 'og:video:secure_url', 'twitter:player:stream', 'twitter:player'].includes(key)) {
       add(content);
     }
   }
 
   return candidates;
+}
+
+function findEmbeddedPageCandidates(html, baseUrl) {
+  const pages = [];
+  const add = value => {
+    const resolved = decodeMediaUrl(value, baseUrl);
+    if (resolved && !pages.includes(resolved)) pages.push(resolved);
+  };
+  for (const match of html.matchAll(/<iframe\b[^>]*\b(?:src|data-src)=["']([^"']+)["']/gi)) add(match[1]);
+  for (const match of html.matchAll(/<link\b[^>]*\brel=["'](?:amphtml|canonical)["'][^>]*\bhref=["']([^"']+)["']/gi)) add(match[1]);
+  return pages.slice(0, 8);
+}
+
+function collectSetCookies(response) {
+  const values = typeof response.headers.getSetCookie === 'function'
+    ? response.headers.getSetCookie()
+    : [response.headers.get('set-cookie')].filter(Boolean);
+  return values.map(value => String(value).split(';')[0]).filter(Boolean).join('; ');
+}
+
+async function probeVideoCandidate(candidate, referer, cookie = '') {
+  try {
+    const headers = {
+      Range: 'bytes=0-1',
+      Referer: referer,
+      Origin: new URL(referer).origin,
+      Accept: 'video/*,application/vnd.apple.mpegurl,application/x-mpegURL;q=0.9,*/*;q=0.5'
+    };
+    if (cookie) headers.Cookie = cookie;
+    const { response, finalUrl } = await fetchPublicUrl(candidate, { headers, timeoutMs: 18000 });
+    if (!response.ok && response.status !== 206) return null;
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const mediaLike = contentType.startsWith('video/') ||
+      /mpegurl|application\/octet-stream/.test(contentType) ||
+      /\.(mp4|webm|m4v|mov|m3u8)(?:$|\?)/i.test(finalUrl);
+    try { await response.body?.cancel(); } catch {}
+    if (!mediaLike) return null;
+    return {
+      sourceUrl: finalUrl,
+      type: /mpegurl|\.m3u8(?:$|\?)/i.test(`${contentType} ${finalUrl}`) ? 'hls' : 'video',
+      contentType
+    };
+  } catch {
+    return null;
+  }
+}
+
+const resolvedVideoSessions = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of resolvedVideoSessions) {
+    if (session.expiresAt <= now) resolvedVideoSessions.delete(token);
+  }
+}, 10 * 60 * 1000).unref();
+
+async function resolvePublicVideoPage(startUrl) {
+  const queue = [{ url: startUrl, depth: 0, referer: startUrl, cookie: '' }];
+  const visited = new Set();
+  const found = [];
+
+  while (queue.length && visited.size < 10) {
+    const page = queue.shift();
+    if (visited.has(page.url)) continue;
+    visited.add(page.url);
+
+    const { response, finalUrl } = await fetchPublicUrl(page.url, {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,video/*;q=0.9,*/*;q=0.6',
+        Referer: page.referer,
+        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+      }
+    });
+    if (!response.ok) continue;
+
+    const responseCookie = collectSetCookies(response) || page.cookie;
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.startsWith('video/')) {
+      return { sourceUrl: finalUrl, pageUrl: page.referer, type: 'video', cookie: responseCookie };
+    }
+
+    const html = (await response.text()).slice(0, 6000000);
+    for (const candidate of findVideoCandidates(html, finalUrl)) {
+      found.push({ url: candidate, referer: finalUrl, cookie: responseCookie });
+    }
+    if (page.depth < 2) {
+      for (const embedded of findEmbeddedPageCandidates(html, finalUrl)) {
+        queue.push({ url: embedded, depth: page.depth + 1, referer: finalUrl, cookie: responseCookie });
+      }
+    }
+  }
+
+  const preferred = found.sort((left, right) => {
+    const score = value => /\.(mp4|webm|m4v|mov)(?:$|\?)/i.test(value) ? 0 : /\.m3u8(?:$|\?)/i.test(value) ? 2 : 1;
+    return score(left.url) - score(right.url);
+  }).slice(0, 30);
+
+  for (const item of preferred) {
+    const verified = await probeVideoCandidate(item.url, item.referer, item.cookie);
+    if (verified) return { ...verified, pageUrl: item.referer, cookie: item.cookie };
+  }
+  return null;
 }
 
 app.post('/api/resolve-video-url', async (req, res) => {
@@ -979,42 +1086,30 @@ app.post('/api/resolve-video-url', async (req, res) => {
       });
     }
 
-    const { response, finalUrl } = await fetchPublicUrl(normalizedUrl, {
-      headers: { Accept: 'text/html,application/xhtml+xml,video/*;q=0.8' }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Sayfa ${response.status} yanıtı verdi.`);
-    }
-
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.startsWith('video/')) {
-      return res.json({
-        ok: true,
-        type: 'video',
-        sourceUrl: finalUrl,
-        proxyUrl: `/api/video-proxy?url=${encodeURIComponent(finalUrl)}`
-      });
-    }
-
-    const html = (await response.text()).slice(0, 3000000);
-    const candidates = findVideoCandidates(html, finalUrl);
-    const sourceUrl = candidates.find(url => /\.(mp4|webm|m4v|mov|m3u8)(?:$|\?)/i.test(url));
-
-    if (!sourceUrl) {
+    const resolved = await resolvePublicVideoPage(normalizedUrl);
+    if (!resolved) {
       return res.status(422).json({
         ok: false,
         reason: 'VIDEO_SOURCE_HIDDEN',
-        message: 'Bu sayfa video kaynağını gizliyor veya özel oynatıcı kullanıyor.'
+        message: 'Sayfa tarandı ancak herkese açık indirilebilir video kaynağı doğrulanamadı. Giriş, CAPTCHA, DRM veya site koruması olabilir.'
       });
     }
 
+    const token = crypto.randomBytes(18).toString('hex');
+    resolvedVideoSessions.set(token, {
+      sourceUrl: resolved.sourceUrl,
+      referer: resolved.pageUrl,
+      cookie: resolved.cookie,
+      type: resolved.type,
+      expiresAt: Date.now() + 30 * 60 * 1000
+    });
+
     res.json({
       ok: true,
-      type: /\.m3u8(?:$|\?)/i.test(sourceUrl) ? 'hls' : 'video',
-      sourceUrl,
-      pageUrl: finalUrl,
-      proxyUrl: `/api/video-proxy?url=${encodeURIComponent(sourceUrl)}&referer=${encodeURIComponent(finalUrl)}`
+      type: resolved.type,
+      sourceUrl: resolved.sourceUrl,
+      pageUrl: resolved.pageUrl,
+      proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`
     });
   } catch (error) {
     res.status(502).json({
@@ -1027,16 +1122,58 @@ app.post('/api/resolve-video-url', async (req, res) => {
 
 app.get('/api/video-proxy', async (req, res) => {
   try {
-    const sourceUrl = String(req.query.url || '');
-    const referer = String(req.query.referer || '');
+    const token = String(req.query.token || '');
+    const session = token ? resolvedVideoSessions.get(token) : null;
+    const sourceUrl = String(session?.sourceUrl || req.query.url || '');
+    const referer = String(session?.referer || req.query.referer || '');
     if (!sourceUrl) return res.status(400).json({ ok: false, message: 'Video URL’si gerekli.' });
+
+    if (session?.type === 'hls' || /\.m3u8(?:$|\?)/i.test(sourceUrl)) {
+      const headerLines = [
+        'User-Agent: Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+        referer ? `Referer: ${referer}` : '',
+        referer ? `Origin: ${new URL(referer).origin}` : '',
+        session?.cookie ? `Cookie: ${session.cookie}` : ''
+      ].filter(Boolean).join('\r\n') + '\r\n';
+      const ffmpeg = spawn(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error',
+        '-headers', headerLines,
+        '-i', sourceUrl,
+        '-map', '0:v:0?', '-map', '0:a:0?',
+        '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov',
+        '-f', 'mp4', 'pipe:1'
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      let stderr = '';
+      ffmpeg.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
+      ffmpeg.on('error', error => {
+        console.error('HLS ffmpeg start error:', error?.message || error);
+        if (!res.headersSent) res.status(502).json({ ok: false, message: 'HLS dönüştürücü başlatılamadı.' });
+        else res.destroy(error);
+      });
+      ffmpeg.on('close', code => {
+        if (code && !res.writableEnded) {
+          console.error('HLS ffmpeg error:', stderr || `exit ${code}`);
+          res.destroy(new Error('HLS_VIDEO_CONVERSION_FAILED'));
+        }
+      });
+      const deadline = setTimeout(() => ffmpeg.kill('SIGKILL'), 30 * 60 * 1000);
+      ffmpeg.once('close', () => clearTimeout(deadline));
+      req.once('close', () => { if (!ffmpeg.killed) ffmpeg.kill('SIGTERM'); });
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Cache-Control', 'private, no-store');
+      ffmpeg.stdout.pipe(res);
+      return;
+    }
 
     const headers = {};
     if (req.headers.range) headers.Range = req.headers.range;
     if (referer) {
       await validatePublicUrl(referer);
       headers.Referer = referer;
+      headers.Origin = new URL(referer).origin;
     }
+    if (session?.cookie) headers.Cookie = session.cookie;
 
     const { response } = await fetchPublicUrl(sourceUrl, { headers, timeoutMs: 0 });
     if (!response.ok && response.status !== 206) {
