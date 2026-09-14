@@ -1366,6 +1366,7 @@ LANGUAGE DETECTION AND TURKISH TRANSLATION:
 - Support every detectable language and dialect, including multilingual conversations and speakers switching languages inside the same video.
 - Treat clear non-English speech as valid dialogue, never as silence or unintelligible audio merely because of its language.
 - Transcribe each clearly audible line faithfully in its original language into originalText.
+- Perform a second careful listening pass for low-volume speech: whispers, murmured words, breathy speech, short replies, overlapping dialogue and off-screen speakers. If words are intelligible, include them even when much quieter than music or other vocal sounds.
 - Translate every detected non-Turkish line into natural, complete Turkish in turkishText.
 - If a line is already Turkish, preserve its meaning faithfully in turkishText without translating it into another language.
 - Set sourceLanguage to the detected language name; use "multilingual" when multiple source languages are present.
@@ -1428,7 +1429,7 @@ Rules:
 - Do not reuse one speakerName for two different voices and do not change a person's name between segments.
 - Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
 - Transcribe speech faithfully without inventing words.
-- Transcribe and translate every clearly audible spoken word without censorship, sanitization, euphemism, summarization, or omission.
+- Transcribe and translate every intelligible spoken word without censorship, sanitization, euphemism, summarization, or omission, including quiet, whispered, breathy, overlapping and sexually explicit speech.
 - Preserve profanity, slang, sexual or adult vocabulary, commands, reactions, and intensity exactly in natural Turkish.
 - Never replace words with asterisks, softened expressions, generic summaries, or skipped segments.
 - Treat every speaker equally and include every intelligible spoken line regardless of its subject.
@@ -1563,7 +1564,7 @@ Rules:
             try {
               const response = await ai.models.generateContent({
                 model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
-                contents: [{ role: 'user', parts: [{ text: `Translate ALL supplied speech lines into natural Turkish. Preserve every segmentId. Never omit, merge, censor, summarize or reorder a line. Return JSON only as {"segments":[{"segmentId":"...","turkishText":"...","gender":"male|female|uncertain","emotion":"...","confidence":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(batch)}` }] }],
+                contents: [{ role: 'user', parts: [{ text: `Translate ALL supplied speech lines into natural Turkish. Preserve every segmentId. Preserve profanity, slang and sexually explicit wording literally and naturally; never soften it. Never omit, merge, censor, summarize or reorder a line. Return JSON only as {"segments":[{"segmentId":"...","turkishText":"...","gender":"male|female|uncertain","emotion":"...","confidence":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(batch)}` }] }],
                 config: { responseMimeType: 'application/json', temperature: 0.02, maxOutputTokens: 8192 }
               });
               const recovered = JSON.parse(String(response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
@@ -1579,10 +1580,42 @@ Rules:
           }
         }
 
-        parsed.segments = asr.segments.map(grounded => {
+        const groundedSegments = asr.segments.map(grounded => {
           const item = enriched.get(grounded.segmentId) || {};
           return { ...item, segmentId: grounded.segmentId, speakerId: grounded.speakerId, startTime: grounded.startTime, endTime: grounded.endTime, originalText: grounded.originalText, turkishText: String(item.turkishText || grounded.originalText).trim() };
         });
+
+        // The multimodal pass can recover whispers and overlapping lines missed
+        // by dedicated ASR. Preserve unique timed lines from both passes.
+        const groundedIds = new Set(asr.segments.map(item => String(item.segmentId || '')));
+        const supplementalSegments = (Array.isArray(parsed.segments) ? parsed.segments : [])
+          .filter(item => !groundedIds.has(String(item.segmentId || '')))
+          .filter(item => {
+            const start = Number(item.startTime);
+            const end = Number(item.endTime);
+            const text = String(item.originalText || item.turkishText || '').trim();
+            if (!text || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return false;
+            return !groundedSegments.some(grounded => {
+              const overlap = Math.max(
+                0,
+                Math.min(end, grounded.endTime) - Math.max(start, grounded.startTime)
+              );
+              const shortest = Math.max(
+                0.05,
+                Math.min(end - start, grounded.endTime - grounded.startTime)
+              );
+              return overlap / shortest >= 0.72;
+            });
+          })
+          .map((item, index) => ({
+            ...item,
+            segmentId: String(item.segmentId || `quiet-${String(index + 1).padStart(3, '0')}`),
+            originalText: String(item.originalText || item.turkishText || '').trim(),
+            turkishText: String(item.turkishText || item.originalText || '').trim()
+          }));
+
+        parsed.segments = [...groundedSegments, ...supplementalSegments]
+          .sort((a, b) => Number(a.startTime) - Number(b.startTime));
         parsed.transcriptionEngine = process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe';
       }
 
@@ -1630,8 +1663,8 @@ Rules:
           speakerId,
           speakerName: profile.speakerName,
           gender,
-          originalText: String(segment.originalText || '').trim(),
-          turkishText: String(segment.turkishText || '').trim(),
+          originalText: String(segment.originalText || segment.turkishText || '').trim(),
+          turkishText: String(segment.turkishText || segment.originalText || '').trim(),
           emotion: String(segment.emotion || 'uncertain'),
           confidence: Math.max(0, Math.min(1, Number(segment.confidence || 0)))
         });})
@@ -1904,7 +1937,8 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
         role: 'user',
         parts: [{
           text:
-            `Read the following Turkish line exactly as written. ` +
+            `Read the following Turkish line exactly as written, including any ` +
+            `profanity, slang or sexually explicit wording without censoring, softening or skipping it. ` +
             `Use ${voiceStyle}. Preserve a natural ${emotion} emotion, ` +
             `realistic conversational pace and clear pronunciation. ` +
             `Do not add, remove or explain any words.\n\n${text}`
