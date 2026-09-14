@@ -48,6 +48,7 @@ import {
   createRuntimeSnapshot,
   isCompatibleRuntimeSnapshot,
   mergeSecondPassReview,
+  normalizeChunkActionTimes,
   reviewAndHardenAnalysis,
   secondPassReviewCandidates
 } from './engine-hardening.js';
@@ -1327,6 +1328,21 @@ els.analyzeBtn.addEventListener('click', async () => {
 
           body = await response.json();
 
+          if (response.ok && body?.available) {
+            const normalizedChunk = normalizeChunkActionTimes(
+              body.actions,
+              chunkStart,
+              chunkEnd
+            );
+            body = {
+              ...body,
+              actions: normalizedChunk.actions,
+              chunkStart,
+              chunkEnd,
+              chunkTimeRebased: normalizedChunk.rebased
+            };
+          }
+
           if (!response.ok || !body?.available) {
             failureBody = body || {
               available: false,
@@ -1348,7 +1364,21 @@ els.analyzeBtn.addEventListener('click', async () => {
                 body: freshChunkForm(),
                 signal: AbortSignal.timeout(240000)
               });
-              const reviewBody = await reviewResponse.json();
+              let reviewBody = await reviewResponse.json();
+              if (reviewResponse.ok && reviewBody?.available) {
+                const normalizedReview = normalizeChunkActionTimes(
+                  reviewBody.actions,
+                  chunkStart,
+                  chunkEnd
+                );
+                reviewBody = {
+                  ...reviewBody,
+                  actions: normalizedReview.actions,
+                  chunkStart,
+                  chunkEnd,
+                  chunkTimeRebased: normalizedReview.rebased
+                };
+              }
               if (!reviewResponse.ok || !reviewBody?.available) {
                 failureBody = reviewBody || {
                   available: false,
@@ -1468,6 +1498,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         expectedChunkCount: chunkCount,
         analysisCoverage: chunkCount ? chunkResults.length / chunkCount : 0,
         secondPassChunkCount: chunkResults.filter(result => result.secondPassReviewed).length,
+        rebasedChunkCount: chunkResults.filter(result => result.chunkTimeRebased).length,
+        analyzedThroughTime: Math.max(0, ...mergedActions.map(action => Number(action.endTime) || 0)),
         schemaVersion: ANALYSIS_SCHEMA_VERSION,
         engineVersion: ENGINE_VERSION
       };
@@ -1564,6 +1596,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${normalized.actions.length} doğrulanmış aksiyon hazır.`,
     `${Number(body.chunkCount || 0)}/${Number(body.expectedChunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
     `${Number(body.secondPassChunkCount || 0)} bölüm görsel ikinci kontrolden geçti.`,
+    `${Number(body.rebasedChunkCount || 0)} bölümün yerel zamanları video zamanına düzeltildi.`,
+    `Zaman çizelgesi ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyeye kadar doğrulandı.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
     'Oyun modu kullanıma hazır.'
   ].join('\n');
