@@ -3206,6 +3206,74 @@ pre {
   grid-column: 1 / -1;
 }
 
+.quota-status {
+  display: inline-flex;
+  margin-left: 5px;
+  padding: 2px 5px;
+  border: 1px solid #303030;
+  border-radius: 999px;
+  color: #aaa;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 800;
+  vertical-align: middle;
+}
+.quota-status.available { color: #52e9b9; border-color: rgba(82,233,185,.35); }
+.quota-status.blocked, .quota-status.unconfigured { color: #ff8a9c; border-color: rgba(255,91,116,.42); }
+
+.adult-panel-toggle-btn { display: none; }
+
+/* The adult controls remain descendants of the fullscreen stage. */
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+  top: 54px !important;
+  right: 10px !important;
+  bottom: 10px !important;
+  width: min(36vw, 430px) !important;
+  max-width: min(36vw, 430px) !important;
+  max-height: calc(100dvh - 64px) !important;
+  padding: 8px !important;
+  background: rgba(0,0,0,.78) !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+  backdrop-filter: blur(9px) !important;
+  -webkit-backdrop-filter: blur(9px) !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel.fullscreen-collapsed,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.fullscreen-collapsed {
+  display: none !important;
+}
+
+#playerSection .video-stage:fullscreen .adult-panel-toggle-btn,
+#playerSection .video-stage:-webkit-full-screen .adult-panel-toggle-btn {
+  position: absolute;
+  z-index: 92;
+  top: 10px;
+  right: 112px;
+  display: block;
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid rgba(56,227,176,.5);
+  border-radius: 7px;
+  color: #63f1c5;
+  background: rgba(0,0,0,.76);
+  font-size: 8px;
+  font-weight: 900;
+}
+
+@media (orientation: portrait) {
+  #playerSection .video-stage:fullscreen #adultInteractionPanel,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+    top: auto !important;
+    right: 7px !important;
+    bottom: 7px !important;
+    left: 7px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 38dvh !important;
+  }
+}
+
 /* MINIMAL BLACK UI — compact mobile-first presentation */
 :root {
   --bg: #000;
