@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   dialogueSegmentAt,
+  decisionBoundaryAfterDialogue,
   dubMasterClockCorrection,
   dubSegmentKey,
   fittedDubPlaybackRate,
@@ -33,6 +34,17 @@ test('dialogueSegmentAt immediately switches to the newest overlapping speaker',
     { segmentId: 'son', startTime: 12.4, endTime: 15, speakerName: 'Erkek kardeş' }
   ];
   assert.equal(dialogueSegmentAt(segments, 12.5)?.segmentId, 'son');
+});
+
+test('choice boundary waits for every sentence active at the action end', () => {
+  const segments = [
+    { startTime: 8, endTime: 12.5, turkishText: 'Devam eden cümle' },
+    { startTime: 9.5, endTime: 11.8, turkishText: 'Üst üste konuşma' },
+    { startTime: 13, endTime: 15, turkishText: 'Sonraki cümle' }
+  ];
+  assert.equal(decisionBoundaryAfterDialogue(segments, 10, 30), 12.5);
+  assert.equal(decisionBoundaryAfterDialogue(segments, 7, 30), 7);
+  assert.equal(decisionBoundaryAfterDialogue(segments, 10, 11), 11);
 });
 
 test('dub time maps proportionally inside the matching dialogue segment', () => {
