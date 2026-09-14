@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --check server.js && node --check public/app.js && node --check public/storyboard.js && node --check public/adult-gameplay.js && node --check public/playback-logic.js && node --check public/engine-hardening.js && node --check public/story-engine.js && node --test test/adult-gameplay.test.js test/playback-logic.test.js test/engine-hardening.test.js test/story-engine.test.js"
+    "test": "node --check server.js && node --check public/app.js && node --check public/storyboard.js && node --check public/adult-gameplay.js && node --check public/playback-logic.js && node --check public/engine-hardening.js && node --check public/story-engine.js && node --test test/adult-gameplay.test.js test/playback-logic.test.js test/engine-hardening.test.js test/story-engine.test.js test/storyboard.test.js"
   },
   "engines": {
     "node": ">=20"
