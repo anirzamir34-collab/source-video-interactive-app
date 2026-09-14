@@ -2720,6 +2720,46 @@ pre {
   box-shadow: none !important;
 }
 
+.rhythm-control {
+  margin-top: 8px;
+}
+
+.rhythm-tap-btn {
+  width: 100%;
+  min-height: 56px;
+  padding: 9px 12px;
+  border: 1px solid rgba(56, 227, 176, .48);
+  border-radius: 13px;
+  color: #f4fffb;
+  background: rgba(17, 68, 54, .34);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.rhythm-tap-btn span,
+.rhythm-tap-btn small {
+  display: block;
+  pointer-events: none;
+}
+
+.rhythm-tap-btn span { font-size: .76rem; font-weight: 900; letter-spacing: .05em; }
+.rhythm-tap-btn small { margin-top: 3px; color: #91b9aa; font-size: .6rem; }
+.rhythm-tap-btn[data-tempo="slow"] { background: rgba(22, 63, 92, .46); }
+.rhythm-tap-btn[data-tempo="moderate"] { background: rgba(17, 92, 70, .5); }
+.rhythm-tap-btn[data-tempo="fast"] { border-color: rgba(255, 100, 119, .68); background: rgba(105, 22, 37, .56); }
+.rhythm-tap-btn.tap-pulse { animation: rhythm-tap-pulse .16s ease-out; }
+
+@keyframes rhythm-tap-pulse {
+  50% { transform: scale(.975); filter: brightness(1.35); }
+}
+
+#playerSection .video-stage:fullscreen .rhythm-tap-btn,
+#playerSection .video-stage:-webkit-full-screen .rhythm-tap-btn {
+  min-height: 46px;
+  padding: 7px 9px;
+}
+
 .outcome-section {
   margin-top: 6px !important;
   padding: 0 !important;
