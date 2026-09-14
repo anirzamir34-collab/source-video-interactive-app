@@ -17,6 +17,7 @@ import {
   findAdultSceneForTimeline,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
+  isEnergeticSexMoment,
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
@@ -273,7 +274,7 @@ test('discovery phases are content-driven and never regress once a later phase w
 });
 
 
-test('consolidates repeated occurrences into one canonical position', () => {
+test('keeps disconnected occurrences of one family isolated', () => {
   const positions = [
     {
       id: 'cowgirl-1',
@@ -296,12 +297,20 @@ test('consolidates repeated occurrences into one canonical position', () => {
   ];
 
   const result = consolidateVerifiedPositions(positions);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].id, 'position:cowgirl');
-  assert.equal(result[0].startTime, 10);
-  assert.equal(result[0].endTime, 58);
-  assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1', 'cowgirl-2']);
-  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a', 'fast-a']);
+  assert.equal(result.length, 2);
+  assert.deepEqual(result.map(item => item.id), [
+    'position:cowgirl:continuous-10000',
+    'position:cowgirl:continuous-40000'
+  ]);
+  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a']);
+  assert.deepEqual(result[1].movements.map(item => item.id), ['fast-a']);
+});
+
+test('sex control requires verified fast, hard or deep evidence', () => {
+  assert.equal(isEnergeticSexMoment({ sourceVerified: true, movementTempo: 'fast' }), true);
+  assert.equal(isEnergeticSexMoment({ sourceVerified: true, movementTempo: 'slow', label: 'Derin hareket' }), true);
+  assert.equal(isEnergeticSexMoment({ sourceVerified: true, movementTempo: 'moderate', label: 'Normal tempo' }), false);
+  assert.equal(isEnergeticSexMoment({ sourceVerified: false, movementTempo: 'fast' }), false);
 });
 
 test('builds at most four subchoices and keeps multiple clips in each choice pool', () => {
@@ -343,8 +352,8 @@ test('never mixes separate position occurrences or exposes twenty clips in one s
 });
 
 
-test('joins overlapping raw detections but keeps later returns in a separate clip pool', () => {
-  const [position] = consolidateVerifiedPositions([
+test('joins overlapping raw detections but keeps later returns as separate positions', () => {
+  const positions = consolidateVerifiedPositions([
     {
       id: 'raw-a', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
       startTime: 10, endTime: 24,
@@ -362,10 +371,13 @@ test('joins overlapping raw detections but keeps later returns in a separate cli
     }
   ]);
 
-  const choices = buildVerifiedMovementChoices(position.movements, position.label, 4);
-  assert.equal(position.sourcePositionIds.length, 2);
-  assert.deepEqual(choices.map(choice => choice.variants.map(item => item.id)), [
-    ['a', 'b'],
-    ['c']
-  ]);
+  assert.equal(positions.length, 2);
+  assert.equal(positions[0].sourcePositionIds.length, 2);
+  assert.deepEqual(
+    positions.map(position =>
+      buildVerifiedMovementChoices(position.movements, position.label, 3)
+        .flatMap(choice => choice.variants.map(item => item.id))
+    ),
+    [['a', 'b'], ['c']]
+  );
 });

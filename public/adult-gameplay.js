@@ -435,7 +435,8 @@ export function consolidateVerifiedPositions(positions = []) {
     }
   }
 
-  return [...groups.values()].map(position => {
+  const clustered = [];
+  for (const position of groups.values()) {
     const seen = new Set();
     position.movements = position.movements
       .filter(movement => {
@@ -452,32 +453,51 @@ export function consolidateVerifiedPositions(positions = []) {
     const ranges = [...position.sourceRanges]
       .filter(range => Number.isFinite(range.startTime) && Number.isFinite(range.endTime))
       .sort((a, b) => a.startTime - b.startTime);
-    const occurrenceBySource = new Map();
+    const clusters = [];
     let cluster = null;
     for (const range of ranges) {
       if (!cluster || range.startTime > cluster.endTime + 1.25) {
         cluster = {
           id: `${position.familyId}:continuous-${Math.round(range.startTime * 1000)}`,
           startTime: range.startTime,
-          endTime: range.endTime
+          endTime: range.endTime,
+          sourceIds: [String(range.id)]
         };
+        clusters.push(cluster);
       } else {
         cluster.endTime = Math.max(cluster.endTime, range.endTime);
+        cluster.sourceIds.push(String(range.id));
       }
-      occurrenceBySource.set(String(range.id), cluster.id);
     }
-    position.movements = position.movements.map(movement => ({
-      ...movement,
-      sourcePositionId: occurrenceBySource.get(String(movement.sourcePositionId)) ||
-        String(movement.sourcePositionId)
-    }));
-    position.sourcePositionIds = [...new Set(position.movements.map(item => item.sourcePositionId))];
-    return position;
-  }).sort((a, b) => Number(a.startTime) - Number(b.startTime));
+
+    for (const item of clusters) {
+      const sourceIds = new Set(item.sourceIds);
+      const clusterMovements = position.movements
+        .filter(movement => {
+          if (sourceIds.has(String(movement.sourcePositionId || ''))) return true;
+          const start = Number(movement.loopStartTime);
+          const end = Number(movement.loopEndTime);
+          return Number.isFinite(start) && Number.isFinite(end) &&
+            start >= item.startTime - 0.2 && end <= item.endTime + 0.2;
+        })
+        .map(movement => ({ ...movement, sourcePositionId: item.id }));
+      clustered.push({
+        ...position,
+        id: `position:${item.id}`,
+        occurrenceId: item.id,
+        startTime: item.startTime,
+        endTime: item.endTime,
+        sourcePositionIds: [...sourceIds],
+        sourceRanges: ranges.filter(range => sourceIds.has(String(range.id))),
+        movements: clusterMovements
+      });
+    }
+  }
+  return clustered.sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
-export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
-  const limit = Math.max(1, Math.min(4, Math.floor(Number(maxChoices) || 4)));
+export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 3) {
+  const limit = Math.max(1, Math.min(3, Math.floor(Number(maxChoices) || 3)));
   const clean = value => String(value || '')
     .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
@@ -509,13 +529,35 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       });
     }
     const variants = groups.get(key).variants;
-    if (variants.length < 4) variants.push(movement);
+    if (variants.length < 3) variants.push(movement);
   }
 
   return [...groups.values()]
     .filter(choice => choice.variants.length)
     .sort((a, b) => Number(a.variants[0]?.loopStartTime) - Number(b.variants[0]?.loopStartTime))
     .slice(0, limit);
+}
+
+export function isEnergeticSexMoment(movement = null) {
+  if (!movement || movement.sourceVerified !== true) return false;
+  const tempo = normalizeMovementTempo(movement.movementTempo);
+  if (tempo === 'fast') return true;
+  const text = String([
+    movement.label,
+    movement.movementType,
+    movement.activityEvidence,
+    movement.sensoryEvidence
+  ].filter(Boolean).join(' '))
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return /\b(hizli|sert|derin|guclu|thrust|hard|deep)\b/.test(text);
 }
 
 export function dedupeVerifiedTimelineActions(actions = []) {

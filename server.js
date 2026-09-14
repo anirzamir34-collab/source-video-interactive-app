@@ -492,6 +492,8 @@ Rules:
 - Reject any position or movement when the claimed body configuration is not visibly present at its start, midpoint, and end timestamps.
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
 - Set movementTempo from directly visible cadence only. Use slow, moderate or fast for stable segments; split a changing cadence into separate 10+ second verified segments whenever the source duration permits. Use unclear when speed cannot be verified.
+- Use fast only when repeated motion is visibly and consistently fast across the complete interval. Put words such as sert, derin or güçlü in movementType/label only when that exact quality is directly visible throughout the same time-aligned segment; never infer it from dialogue, audio alone or the surrounding adult scene.
+- These explicit movementTempo and movementType observations control the optional on-screen sex interaction button. If no source-verified fast, hard or deep interval exists, do not manufacture one and allow the button to remain unavailable for the entire video.
 - Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.
 - Do not split tiny repetitions into fake choices and do not merge genuinely different changes.
 - loopStartTime and loopEndTime must define a naturally repeatable real interval inside the action and position.
