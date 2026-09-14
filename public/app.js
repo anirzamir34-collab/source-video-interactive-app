@@ -121,6 +121,8 @@ const els = {
   motionMode: $('motionMode'),
   subtitleMode: $('subtitleMode'),
   dubMode: $('dubMode'),
+  subtitleQuotaStatus: $('subtitleQuotaStatus'),
+  dubQuotaStatus: $('dubQuotaStatus'),
   keepOriginalAudio: $('keepOriginalAudio'),
   originalAudioRow: $('originalAudioRow'),
   selectedModesSummary: $('selectedModesSummary'),
@@ -145,6 +147,7 @@ const els = {
   videoPrompt: $('videoPrompt'),
   debugOutput: $('debugOutput'),
   adultInteractionPanel: $('adultInteractionPanel'),
+  adultPanelToggleBtn: $('adultPanelToggleBtn'),
   adultSceneTitle: $('adultSceneTitle'),
   adultSceneTime: $('adultSceneTime'),
   adultPhaseBadge: $('adultPhaseBadge'),
@@ -371,6 +374,37 @@ async function checkHealth() {
   }
   updateAnalyzeAvailability();
   renderDebug();
+}
+
+function renderQuotaBadge(element, status) {
+  if (!element) return;
+  const stateName = String(status?.state || 'unknown');
+  element.className = `quota-status ${stateName}`;
+  if (stateName === 'blocked') {
+    const retry = Math.max(1, Math.ceil(Number(status.retryAfterSeconds) || 0));
+    element.textContent = retry >= 3600
+      ? `Limit dolu · ${Math.ceil(retry / 3600)} sa.`
+      : `Limit dolu · ${Math.ceil(retry / 60)} dk.`;
+  } else if (stateName === 'available') {
+    element.textContent = status.lastSuccessAt ? 'Kullanılabilir' : 'Hazır · miktar bilinmiyor';
+  } else if (stateName === 'unconfigured') {
+    element.textContent = 'Kullanılamıyor';
+  } else {
+    element.textContent = 'Kalan miktar bilinmiyor';
+  }
+  element.title = status?.message || '';
+}
+
+async function checkAiUsageStatus() {
+  try {
+    const response = await fetch('/api/ai-usage-status', { cache: 'no-store' });
+    const body = await response.json();
+    renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
+    renderQuotaBadge(els.dubQuotaStatus, body.dubbing);
+  } catch {
+    renderQuotaBadge(els.subtitleQuotaStatus, { state: 'unknown' });
+    renderQuotaBadge(els.dubQuotaStatus, { state: 'unknown' });
+  }
 }
 
 function selectedAnalysisModes() {
@@ -862,6 +896,7 @@ async function ensureDubSegment(segment) {
           els.dubToggleBtn.dataset.unavailable = 'true';
         }
         logEngineEvent('DUB_QUOTA_EXHAUSTED', { retrySeconds });
+        checkAiUsageStatus();
         return null;
       }
       throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
@@ -2499,15 +2534,7 @@ function renderAdultPanel(scene) {
 
   const previousSceneId = state.adultScene?.id || null;
   const videoStage = els.video?.closest('.video-stage');
-  if (videoStage && els.adultInteractionPanel.parentElement === videoStage) {
-    videoStage.insertAdjacentElement('afterend', els.adultInteractionPanel);
-  }
-
-  if (document.fullscreenElement && document.exitFullscreen) {
-    document.exitFullscreen().catch(() => {});
-  } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
-    document.webkitExitFullscreen();
-  }
+  syncAdultPanelPlacement(videoStage);
 
   const restoringSameScene = state.restoredAdultSceneId === scene.id;
   if (previousSceneId !== scene.id && !restoringSameScene) {
@@ -2524,6 +2551,7 @@ function renderAdultPanel(scene) {
   state.adultScene = scene;
   state.adultMode = true;
   els.adultInteractionPanel.classList.remove('hidden');
+  els.adultPanelToggleBtn?.classList.remove('hidden');
   document.querySelector('.choice-navigation')?.classList.add('hidden');
 
   if (els.adultSceneTitle) els.adultSceneTitle.textContent = scene.title;
@@ -2537,6 +2565,18 @@ function renderAdultPanel(scene) {
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   renderAdultProgress();
   renderAdultProgressiveUI(true);
+}
+
+function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
+  if (!stage || !els.adultInteractionPanel) return;
+  const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fullscreenElement === stage) {
+    if (els.adultInteractionPanel.parentElement !== stage) {
+      stage.appendChild(els.adultInteractionPanel);
+    }
+  } else if (els.adultInteractionPanel.previousElementSibling !== stage) {
+    stage.insertAdjacentElement('afterend', els.adultInteractionPanel);
+  }
 }
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
@@ -2861,6 +2901,7 @@ function finishAdultScene() {
   state.adultOutcomePhase = 'idle';
   state.lastAdultMediaTime = null;
   els.adultInteractionPanel?.classList.add('hidden');
+  els.adultPanelToggleBtn?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
   if (els.video) {
@@ -3056,6 +3097,11 @@ if (els.finishAdultSceneBtn) {
 if (els.nextVariantBtn) {
   els.nextVariantBtn.addEventListener('click', playNextAdultVariant);
 }
+
+els.adultPanelToggleBtn?.addEventListener('click', () => {
+  const collapsed = els.adultInteractionPanel?.classList.toggle('fullscreen-collapsed');
+  els.adultPanelToggleBtn.textContent = collapsed ? 'SEÇİMLERİ AÇ' : 'SEÇİMLERİ GİZLE';
+});
 
 if (els.video?.requestVideoFrameCallback) {
   state.adultFrameRequest = els.video.requestVideoFrameCallback(adultFrameLoop);
@@ -3351,6 +3397,8 @@ els.video.addEventListener('play', () => {
 els.video.addEventListener('timeupdate', renderDebug);
 
 checkHealth();
+checkAiUsageStatus();
+setInterval(checkAiUsageStatus, 60 * 1000);
 renderDebug();
 
 function restoreSavedAnalysis() {
@@ -3443,11 +3491,16 @@ fullscreenBtn?.addEventListener('click', async () => {
 });
 
 document.addEventListener('fullscreenchange', () => {
+  syncAdultPanelPlacement(fullscreenStage);
   if (fullscreenBtn) {
     fullscreenBtn.textContent = document.fullscreenElement
       ? '✕ TAM EKRANDAN ÇIK'
       : '⛶ OYUN MODU';
   }
+});
+
+document.addEventListener('webkitfullscreenchange', () => {
+  syncAdultPanelPlacement(fullscreenStage);
 });
 
 
