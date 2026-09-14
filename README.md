@@ -72,3 +72,4 @@ Sadece `sourceVerified: true` olan ve geçerli start/end zamanına sahip action'
 ## Not
 
 Bu sürüm kasıtlı olarak hareket analizi modeli içermez. Analiz modeli `source-video-analysis` servisinde ayrı tutulur. Böylece frontend hiçbir zaman MMPose/MMAction2/ByteTrack kurulmuş gibi davranmaz.
+
