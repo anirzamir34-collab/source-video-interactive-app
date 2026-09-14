@@ -47,6 +47,7 @@ import {
 import {
   mergeStoryContexts,
   normalizeStoryContext,
+  sensoryActionMeta,
   storyActionMeta,
   storyChoiceLabelForAction
 } from './story-engine.js';
@@ -1089,7 +1090,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.subtitleOverlay?.classList.add('hidden');
 
   try {
-  if (modes.subtitles || modes.dubbing) {
+  // The sensory pass also needs the audio track when the user only requests
+  // movement choices. Subtitle rendering remains disabled unless explicitly
+  // selected, but non-speech observations are forwarded to scene analysis.
+  if (modes.subtitles || modes.dubbing || modes.motion) {
     try {
       const dialogue = await analyzeSelectedDialogue(file);
 
@@ -1225,6 +1229,10 @@ els.analyzeBtn.addEventListener('click', async () => {
     );
 
     form.append('dialogueContext', JSON.stringify(chunkDialogue));
+    const chunkSensoryAudio = (state.dialogue?.nonSpeechEvents || []).filter(event =>
+      Number(event.endTime) >= chunkStart && Number(event.startTime) <= chunkEnd
+    );
+    form.append('sensoryAudioContext', JSON.stringify(chunkSensoryAudio));
     form.append('qualityMode', modes.quality);
     form.append('protagonistProfile', protagonistProfile);
       form.append('storyContextMemory', JSON.stringify(storyContextMemory));
@@ -1675,6 +1683,13 @@ function normalizeAnalysis(body) {
       movementTempo: ['slow', 'moderate', 'fast'].includes(String(a.movementTempo || '').toLowerCase())
         ? String(a.movementTempo).toLowerCase()
         : 'unclear',
+      audioIntensity: String(a.audioIntensity || 'unclear'),
+      nonSpeechAudio: String(a.nonSpeechAudio || 'unclear'),
+      gazeIntensity: String(a.gazeIntensity || 'unclear'),
+      observedAffect: String(a.observedAffect || 'unclear'),
+      bodyResponse: String(a.bodyResponse || 'unclear'),
+      sensoryEvidence: String(a.sensoryEvidence || ''),
+      sensoryConfidence: Math.max(0, Math.min(1, Number(a.sensoryConfidence) || 0)),
       loopStartTime: Number(a.loopStartTime ?? a.startTime),
       loopEndTime: Number(a.loopEndTime ?? a.endTime),
       maleProgressRate: Math.min(2.5, Math.max(0.25, Number(a.maleProgressRate) || 1)),
@@ -2894,7 +2909,9 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.type = 'button';
     button.className = 'movement-choice-card';
     button.dataset.movementId = movement.id;
-    button.innerHTML = `<span>${escapeHtml(movement.label)}</span><small>${adultTimeLabel(movement.loopStartTime)} – ${adultTimeLabel(movement.loopEndTime)}</small>`;
+    const sensory = sensoryActionMeta(movement);
+    const sensoryLine = sensory.cues.length ? ` · ${escapeHtml(sensory.cues.join(' · '))}` : '';
+    button.innerHTML = `<span>${escapeHtml(movement.label)}</span><small>${adultTimeLabel(movement.loopStartTime)} – ${adultTimeLabel(movement.loopEndTime)}${sensoryLine}</small>`;
     button.addEventListener('click', () => selectAdultMovement(movement.id, true));
     els.movementChoices?.appendChild(button);
   });
@@ -3317,10 +3334,12 @@ function renderChoices() {
     button.className = 'choice';
     const storyLabel = storyChoiceLabelForAction(action);
     const storyMeta = storyActionMeta(action);
+    const sensory = sensoryActionMeta(action);
     const scenePrefix = storyMeta.sceneTitle ? `${escapeHtml(storyMeta.sceneTitle)} · ` : '';
     button.innerHTML = `
       <div class="choice-title">${escapeHtml(storyLabel)}</div>
       <div class="choice-meta">${scenePrefix}${action.startTime.toFixed(2)} → ${action.endTime.toFixed(2)} sn • ${(action.confidence * 100).toFixed(0)}%</div>
+      ${sensory.cues.length ? `<div class="choice-sensory">◌ ${escapeHtml(sensory.cues.join(' · '))}</div>` : ''}
     `;
     button.addEventListener('click', () => playAction(action));
     els.choices.appendChild(button);
