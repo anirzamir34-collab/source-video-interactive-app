@@ -23,11 +23,7 @@ import {
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
-  tapRhythm,
-  isEnergeticFireMoment,
-  nextFireAdvance,
-  fireMomentCopy,
-  movementsInSameOccurrence
+  tapRhythm
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
@@ -131,9 +127,6 @@ const state = {
   adultTapCandidateTempo: 'unclear',
   adultTapCandidateCount: 0,
   adultLastTempoSwitchAt: 0,
-  adultFireHeld: false,
-  adultFireArmed: false,
-  adultAwaitingFire: false,
 };
 
 const els = {
@@ -1796,7 +1789,6 @@ function normalizeAnalysis(body) {
     .filter(a => Number.isFinite(a.startTime) && Number.isFinite(a.endTime) && a.endTime > a.startTime && a.sourceVerified)
     .sort((a, b) => a.startTime - b.startTime);
 
-  routeVerifiedAdultActions(cleaned);
   assignPositionOccurrenceIds(cleaned);
 
   return {
@@ -1933,8 +1925,7 @@ function canonicalAdultPosition(action) {
     spoon: 'Kaşık Pozisyonu',
     'standing-rear': 'Ayakta Arkadan Pozisyon',
     rear: 'Arkadan Pozisyon',
-    standing: 'Ayakta Pozisyon',
-    'position-transition': 'Pozisyon Değişimi'
+    standing: 'Ayakta Pozisyon'
   };
 
   if (family) return { id: family, label: labels[family] };
@@ -1949,83 +1940,6 @@ function canonicalAdultPosition(action) {
   };
 }
 
-function verifiedAdultPositionFamily(action) {
-  if (action?.sourceVerified !== true) return '';
-  const family = adultSemanticFamily(action.positionLabel) ||
-    adultSemanticFamily(action.label) ||
-    adultSemanticFamily(action.positionId);
-  if (family) return family;
-  return String(action.actionType || '').toLowerCase() === 'position'
-    ? 'position-transition'
-    : '';
-}
-
-function isVerifiedAdultPositionAction(action) {
-  const family = verifiedAdultPositionFamily(action);
-  if (!family) return false;
-  const start = Number(action?.positionStartTime ?? action?.startTime);
-  const end = Number(action?.positionEndTime ?? action?.endTime);
-  return Number.isFinite(start) && Number.isFinite(end) && end > start;
-}
-
-function routeVerifiedAdultActions(actions = []) {
-  const candidates = (Array.isArray(actions) ? actions : [])
-    .map(action => ({
-      action,
-      family: verifiedAdultPositionFamily(action),
-      startTime: Number(action?.positionStartTime ?? action?.startTime),
-      endTime: Number(action?.positionEndTime ?? action?.endTime)
-    }))
-    .filter(item => item.family && Number.isFinite(item.startTime) &&
-      Number.isFinite(item.endTime) && item.endTime > item.startTime)
-    .sort((a, b) => a.startTime - b.startTime);
-
-  const clustersByFamily = new Map();
-  for (const item of candidates) {
-    if (!clustersByFamily.has(item.family)) clustersByFamily.set(item.family, []);
-    const clusters = clustersByFamily.get(item.family);
-    let cluster = clusters[clusters.length - 1];
-    if (!cluster || item.startTime > cluster.endTime + 1.25) {
-      cluster = { startTime: item.startTime, endTime: item.endTime, items: [] };
-      clusters.push(cluster);
-    } else {
-      cluster.endTime = Math.max(cluster.endTime, item.endTime);
-    }
-    cluster.items.push(item);
-  }
-
-  for (const [family, clusters] of clustersByFamily) {
-    for (const cluster of clusters) {
-      if (cluster.endTime - cluster.startTime < 6) continue;
-      const occurrenceId = `${family}:continuous-${Math.round(cluster.startTime * 1000)}`;
-      const sceneId = `adult:${occurrenceId}`;
-      for (const { action } of cluster.items) {
-        const canonical = canonicalAdultPosition(action);
-        action.adultScene = true;
-        action.adultSceneId ||= sceneId;
-        action.adultSceneStartTime = Math.min(
-          Number(action.adultSceneStartTime) || cluster.startTime,
-          cluster.startTime
-        );
-        action.adultSceneEndTime = Math.max(
-          Number(action.adultSceneEndTime) || cluster.endTime,
-          cluster.endTime
-        );
-        action.postSceneTime = Math.max(Number(action.postSceneTime) || 0, cluster.endTime);
-        action.positionId ||= family;
-        action.positionLabel ||= canonical.label;
-        action.positionOccurrenceId ||= occurrenceId;
-        action.positionStartTime = Number.isFinite(Number(action.positionStartTime))
-          ? Number(action.positionStartTime)
-          : Number(action.startTime);
-        action.positionEndTime = Number.isFinite(Number(action.positionEndTime))
-          ? Number(action.positionEndTime)
-          : Number(action.endTime);
-      }
-    }
-  }
-}
-
 function adultCategoryFor(action, positionId) {
   const explicit = normalizeAdultLabel(action.activityType);
 
@@ -2036,7 +1950,7 @@ function adultCategoryFor(action, positionId) {
 
   if (positionId === 'oral') return { id: 'oral', label: 'Oral' };
   if (positionId === 'manual') return { id: 'manual', label: 'Manuel' };
-  if (['prone-bone', 'missionary', 'cowgirl', 'spoon', 'standing-rear', 'rear', 'standing', 'position-transition'].includes(positionId)) {
+  if (['prone-bone', 'missionary', 'cowgirl', 'spoon', 'standing-rear', 'rear', 'standing'].includes(positionId)) {
     return { id: 'position', label: 'Pozisyonlar' };
   }
 
@@ -2124,11 +2038,22 @@ function prepareAdultScenes() {
   const verifiedPositionSceneIds = new Set(
     actions.filter(action => {
       if (action?.adultScene !== true || action?.sourceVerified !== true) return false;
-      const family = verifiedAdultPositionFamily(action);
+      if (String(action.actionType || '').toLowerCase() !== 'position') return false;
+      const family = adultSemanticFamily(action.positionLabel || action.positionId || action.label);
       if (!family) return false;
+      const route = String(action.activityType || '').toLowerCase();
+      const explicitRoute = ['vaginal', 'anal', 'oral', 'manual'].includes(route);
+      const routeEvidence = String(action.activityEvidence || '').trim();
+      // A body arrangement alone (lap sitting, hugging, dancing) is not enough.
+      // Penetrative/oral/manual evidence must be independently asserted and
+      // supported before the dedicated adult player can own the timeline.
+      if (!explicitRoute || Number(action.activityTypeConfidence || 0) < 0.78 || !routeEvidence) {
+        return false;
+      }
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
-      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6;
+      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6 &&
+        Number(action.confidence || 0) >= 0.78;
     }).map(sceneIdFor)
   );
 
@@ -2246,7 +2171,6 @@ function prepareAdultScenes() {
         label: activityDisplayLabel(canonical.label, action),
         categoryId: category.id,
         categoryLabel: category.label,
-        sourceVerified: action.sourceVerified === true,
         startTime: Number(action.positionStartTime ?? action.startTime),
         endTime: Number(action.positionEndTime ?? action.endTime),
         unlockProgress: 0,
@@ -2255,7 +2179,6 @@ function prepareAdultScenes() {
     }
 
     const position = scene.positions.get(positionKey);
-    if (action.sourceVerified === true) position.sourceVerified = true;
     position.startTime = Math.min(
       position.startTime,
       Number(action.positionStartTime ?? action.startTime)
@@ -2265,7 +2188,7 @@ function prepareAdultScenes() {
       Number(action.positionEndTime ?? action.endTime)
     );
 
-    if (action.movementType || action.actionType === 'position') {
+    if (action.actionType !== 'position' && action.movementType) {
       const movementStart = Math.max(
         position.startTime,
         Number(action.loopStartTime ?? action.startTime)
@@ -2278,12 +2201,11 @@ function prepareAdultScenes() {
         `${action.movementType || ''} ${action.label || ''}`
       );
 
-      if (movementEnd - movementStart >= 2 && (!movementFamily || movementFamily === canonical.id)) {
+      if (!movementFamily || movementFamily === canonical.id) {
         position.movements.push({
           ...action,
           id: action.actionId || `movement-${index}`,
           label: action.label,
-          corePosition: !isWarmupPosition(position),
           loopStartTime: movementStart,
           loopEndTime: movementEnd
         });
@@ -2325,20 +2247,13 @@ function prepareAdultScenes() {
 
       const positions = [...scene.positions.values()]
           .map(position => {
-            const verifiedCuts = position.movements
-              .filter(item => item?.sourceVerified === true &&
-                Number(item.loopEndTime) > Number(item.loopStartTime))
-              .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
             let movements = expandVerifiedMovementVariants(
-              verifiedCuts,
+              position.movements,
               position.startTime,
               position.endTime,
               { baseLabel: position.label }
             );
-            if (!movements.length && verifiedCuts.length) {
-              movements = verifiedCuts;
-            }
-            if (!movements.length && position.endTime - position.startTime >= 6) {
+            if (!movements.length && position.endTime - position.startTime >= 10) {
               const verifiedBase = {
                 id: `${position.id}:verified-base`,
                 actionId: `${position.id}:verified-base`,
@@ -2349,23 +2264,20 @@ function prepareAdultScenes() {
                 loopEndTime: position.endTime,
                 movementType: position.familyId,
                 movementTempo: 'unclear',
-                corePosition: !isWarmupPosition(position),
                 sourceVerified: true,
                 maleProgressRate: 1,
                 femaleProgressRate: 1
               };
-              movements = position.endTime - position.startTime >= 10
-                ? expandVerifiedMovementVariants(
-                    [verifiedBase],
-                    position.startTime,
-                    position.endTime,
-                    { baseLabel: position.label }
-                  )
-                : [verifiedBase];
+              movements = expandVerifiedMovementVariants(
+                [verifiedBase],
+                position.startTime,
+                position.endTime,
+                { baseLabel: position.label }
+              );
             }
             return { ...position, movements };
           })
-          .filter(position => position.endTime - position.startTime >= 6)
+          .filter(position => position.endTime - position.startTime >= 10)
           .sort((a, b) => a.startTime - b.startTime);
       if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
       const interactionStart = Math.min(...positions.map(position => Number(position.startTime)));
@@ -2391,31 +2303,9 @@ function prepareAdultScenes() {
   );
 
   state.adultScenes.forEach(scene => {
-    const existingWarmupIds = new Set((scene.foreplay || []).map(item => item.id));
-    const windowWarmups = actions.filter(action => {
-      if (action?.sourceVerified !== true || verifiedAdultPositionFamily(action)) return false;
-      const actionType = String(action.actionType || '').toLowerCase();
-      const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
-      const warmupType = ['kiss', 'touch', 'clothing', 'body_transition'].includes(actionType);
-      const warmupLabel = /\b(op|opus|boyun|gogus|dokun|oksa|saril|yaklas|yonlendir)\b/.test(labelKey);
-      const start = Number(action.startTime);
-      const end = Number(action.endTime);
-      return (warmupType || warmupLabel) && Number.isFinite(start) && Number.isFinite(end) &&
-        Math.min(end, Number(scene.endTime)) - Math.max(start, Number(scene.startTime)) >= 0.5;
-    }).map(action => ({
-      id: action.actionId,
-      label: action.label,
-      startTime: Math.max(Number(scene.startTime), Number(action.startTime)),
-      endTime: Math.min(Number(scene.endTime), Number(action.endTime)),
-      maleProgressRate: Number(action.maleProgressRate || 1),
-      femaleProgressRate: Number(action.femaleProgressRate || 1)
-    })).filter(item => !existingWarmupIds.has(item.id));
-    scene.foreplay = [...(scene.foreplay || []), ...windowWarmups]
-      .sort((a, b) => Number(a.startTime) - Number(b.startTime));
-
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 4)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -2439,7 +2329,7 @@ function prepareAdultScenes() {
 function findAdultSceneAt(time) {
   return findAdultSceneForTimeline(state.adultScenes, {
     time,
-    completedSceneIds: new Set()
+    completedSceneIds: state.completedAdultSceneIds
   });
 }
 
@@ -2478,15 +2368,12 @@ function unlockedAdultPositions(scene = state.adultScene) {
   const flow = currentAdultFlow();
   const positions = scene?.positions || [];
   const { warmupTotal, warmupUniquePlayed } = adultWarmupStats(scene);
-  const corePositions = positions.filter(position =>
-    position.sourceVerified === true && !isWarmupPosition(position) && !isBonusPosition(position)
-  );
+  const corePositions = positions.filter(position => !isWarmupPosition(position) && !isBonusPosition(position));
   const coreVisitedCount = corePositions.filter(position => state.adultVisitedPositionIds.has(position.id)).length;
   const coreAllowed = canUnlockCorePositions({
     flow,
     warmupTotal,
-    warmupUniquePlayed,
-    hasVerifiedCore: corePositions.some(position => position.sourceVerified === true)
+    warmupUniquePlayed
   });
   const bonusAllowed = canUnlockBonusPositions({
     flow,
@@ -2495,38 +2382,12 @@ function unlockedAdultPositions(scene = state.adultScene) {
     bootstrap: warmupTotal === 0 && corePositions.length === 0
   });
 
-  const firstVerifiedCoreId = corePositions[0]?.id || null;
   return positions.filter(position => {
-    // Unverified detections never become playable choices.
-    if (position.sourceVerified !== true) return false;
-    // The first real core occurrence is the scene's entry door. It is not
-    // gated by warmup count or a Lust threshold; later occurrences retain
-    // their progressive thresholds.
-    const isFirstCore = position.id === firstVerifiedCoreId;
-    if (!isFirstCore && flow + 0.001 < Number(position.unlockProgress || 0)) return false;
+    if (flow + 0.001 < Number(position.unlockProgress || 0)) return false;
     if (isWarmupPosition(position)) return true;
     if (isBonusPosition(position)) return coreAllowed && bonusAllowed;
     return coreAllowed;
   });
-}
-
-function reachableAdultPositions(scene = state.adultScene) {
-  const unlocked = unlockedAdultPositions(scene);
-  const now = Number(els.video?.currentTime ?? state.gameCursorTime) || 0;
-  const active = (scene?.positions || []).find(item => item.id === state.activePositionId) || null;
-  const playing = (scene?.positions || []).find(position =>
-    now >= Number(position.startTime) - 0.15 && now < Number(position.endTime) - 0.04
-  ) || null;
-  const forwardLimit = Math.max(
-    now + 12,
-    active ? Number(active.endTime) + 18 : Number.NEGATIVE_INFINITY
-  );
-
-  return unlocked.filter(position =>
-    position.id === active?.id ||
-    position.id === playing?.id ||
-    (Number(position.startTime) >= now - 0.15 && Number(position.startTime) <= forwardLimit)
-  );
 }
 
 function unlockedAdultOutcomes(scene = state.adultScene) {
@@ -2703,16 +2564,13 @@ function renderAdultOutcomes(scene) {
   if (els.outcomeCount) els.outcomeCount.textContent = `${outcomes.length} açık`;
 }
 
-function renderAdultProgressiveUI(force = false, autoPlayInitial = false) {
+function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel) return;
 
   const flow = currentAdultFlow();
   const unlockedPositions = unlockedAdultPositions(scene);
   const unlockedCore = unlockedPositions.filter(position => !isWarmupPosition(position));
-  const hasVerifiedCore = (scene.positions || []).some(position =>
-    position.sourceVerified === true && !isWarmupPosition(position) && !isBonusPosition(position)
-  );
   const unlockedBonus = unlockedCore.filter(isBonusPosition);
   const outcomes = unlockedAdultOutcomes(scene);
   const proposedPhase = adultDiscoveryPhase({
@@ -2765,7 +2623,7 @@ function renderAdultProgressiveUI(force = false, autoPlayInitial = false) {
 
   const next = nextAdultDiscovery(scene);
   const warmupStats = adultWarmupStats(scene);
-  const warmupRequired = hasVerifiedCore ? 0 : requiredWarmupDiscoveries(warmupStats.warmupTotal);
+  const warmupRequired = requiredWarmupDiscoveries(warmupStats.warmupTotal);
   const warmupRemaining = Math.max(0, warmupRequired - warmupStats.warmupUniquePlayed);
   if (els.discoveryGate) {
     const hideGate = phase === 'final' || (!next && warmupRemaining === 0);
@@ -2861,7 +2719,7 @@ function renderAdultProgressiveUI(force = false, autoPlayInitial = false) {
 
   const selectedCategory = categories.find(item => item.id === state.activeAdultCategory) || categories[0];
   if (selectedCategory) {
-    selectAdultCategory(selectedCategory.id, autoPlayInitial && !state.activePositionId);
+    selectAdultCategory(selectedCategory.id, false);
   }
 }
 
@@ -2900,12 +2758,11 @@ function renderAdultPanel(scene) {
   if (els.positionTabs) els.positionTabs.innerHTML = '';
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   renderAdultProgress();
-  renderAdultProgressiveUI(true, previousSceneId !== scene.id && !restoringSameScene);
+  renderAdultProgressiveUI(true);
 }
 
 function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}) {
-  if (!scene || !els.video) return false;
-  state.completedAdultSceneIds?.delete(scene.id);
+  if (!scene || state.completedAdultSceneIds?.has(scene.id) || !els.video) return false;
 
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
@@ -2946,7 +2803,7 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
-  const positions = reachableAdultPositions(scene)
+  const positions = unlockedAdultPositions(scene)
     .filter(item => {
       if (isWarmupPosition(item)) return false;
       if (categoryId === 'all') return true;
@@ -2976,9 +2833,7 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'position-tab';
-    const startMark = Math.max(0, Math.floor(Number(position.startTime) || 0));
-    const stamp = `${Math.floor(startMark / 60)}:${String(startMark % 60).padStart(2, '0')}`;
-    button.textContent = `${position.label} · ${stamp}`;
+    button.textContent = position.label;
     button.dataset.positionId = position.id;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
@@ -3108,115 +2963,125 @@ function resetAdultTapRhythm() {
   state.adultTapCandidateTempo = 'unclear';
   state.adultTapCandidateCount = 0;
   state.adultLastTempoSwitchAt = 0;
-  state.adultFireHeld = false;
-  state.adultFireArmed = false;
-  state.adultAwaitingFire = false;
   els.rhythmTapBtn?.removeAttribute('data-tempo');
-  els.rhythmTapBtn?.classList.remove('fire-held');
   if (els.video && Number(els.video.playbackRate) !== 1) els.video.playbackRate = 1;
-  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'ATEŞ';
-  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Hızlı veya derin bir an gelince ateş yanar';
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'RİTİMİ BAŞLAT';
+  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Hızını algılamak için ritimli dokun';
 }
 
-function currentAdultMovement() {
-  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
-  return position?.movements.find(item => item.id === state.activeMovementId) || null;
+function rhythmGroupsForPosition(position) {
+  if (!position || isWarmupPosition(position)) return null;
+  const playableCount = (position.movements || []).filter(item => item?.sourceVerified === true).length;
+  if (playableCount < 2) return null;
+  const groups = groupVerifiedMovementsByTempo(position?.movements || []);
+  const tempoCount = Object.values(groups).filter(items => items.length).length;
+  groups.fallbackPlaybackRate = tempoCount < 2;
+  return groups;
 }
 
-function updateFireControl(position = null) {
-  const activePosition = position ||
-    state.adultScene?.positions.find(item => item.id === state.activePositionId) ||
-    null;
-  const movement = currentAdultMovement();
-  const energetic = Boolean(movement && (
-    isEnergeticFireMoment(movement) ||
-    (activePosition && !isWarmupPosition(activePosition))
-  ));
-  const showControl = Boolean(
-    activePosition &&
-    !isWarmupPosition(activePosition) &&
-    state.adultOutcomePhase === 'idle'
+function updateRhythmControl(position) {
+  const eligible = Boolean(
+    position &&
+    !isWarmupPosition(position) &&
+    (position.movements?.length || 0) >= 2
   );
-  state.adultFireArmed = showControl && Boolean(movement) && energetic;
-  els.rhythmControl?.classList.toggle('hidden', !showControl);
-  if (els.rhythmTapBtn) {
-    els.rhythmTapBtn.disabled = !state.adultFireArmed;
-    els.rhythmTapBtn.classList.toggle('fire-armed', state.adultFireArmed);
-    els.rhythmTapBtn.setAttribute('data-tempo', energetic
-      ? (normalizeUiTempo(movement?.movementTempo) || 'fast')
-      : 'idle');
+  const groups = rhythmGroupsForPosition(position);
+  els.rhythmControl?.classList.toggle('hidden', !eligible);
+  if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !groups || state.adultOutcomePhase !== 'idle';
+  if (!groups) {
+    resetAdultTapRhythm();
+    if (eligible && els.rhythmTapStatus) {
+      els.rhythmTapStatus.textContent = 'En az iki doğrulanmış hız sekansı gerekli';
+    }
+  } else if (groups.fallbackPlaybackRate && els.rhythmTapStatus) {
+    els.rhythmTapStatus.textContent = 'Dokunma hızın mevcut gerçek sekansın temposunu yönetir';
   }
+}
+
+function handleAdultRhythmTap(timestamp = performance.now()) {
+  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
+  const groups = rhythmGroupsForPosition(position);
+  if (!groups || state.adultOutcomePhase !== 'idle') return;
+
+  const now = Number(timestamp) || performance.now();
+  state.adultTapTimes = [...state.adultTapTimes, now]
+    .filter(value => now - value <= 2200)
+    .slice(-8);
+  const rhythm = tapRhythm(state.adultTapTimes, now);
+  els.rhythmTapBtn?.classList.remove('tap-pulse');
+  requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
+
+  if (rhythm.tempo === 'unclear') {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
+    if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Bir kez daha dokun';
+    return;
+  }
+
+  const targetTempo = groups.fallbackPlaybackRate
+    ? rhythm.tempo
+    : nearestAvailableTempo(rhythm.tempo, groups);
+  if (!targetTempo) return;
+  if (state.adultTapCandidateTempo === targetTempo) state.adultTapCandidateCount += 1;
+  else {
+    state.adultTapCandidateTempo = targetTempo;
+    state.adultTapCandidateCount = 1;
+  }
+
+  const labels = { slow: 'YAVAŞ', moderate: 'ORTA', fast: 'HIZLI' };
+  const tempoChanged = targetTempo !== state.adultTapTempo;
+  const canReact = rhythm.sampleCount >= 2 && now - state.adultLastTempoSwitchAt >= 180;
+
+  if (canReact) {
+    const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
+    const activeChoice = (position.movementChoices || []).find(
+      choice => choice.id === state.activeMovementChoiceId ||
+        choice.variants?.some(item => item.id === currentMovement?.id)
+    );
+    const coherentPool = (activeChoice?.variants || []).filter(item => item?.sourceVerified === true);
+    const pool = coherentPool.length ? coherentPool : (currentMovement ? [currentMovement] : []);
+    const movement = pickNextVariant(
+      pool,
+      currentMovement?.id || null,
+      state.adultMovementPlayCounts
+    );
+
+    state.adultTapTempo = targetTempo;
+    state.adultLastTempoSwitchAt = now;
+    state.adultTapCandidateCount = 0;
+
+    if (groups.fallbackPlaybackRate && els.video) {
+      els.video.playbackRate = playbackRateForTapTempo(targetTempo);
+    }
+    if (movement && movement.id !== currentMovement?.id) {
+      selectAdultMovement(movement.id, true, null, {
+        awardProgress: false,
+        rhythmTempo: targetTempo
+      });
+    }
+
+    logEngineEvent('RHYTHM_TAP_APPLIED', {
+      positionId: position.id,
+      movementId: movement?.id || currentMovement?.id || null,
+      tempo: targetTempo,
+      playbackRate: Number(els.video?.playbackRate || 1),
+      tapsPerSecond: rhythm.tapsPerSecond,
+      sequenceChanged: Boolean(movement && movement.id !== currentMovement?.id)
+    });
+  }
+
+  els.rhythmTapBtn?.setAttribute('data-tempo', state.adultTapTempo === 'unclear' ? targetTempo : state.adultTapTempo);
   if (els.rhythmTapLabel) {
-    els.rhythmTapLabel.textContent = state.adultFireHeld
-      ? 'ATEŞTE'
-      : state.adultFireArmed
-        ? 'ATEŞ'
-        : 'ATEŞ KAPALI';
+    els.rhythmTapLabel.textContent = `RİTİM: ${labels[state.adultTapTempo] || labels[targetTempo]}`;
   }
   if (els.rhythmTapStatus) {
-    els.rhythmTapStatus.textContent = showControl && movement
-      ? fireMomentCopy(movement)
-      : 'Önce bu pozisyondaki gerçek bir kesiti seç';
+    els.rhythmTapStatus.textContent = groups.fallbackPlaybackRate
+      ? `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · ${Number(els.video?.playbackRate || 1).toFixed(2)}× oynuyor`
+      : `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · hızına göre gerçek sekans seçiliyor`;
   }
-}
-
-function normalizeUiTempo(value) {
-  const tempo = String(value || '').toLowerCase();
-  return ['slow', 'moderate', 'fast'].includes(tempo) ? tempo : '';
-}
-
-function fireAdvanceOrReplay(position, currentMovement, { awardProgress = true } = {}) {
-  if (!position || !currentMovement) return false;
-  const next = nextFireAdvance(position.movements, currentMovement.id);
-  if (next && next.id !== currentMovement.id) {
-    selectAdultMovement(next.id, true, null, {
-      awardProgress,
-      positionChanged: false
-    });
-    return true;
+  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+    if (tempoChanged) navigator.vibrate([10, 22, 10]);
+    else navigator.vibrate({ slow: 8, moderate: 13, fast: 19 }[state.adultTapTempo] || 10);
   }
-  if (els.video) {
-    state.adultAwaitingFire = true;
-    els.video.pause();
-  }
-  return false;
-}
-
-function handleAdultFireDown() {
-  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
-  const movement = currentAdultMovement();
-  if (!position || !movement || !state.adultFireArmed || state.adultOutcomePhase !== 'idle') return;
-  state.adultFireHeld = true;
-  els.rhythmTapBtn?.classList.add('fire-held', 'tap-pulse');
-  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'ATEŞTE';
-  if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([12, 18, 22]);
-
-  if (els.video?.paused || state.adultAwaitingFire) {
-    state.adultAwaitingFire = false;
-    if (Number(els.video?.currentTime) >= Number(movement.loopEndTime) - 0.12) {
-      fireAdvanceOrReplay(position, movement);
-    } else {
-      els.video.play().catch(() => {});
-    }
-  } else if (Number(els.video?.currentTime) >= Number(movement.loopEndTime) - 0.35) {
-    fireAdvanceOrReplay(position, movement);
-  }
-
-  logEngineEvent('FIRE_ENGAGED', {
-    positionId: position.id,
-    movementId: movement.id,
-    tempo: movement.movementTempo || 'unclear'
-  });
-}
-
-function handleAdultFireUp() {
-  if (!state.adultFireHeld) return;
-  state.adultFireHeld = false;
-  els.rhythmTapBtn?.classList.remove('fire-held', 'tap-pulse');
-  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = state.adultFireArmed ? 'ATEŞ' : 'ATEŞ KAPALI';
-  logEngineEvent('FIRE_RELEASED', {
-    movementId: state.activeMovementId
-  });
 }
 
 function playNextAdultVariant() {
@@ -3231,21 +3096,6 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
   const positionUnlocked = unlockedAdultPositions(scene).some(item => item.id === position.id);
-  const activePosition = scene?.positions.find(item => item.id === state.activePositionId) || null;
-  const targetBeyondActiveWindow = Boolean(
-    activePosition &&
-    position.id !== activePosition.id &&
-    Number(position.startTime) > Number(activePosition.endTime) + 18
-  );
-  if (shouldSeek && (!positionUnlocked || targetBeyondActiveWindow)) {
-    logEngineEvent('POSITION_JUMP_BLOCKED', {
-      positionId: position.id,
-      positionStart: position.startTime,
-      mediaTime: Number(els.video?.currentTime) || 0,
-      activePositionId: state.activePositionId || null
-    });
-    return;
-  }
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
     position,
@@ -3269,7 +3119,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   const movementChoices = position.movementChoices?.length
     ? position.movementChoices
-    : buildVerifiedMovementChoices(position.movements, position.label, 3);
+    : buildVerifiedMovementChoices(position.movements, position.label, 4);
   position.movementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
@@ -3290,13 +3140,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
         : null;
-      const movement = currentId
-        ? pickNextChronologicalVariant(choice.variants, currentId)
-        : choice.variants[0];
-      if (currentId && !movement) {
-        els.video?.pause();
-        return;
-      }
+      const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
       if (!movement) return;
       state.activeMovementChoiceId = choice.id;
       selectAdultMovement(movement.id, true);
@@ -3305,14 +3149,15 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   });
 
   updateVariantButton(position);
-  updateFireControl(position);
+  updateRhythmControl(position);
 
-  const chronological = [...(position.movements || [])]
-    .filter(item => item?.sourceVerified !== false)
-    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   const movement = shouldSeek
-    ? chronological[0] || null
-    : chronological.find(item => item.id === state.activeMovementId) || chronological[0];
+    ? pickNextVariant(
+        position.movements,
+        state.activeMovementId,
+        state.adultMovementPlayCounts
+      )
+    : position.movements.find(item => item.id === state.activeMovementId) || position.movements[0];
 
   if (movement) {
     selectAdultMovement(
@@ -3328,7 +3173,8 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     if (shouldSeek && els.video) {
       applyAdultSelectionProgress(position, null, { positionChanged: changedPosition });
       els.video.pause();
-      seekAdultLoop(position.startTime, selectionToken, { playAfterSeek: true });
+      seekAdultLoop(position.startTime, selectionToken);
+      els.video.play().catch(() => {});
     }
   }
 }
@@ -3368,12 +3214,11 @@ function selectAdultMovement(
   }
 
   updateVariantButton(position);
-  updateFireControl(position);
 
   if (shouldSeek && els.video) {
-    state.adultAwaitingFire = false;
     els.video.pause();
-    seekAdultLoop(movement.loopStartTime, effectiveToken, { playAfterSeek: true });
+    seekAdultLoop(movement.loopStartTime, effectiveToken);
+    els.video.play().catch(() => {});
   }
 }
 
@@ -3400,16 +3245,9 @@ function playAdultOutcome(outcomeId) {
   els.video.play().catch(() => {});
 }
 
-function finishAdultScene(reason = '') {
+function finishAdultScene() {
   const scene = state.adultScene;
   if (!scene) return;
-  if (!['outcome', 'aftermath', 'skip'].includes(String(reason))) {
-    logEngineEvent('ADULT_SCENE_FINISH_BLOCKED', {
-      sceneId: scene.id,
-      reason: String(reason || 'selection')
-    });
-    return;
-  }
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
   state.completedAdultSceneIds.add(scene.id);
   const sceneActions = (state.analysis?.actions || []).filter(action => {
@@ -3468,11 +3306,7 @@ function finishAdultScene(reason = '') {
   setTimeout(finishExit, 1200);
 }
 
-function seekAdultLoop(
-  targetTime,
-  selectionToken = state.adultSelectionToken,
-  { playAfterSeek = false } = {}
-) {
+function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
   if (!els.video) return false;
 
   cancelAdultSeek();
@@ -3512,9 +3346,6 @@ function seekAdultLoop(
     state.adultSeekTimer = null;
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
-    if (playAfterSeek && state.adultMode) {
-      els.video.play().catch(() => {});
-    }
   };
 
   const onSeeked = () => finishSeek(false);
@@ -3568,7 +3399,7 @@ function updateAdultPlayback(now, mediaTime) {
         seekAdultLoop(aftermath.startTime, token);
         els.video.play().catch(() => {});
       } else {
-        finishAdultScene('outcome');
+        finishAdultScene();
       }
     }
     state.lastAdultFrameNow = now;
@@ -3578,7 +3409,7 @@ function updateAdultPlayback(now, mediaTime) {
   if (state.adultOutcomePhase === 'aftermath') {
     const aftermath = state.adultScene?.aftermath;
     if (!aftermath || mediaTime >= aftermath.endTime - 0.04) {
-      finishAdultScene('aftermath');
+      finishAdultScene();
     }
     state.lastAdultFrameNow = now;
     return;
@@ -3595,12 +3426,8 @@ function updateAdultPlayback(now, mediaTime) {
       state.activeAdultPreludeId = null;
       return;
     }
-    if (mediaTime >= item.endTime - 0.04) {
-      els.video.pause();
-      return;
-    }
-    if (mediaTime < item.startTime - 0.15) {
-      seekAdultLoop(item.startTime, state.adultSelectionToken, { playAfterSeek: true });
+    if (mediaTime >= item.endTime - 0.04 || mediaTime < item.startTime - 0.15) {
+      seekAdultLoop(item.startTime, state.adultSelectionToken);
       return;
     }
     state.maleSceneProgress = Math.min(
@@ -3621,25 +3448,8 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
-  if (mediaTime < movement.loopStartTime - 0.15) {
+  if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
     seekAdultLoop(movement.loopStartTime, state.adultSelectionToken);
-    return;
-  }
-
-  if (mediaTime >= movement.loopEndTime - 0.04) {
-    const next = state.adultFireHeld
-      ? nextFireAdvance(position.movements, movement.id)
-      : null;
-    if (next && next.id !== movement.id) {
-      selectAdultMovement(next.id, true, state.adultSelectionToken, {
-        awardProgress: true,
-        positionChanged: false
-      });
-      return;
-    }
-    state.adultAwaitingFire = true;
-    els.video.pause();
-    updateFireControl(position);
     return;
   }
 
@@ -3679,7 +3489,7 @@ function adultFrameLoop(now, metadata) {
 }
 
 if (els.finishAdultSceneBtn) {
-  els.finishAdultSceneBtn.addEventListener('click', () => finishAdultScene('skip'));
+  els.finishAdultSceneBtn.addEventListener('click', finishAdultScene);
 }
 
 if (els.nextVariantBtn) {
@@ -3688,21 +3498,13 @@ if (els.nextVariantBtn) {
 
 els.rhythmTapBtn?.addEventListener('pointerdown', event => {
   event.preventDefault();
-  handleAdultFireDown();
+  handleAdultRhythmTap(event.timeStamp);
 });
-
-els.rhythmTapBtn?.addEventListener('pointerup', () => handleAdultFireUp());
-els.rhythmTapBtn?.addEventListener('pointerleave', () => handleAdultFireUp());
-els.rhythmTapBtn?.addEventListener('pointercancel', () => handleAdultFireUp());
 
 els.rhythmTapBtn?.addEventListener('keydown', event => {
   if (event.key !== 'Enter' && event.key !== ' ') return;
   event.preventDefault();
-  handleAdultFireDown();
-});
-els.rhythmTapBtn?.addEventListener('keyup', event => {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  handleAdultFireUp();
+  handleAdultRhythmTap(performance.now());
 });
 
 els.adultPanelToggleBtn?.addEventListener('click', () => {
@@ -3781,15 +3583,10 @@ function renderChoices() {
       .slice(0, 4);
   }
 
-  const adultCandidate = candidates.find(action =>
-    findAdultSceneForTimeline(state.adultScenes, {
-      action,
-      completedSceneIds: new Set()
-    })
-  );
-  const candidateScene = adultCandidate && findAdultSceneForTimeline(state.adultScenes, {
-    action: adultCandidate,
-    completedSceneIds: new Set()
+  const firstCandidate = candidates[0];
+  const candidateScene = findAdultSceneForTimeline(state.adultScenes, {
+    action: firstCandidate,
+    completedSceneIds: state.completedAdultSceneIds
   });
   if (candidateScene && enterAdultScene(candidateScene, { forceStart: true, reason: 'next-timeline-action' })) {
     return;
@@ -3798,10 +3595,9 @@ function renderChoices() {
   // Only actions owned by a validated adult-scene graph are removed from
   // the normal timeline. A raw model flag alone must never orphan an action.
   candidates = candidates.filter(action =>
-    !isVerifiedAdultPositionAction(action) &&
     !findAdultSceneForTimeline(state.adultScenes, {
       action,
-      completedSceneIds: new Set()
+      completedSceneIds: state.completedAdultSceneIds
     })
   );
 
@@ -3811,10 +3607,9 @@ function renderChoices() {
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
         !state.consumedActionIds.has(action.actionId) &&
-        !isVerifiedAdultPositionAction(action) &&
         !findAdultSceneForTimeline(state.adultScenes, {
           action,
-          completedSceneIds: new Set()
+          completedSceneIds: state.completedAdultSceneIds
         })
       )
       .slice(0, 4);
@@ -3847,7 +3642,7 @@ function renderChoices() {
 async function playAction(action) {
   const adultScene = findAdultSceneForTimeline(state.adultScenes, {
     action,
-    completedSceneIds: new Set()
+    completedSceneIds: state.completedAdultSceneIds
   });
   if (adultScene) {
     enterAdultScene(adultScene, { forceStart: true, reason: 'action-route-guard' });
