@@ -229,3 +229,67 @@ export function pickNextVariant(variants, currentId = null, playCounts = new Map
     return Number(a.loopStartTime) - Number(b.loopStartTime);
   })[0] || null;
 }
+
+const TEMPO_ORDER = Object.freeze(['slow', 'moderate', 'fast']);
+
+export function normalizeMovementTempo(value) {
+  const tempo = String(value || '').trim().toLowerCase();
+  if (tempo === 'medium' || tempo === 'normal') return 'moderate';
+  return TEMPO_ORDER.includes(tempo) ? tempo : 'unclear';
+}
+
+export function groupVerifiedMovementsByTempo(movements = []) {
+  const groups = { slow: [], moderate: [], fast: [] };
+  for (const movement of Array.isArray(movements) ? movements : []) {
+    const tempo = normalizeMovementTempo(movement?.movementTempo);
+    const duration = Number(movement?.loopEndTime) - Number(movement?.loopStartTime);
+    if (movement?.sourceVerified === true && tempo !== 'unclear' && duration >= 2) {
+      groups[tempo].push(movement);
+    }
+  }
+  return groups;
+}
+
+export function tapRhythm(timestamps = [], now = null, windowMs = 1800) {
+  const current = Number.isFinite(Number(now))
+    ? Number(now)
+    : Number(timestamps?.[timestamps.length - 1]);
+  const recent = (Array.isArray(timestamps) ? timestamps : [])
+    .map(Number)
+    .filter(value => Number.isFinite(value) && current - value >= 0 && current - value <= windowMs)
+    .sort((a, b) => a - b);
+
+  if (recent.length < 2) return { tempo: 'unclear', tapsPerSecond: 0, sampleCount: recent.length };
+
+  const intervals = recent.slice(1).map((value, index) => value - recent[index])
+    .filter(value => value >= 80 && value <= 1200)
+    .slice(-3);
+  if (!intervals.length) return { tempo: 'unclear', tapsPerSecond: 0, sampleCount: recent.length };
+
+  const weightedTotal = intervals.reduce((sum, interval, index) => {
+    const weight = 2 ** index;
+    return sum + interval * weight;
+  }, 0);
+  const weightTotal = intervals.reduce((sum, _interval, index) => sum + 2 ** index, 0);
+  const intervalMs = weightedTotal / weightTotal;
+  const tapsPerSecond = 1000 / intervalMs;
+  const tempo = tapsPerSecond >= 3.6 ? 'fast' : tapsPerSecond >= 2.05 ? 'moderate' : 'slow';
+
+  return {
+    tempo,
+    tapsPerSecond: Number(tapsPerSecond.toFixed(2)),
+    sampleCount: intervals.length + 1
+  };
+}
+
+export function nearestAvailableTempo(requestedTempo, groups = {}) {
+  const requested = normalizeMovementTempo(requestedTempo);
+  const available = TEMPO_ORDER.filter(tempo => Array.isArray(groups?.[tempo]) && groups[tempo].length);
+  if (!available.length) return null;
+  if (available.includes(requested)) return requested;
+  const requestedIndex = Math.max(0, TEMPO_ORDER.indexOf(requested));
+  return [...available].sort((a, b) =>
+    Math.abs(TEMPO_ORDER.indexOf(a) - requestedIndex) -
+    Math.abs(TEMPO_ORDER.indexOf(b) - requestedIndex)
+  )[0];
+}

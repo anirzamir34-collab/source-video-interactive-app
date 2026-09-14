@@ -468,6 +468,7 @@ Rules:
 - A movement may belong to a position only when its entire loopStartTime-loopEndTime interval is visibly contained inside that exact positionStartTime-positionEndTime range.
 - Reject any position or movement when the claimed body configuration is not visibly present at its start, midpoint, and end timestamps.
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
+- Set movementTempo from directly visible cadence only. Use slow, moderate or fast for stable segments; split a changing cadence into separate 10+ second verified segments whenever the source duration permits. Use unclear when speed cannot be verified.
 - Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.
 - Do not split tiny repetitions into fake choices and do not merge genuinely different changes.
 - loopStartTime and loopEndTime must define a naturally repeatable real interval inside the action and position.
@@ -557,6 +558,9 @@ Rules:
           positionStartTime: Number(action.positionStartTime ?? action.startTime),
           positionEndTime: Number(action.positionEndTime ?? action.endTime),
           movementType: String(action.movementType || action.actionType || ''),
+          movementTempo: ['still', 'slow', 'moderate', 'fast', 'changing', 'unclear'].includes(
+            String(action.movementTempo || '').toLowerCase()
+          ) ? String(action.movementTempo).toLowerCase() : 'unclear',
           loopStartTime: Number(action.loopStartTime ?? action.startTime),
           loopEndTime: Number(action.loopEndTime ?? action.endTime),
           maleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.maleProgressRate) || 1)),
