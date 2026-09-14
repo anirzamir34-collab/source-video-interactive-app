@@ -527,24 +527,60 @@ function createDialogueWav(audioBuffer, targetRate = 16000) {
   view.setUint32(40, sampleCount * 2, true);
 
   const ratio = sourceRate / targetRate;
+  const mono = new Float32Array(sampleCount);
 
+  // Keep the strongest usable channel when stereo averaging would cancel a
+  // quiet voice. This preserves whispers before speech recognition.
   for (let index = 0; index < sampleCount; index += 1) {
     const sourceIndex = Math.min(
       Math.floor(index * ratio),
       audioBuffer.length - 1
     );
 
-    let sample = 0;
+    let sum = 0;
+    let strongest = 0;
     for (let channel = 0; channel < channels; channel += 1) {
-      sample += channelData[channel][sourceIndex] || 0;
+      const value = channelData[channel][sourceIndex] || 0;
+      sum += value;
+      if (Math.abs(value) > Math.abs(strongest)) strongest = value;
     }
 
-    sample = Math.max(-1, Math.min(1, sample / channels));
-    view.setInt16(
-      44 + index * 2,
-      sample < 0 ? sample * 32768 : sample * 32767,
-      true
-    );
+    const average = sum / channels;
+    mono[index] = Math.abs(average) >= Math.abs(strongest) * 0.35
+      ? average
+      : strongest * 0.72;
+  }
+
+  // Windowed speech normalization raises low-volume dialogue without applying
+  // one destructive gain value to the whole soundtrack.
+  const windowSize = Math.max(1, Math.round(targetRate * 0.4));
+  let smoothedGain = 1;
+
+  for (let windowStart = 0; windowStart < sampleCount; windowStart += windowSize) {
+    const windowEnd = Math.min(sampleCount, windowStart + windowSize);
+    let energy = 0;
+    let peak = 0;
+
+    for (let index = windowStart; index < windowEnd; index += 1) {
+      const value = mono[index];
+      energy += value * value;
+      peak = Math.max(peak, Math.abs(value));
+    }
+
+    const rms = Math.sqrt(energy / Math.max(1, windowEnd - windowStart));
+    const desiredGain = rms > 0.0008
+      ? Math.min(6, Math.max(1, 0.105 / rms, 0.86 / Math.max(peak, 0.001)))
+      : 1;
+    smoothedGain = smoothedGain * 0.45 + desiredGain * 0.55;
+
+    for (let index = windowStart; index < windowEnd; index += 1) {
+      const sample = Math.tanh(mono[index] * smoothedGain * 1.12);
+      view.setInt16(
+        44 + index * 2,
+        sample < 0 ? sample * 32768 : sample * 32767,
+        true
+      );
+    }
   }
 
   return new Blob([wavBuffer], { type: 'audio/wav' });
