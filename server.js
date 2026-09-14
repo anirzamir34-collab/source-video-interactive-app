@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
+import youtubedl from 'youtube-dl-exec';
 import { spawn } from 'node:child_process';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 
@@ -1066,6 +1067,60 @@ async function resolvePublicVideoPage(startUrl) {
   return null;
 }
 
+async function resolveWithSiteExtractor(rawUrl) {
+  const userAgent = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36';
+  const output = await youtubedl(rawUrl, {
+    dumpSingleJson: true,
+    skipDownload: true,
+    noWarnings: true,
+    noPlaylist: true,
+    noCheckCertificates: true,
+    socketTimeout: 25,
+    userAgent,
+    referer: rawUrl,
+    format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best[ext=mp4]/best'
+  }, {
+    timeout: 90000,
+    maxBuffer: 16 * 1024 * 1024
+  });
+
+  const info = Array.isArray(output?.entries) ? output.entries[0] : output;
+  if (!info || typeof info !== 'object') {
+    throw new Error('SITE_EXTRACTOR_EMPTY_RESULT');
+  }
+
+  const candidates = [
+    info.url,
+    ...(Array.isArray(info.requested_formats) ? info.requested_formats.map(item => item?.url) : []),
+    ...(Array.isArray(info.formats) ? info.formats
+      .filter(item => item?.url && item?.vcodec !== 'none' && item?.acodec !== 'none')
+      .sort((a, b) => Number(b.height || 0) - Number(a.height || 0))
+      .map(item => item.url) : [])
+  ].filter(Boolean);
+
+  const sourceUrl = candidates.find(value => /^https?:\/\//i.test(String(value)));
+  if (!sourceUrl) throw new Error('SITE_EXTRACTOR_NO_PROGRESSIVE_SOURCE');
+  await validatePublicUrl(sourceUrl);
+
+  const protocol = String(info.protocol || '').toLowerCase();
+  const ext = String(info.ext || '').toLowerCase();
+  const type = /m3u8|hls/.test(protocol) || ext === 'm3u8' || /\.m3u8(?:$|\?)/i.test(sourceUrl)
+    ? 'hls'
+    : 'video';
+  const httpHeaders = info.http_headers && typeof info.http_headers === 'object'
+    ? info.http_headers
+    : {};
+
+  return {
+    sourceUrl,
+    pageUrl: String(info.webpage_url || rawUrl),
+    type,
+    cookie: String(httpHeaders.Cookie || httpHeaders.cookie || ''),
+    userAgent: String(httpHeaders['User-Agent'] || httpHeaders['user-agent'] || userAgent),
+    extractor: String(info.extractor_key || info.extractor || 'yt-dlp')
+  };
+}
+
 app.post('/api/resolve-video-url', async (req, res) => {
   try {
     const requestedUrl = String(req.body?.url || '').trim();
@@ -1086,12 +1141,27 @@ app.post('/api/resolve-video-url', async (req, res) => {
       });
     }
 
-    const resolved = await resolvePublicVideoPage(normalizedUrl);
+    let resolved = null;
+    let extractorError = '';
+    try {
+      resolved = await resolveWithSiteExtractor(normalizedUrl);
+    } catch (error) {
+      extractorError = String(error?.stderr || error?.message || error).slice(0, 900);
+      console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, extractorError);
+    }
+
+    if (!resolved) resolved = await resolvePublicVideoPage(normalizedUrl);
     if (!resolved) {
+      const protectedSite = /captcha|sign in|login|cookies|forbidden|403|unsupported url|drm/i.test(extractorError);
       return res.status(422).json({
         ok: false,
-        reason: 'VIDEO_SOURCE_HIDDEN',
-        message: 'Sayfa tarandı ancak herkese açık indirilebilir video kaynağı doğrulanamadı. Giriş, CAPTCHA, DRM veya site koruması olabilir.'
+        reason: protectedSite ? 'SITE_ACCESS_BLOCKED' : 'VIDEO_SOURCE_HIDDEN',
+        message: protectedSite
+          ? 'Site oynatıcı erişimini engelledi. Giriş, CAPTCHA, bölge veya bot koruması olabilir.'
+          : 'Dinamik oynatıcı ve sayfa kaynağı tarandı ancak indirilebilir video bulunamadı.',
+        technicalDetail: extractorError
+          ? extractorError.replace(/https?:\/\/\S+/g, '[adres]').slice(0, 280)
+          : 'Extractor ve HTML taraması sonuç vermedi.'
       });
     }
 
@@ -1101,6 +1171,8 @@ app.post('/api/resolve-video-url', async (req, res) => {
       referer: resolved.pageUrl,
       cookie: resolved.cookie,
       type: resolved.type,
+      userAgent: resolved.userAgent,
+      extractor: resolved.extractor,
       expiresAt: Date.now() + 30 * 60 * 1000
     });
 
@@ -1130,7 +1202,7 @@ app.get('/api/video-proxy', async (req, res) => {
 
     if (session?.type === 'hls' || /\.m3u8(?:$|\?)/i.test(sourceUrl)) {
       const headerLines = [
-        'User-Agent: Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+        `User-Agent: ${session?.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36'}`,
         referer ? `Referer: ${referer}` : '',
         referer ? `Origin: ${new URL(referer).origin}` : '',
         session?.cookie ? `Cookie: ${session.cookie}` : ''
@@ -1166,7 +1238,9 @@ app.get('/api/video-proxy', async (req, res) => {
       return;
     }
 
-    const headers = {};
+    const headers = {
+      'User-Agent': session?.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36'
+    };
     if (req.headers.range) headers.Range = req.headers.range;
     if (referer) {
       await validatePublicUrl(referer);
