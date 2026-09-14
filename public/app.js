@@ -8,12 +8,15 @@ import {
   computeWarmupSelectionDelta,
   expandVerifiedMovementVariants,
   isOutcomeUnlocked,
+  groupVerifiedMovementsByTempo,
   monotonicAdultPhase,
+  nearestAvailableTempo,
   normalizeOutcomeUnlockProgress,
   pickNextVariant,
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
-  requiredWarmupDiscoveries
+  requiredWarmupDiscoveries,
+  tapRhythm
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
@@ -109,6 +112,11 @@ const state = {
   analysisFingerprint: '',
   lastRuntimeSaveAt: 0,
   restoredAdultSceneId: null,
+  adultTapTimes: [],
+  adultTapTempo: 'unclear',
+  adultTapCandidateTempo: 'unclear',
+  adultTapCandidateCount: 0,
+  adultLastTempoSwitchAt: 0,
 };
 
 const els = {
@@ -178,6 +186,10 @@ const els = {
   climaxProgressBar: $('climaxProgressBar'),
   adultFlowStatus: $('adultFlowStatus'),
   nextVariantBtn: $('nextVariantBtn'),
+  rhythmControl: $('rhythmControl'),
+  rhythmTapBtn: $('rhythmTapBtn'),
+  rhythmTapLabel: $('rhythmTapLabel'),
+  rhythmTapStatus: $('rhythmTapStatus'),
   outcomeSection: $('outcomeSection'),
   outcomeCount: $('outcomeCount'),
   outcomeChoices: $('outcomeChoices'),
@@ -1648,6 +1660,9 @@ function normalizeAnalysis(body) {
       positionStartTime: Number(a.positionStartTime ?? a.startTime),
       positionEndTime: Number(a.positionEndTime ?? a.endTime),
       movementType: String(a.movementType || a.actionType || ""),
+      movementTempo: ['slow', 'moderate', 'fast'].includes(String(a.movementTempo || '').toLowerCase())
+        ? String(a.movementTempo).toLowerCase()
+        : 'unclear',
       loopStartTime: Number(a.loopStartTime ?? a.startTime),
       loopEndTime: Number(a.loopEndTime ?? a.endTime),
       maleProgressRate: Math.min(2.5, Math.max(0.25, Number(a.maleProgressRate) || 1)),
@@ -2302,6 +2317,7 @@ function resetAdultSceneGameplay() {
   state.adultUiSignature = '';
   state.adultLastUiPhase = 'foreplay';
   state.adultPhaseMachine = 'foreplay';
+  resetAdultTapRhythm();
 }
 
 function renderAdultWarmupChoices(scene) {
@@ -2733,6 +2749,92 @@ function updateVariantButton(position) {
     : 'Tek gerçek varyasyon';
 }
 
+function resetAdultTapRhythm() {
+  state.adultTapTimes = [];
+  state.adultTapTempo = 'unclear';
+  state.adultTapCandidateTempo = 'unclear';
+  state.adultTapCandidateCount = 0;
+  state.adultLastTempoSwitchAt = 0;
+  els.rhythmTapBtn?.removeAttribute('data-tempo');
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'RİTİMİ BAŞLAT';
+  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Hızını algılamak için ritimli dokun';
+}
+
+function rhythmGroupsForPosition(position) {
+  if (!['vaginal', 'anal'].includes(String(position?.activityType || position?.categoryId || ''))) {
+    return null;
+  }
+  const groups = groupVerifiedMovementsByTempo(position?.movements || []);
+  const tempoCount = Object.values(groups).filter(items => items.length).length;
+  return tempoCount >= 2 ? groups : null;
+}
+
+function updateRhythmControl(position) {
+  const groups = rhythmGroupsForPosition(position);
+  els.rhythmControl?.classList.toggle('hidden', !groups);
+  if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !groups || state.adultOutcomePhase !== 'idle';
+  if (!groups) resetAdultTapRhythm();
+}
+
+function handleAdultRhythmTap(timestamp = performance.now()) {
+  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
+  const groups = rhythmGroupsForPosition(position);
+  if (!groups || state.adultOutcomePhase !== 'idle') return;
+
+  const now = Number(timestamp) || performance.now();
+  state.adultTapTimes = [...state.adultTapTimes, now]
+    .filter(value => now - value <= 1800)
+    .slice(-8);
+  const rhythm = tapRhythm(state.adultTapTimes, now);
+  els.rhythmTapBtn?.classList.remove('tap-pulse');
+  requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
+
+  if (rhythm.tempo === 'unclear') {
+    if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Bir kez daha dokun';
+    return;
+  }
+
+  const targetTempo = nearestAvailableTempo(rhythm.tempo, groups);
+  if (!targetTempo) return;
+  if (state.adultTapCandidateTempo === targetTempo) state.adultTapCandidateCount += 1;
+  else {
+    state.adultTapCandidateTempo = targetTempo;
+    state.adultTapCandidateCount = 1;
+  }
+
+  const labels = { slow: 'YAVAŞ', moderate: 'ORTA', fast: 'HIZLI' };
+  const canSwitch = state.adultTapTempo === 'unclear' ||
+    (state.adultTapCandidateCount >= 2 && now - state.adultLastTempoSwitchAt >= 320);
+  if (canSwitch && targetTempo !== state.adultTapTempo) {
+    const movement = pickNextVariant(
+      groups[targetTempo],
+      state.activeMovementId,
+      state.adultMovementPlayCounts
+    );
+    if (movement) {
+      state.adultTapTempo = targetTempo;
+      state.adultLastTempoSwitchAt = now;
+      state.adultTapCandidateCount = 0;
+      selectAdultMovement(movement.id, true, null, { awardProgress: false, rhythmTempo: targetTempo });
+      logEngineEvent('RHYTHM_TEMPO_CHANGED', {
+        positionId: position.id,
+        movementId: movement.id,
+        tempo: targetTempo,
+        tapsPerSecond: rhythm.tapsPerSecond
+      });
+    }
+  }
+
+  els.rhythmTapBtn?.setAttribute('data-tempo', state.adultTapTempo === 'unclear' ? targetTempo : state.adultTapTempo);
+  if (els.rhythmTapLabel) {
+    els.rhythmTapLabel.textContent = `RİTİM: ${labels[state.adultTapTempo] || labels[targetTempo]}`;
+  }
+  if (els.rhythmTapStatus) {
+    els.rhythmTapStatus.textContent = `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · hızına göre oynuyor`;
+  }
+  navigator.vibrate?.(10);
+}
+
 function playNextAdultVariant() {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   if (!position) return;
@@ -2764,6 +2866,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const changedPosition = state.activePositionId !== position.id;
   state.activePositionId = position.id;
   if (changedPosition) state.activeMovementId = null;
+  if (changedPosition) resetAdultTapRhythm();
 
   els.positionTabs?.querySelectorAll('.position-tab').forEach(button => {
     button.classList.toggle('active', button.dataset.positionId === position.id);
@@ -2772,6 +2875,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${position.movements.length} gerçek varyasyon`;
   if (els.movementChoices) els.movementChoices.innerHTML = '';
+  els.movementSection?.classList.remove('hidden');
 
   position.movements.forEach(movement => {
     const button = document.createElement('button');
@@ -2784,6 +2888,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   });
 
   updateVariantButton(position);
+  updateRhythmControl(position);
 
   const movement = shouldSeek
     ? pickNextVariant(
@@ -2838,7 +2943,7 @@ function selectAdultMovement(
     button.classList.toggle('active', button.dataset.movementId === movement.id);
   });
 
-  if (shouldSeek) {
+  if (shouldSeek && selectionMeta?.awardProgress !== false) {
     applyAdultSelectionProgress(position, movement, selectionMeta || {});
   }
 
@@ -3098,6 +3203,17 @@ if (els.finishAdultSceneBtn) {
 if (els.nextVariantBtn) {
   els.nextVariantBtn.addEventListener('click', playNextAdultVariant);
 }
+
+els.rhythmTapBtn?.addEventListener('pointerdown', event => {
+  event.preventDefault();
+  handleAdultRhythmTap(event.timeStamp);
+});
+
+els.rhythmTapBtn?.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  handleAdultRhythmTap(performance.now());
+});
 
 els.adultPanelToggleBtn?.addEventListener('click', () => {
   const collapsed = els.adultInteractionPanel?.classList.toggle('fullscreen-collapsed');
