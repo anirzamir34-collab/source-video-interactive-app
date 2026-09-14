@@ -3197,6 +3197,15 @@ pre {
   background: rgba(62,8,17,.90) !important;
 }
 
+.scene-progress-fill.climax {
+  background: linear-gradient(90deg, #8c63ff, #d3b6ff);
+  box-shadow: 0 0 12px rgba(157, 112, 255, .35);
+}
+
+.climax-progress-item {
+  grid-column: 1 / -1;
+}
+
 /* MINIMAL BLACK UI — compact mobile-first presentation */
 :root {
   --bg: #000;
