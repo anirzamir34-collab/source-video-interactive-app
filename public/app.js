@@ -5,6 +5,8 @@ import {
   canUnlockBonusPositions,
   canUnlockCorePositions,
   canUnlockOutcome,
+  buildVerifiedMovementChoices,
+  consolidateVerifiedPositions,
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
   expandVerifiedMovementVariants,
@@ -85,6 +87,7 @@ const state = {
   activePositionId: null,
   activeAdultCategory: null,
   activeMovementId: null,
+  activeMovementChoiceId: null,
   maleSceneProgress: 0,
   femaleSceneProgress: 0,
   lastAdultMediaTime: null,
@@ -1826,6 +1829,7 @@ function initializeInteractive(analysis) {
   state.adultOutcomePhase = 'idle';
   state.activeAdultOutcomeId = null;
   state.activeAdultPreludeId = null;
+  state.activeMovementChoiceId = null;
   state.adultUnlockedOutcomeIds = new Set();
   state.adultRevealedPositionIds = new Set();
   state.adultUiSignature = '';
@@ -2233,25 +2237,10 @@ function prepareAdultScenes() {
   );
 
   state.adultScenes.forEach(scene => {
-    const totals = new Map();
-    const indexes = new Map();
-
-    scene.positions.forEach(position => {
-      const key = `${position.categoryId}:${position.familyId}:${position.activityType || 'other'}`;
-      totals.set(key, (totals.get(key) || 0) + 1);
-    });
-
-    scene.positions.forEach(position => {
-      const key = `${position.categoryId}:${position.familyId}:${position.activityType || 'other'}`;
-      if ((totals.get(key) || 0) > 1) {
-        const occurrenceNumber = (indexes.get(key) || 0) + 1;
-        indexes.set(key, occurrenceNumber);
-        const baseLabel = String(position.label || 'Pozisyon')
-          .replace(/\s+·\s+\d+$/u, '')
-          .replace(/\s+Pozisyon(?:u)?$/iu, '');
-        position.label = `${baseLabel} · ${occurrenceNumber}`;
-      }
-    });
+    scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
+      ...position,
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 4)
+    }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
     let coreIndex = 0;
@@ -3056,20 +3045,34 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.classList.toggle('active', button.dataset.positionId === position.id);
   });
 
+  const movementChoices = position.movementChoices?.length
+    ? position.movementChoices
+    : buildVerifiedMovementChoices(position.movements, position.label, 4);
+  position.movementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
-  if (els.movementCount) els.movementCount.textContent = `${position.movements.length} gerçek varyasyon`;
+  if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   els.movementSection?.classList.remove('hidden');
 
-  position.movements.forEach(movement => {
+  movementChoices.forEach(choice => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'movement-choice-card';
-    button.dataset.movementId = movement.id;
-    const sensory = sensoryActionMeta(movement);
+    button.dataset.movementChoiceId = choice.id;
+    button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
+    const first = choice.variants[0];
+    const sensory = sensoryActionMeta(first);
     const sensoryLine = sensory.cues.length ? ` · ${escapeHtml(sensory.cues.join(' · '))}` : '';
-    button.innerHTML = `<span>${escapeHtml(movement.label)}</span><small>${adultTimeLabel(movement.loopStartTime)} – ${adultTimeLabel(movement.loopEndTime)}${sensoryLine}</small>`;
-    button.addEventListener('click', () => selectAdultMovement(movement.id, true));
+    button.innerHTML = `<span>${escapeHtml(choice.label)}</span><small>${choice.variants.length} gerçek sekans${sensoryLine}</small>`;
+    button.addEventListener('click', () => {
+      const currentId = choice.variants.some(item => item.id === state.activeMovementId)
+        ? state.activeMovementId
+        : null;
+      const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
+      if (!movement) return;
+      state.activeMovementChoiceId = choice.id;
+      selectAdultMovement(movement.id, true);
+    });
     els.movementChoices?.appendChild(button);
   });
 
@@ -3126,7 +3129,8 @@ function selectAdultMovement(
   state.activeMovementId = movement.id;
   state.lastAdultMediaTime = null;
   els.movementChoices?.querySelectorAll('.movement-choice-card').forEach(button => {
-    button.classList.toggle('active', button.dataset.movementId === movement.id);
+    const variants = String(button.dataset.variantIds || '').split(',');
+    button.classList.toggle('active', variants.includes(movement.id));
   });
 
   if (shouldSeek && selectionMeta?.awardProgress !== false) {
