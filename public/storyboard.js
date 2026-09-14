@@ -1,3 +1,34 @@
+export function detectSceneBoundaries(motionProfile = [], interval = 1) {
+  const samples = Array.isArray(motionProfile)
+    ? motionProfile.filter(item => Number.isFinite(Number(item?.time)) && Number.isFinite(Number(item?.score)))
+    : [];
+  const minimumGap = Math.max(2.5, Number(interval || 1) * 2);
+  const boundaries = [];
+  let lastBoundary = -Infinity;
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    const next = samples[index + 1];
+    const score = Number(current.score);
+    const rise = score - Number(previous.score);
+    const localPeak = !next || score >= Number(next.score);
+    const meaningfulChange = score >= 48 || (score >= 34 && rise >= 12);
+    const time = Number(current.time);
+
+    if (meaningfulChange && localPeak && time - lastBoundary >= minimumGap) {
+      boundaries.push({
+        time: Number(time.toFixed(3)),
+        score,
+        kind: score >= 48 ? 'hard-cut' : 'visual-transition'
+      });
+      lastBoundary = time;
+    }
+  }
+
+  return boundaries;
+}
+
 export async function extractStoryboard(file, onProgress = () => {}, signal) {
   const url = URL.createObjectURL(file);
   const video = document.createElement('video');
@@ -138,13 +169,15 @@ export async function extractStoryboard(file, onProgress = () => {}, signal) {
     await finishSheet();
 
     const totalBytes = sheets.reduce((sum, blob) => sum + blob.size, 0);
+    const sceneBoundaries = detectSceneBoundaries(motionProfile, interval);
     return {
       sheets,
       timestamps,
       duration,
       interval,
       totalBytes,
-      motionProfile
+      motionProfile,
+      sceneBoundaries
     };
   } finally {
     video.pause();
