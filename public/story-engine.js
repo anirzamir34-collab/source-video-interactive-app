@@ -152,3 +152,26 @@ export function storyActionMeta(action = {}) {
     storyEvidence: cleanText(action.storyEvidence, 360)
   };
 }
+
+export function sensoryActionMeta(action = {}) {
+  const confidence = clamp(action.sensoryConfidence);
+  const evidence = cleanText(action.sensoryEvidence, 360);
+  if (confidence < 0.55 || !evidence) return { cues: [], confidence, evidence };
+
+  const cues = [];
+  const audioLevel = { low: 'Hafif', moderate: 'Belirgin', high: 'Yoğun' };
+  const audioType = { breathing: 'nefes', moan: 'inleme', laughter: 'gülüş', crying: 'ağlama', vocal_reaction: 'ses tepkisi', mixed: 'karışık ses tepkisi' };
+  const gaze = { brief: 'Kısa bakış', sustained: 'Uzun bakış', mutual: 'Karşılıklı yoğun bakış' };
+  const affect = { relaxed: 'Rahat görünüm', tense: 'Gergin görünüm', happy: 'Mutlu görünüm', sad: 'Üzgün görünüm', fearful: 'Korkulu görünüm', excited: 'Heyecanlı görünüm', distressed: 'Rahatsızlık işaretleri' };
+  const body = { relaxed: 'Rahat beden tepkisi', tense: 'Bedensel gerilim', recoil: 'Geri çekilme', rhythmic: 'Ritmik tepki', changing: 'Değişen beden tepkisi' };
+
+  if (audioLevel[action.audioIntensity] && audioType[action.nonSpeechAudio]) {
+    cues.push(`${audioLevel[action.audioIntensity]} ${audioType[action.nonSpeechAudio]}`);
+  } else if (audioLevel[action.audioIntensity]) {
+    cues.push(`${audioLevel[action.audioIntensity]} ses tepkisi`);
+  }
+  if (gaze[action.gazeIntensity]) cues.push(gaze[action.gazeIntensity]);
+  if (affect[action.observedAffect]) cues.push(affect[action.observedAffect]);
+  if (body[action.bodyResponse]) cues.push(body[action.bodyResponse]);
+  return { cues: [...new Set(cues)].slice(0, 3), confidence, evidence };
+}
