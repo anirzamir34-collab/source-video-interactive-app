@@ -3558,10 +3558,9 @@ function renderChoices() {
     return;
   }
 
-  // Adult-scene actions are owned exclusively by the dedicated scene panel.
-  // Never let one leak into the generic centered choice overlay.
+  // Only actions owned by a validated adult-scene graph are removed from
+  // the normal timeline. A raw model flag alone must never orphan an action.
   candidates = candidates.filter(action =>
-    !action.adultScene &&
     !findAdultSceneForTimeline(state.adultScenes, {
       action,
       completedSceneIds: state.completedAdultSceneIds
@@ -3574,7 +3573,6 @@ function renderChoices() {
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
         !state.consumedActionIds.has(action.actionId) &&
-        !action.adultScene &&
         !findAdultSceneForTimeline(state.adultScenes, {
           action,
           completedSceneIds: state.completedAdultSceneIds
