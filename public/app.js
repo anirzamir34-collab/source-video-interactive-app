@@ -1933,7 +1933,8 @@ function canonicalAdultPosition(action) {
     spoon: 'Kaşık Pozisyonu',
     'standing-rear': 'Ayakta Arkadan Pozisyon',
     rear: 'Arkadan Pozisyon',
-    standing: 'Ayakta Pozisyon'
+    standing: 'Ayakta Pozisyon',
+    'position-transition': 'Pozisyon Değişimi'
   };
 
   if (family) return { id: family, label: labels[family] };
@@ -1950,9 +1951,13 @@ function canonicalAdultPosition(action) {
 
 function verifiedAdultPositionFamily(action) {
   if (action?.sourceVerified !== true) return '';
-  return adultSemanticFamily(action.positionLabel) ||
+  const family = adultSemanticFamily(action.positionLabel) ||
     adultSemanticFamily(action.label) ||
     adultSemanticFamily(action.positionId);
+  if (family) return family;
+  return String(action.actionType || '').toLowerCase() === 'position'
+    ? 'position-transition'
+    : '';
 }
 
 function isVerifiedAdultPositionAction(action) {
@@ -2031,7 +2036,7 @@ function adultCategoryFor(action, positionId) {
 
   if (positionId === 'oral') return { id: 'oral', label: 'Oral' };
   if (positionId === 'manual') return { id: 'manual', label: 'Manuel' };
-  if (['prone-bone', 'missionary', 'cowgirl', 'spoon', 'standing-rear', 'rear', 'standing'].includes(positionId)) {
+  if (['prone-bone', 'missionary', 'cowgirl', 'spoon', 'standing-rear', 'rear', 'standing', 'position-transition'].includes(positionId)) {
     return { id: 'position', label: 'Pozisyonlar' };
   }
 
@@ -2241,6 +2246,7 @@ function prepareAdultScenes() {
         label: activityDisplayLabel(canonical.label, action),
         categoryId: category.id,
         categoryLabel: category.label,
+        sourceVerified: action.sourceVerified === true,
         startTime: Number(action.positionStartTime ?? action.startTime),
         endTime: Number(action.positionEndTime ?? action.endTime),
         unlockProgress: 0,
@@ -2454,7 +2460,8 @@ function unlockedAdultPositions(scene = state.adultScene) {
   const coreAllowed = canUnlockCorePositions({
     flow,
     warmupTotal,
-    warmupUniquePlayed
+    warmupUniquePlayed,
+    hasVerifiedCore: corePositions.some(position => position.sourceVerified === true)
   });
   const bonusAllowed = canUnlockBonusPositions({
     flow,

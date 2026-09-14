@@ -22,6 +22,9 @@ export function adultPositionFamily(value) {
   }
   if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
   if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
+  if (/\b(pozisyon(?:u|unu|da|dan)?|pozisyon degistir|yere uzan|uzanarak|uzan)\b/.test(text)) {
+    return 'position-transition';
+  }
   return '';
 }
 
@@ -196,8 +199,10 @@ export function requiredWarmupDiscoveries(totalChoices = 0) {
 export function canUnlockCorePositions({
   flow = 0,
   warmupTotal = 0,
-  warmupUniquePlayed = 0
+  warmupUniquePlayed = 0,
+  hasVerifiedCore = false
 } = {}) {
+  if (hasVerifiedCore) return true;
   const total = Math.max(0, Math.floor(Number(warmupTotal) || 0));
   if (!total) return true;
   const played = Math.max(0, Math.floor(Number(warmupUniquePlayed) || 0));

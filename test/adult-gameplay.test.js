@@ -121,6 +121,7 @@ test('prone bone stays a separate canonical position family', () => {
   assert.equal(adultPositionFamily('Pronebone'), 'prone-bone');
   assert.equal(adultPositionFamily('Yüzüstü arkadan pozisyon'), 'prone-bone');
   assert.equal(adultPositionFamily('Doggy style'), 'rear');
+  assert.equal(adultPositionFamily('Kanepeden ayrılıp yere uzanarak pozisyon değiştirmek'), 'position-transition');
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
@@ -258,6 +259,7 @@ test('core positions wait for both Lust and enough unique warm-up discovery', ()
   assert.equal(canUnlockCorePositions({ flow: 34, warmupTotal: 8, warmupUniquePlayed: 8 }), false);
   assert.equal(canUnlockCorePositions({ flow: 50, warmupTotal: 8, warmupUniquePlayed: 6 }), true);
   assert.equal(canUnlockCorePositions({ flow: 0, warmupTotal: 0, warmupUniquePlayed: 0 }), true);
+  assert.equal(canUnlockCorePositions({ flow: 0, warmupTotal: 8, warmupUniquePlayed: 0, hasVerifiedCore: true }), true);
 });
 
 test('bonus positions require reward-level Lust and at least one core visit when core positions exist', () => {
