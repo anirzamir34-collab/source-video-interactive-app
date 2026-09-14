@@ -11,6 +11,7 @@ import {
   computeWarmupSelectionDelta,
   expandVerifiedMovementVariants,
   findAdultSceneForTimeline,
+  isEnergeticSexMoment,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   monotonicAdultPhase,
@@ -2304,7 +2305,7 @@ function prepareAdultScenes() {
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 4)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -2964,123 +2965,57 @@ function resetAdultTapRhythm() {
   state.adultLastTempoSwitchAt = 0;
   els.rhythmTapBtn?.removeAttribute('data-tempo');
   if (els.video && Number(els.video.playbackRate) !== 1) els.video.playbackRate = 1;
-  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'RİTİMİ BAŞLAT';
-  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Hızını algılamak için ritimli dokun';
-}
-
-function rhythmGroupsForPosition(position) {
-  if (!position || isWarmupPosition(position)) return null;
-  const playableCount = (position.movements || []).filter(item => item?.sourceVerified === true).length;
-  if (playableCount < 2) return null;
-  const groups = groupVerifiedMovementsByTempo(position?.movements || []);
-  const tempoCount = Object.values(groups).filter(items => items.length).length;
-  groups.fallbackPlaybackRate = tempoCount < 2;
-  return groups;
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'SEKS';
+  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Yalnızca hızlı, sert veya derin doğrulanmış kesitlerde açılır';
 }
 
 function updateRhythmControl(position) {
+  const movement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
   const eligible = Boolean(
-    position &&
-    !isWarmupPosition(position) &&
-    (position.movements?.length || 0) >= 2
+    position && !isWarmupPosition(position) &&
+    state.adultOutcomePhase === 'idle' &&
+    isEnergeticSexMoment(movement)
   );
-  const groups = rhythmGroupsForPosition(position);
   els.rhythmControl?.classList.toggle('hidden', !eligible);
-  if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !groups || state.adultOutcomePhase !== 'idle';
-  if (!groups) {
-    resetAdultTapRhythm();
-    if (eligible && els.rhythmTapStatus) {
-      els.rhythmTapStatus.textContent = 'En az iki doğrulanmış hız sekansı gerekli';
-    }
-  } else if (groups.fallbackPlaybackRate && els.rhythmTapStatus) {
-    els.rhythmTapStatus.textContent = 'Dokunma hızın mevcut gerçek sekansın temposunu yönetir';
+  if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !eligible;
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? 'SEKS' : 'SEKS KAPALI';
+  if (els.rhythmTapStatus) {
+    els.rhythmTapStatus.textContent = eligible
+      ? 'Doğrulanmış hızlı, sert veya derin kesit — dokunarak aynı an içinde ilerlet'
+      : 'Bu kesitte doğrulanmış yoğun hareket yok';
   }
 }
 
 function handleAdultRhythmTap(timestamp = performance.now()) {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
-  const groups = rhythmGroupsForPosition(position);
-  if (!groups || state.adultOutcomePhase !== 'idle') return;
+  const currentMovement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
+  if (!position || !isEnergeticSexMoment(currentMovement) || state.adultOutcomePhase !== 'idle') return;
 
-  const now = Number(timestamp) || performance.now();
-  state.adultTapTimes = [...state.adultTapTimes, now]
-    .filter(value => now - value <= 2200)
-    .slice(-8);
-  const rhythm = tapRhythm(state.adultTapTimes, now);
   els.rhythmTapBtn?.classList.remove('tap-pulse');
   requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
-
-  if (rhythm.tempo === 'unclear') {
-    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
-    if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Bir kez daha dokun';
-    return;
+  const activeChoice = (position.movementChoices || []).find(choice =>
+    choice.id === state.activeMovementChoiceId ||
+    choice.variants?.some(item => item.id === currentMovement.id)
+  );
+  const pool = (activeChoice?.variants || [])
+    .filter(item => item.sourceVerified === true && item.sourcePositionId === currentMovement.sourcePositionId)
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+  const next = pickNextChronologicalVariant(pool, currentMovement.id);
+  if (next) {
+    selectAdultMovement(next.id, true, null, { awardProgress: false });
+  } else if (els.video && Number(els.video.currentTime) < Number(currentMovement.loopEndTime) - 0.08) {
+    els.video.play().catch(() => {});
+  } else {
+    els.video?.pause();
   }
-
-  const targetTempo = groups.fallbackPlaybackRate
-    ? rhythm.tempo
-    : nearestAvailableTempo(rhythm.tempo, groups);
-  if (!targetTempo) return;
-  if (state.adultTapCandidateTempo === targetTempo) state.adultTapCandidateCount += 1;
-  else {
-    state.adultTapCandidateTempo = targetTempo;
-    state.adultTapCandidateCount = 1;
-  }
-
-  const labels = { slow: 'YAVAŞ', moderate: 'ORTA', fast: 'HIZLI' };
-  const tempoChanged = targetTempo !== state.adultTapTempo;
-  const canReact = rhythm.sampleCount >= 2 && now - state.adultLastTempoSwitchAt >= 180;
-
-  if (canReact) {
-    const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
-    const activeChoice = (position.movementChoices || []).find(
-      choice => choice.id === state.activeMovementChoiceId ||
-        choice.variants?.some(item => item.id === currentMovement?.id)
-    );
-    const coherentPool = (activeChoice?.variants || []).filter(item => item?.sourceVerified === true);
-    const pool = coherentPool.length ? coherentPool : (currentMovement ? [currentMovement] : []);
-    const movement = pickNextVariant(
-      pool,
-      currentMovement?.id || null,
-      state.adultMovementPlayCounts
-    );
-
-    state.adultTapTempo = targetTempo;
-    state.adultLastTempoSwitchAt = now;
-    state.adultTapCandidateCount = 0;
-
-    if (groups.fallbackPlaybackRate && els.video) {
-      els.video.playbackRate = playbackRateForTapTempo(targetTempo);
-    }
-    if (movement && movement.id !== currentMovement?.id) {
-      selectAdultMovement(movement.id, true, null, {
-        awardProgress: false,
-        rhythmTempo: targetTempo
-      });
-    }
-
-    logEngineEvent('RHYTHM_TAP_APPLIED', {
-      positionId: position.id,
-      movementId: movement?.id || currentMovement?.id || null,
-      tempo: targetTempo,
-      playbackRate: Number(els.video?.playbackRate || 1),
-      tapsPerSecond: rhythm.tapsPerSecond,
-      sequenceChanged: Boolean(movement && movement.id !== currentMovement?.id)
-    });
-  }
-
-  els.rhythmTapBtn?.setAttribute('data-tempo', state.adultTapTempo === 'unclear' ? targetTempo : state.adultTapTempo);
-  if (els.rhythmTapLabel) {
-    els.rhythmTapLabel.textContent = `RİTİM: ${labels[state.adultTapTempo] || labels[targetTempo]}`;
-  }
-  if (els.rhythmTapStatus) {
-    els.rhythmTapStatus.textContent = groups.fallbackPlaybackRate
-      ? `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · ${Number(els.video?.playbackRate || 1).toFixed(2)}× oynuyor`
-      : `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · hızına göre gerçek sekans seçiliyor`;
-  }
-  if (typeof navigator !== 'undefined' && navigator.vibrate) {
-    if (tempoChanged) navigator.vibrate([10, 22, 10]);
-    else navigator.vibrate({ slow: 8, moderate: 13, fast: 19 }[state.adultTapTempo] || 10);
-  }
+  logEngineEvent('SEX_CONTROL_APPLIED', {
+    positionId: position.id,
+    occurrenceId: position.occurrenceId,
+    movementId: next?.id || currentMovement.id,
+    advanced: Boolean(next),
+    timestamp: Number(timestamp) || performance.now()
+  });
+  if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([12, 18, 20]);
 }
 
 function playNextAdultVariant() {
@@ -3118,7 +3053,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   const movementChoices = position.movementChoices?.length
     ? position.movementChoices
-    : buildVerifiedMovementChoices(position.movements, position.label, 4);
+    : buildVerifiedMovementChoices(position.movements, position.label, 3);
   position.movementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
@@ -3213,6 +3148,7 @@ function selectAdultMovement(
   }
 
   updateVariantButton(position);
+  updateRhythmControl(position);
 
   if (shouldSeek && els.video) {
     els.video.pause();
