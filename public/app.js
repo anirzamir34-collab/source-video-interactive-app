@@ -17,6 +17,7 @@ import {
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
+  decisionBoundaryAfterDialogue,
   dubMasterClockCorrection,
   dubSegmentKey,
   fittedDubPlaybackRate,
@@ -3226,24 +3227,37 @@ async function playAction(action) {
   await waitForEvent(els.video, 'seeked', 5000).catch(() => {});
   setGameState('SEGMENT_PLAYING');
 
+  const decisionEndTime = decisionBoundaryAfterDialogue(
+    state.dialogue?.segments || [],
+    action.endTime,
+    state.analysis?.videoDuration || els.video.duration
+  );
+
   state.stopListener = () => {
-    if (els.video.currentTime >= action.endTime - 0.03) {
-      finishAction(action);
+    if (els.video.currentTime >= decisionEndTime - 0.03) {
+      finishAction(action, decisionEndTime);
     }
   };
   els.video.addEventListener('timeupdate', state.stopListener);
   await els.video.play().catch(() => {});
 }
 
-function finishAction(action) {
+function finishAction(action, decisionEndTime = action.endTime) {
   els.video.pause();
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
   }
-  state.consumedActionIds.add(action.actionId);
-  state.gameCursorTime = action.endTime;
-  state.currentActionIndex = Math.max(state.currentActionIndex, state.analysis.actions.findIndex(a => a.actionId === action.actionId));
+  const reachedTime = Math.max(Number(action.endTime) || 0, Number(decisionEndTime) || 0);
+  let reachedIndex = state.analysis.actions.findIndex(a => a.actionId === action.actionId);
+  state.analysis.actions.forEach((candidate, index) => {
+    if (Number(candidate.endTime) <= reachedTime + 0.03) {
+      state.consumedActionIds.add(candidate.actionId);
+      reachedIndex = Math.max(reachedIndex, index);
+    }
+  });
+  state.gameCursorTime = reachedTime;
+  state.currentActionIndex = Math.max(state.currentActionIndex, reachedIndex);
   state.activeAction = null;
   setGameState('DECISION_PENDING');
   persistRuntimeSnapshot('action-finished', true);
