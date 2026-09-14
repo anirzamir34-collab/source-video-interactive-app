@@ -2005,11 +2005,21 @@ function prepareAdultScenes() {
     actions.filter(action => {
       if (action?.adultScene !== true || action?.sourceVerified !== true) return false;
       if (String(action.actionType || '').toLowerCase() !== 'position') return false;
-      if (!adultSemanticFamily(action.positionLabel || action.positionId || action.label)) return false;
+      const family = adultSemanticFamily(action.positionLabel || action.positionId || action.label);
+      if (!family) return false;
+      const route = String(action.activityType || '').toLowerCase();
+      const explicitRoute = ['vaginal', 'anal', 'oral', 'manual'].includes(route);
+      const routeEvidence = String(action.activityEvidence || '').trim();
+      // A body arrangement alone (lap sitting, hugging, dancing) is not enough.
+      // Penetrative/oral/manual evidence must be independently asserted and
+      // supported before the dedicated adult player can own the timeline.
+      if (!explicitRoute || Number(action.activityTypeConfidence || 0) < 0.78 || !routeEvidence) {
+        return false;
+      }
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
       return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6 &&
-        Number(action.confidence || 0) >= 0.72;
+        Number(action.confidence || 0) >= 0.78;
     }).map(sceneIdFor)
   );
 
@@ -2905,17 +2915,12 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   renderAdultProgress();
 }
 
-function updateVariantButton(position) {
+function updateVariantButton(_position) {
+  // Movement choices already own their coherent clip pools. A second global
+  // "next variation" control would bypass that graph and can jump timelines.
   if (!els.nextVariantBtn) return;
-  const count = position?.movements?.length || 0;
-  const next = pickNextChronologicalVariant(position?.movements || [], state.activeMovementId);
-  els.nextVariantBtn.classList.toggle('hidden', count < 2);
-  els.nextVariantBtn.disabled = count < 2 || !next || state.adultOutcomePhase !== 'idle';
-  els.nextVariantBtn.textContent = count >= 2 && next
-    ? '→ Sonraki gerçek varyasyon'
-    : count >= 2
-      ? 'Bu pozisyon bölümü tamamlandı'
-    : 'Tek gerçek varyasyon';
+  els.nextVariantBtn.classList.add('hidden');
+  els.nextVariantBtn.disabled = true;
 }
 
 function resetAdultTapRhythm() {
@@ -3613,7 +3618,13 @@ async function playAction(action) {
   }
 
   const guard = guardPlayable('timeline', action, { unlocked: true });
-  if (!guard.allowed) {
+  const actionStart = Number(action?.startTime);
+  if (!guard.allowed || !Number.isFinite(actionStart) || actionStart < state.gameCursorTime - 0.03) {
+    logEngineEvent('TIMELINE_BACKWARD_SEEK_BLOCKED', {
+      actionId: action?.actionId || null,
+      actionStart,
+      cursor: state.gameCursorTime
+    });
     renderChoices();
     return;
   }
@@ -3629,7 +3640,7 @@ async function playAction(action) {
   setGameState('SEGMENT_SEEKING');
   els.video.pause();
 
-  const seekTarget = action.startTime;
+  const seekTarget = Math.max(state.gameCursorTime, actionStart);
   els.video.currentTime = seekTarget;
   const mobilePlayPromise = els.video.play().catch(() => {
     els.video.controls = true;
