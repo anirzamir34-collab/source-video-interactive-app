@@ -473,7 +473,8 @@ Rules:
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
 - For every action, fuse only time-aligned evidence: audible non-speech intensity, visible gaze duration, facial expression, posture and body response. Report observable cues, not hidden mental states.
 - Never claim pain, pleasure, happiness, fear, consent or climax from one ambiguous facial expression, sound or body movement. Use observedAffect unclear unless multiple consistent cues support a cautious visible description.
-- Use canonical positionId values consistently: oral, manual, missionary, cowgirl, spoon, standing-rear, rear, standing, or other-stable-N.
+- Use canonical positionId values consistently: oral, manual, prone-bone, missionary, cowgirl, spoon, standing-rear, rear, standing, or other-stable-N.
+- Use prone-bone only when the receiving partner is visibly lying face-down/flat with hips low while penetration is from behind. Do not collapse prone-bone into rear/doggy, missionary, spoon or a generic lying position.
 - positionId, positionLabel and the visible body configuration described by label must agree. If they conflict, omit the position instead of guessing.
 - Use missionary only when the receiving partner is visibly below/on their back and MAIN_MALE is visibly above/front-facing in that configuration.
 - Use cowgirl only when the partner is visibly on top/straddling MAIN_MALE. Never reuse missionary for a cowgirl segment or cowgirl for a missionary segment.
