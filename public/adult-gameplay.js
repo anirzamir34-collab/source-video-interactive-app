@@ -435,9 +435,10 @@ export function consolidateVerifiedPositions(positions = []) {
     }
   }
 
-  return [...groups.values()].map(position => {
+  const clustered = [];
+  for (const position of groups.values()) {
     const seen = new Set();
-    position.movements = position.movements
+    const movements = position.movements
       .filter(movement => {
         const key = String(movement.id || [
           Number(movement.loopStartTime).toFixed(3),
@@ -452,32 +453,59 @@ export function consolidateVerifiedPositions(positions = []) {
     const ranges = [...position.sourceRanges]
       .filter(range => Number.isFinite(range.startTime) && Number.isFinite(range.endTime))
       .sort((a, b) => a.startTime - b.startTime);
-    const occurrenceBySource = new Map();
+
+    const clusters = [];
     let cluster = null;
     for (const range of ranges) {
       if (!cluster || range.startTime > cluster.endTime + 1.25) {
         cluster = {
           id: `${position.familyId}:continuous-${Math.round(range.startTime * 1000)}`,
           startTime: range.startTime,
-          endTime: range.endTime
+          endTime: range.endTime,
+          sourceIds: [String(range.id)]
         };
+        clusters.push(cluster);
       } else {
         cluster.endTime = Math.max(cluster.endTime, range.endTime);
+        cluster.sourceIds.push(String(range.id));
       }
-      occurrenceBySource.set(String(range.id), cluster.id);
     }
-    position.movements = position.movements.map(movement => ({
-      ...movement,
-      sourcePositionId: occurrenceBySource.get(String(movement.sourcePositionId)) ||
-        String(movement.sourcePositionId)
-    }));
-    position.sourcePositionIds = [...new Set(position.movements.map(item => item.sourcePositionId))];
-    return position;
-  }).sort((a, b) => Number(a.startTime) - Number(b.startTime));
+
+    const occurrenceBySource = new Map();
+    for (const item of clusters) {
+      for (const sourceId of item.sourceIds) occurrenceBySource.set(sourceId, item.id);
+    }
+
+    for (const item of clusters) {
+      const clusterMovements = movements
+        .filter(movement => {
+          const sourceId = String(movement.sourcePositionId || '');
+          const mapped = occurrenceBySource.get(sourceId);
+          if (mapped) return mapped === item.id;
+          const start = Number(movement.loopStartTime);
+          return start >= item.startTime - 0.2 && start <= item.endTime + 0.2;
+        })
+        .map(movement => ({
+          ...movement,
+          sourcePositionId: item.id
+        }));
+      clustered.push({
+        ...position,
+        id: `position:${item.id}`,
+        occurrenceId: item.id,
+        startTime: item.startTime,
+        endTime: item.endTime,
+        sourcePositionIds: [...new Set(item.sourceIds)],
+        sourceRanges: ranges.filter(range => item.sourceIds.includes(String(range.id))),
+        movements: clusterMovements
+      });
+    }
+  }
+  return clustered.sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
-export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
-  const limit = Math.max(1, Math.min(4, Math.floor(Number(maxChoices) || 4)));
+export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 8) {
+  const limit = Math.max(1, Math.min(8, Math.floor(Number(maxChoices) || 8)));
   const clean = value => String(value || '')
     .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
@@ -606,4 +634,57 @@ export function nearestAvailableTempo(requestedTempo, groups = {}) {
     Math.abs(TEMPO_ORDER.indexOf(a) - requestedIndex) -
     Math.abs(TEMPO_ORDER.indexOf(b) - requestedIndex)
   )[0];
+}
+
+export function isEnergeticFireMoment(movement = null) {
+  if (!movement || movement.sourceVerified === false) return false;
+  const tempo = normalizeMovementTempo(movement.movementTempo);
+  if (tempo === 'fast') return true;
+  const text = String(movement.label || movement.movementType || movement.activityType || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (/\b(hizli|derin|sert|thrust|pound|slam|deep|hard|intense)\b/.test(text)) {
+    return true;
+  }
+  if (/\b(hizli|derin|sert)\b/.test(text) && /\b(ritim|ritm|tempo)\b/.test(text)) {
+    return true;
+  }
+  return tempo === 'moderate' && String(movement.audioIntensity || '').toLowerCase() === 'high';
+}
+
+export function movementsInSameOccurrence(movements = [], current = null) {
+  const playable = (Array.isArray(movements) ? movements : [])
+    .filter(item =>
+      item &&
+      item.sourceVerified !== false &&
+      Number.isFinite(Number(item.loopStartTime)) &&
+      Number.isFinite(Number(item.loopEndTime)) &&
+      Number(item.loopEndTime) > Number(item.loopStartTime)
+    )
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+  if (!current) return playable;
+  const occurrence = String(current.sourcePositionId || '');
+  if (!occurrence) return playable;
+  const scoped = playable.filter(item => String(item.sourcePositionId || '') === occurrence);
+  return scoped.length ? scoped : playable;
+}
+
+export function nextFireAdvance(movements = [], currentId = null) {
+  const current = (Array.isArray(movements) ? movements : []).find(item => item?.id === currentId) || null;
+  return pickNextChronologicalVariant(movementsInSameOccurrence(movements, current), currentId);
+}
+
+export function fireMomentCopy(movement = null) {
+  const tempo = normalizeMovementTempo(movement?.movementTempo);
+  if (tempo === 'fast') return 'Hızlı tempo — bas, bu anı sen sür.';
+  if (tempo === 'moderate') return 'Derin tempo — basılı tutarak devam et.';
+  if (isEnergeticFireMoment(movement)) return 'Bu an ateşte — basınca sahne senin.';
+  return 'Ateş kapalı. Hızlı veya derin bir kesit bekleniyor.';
 }

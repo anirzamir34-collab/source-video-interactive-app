@@ -2746,6 +2746,15 @@ pre {
 .rhythm-tap-btn[data-tempo="slow"] { background: rgba(22, 63, 92, .46); }
 .rhythm-tap-btn[data-tempo="moderate"] { background: rgba(17, 92, 70, .5); }
 .rhythm-tap-btn[data-tempo="fast"] { border-color: rgba(255, 100, 119, .68); background: rgba(105, 22, 37, .56); }
+.rhythm-tap-btn[data-tempo="idle"] { opacity: .55; filter: saturate(.4); }
+.rhythm-tap-btn.fire-armed {
+  box-shadow: 0 0 0 1px rgba(255, 92, 110, .35), 0 10px 28px rgba(120, 16, 36, .28);
+}
+.rhythm-tap-btn.fire-held {
+  transform: scale(0.98);
+  border-color: rgba(255, 180, 150, .9);
+  background: rgba(150, 22, 40, .78);
+}
 .rhythm-tap-btn.tap-pulse { animation: rhythm-tap-pulse .16s ease-out; }
 
 @keyframes rhythm-tap-pulse {

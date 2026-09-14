@@ -11,6 +11,9 @@ Bu proje, Google AI Studio'dan bağımsız çalışan mobil-first interaktif vid
 - Eski Gemini/local fallback yoktur.
 - Her choice kendi `startTime -> endTime` segmentini oynatır ve segment sonunda video durur.
 - `gameCursorTime`, `currentActionIndex` ve `consumedActionIds` ile zaman çizelgesi geriye dönmez.
+- Seks sahnesinde pozisyonlar videodaki gerçek, kesintisiz occurrence’lara ayrılır. Kopuk aynı aile tek sekmeye yığılmaz.
+- Pozisyon içindeki doğrulanmış değişimler ek seçenek olur. Kesit bitince loop etmez, durur.
+- Hızlı / derin kesitte ATEŞ tuşu yanar. Basınca o an oynar, basılı tutunca aynı occurrence içinde ileri gider.
 
 ## Mevcut durum
 

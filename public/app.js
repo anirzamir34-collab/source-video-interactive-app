@@ -23,7 +23,11 @@ import {
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
-  tapRhythm
+  tapRhythm,
+  isEnergeticFireMoment,
+  nextFireAdvance,
+  fireMomentCopy,
+  movementsInSameOccurrence
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
@@ -127,6 +131,9 @@ const state = {
   adultTapCandidateTempo: 'unclear',
   adultTapCandidateCount: 0,
   adultLastTempoSwitchAt: 0,
+  adultFireHeld: false,
+  adultFireArmed: false,
+  adultAwaitingFire: false,
 };
 
 const els = {
@@ -2305,7 +2312,7 @@ function prepareAdultScenes() {
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 4)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 8)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -2833,7 +2840,9 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'position-tab';
-    button.textContent = position.label;
+    const startMark = Math.max(0, Math.floor(Number(position.startTime) || 0));
+    const stamp = `${Math.floor(startMark / 60)}:${String(startMark % 60).padStart(2, '0')}`;
+    button.textContent = `${position.label} · ${stamp}`;
     button.dataset.positionId = position.id;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
@@ -2963,125 +2972,115 @@ function resetAdultTapRhythm() {
   state.adultTapCandidateTempo = 'unclear';
   state.adultTapCandidateCount = 0;
   state.adultLastTempoSwitchAt = 0;
+  state.adultFireHeld = false;
+  state.adultFireArmed = false;
+  state.adultAwaitingFire = false;
   els.rhythmTapBtn?.removeAttribute('data-tempo');
+  els.rhythmTapBtn?.classList.remove('fire-held');
   if (els.video && Number(els.video.playbackRate) !== 1) els.video.playbackRate = 1;
-  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'RİTİMİ BAŞLAT';
-  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Hızını algılamak için ritimli dokun';
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'ATEŞ';
+  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Hızlı veya derin bir an gelince ateş yanar';
 }
 
-function rhythmGroupsForPosition(position) {
-  if (!position || isWarmupPosition(position)) return null;
-  const playableCount = (position.movements || []).filter(item => item?.sourceVerified === true).length;
-  if (playableCount < 2) return null;
-  const groups = groupVerifiedMovementsByTempo(position?.movements || []);
-  const tempoCount = Object.values(groups).filter(items => items.length).length;
-  groups.fallbackPlaybackRate = tempoCount < 2;
-  return groups;
-}
-
-function updateRhythmControl(position) {
-  const eligible = Boolean(
-    position &&
-    !isWarmupPosition(position) &&
-    (position.movements?.length || 0) >= 2
-  );
-  const groups = rhythmGroupsForPosition(position);
-  els.rhythmControl?.classList.toggle('hidden', !eligible);
-  if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !groups || state.adultOutcomePhase !== 'idle';
-  if (!groups) {
-    resetAdultTapRhythm();
-    if (eligible && els.rhythmTapStatus) {
-      els.rhythmTapStatus.textContent = 'En az iki doğrulanmış hız sekansı gerekli';
-    }
-  } else if (groups.fallbackPlaybackRate && els.rhythmTapStatus) {
-    els.rhythmTapStatus.textContent = 'Dokunma hızın mevcut gerçek sekansın temposunu yönetir';
-  }
-}
-
-function handleAdultRhythmTap(timestamp = performance.now()) {
+function currentAdultMovement() {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
-  const groups = rhythmGroupsForPosition(position);
-  if (!groups || state.adultOutcomePhase !== 'idle') return;
+  return position?.movements.find(item => item.id === state.activeMovementId) || null;
+}
 
-  const now = Number(timestamp) || performance.now();
-  state.adultTapTimes = [...state.adultTapTimes, now]
-    .filter(value => now - value <= 2200)
-    .slice(-8);
-  const rhythm = tapRhythm(state.adultTapTimes, now);
-  els.rhythmTapBtn?.classList.remove('tap-pulse');
-  requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
-
-  if (rhythm.tempo === 'unclear') {
-    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
-    if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Bir kez daha dokun';
-    return;
+function updateFireControl(position = null) {
+  const activePosition = position ||
+    state.adultScene?.positions.find(item => item.id === state.activePositionId) ||
+    null;
+  const movement = currentAdultMovement();
+  const energetic = Boolean(movement && isEnergeticFireMoment(movement));
+  const canDrive = Boolean(
+    activePosition &&
+    !isWarmupPosition(activePosition) &&
+    state.adultOutcomePhase === 'idle' &&
+    movement
+  );
+  state.adultFireArmed = canDrive && energetic;
+  els.rhythmControl?.classList.toggle('hidden', !canDrive);
+  if (els.rhythmTapBtn) {
+    els.rhythmTapBtn.disabled = !state.adultFireArmed;
+    els.rhythmTapBtn.classList.toggle('fire-armed', state.adultFireArmed);
+    els.rhythmTapBtn.setAttribute('data-tempo', energetic
+      ? (normalizeUiTempo(movement?.movementTempo) || 'fast')
+      : 'idle');
   }
-
-  const targetTempo = groups.fallbackPlaybackRate
-    ? rhythm.tempo
-    : nearestAvailableTempo(rhythm.tempo, groups);
-  if (!targetTempo) return;
-  if (state.adultTapCandidateTempo === targetTempo) state.adultTapCandidateCount += 1;
-  else {
-    state.adultTapCandidateTempo = targetTempo;
-    state.adultTapCandidateCount = 1;
-  }
-
-  const labels = { slow: 'YAVAŞ', moderate: 'ORTA', fast: 'HIZLI' };
-  const tempoChanged = targetTempo !== state.adultTapTempo;
-  const canReact = rhythm.sampleCount >= 2 && now - state.adultLastTempoSwitchAt >= 180;
-
-  if (canReact) {
-    const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
-    const activeChoice = (position.movementChoices || []).find(
-      choice => choice.id === state.activeMovementChoiceId ||
-        choice.variants?.some(item => item.id === currentMovement?.id)
-    );
-    const coherentPool = (activeChoice?.variants || []).filter(item => item?.sourceVerified === true);
-    const pool = coherentPool.length ? coherentPool : (currentMovement ? [currentMovement] : []);
-    const movement = pickNextVariant(
-      pool,
-      currentMovement?.id || null,
-      state.adultMovementPlayCounts
-    );
-
-    state.adultTapTempo = targetTempo;
-    state.adultLastTempoSwitchAt = now;
-    state.adultTapCandidateCount = 0;
-
-    if (groups.fallbackPlaybackRate && els.video) {
-      els.video.playbackRate = playbackRateForTapTempo(targetTempo);
-    }
-    if (movement && movement.id !== currentMovement?.id) {
-      selectAdultMovement(movement.id, true, null, {
-        awardProgress: false,
-        rhythmTempo: targetTempo
-      });
-    }
-
-    logEngineEvent('RHYTHM_TAP_APPLIED', {
-      positionId: position.id,
-      movementId: movement?.id || currentMovement?.id || null,
-      tempo: targetTempo,
-      playbackRate: Number(els.video?.playbackRate || 1),
-      tapsPerSecond: rhythm.tapsPerSecond,
-      sequenceChanged: Boolean(movement && movement.id !== currentMovement?.id)
-    });
-  }
-
-  els.rhythmTapBtn?.setAttribute('data-tempo', state.adultTapTempo === 'unclear' ? targetTempo : state.adultTapTempo);
   if (els.rhythmTapLabel) {
-    els.rhythmTapLabel.textContent = `RİTİM: ${labels[state.adultTapTempo] || labels[targetTempo]}`;
+    els.rhythmTapLabel.textContent = state.adultFireHeld
+      ? 'ATEŞTE'
+      : state.adultFireArmed
+        ? 'ATEŞ'
+        : 'ATEŞ KAPALI';
   }
   if (els.rhythmTapStatus) {
-    els.rhythmTapStatus.textContent = groups.fallbackPlaybackRate
-      ? `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · ${Number(els.video?.playbackRate || 1).toFixed(2)}× oynuyor`
-      : `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · hızına göre gerçek sekans seçiliyor`;
+    els.rhythmTapStatus.textContent = canDrive
+      ? fireMomentCopy(movement)
+      : 'Önce bu pozisyondaki gerçek bir kesiti seç';
   }
-  if (typeof navigator !== 'undefined' && navigator.vibrate) {
-    if (tempoChanged) navigator.vibrate([10, 22, 10]);
-    else navigator.vibrate({ slow: 8, moderate: 13, fast: 19 }[state.adultTapTempo] || 10);
+}
+
+function normalizeUiTempo(value) {
+  const tempo = String(value || '').toLowerCase();
+  return ['slow', 'moderate', 'fast'].includes(tempo) ? tempo : '';
+}
+
+function fireAdvanceOrReplay(position, currentMovement, { awardProgress = true } = {}) {
+  if (!position || !currentMovement) return false;
+  const next = nextFireAdvance(position.movements, currentMovement.id);
+  if (next && next.id !== currentMovement.id) {
+    selectAdultMovement(next.id, true, null, {
+      awardProgress,
+      positionChanged: false
+    });
+    return true;
   }
+  if (els.video) {
+    state.adultAwaitingFire = false;
+    els.video.pause();
+    seekAdultLoop(currentMovement.loopStartTime, state.adultSelectionToken);
+    els.video.play().catch(() => {});
+  }
+  return false;
+}
+
+function handleAdultFireDown() {
+  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
+  const movement = currentAdultMovement();
+  if (!position || !movement || !state.adultFireArmed || state.adultOutcomePhase !== 'idle') return;
+  state.adultFireHeld = true;
+  els.rhythmTapBtn?.classList.add('fire-held', 'tap-pulse');
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'ATEŞTE';
+  if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([12, 18, 22]);
+
+  if (els.video?.paused || state.adultAwaitingFire) {
+    state.adultAwaitingFire = false;
+    if (Number(els.video?.currentTime) >= Number(movement.loopEndTime) - 0.12) {
+      fireAdvanceOrReplay(position, movement);
+    } else {
+      els.video.play().catch(() => {});
+    }
+  } else if (Number(els.video?.currentTime) >= Number(movement.loopEndTime) - 0.35) {
+    fireAdvanceOrReplay(position, movement);
+  }
+
+  logEngineEvent('FIRE_ENGAGED', {
+    positionId: position.id,
+    movementId: movement.id,
+    tempo: movement.movementTempo || 'unclear'
+  });
+}
+
+function handleAdultFireUp() {
+  if (!state.adultFireHeld) return;
+  state.adultFireHeld = false;
+  els.rhythmTapBtn?.classList.remove('fire-held', 'tap-pulse');
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = state.adultFireArmed ? 'ATEŞ' : 'ATEŞ KAPALI';
+  logEngineEvent('FIRE_RELEASED', {
+    movementId: state.activeMovementId
+  });
 }
 
 function playNextAdultVariant() {
@@ -3119,7 +3118,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   const movementChoices = position.movementChoices?.length
     ? position.movementChoices
-    : buildVerifiedMovementChoices(position.movements, position.label, 4);
+    : buildVerifiedMovementChoices(position.movements, position.label, 8);
   position.movementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
@@ -3140,7 +3139,8 @@ function selectAdultPosition(positionId, shouldSeek = true) {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
         : null;
-      const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
+      const movement = pickNextChronologicalVariant(choice.variants, currentId) ||
+        choice.variants[0];
       if (!movement) return;
       state.activeMovementChoiceId = choice.id;
       selectAdultMovement(movement.id, true);
@@ -3149,15 +3149,14 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   });
 
   updateVariantButton(position);
-  updateRhythmControl(position);
+  updateFireControl(position);
 
+  const chronological = [...(position.movements || [])]
+    .filter(item => item?.sourceVerified !== false)
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   const movement = shouldSeek
-    ? pickNextVariant(
-        position.movements,
-        state.activeMovementId,
-        state.adultMovementPlayCounts
-      )
-    : position.movements.find(item => item.id === state.activeMovementId) || position.movements[0];
+    ? chronological[0] || null
+    : chronological.find(item => item.id === state.activeMovementId) || chronological[0];
 
   if (movement) {
     selectAdultMovement(
@@ -3214,8 +3213,10 @@ function selectAdultMovement(
   }
 
   updateVariantButton(position);
+  updateFireControl(position);
 
   if (shouldSeek && els.video) {
+    state.adultAwaitingFire = false;
     els.video.pause();
     seekAdultLoop(movement.loopStartTime, effectiveToken);
     els.video.play().catch(() => {});
@@ -3448,8 +3449,25 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
-  if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
+  if (mediaTime < movement.loopStartTime - 0.15) {
     seekAdultLoop(movement.loopStartTime, state.adultSelectionToken);
+    return;
+  }
+
+  if (mediaTime >= movement.loopEndTime - 0.04) {
+    const next = state.adultFireHeld
+      ? nextFireAdvance(position.movements, movement.id)
+      : null;
+    if (next && next.id !== movement.id) {
+      selectAdultMovement(next.id, true, state.adultSelectionToken, {
+        awardProgress: true,
+        positionChanged: false
+      });
+      return;
+    }
+    state.adultAwaitingFire = true;
+    els.video.pause();
+    updateFireControl(position);
     return;
   }
 
@@ -3498,13 +3516,21 @@ if (els.nextVariantBtn) {
 
 els.rhythmTapBtn?.addEventListener('pointerdown', event => {
   event.preventDefault();
-  handleAdultRhythmTap(event.timeStamp);
+  handleAdultFireDown();
 });
+
+els.rhythmTapBtn?.addEventListener('pointerup', () => handleAdultFireUp());
+els.rhythmTapBtn?.addEventListener('pointerleave', () => handleAdultFireUp());
+els.rhythmTapBtn?.addEventListener('pointercancel', () => handleAdultFireUp());
 
 els.rhythmTapBtn?.addEventListener('keydown', event => {
   if (event.key !== 'Enter' && event.key !== ' ') return;
   event.preventDefault();
-  handleAdultRhythmTap(performance.now());
+  handleAdultFireDown();
+});
+els.rhythmTapBtn?.addEventListener('keyup', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  handleAdultFireUp();
 });
 
 els.adultPanelToggleBtn?.addEventListener('click', () => {
