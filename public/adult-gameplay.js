@@ -230,6 +230,130 @@ export function pickNextVariant(variants, currentId = null, playCounts = new Map
   })[0] || null;
 }
 
+export function pickNextChronologicalVariant(variants, currentId = null) {
+  const playable = (Array.isArray(variants) ? variants : [])
+    .filter(item =>
+      item &&
+      Number.isFinite(Number(item.loopStartTime)) &&
+      Number.isFinite(Number(item.loopEndTime)) &&
+      Number(item.loopEndTime) > Number(item.loopStartTime)
+    )
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+
+  if (!playable.length) return null;
+  const currentIndex = playable.findIndex(item => item.id === currentId);
+  if (currentIndex < 0) return playable[0];
+  return playable[currentIndex + 1] || null;
+}
+
+export function pickNearbyRhythmVariant(
+  variants,
+  currentMovement = null,
+  mediaTime = null,
+  playCounts = new Map(),
+  { maxForwardSeconds = 35, backwardTolerance = 0.2 } = {}
+) {
+  const playable = (Array.isArray(variants) ? variants : [])
+    .filter(item =>
+      item &&
+      Number.isFinite(Number(item.loopStartTime)) &&
+      Number.isFinite(Number(item.loopEndTime)) &&
+      Number(item.loopEndTime) > Number(item.loopStartTime)
+    );
+  if (!playable.length) return null;
+
+  const currentStart = Number(currentMovement?.loopStartTime);
+  const currentEnd = Number(currentMovement?.loopEndTime);
+  const cursor = mediaTime !== null && mediaTime !== undefined && Number.isFinite(Number(mediaTime))
+    ? Number(mediaTime)
+    : (Number.isFinite(currentStart) ? currentStart : Number(playable[0].loopStartTime));
+  const floor = Number.isFinite(currentStart)
+    ? currentStart - Math.max(0, Number(backwardTolerance) || 0)
+    : Number.NEGATIVE_INFINITY;
+  const ceilingAnchor = Number.isFinite(currentEnd) ? Math.max(cursor, currentEnd) : cursor;
+  const ceiling = ceilingAnchor + Math.max(5, Number(maxForwardSeconds) || 35);
+  const local = playable.filter(item => {
+    const start = Number(item.loopStartTime);
+    return start >= floor && start <= ceiling;
+  });
+  if (!local.length) return null;
+
+  const alternatives = local.length > 1
+    ? local.filter(item => item.id !== currentMovement?.id)
+    : local;
+  const pool = alternatives.length ? alternatives : local;
+  return [...pool].sort((a, b) => {
+    const distanceA = Math.abs(Number(a.loopStartTime) - cursor);
+    const distanceB = Math.abs(Number(b.loopStartTime) - cursor);
+    if (distanceA !== distanceB) return distanceA - distanceB;
+    const countA = Number(playCounts?.get?.(a.id) || 0);
+    const countB = Number(playCounts?.get?.(b.id) || 0);
+    if (countA !== countB) return countA - countB;
+    return Number(a.loopStartTime) - Number(b.loopStartTime);
+  })[0] || null;
+}
+
+export function findAdultSceneForTimeline(
+  scenes,
+  { action = null, time = null, completedSceneIds = new Set(), tolerance = 0.15 } = {}
+) {
+  const isCompleted = id => completedSceneIds?.has?.(id) || false;
+  const available = (Array.isArray(scenes) ? scenes : [])
+    .filter(scene => scene && !isCompleted(scene.id))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  if (!available.length) return null;
+
+  const sceneId = String(action?.adultSceneId || '').trim();
+  if (sceneId) {
+    const exact = available.find(scene =>
+      scene.id === sceneId || (Array.isArray(scene.sourceSceneIds) && scene.sourceSceneIds.includes(sceneId))
+    );
+    if (exact) return exact;
+  }
+
+  const hasExplicitTime = time !== null && time !== undefined && Number.isFinite(Number(time));
+  const point = hasExplicitTime ? Number(time) : Number(action?.startTime);
+  if (Number.isFinite(point)) {
+    const containing = available.find(scene =>
+      point >= Number(scene.startTime) - tolerance && point < Number(scene.endTime) - 0.01
+    );
+    if (containing) return containing;
+  }
+
+  const actionStart = Number(action?.startTime);
+  const actionEnd = Number(action?.endTime);
+  if (!Number.isFinite(actionStart) || !Number.isFinite(actionEnd) || actionEnd <= actionStart) return null;
+  return available
+    .map(scene => ({
+      scene,
+      overlap: Math.max(0, Math.min(actionEnd, Number(scene.endTime)) - Math.max(actionStart, Number(scene.startTime)))
+    }))
+    .filter(item => item.overlap >= Math.min(1, (actionEnd - actionStart) * 0.25))
+    .sort((a, b) => b.overlap - a.overlap)[0]?.scene || null;
+}
+
+export function dedupeVerifiedTimelineActions(actions = []) {
+  const byId = new Map();
+  const withoutId = new Map();
+  for (const action of (Array.isArray(actions) ? actions : [])) {
+    if (!action) continue;
+    const id = String(action.actionId || '').trim();
+    const fallbackKey = [
+      Number(action.startTime).toFixed(3),
+      Number(action.endTime).toFixed(3),
+      String(action.label || '').trim().toLocaleLowerCase('tr-TR')
+    ].join('|');
+    const target = id ? byId : withoutId;
+    const key = id || fallbackKey;
+    const existing = target.get(key);
+    if (!existing || Number(action.confidence || 0) > Number(existing.confidence || 0)) {
+      target.set(key, action);
+    }
+  }
+  return [...byId.values(), ...withoutId.values()]
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime) || Number(a.endTime) - Number(b.endTime));
+}
+
 const TEMPO_ORDER = Object.freeze(['slow', 'moderate', 'fast']);
 
 export function normalizeMovementTempo(value) {
