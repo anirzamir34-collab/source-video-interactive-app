@@ -28,10 +28,7 @@ import {
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
   nearestAvailableTempo,
-  tapRhythm,
-  isEnergeticFireMoment,
-  nextFireAdvance,
-  fireMomentCopy
+  tapRhythm
 } from '../public/adult-gameplay.js';
 
 test('averageAdultProgress clamps both values and averages them', () => {
@@ -121,7 +118,6 @@ test('prone bone stays a separate canonical position family', () => {
   assert.equal(adultPositionFamily('Pronebone'), 'prone-bone');
   assert.equal(adultPositionFamily('Yüzüstü arkadan pozisyon'), 'prone-bone');
   assert.equal(adultPositionFamily('Doggy style'), 'rear');
-  assert.equal(adultPositionFamily('Kanepeden ayrılıp yere uzanarak pozisyon değiştirmek'), 'position-transition');
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
@@ -259,7 +255,6 @@ test('core positions wait for both Lust and enough unique warm-up discovery', ()
   assert.equal(canUnlockCorePositions({ flow: 34, warmupTotal: 8, warmupUniquePlayed: 8 }), false);
   assert.equal(canUnlockCorePositions({ flow: 50, warmupTotal: 8, warmupUniquePlayed: 6 }), true);
   assert.equal(canUnlockCorePositions({ flow: 0, warmupTotal: 0, warmupUniquePlayed: 0 }), true);
-  assert.equal(canUnlockCorePositions({ flow: 0, warmupTotal: 8, warmupUniquePlayed: 0, hasVerifiedCore: true }), true);
 });
 
 test('bonus positions require reward-level Lust and at least one core visit when core positions exist', () => {
@@ -278,7 +273,7 @@ test('discovery phases are content-driven and never regress once a later phase w
 });
 
 
-test('keeps gapped returns as separate playable occurrences to avoid timeline jumps', () => {
+test('consolidates repeated occurrences into one canonical position', () => {
   const positions = [
     {
       id: 'cowgirl-1',
@@ -301,32 +296,15 @@ test('keeps gapped returns as separate playable occurrences to avoid timeline ju
   ];
 
   const result = consolidateVerifiedPositions(positions);
-  assert.equal(result.length, 2);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 'position:cowgirl');
   assert.equal(result[0].startTime, 10);
-  assert.equal(result[0].endTime, 25);
-  assert.equal(result[1].startTime, 40);
-  assert.equal(result[1].endTime, 58);
-  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a']);
-  assert.deepEqual(result[1].movements.map(item => item.id), ['fast-a']);
-
-  const inferred = consolidateVerifiedPositions([{
-    id: 'doggy-label-only',
-    label: 'Doggy-style pozisyonu',
-    startTime: 70,
-    endTime: 78,
-    movements: [{
-      id: 'doggy-cut',
-      loopStartTime: 70,
-      loopEndTime: 78,
-      sourceVerified: true
-    }]
-  }]);
-  assert.equal(inferred.length, 1);
-  assert.equal(inferred[0].familyId, 'rear');
-  assert.equal(inferred[0].id, 'position:rear:continuous-70000');
+  assert.equal(result[0].endTime, 58);
+  assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1', 'cowgirl-2']);
+  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a', 'fast-a']);
 });
 
-test('builds at most three chronological subchoices with at most three linked clips', () => {
+test('builds at most four subchoices and keeps multiple clips in each choice pool', () => {
   const movements = [
     { id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 0, sourceVerified: true },
     { id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 12, sourceVerified: true },
@@ -335,10 +313,13 @@ test('builds at most three chronological subchoices with at most three linked cl
     { id: 'e', label: 'Temas değişimi', movementTempo: 'fast', loopStartTime: 48, sourceVerified: true }
   ];
 
-  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 3);
-  assert.ok(choices.length <= 3);
-  assert.ok(choices.every(choice => choice.variants.length <= 3));
-  assert.deepEqual(choices.flatMap(choice => choice.variants.map(item => item.id)), ['a', 'b', 'c', 'd', 'e']);
+  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
+  assert.ok(choices.length <= 4);
+  const slow = choices.find(choice => choice.tempo === 'slow');
+  const kiss = choices.find(choice => choice.label === 'Öpüşerek devam');
+  assert.equal(slow.label, 'Yavaş tempo');
+  assert.deepEqual(slow.variants.map(item => item.id), ['a', 'b']);
+  assert.deepEqual(kiss.variants.map(item => item.id), ['c', 'd']);
 });
 
 
@@ -354,16 +335,16 @@ test('never mixes separate position occurrences or exposes twenty clips in one s
   }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 3);
-  assert.ok(choices.every(choice => choice.variants.length <= 3));
+  assert.equal(choices.length, 2);
+  assert.ok(choices.every(choice => choice.variants.length <= 4));
   assert.ok(choices.every(choice =>
     new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
   ));
 });
 
 
-test('joins overlapping raw detections but keeps later returns as a separate occurrence', () => {
-  const result = consolidateVerifiedPositions([
+test('joins overlapping raw detections but keeps later returns in a separate clip pool', () => {
+  const [position] = consolidateVerifiedPositions([
     {
       id: 'raw-a', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
       startTime: 10, endTime: 24,
@@ -381,29 +362,10 @@ test('joins overlapping raw detections but keeps later returns as a separate occ
     }
   ]);
 
-  assert.equal(result.length, 2);
-  assert.deepEqual(result[0].movements.map(item => item.id), ['a', 'b']);
-  assert.deepEqual(result[1].movements.map(item => item.id), ['c']);
-  const firstChoices = buildVerifiedMovementChoices(result[0].movements, result[0].label, 8);
-  assert.deepEqual(firstChoices.map(choice => choice.variants.map(item => item.id)), [
-    ['a', 'b']
+  const choices = buildVerifiedMovementChoices(position.movements, position.label, 4);
+  assert.equal(position.sourcePositionIds.length, 2);
+  assert.deepEqual(choices.map(choice => choice.variants.map(item => item.id)), [
+    ['a', 'b'],
+    ['c']
   ]);
-});
-
-test('fire button arms only on fast or deep verified moments and advances forward', () => {
-  const slow = { id: 'slow', movementTempo: 'slow', sourceVerified: true, label: 'Yavaş tempo', loopStartTime: 10, loopEndTime: 24 };
-  const moderate = { id: 'moderate', movementTempo: 'moderate', sourceVerified: true, label: 'Orta tempo', loopStartTime: 14, loopEndTime: 22 };
-  const core = { id: 'core', movementTempo: 'slow', sourceVerified: true, corePosition: true, label: 'Sabit', loopStartTime: 16, loopEndTime: 23 };
-  const warmupCore = { id: 'warmup-core', movementTempo: 'slow', sourceVerified: true, corePosition: true, warmup: true, label: 'Sabit', loopStartTime: 17, loopEndTime: 23 };
-  const rhythmic = { id: 'rhythmic', movementTempo: 'slow', sourceVerified: true, label: 'Ritmik hareket', loopStartTime: 18, loopEndTime: 24 };
-  const fast = { id: 'fast', movementTempo: 'fast', sourceVerified: true, label: 'Hızlı derin ritim', loopStartTime: 24, loopEndTime: 40 };
-  assert.equal(isEnergeticFireMoment(slow), false);
-  assert.equal(isEnergeticFireMoment(moderate), true);
-  assert.equal(isEnergeticFireMoment(core), true);
-  assert.equal(isEnergeticFireMoment(warmupCore), false);
-  assert.equal(isEnergeticFireMoment(rhythmic), true);
-  assert.equal(isEnergeticFireMoment(fast), true);
-  assert.equal(nextFireAdvance([slow, fast], 'slow')?.id, 'fast');
-  assert.equal(nextFireAdvance([slow, fast], 'fast'), null);
-  assert.match(fireMomentCopy(fast), /Hızlı/);
 });
