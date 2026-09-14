@@ -1,9 +1,9 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
-export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 82;
+export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
 export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
-export const DEFAULT_BONUS_UNLOCK_PROGRESS = 72;
-export const MIN_CORE_PLAY_SECONDS_FOR_OUTCOME = 18;
+export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
+export const MIN_CORE_PLAY_SECONDS_FOR_OUTCOME = 75;
 
 export function averageAdultProgress(maleProgress, femaleProgress) {
   const male = clamp(maleProgress, 0, 100);
@@ -25,12 +25,13 @@ export function canUnlockOutcome({
   outcome,
   climaxProgress = 0,
   coreVisitedCount = 0,
-  corePlaySeconds = 0
+  corePlaySeconds = 0,
+  requiredCorePlaySeconds = MIN_CORE_PLAY_SECONDS_FOR_OUTCOME
 } = {}) {
   const visited = Math.max(0, Math.floor(Number(coreVisitedCount) || 0));
   const playedSeconds = Math.max(0, Number(corePlaySeconds) || 0);
   if (visited < 1) return false;
-  if (playedSeconds < MIN_CORE_PLAY_SECONDS_FOR_OUTCOME) return false;
+  if (playedSeconds < Math.max(MIN_CORE_PLAY_SECONDS_FOR_OUTCOME, Number(requiredCorePlaySeconds) || 0)) return false;
   return isOutcomeUnlocked(outcome, climaxProgress, climaxProgress);
 }
 
@@ -49,12 +50,63 @@ export function positionUnlockProgress({
     return 0;
   }
   if (category === 'anal') {
-    return clamp(DEFAULT_BONUS_UNLOCK_PROGRESS + order * 8, 72, 94);
+    return clamp(DEFAULT_BONUS_UNLOCK_PROGRESS + order * 7, 78, 96);
   }
   if (category === 'other') {
     return clamp(58 + order * 10, 58, 90);
   }
   return clamp(DEFAULT_POSITION_UNLOCK_PROGRESS + order * 12, 35, 82);
+}
+
+export function requiredCorePlaySecondsForOutcome(sceneDuration = 0) {
+  const duration = Math.max(0, Number(sceneDuration) || 0);
+  return clamp(duration * 0.62, MIN_CORE_PLAY_SECONDS_FOR_OUTCOME, 300);
+}
+
+export function expandVerifiedMovementVariants(
+  movements,
+  positionStart,
+  positionEnd,
+  { minSeconds = 10, maxVariants = 4 } = {}
+) {
+  const start = Math.max(0, Number(positionStart) || 0);
+  const end = Math.max(start, Number(positionEnd) || start);
+  const minimum = Math.max(10, Number(minSeconds) || 10);
+  const limit = Math.max(1, Math.min(4, Math.floor(Number(maxVariants) || 4)));
+  const source = (Array.isArray(movements) ? movements : [])
+    .filter(item => Number(item?.loopEndTime) - Number(item?.loopStartTime) >= minimum)
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+
+  if (!source.length || source.length >= 3 || end - start < minimum * 2) {
+    return source.slice(0, limit);
+  }
+
+  const positionDuration = end - start;
+  const desired = Math.min(
+    limit,
+    Math.max(source.length, positionDuration >= 60 ? 4 : positionDuration >= 30 ? 3 : 2)
+  );
+  const coverageStart = Math.max(start, Math.min(...source.map(item => Number(item.loopStartTime))));
+  const coverageEnd = Math.min(end, Math.max(...source.map(item => Number(item.loopEndTime))));
+  const coverage = coverageEnd - coverageStart;
+  if (coverage < desired * minimum) return source.slice(0, limit);
+
+  const sliceDuration = coverage / desired;
+  return Array.from({ length: desired }, (_, index) => {
+    const sliceStart = coverageStart + sliceDuration * index;
+    const sliceEnd = index === desired - 1 ? coverageEnd : coverageStart + sliceDuration * (index + 1);
+    const evidence = source.find(item =>
+      Number(item.loopStartTime) < sliceEnd && Number(item.loopEndTime) > sliceStart
+    ) || source[0];
+    return {
+      ...evidence,
+      id: `${evidence.id}:variant-${index + 1}`,
+      label: `${String(evidence.label || 'Gerçek hareket').replace(/\s+·\s+Bölüm\s+\d+$/iu, '')} · Bölüm ${index + 1}`,
+      loopStartTime: sliceStart,
+      loopEndTime: sliceEnd,
+      derivedFromVerifiedSegment: evidence.id
+    };
+  });
 }
 
 export const ADULT_PHASE_ORDER = Object.freeze({
