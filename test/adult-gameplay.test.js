@@ -392,10 +392,14 @@ test('fire button arms only on fast or deep verified moments and advances forwar
   const slow = { id: 'slow', movementTempo: 'slow', sourceVerified: true, label: 'Yavaş tempo', loopStartTime: 10, loopEndTime: 24 };
   const moderate = { id: 'moderate', movementTempo: 'moderate', sourceVerified: true, label: 'Orta tempo', loopStartTime: 14, loopEndTime: 22 };
   const core = { id: 'core', movementTempo: 'slow', sourceVerified: true, corePosition: true, label: 'Sabit', loopStartTime: 16, loopEndTime: 23 };
+  const warmupCore = { id: 'warmup-core', movementTempo: 'slow', sourceVerified: true, corePosition: true, warmup: true, label: 'Sabit', loopStartTime: 17, loopEndTime: 23 };
+  const rhythmic = { id: 'rhythmic', movementTempo: 'slow', sourceVerified: true, label: 'Ritmik hareket', loopStartTime: 18, loopEndTime: 24 };
   const fast = { id: 'fast', movementTempo: 'fast', sourceVerified: true, label: 'Hızlı derin ritim', loopStartTime: 24, loopEndTime: 40 };
-  assert.equal(isEnergeticFireMoment(slow), true);
+  assert.equal(isEnergeticFireMoment(slow), false);
   assert.equal(isEnergeticFireMoment(moderate), true);
   assert.equal(isEnergeticFireMoment(core), true);
+  assert.equal(isEnergeticFireMoment(warmupCore), false);
+  assert.equal(isEnergeticFireMoment(rhythmic), true);
   assert.equal(isEnergeticFireMoment(fast), true);
   assert.equal(nextFireAdvance([slow, fast], 'slow')?.id, 'fast');
   assert.equal(nextFireAdvance([slow, fast], 'fast'), null);
