@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import fs from 'fs';
+import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -446,6 +447,7 @@ Rules:
 - Turkish labels must be short and directly describe the male action
 - Detect every verified adult scene boundary and mark adultScene true only inside that real scene.
 - Set one stable adultSceneId for every action belonging to the same adult scene.
+- Every action whose time interval falls inside a verified adult scene must keep adultScene true and the same adultSceneId, including conversation, pauses, transitions and camera changes. Never emit a generic non-adult timeline choice from inside that interval.
 - Treat one continuous consensual intimate encounter as one adultScene across foreplay, oral/manual activity, position changes, climax and aftermath. Do not create a new adultSceneId merely because the interaction changes from touching/undressing to a sexual position or from one position to another.
 - Start a new adultSceneId only after a clear narrative, location, participant or substantial time break.
 - Detect a position only when the source visibly shows a stable adult-act body configuration sustained over time; then use actionType "position".
@@ -730,10 +732,12 @@ Rules:
           : Math.max(0.4, strictMinimum - 0.18);
         return Number(action.confidence || 0) >= minimum;
       })
-      .sort((a, b) => a.startTime - b.startTime)
-      .filter((action, index, list) =>
-        index === 0 || action.startTime >= list[index - 1].endTime
-      );
+      .sort((a, b) => a.startTime - b.startTime);
+
+    // Parent positions and their verified internal movement loops overlap by
+    // design. Remove only true duplicates; never discard a valid child
+    // segment merely because it lives inside its parent interval.
+    const dedupedActions = dedupeVerifiedTimelineActions(actions);
 
     return res.json({
       available: true,
@@ -746,7 +750,7 @@ Rules:
       protagonistProfile: String(parsed.protagonistProfile || protagonistProfile || ''),
       videoPrompt: String(parsed.videoPrompt || ''),
       storyContext: parsed.storyContext && typeof parsed.storyContext === 'object' ? parsed.storyContext : {},
-      actions,
+      actions: dedupedActions,
       analysisGaps: Array.isArray(parsed.analysisGaps) ? parsed.analysisGaps : [],
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []
     });
