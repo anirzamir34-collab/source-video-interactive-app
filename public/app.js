@@ -2037,28 +2037,27 @@ function prepareAdultScenes() {
     `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
   const verifiedPositionSceneIds = new Set(
     actions.filter(action => {
-      if (action?.adultScene !== true || action?.sourceVerified !== true) return false;
-      if (String(action.actionType || '').toLowerCase() !== 'position') return false;
-      const family = adultSemanticFamily(action.positionLabel || action.positionId || action.label);
+      if (action?.sourceVerified !== true) return false;
+      // A verified position may arrive without the optional adultScene flag
+      // or activityEvidence. The canonical family in its label is enough to
+      // route it into the dedicated adult panel; never require model-only
+      // metadata that would otherwise leak the action into normal choices.
+      const family = adultSemanticFamily([
+        action.positionLabel,
+        action.positionId,
+        action.label,
+        action.movementType
+      ].filter(Boolean).join(' '));
       if (!family) return false;
-      const route = String(action.activityType || '').toLowerCase();
-      const explicitRoute = ['vaginal', 'anal', 'oral', 'manual'].includes(route);
-      const routeEvidence = String(action.activityEvidence || '').trim();
-      // A body arrangement alone (lap sitting, hugging, dancing) is not enough.
-      // Penetrative/oral/manual evidence must be independently asserted and
-      // supported before the dedicated adult player can own the timeline.
-      if (!explicitRoute || Number(action.activityTypeConfidence || 0) < 0.78 || !routeEvidence) {
-        return false;
-      }
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
       return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6 &&
-        Number(action.confidence || 0) >= 0.78;
+        Number(action.confidence || 0) >= 0.6;
     }).map(sceneIdFor)
   );
 
   actions.filter(action =>
-    action.adultScene === true && verifiedPositionSceneIds.has(sceneIdFor(action))
+    verifiedPositionSceneIds.has(sceneIdFor(action))
   ).forEach((action, index) => {
     const sceneId = sceneIdFor(action);
 
