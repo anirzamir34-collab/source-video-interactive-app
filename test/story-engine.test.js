@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   mergeStoryContexts,
   normalizeStoryContext,
+  sensoryActionMeta,
   storyChoiceLabelForAction
 } from '../public/story-engine.js';
 
@@ -22,6 +23,19 @@ test('uses narrative choice only when evidence is strong enough', () => {
     storyConfidence: 0.70,
     storyEvidence: 'Samimi davranıyorlar.'
   }), 'Kadına yaklaş');
+});
+
+test('sensory cues require direct evidence and sufficient confidence', () => {
+  assert.deepEqual(sensoryActionMeta({ audioIntensity: 'high', sensoryConfidence: 0.9 }).cues, []);
+  assert.deepEqual(sensoryActionMeta({
+    audioIntensity: 'high',
+    nonSpeechAudio: 'moan',
+    gazeIntensity: 'mutual',
+    observedAffect: 'tense',
+    bodyResponse: 'rhythmic',
+    sensoryConfidence: 0.86,
+    sensoryEvidence: 'Ses yükseliyor; iki karakter karşılıklı bakıyor ve görünür hareket ritmik.'
+  }).cues, ['Yoğun inleme', 'Karşılıklı yoğun bakış', 'Gergin görünüm']);
 });
 
 test('normalizes story evidence without upgrading uncertainty', () => {
