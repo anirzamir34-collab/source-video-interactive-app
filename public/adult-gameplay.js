@@ -449,7 +449,29 @@ export function consolidateVerifiedPositions(positions = []) {
         return true;
       })
       .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-    position.sourcePositionIds = [...new Set(position.sourcePositionIds)];
+    const ranges = [...position.sourceRanges]
+      .filter(range => Number.isFinite(range.startTime) && Number.isFinite(range.endTime))
+      .sort((a, b) => a.startTime - b.startTime);
+    const occurrenceBySource = new Map();
+    let cluster = null;
+    for (const range of ranges) {
+      if (!cluster || range.startTime > cluster.endTime + 1.25) {
+        cluster = {
+          id: `${position.familyId}:continuous-${Math.round(range.startTime * 1000)}`,
+          startTime: range.startTime,
+          endTime: range.endTime
+        };
+      } else {
+        cluster.endTime = Math.max(cluster.endTime, range.endTime);
+      }
+      occurrenceBySource.set(String(range.id), cluster.id);
+    }
+    position.movements = position.movements.map(movement => ({
+      ...movement,
+      sourcePositionId: occurrenceBySource.get(String(movement.sourcePositionId)) ||
+        String(movement.sourcePositionId)
+    }));
+    position.sourcePositionIds = [...new Set(position.movements.map(item => item.sourcePositionId))];
     return position;
   }).sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
