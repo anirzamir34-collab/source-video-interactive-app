@@ -229,6 +229,7 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
     const duration = Math.max(0, Number(req.body?.duration || 0));
     const timestamps = String(req.body?.timestamps || '[]');
     const motionProfile = String(req.body?.motionProfile || '[]');
+    const sceneBoundaries = String(req.body?.sceneBoundaries || '[]').slice(0, 12000);
     const chunkStart = Math.max(0, Number(req.body?.chunkStart || 0));
     const chunkEnd = Math.min(
       duration,
@@ -282,6 +283,9 @@ scene changes. Never invent alternatives.
 Video duration: ${duration} seconds
 Timestamp metadata for this chunk: ${timestamps}
 Local visual-change profile for this chunk: ${motionProfile}
+Detected visual scene boundaries for this chunk: ${sceneBoundaries}
+- Treat boundary timestamps as navigation hints, not proof of an action.
+- Prefer starting or ending an action near a boundary only when the adjacent frames visibly confirm the change.
 Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
 ${reviewInstructions}
 DIALOGUE AND SCENE CONTEXT:
@@ -1069,7 +1073,7 @@ async function resolvePublicVideoPage(startUrl) {
 
 async function resolveWithSiteExtractor(rawUrl) {
   const userAgent = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36';
-  const output = await youtubedl(rawUrl, {
+  const baseOptions = {
     dumpSingleJson: true,
     skipDownload: true,
     noWarnings: true,
@@ -1079,10 +1083,25 @@ async function resolveWithSiteExtractor(rawUrl) {
     userAgent,
     referer: rawUrl,
     format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best[ext=mp4]/best'
-  }, {
+  };
+  const runtimeOptions = {
     timeout: 90000,
     maxBuffer: 16 * 1024 * 1024
-  });
+  };
+
+  let output;
+  let browserImpersonation = false;
+  let impersonationError = '';
+  try {
+    output = await youtubedl(rawUrl, {
+      ...baseOptions,
+      impersonate: 'chrome'
+    }, runtimeOptions);
+    browserImpersonation = true;
+  } catch (error) {
+    impersonationError = String(error?.stderr || error?.message || error).slice(0, 500);
+    output = await youtubedl(rawUrl, baseOptions, runtimeOptions);
+  }
 
   const info = Array.isArray(output?.entries) ? output.entries[0] : output;
   if (!info || typeof info !== 'object') {
@@ -1117,7 +1136,10 @@ async function resolveWithSiteExtractor(rawUrl) {
     type,
     cookie: String(httpHeaders.Cookie || httpHeaders.cookie || ''),
     userAgent: String(httpHeaders['User-Agent'] || httpHeaders['user-agent'] || userAgent),
-    extractor: String(info.extractor_key || info.extractor || 'yt-dlp')
+    extractor: String(info.extractor_key || info.extractor || 'yt-dlp'),
+    browserImpersonation,
+    extractorFallbackUsed: !browserImpersonation,
+    impersonationError: browserImpersonation ? '' : impersonationError
   };
 }
 
