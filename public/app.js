@@ -1948,7 +1948,7 @@ function isBonusPosition(position) {
 }
 
 
-const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 8;
+const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 0.4;
 
 function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
@@ -1999,10 +1999,24 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
 function prepareAdultScenes() {
   const actions = state.analysis?.actions || [];
   const sceneMap = new Map();
+  const sceneIdFor = action => action.adultSceneId ||
+    `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
+  const verifiedPositionSceneIds = new Set(
+    actions.filter(action => {
+      if (action?.adultScene !== true || action?.sourceVerified !== true) return false;
+      if (String(action.actionType || '').toLowerCase() !== 'position') return false;
+      if (!adultSemanticFamily(action.positionLabel || action.positionId || action.label)) return false;
+      const start = Number(action.positionStartTime ?? action.startTime);
+      const end = Number(action.positionEndTime ?? action.endTime);
+      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6 &&
+        Number(action.confidence || 0) >= 0.72;
+    }).map(sceneIdFor)
+  );
 
-  actions.filter(action => action.adultScene).forEach((action, index) => {
-    const sceneId = action.adultSceneId ||
-      `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
+  actions.filter(action =>
+    action.adultScene === true && verifiedPositionSceneIds.has(sceneIdFor(action))
+  ).forEach((action, index) => {
+    const sceneId = sceneIdFor(action);
 
     if (!sceneMap.has(sceneId)) {
       sceneMap.set(sceneId, {
@@ -2187,11 +2201,7 @@ function prepareAdultScenes() {
           return items;
         }, []);
 
-      return {
-        ...scene,
-        foreplay,
-        outcomes,
-        positions: [...scene.positions.values()]
+      const positions = [...scene.positions.values()]
           .map(position => {
             let movements = expandVerifiedMovementVariants(
               position.movements,
@@ -2224,10 +2234,23 @@ function prepareAdultScenes() {
             return { ...position, movements };
           })
           .filter(position => position.endTime - position.startTime >= 10)
-          .sort((a, b) => a.startTime - b.startTime)
+          .sort((a, b) => a.startTime - b.startTime);
+      if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
+      const interactionStart = Math.min(...positions.map(position => Number(position.startTime)));
+      const interactionEnd = Math.max(...positions.map(position => Number(position.endTime)));
+      return {
+        ...scene,
+        // The interactive panel starts only when a verified position is on
+        // screen, never at an earlier conversation/approach/foreplay frame.
+        startTime: interactionStart,
+        endTime: interactionEnd,
+        postSceneTime: Math.max(Number(scene.postSceneTime) || 0, interactionEnd),
+        foreplay: foreplay.filter(item => Number(item.startTime) >= interactionStart - 0.05),
+        outcomes: outcomes.filter(item => Number(item.startTime) >= interactionStart - 0.05),
+        positions
       };
     })
-    .filter(scene => scene.positions.length || scene.foreplay.length)
+    .filter(scene => scene.positions.length)
     .sort((a, b) => a.startTime - b.startTime);
 
   state.adultScenes = mergeAdultSceneFragments(
@@ -2616,24 +2639,38 @@ function renderAdultProgressiveUI(force = false) {
     return;
   }
 
-  const categories = [...new Map(unlockedCore.map(position => [
-    position.categoryId,
-    { id: position.categoryId, label: position.categoryLabel }
-  ])).values()];
+  const verifiedRoutes = new Set(
+    unlockedCore
+      .filter(position =>
+        ['vaginal', 'anal'].includes(String(position.activityType || '')) &&
+        Number(position.activityTypeConfidence || 0) >= 0.78
+      )
+      .map(position => String(position.activityType))
+  );
+  const showRouteCategories = verifiedRoutes.has('vaginal') && verifiedRoutes.has('anal');
+  const categories = showRouteCategories
+    ? [
+        { id: 'all', label: 'Tümü' },
+        { id: 'vaginal', label: 'Vajinal' },
+        { id: 'anal', label: 'Anal' }
+      ]
+    : [{ id: 'all', label: 'Tümü' }];
 
   if (els.categoryTabs) els.categoryTabs.innerHTML = '';
-  categories.forEach(category => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'category-tab';
-    button.textContent = category.label;
-    button.dataset.categoryId = category.id;
-    button.addEventListener('click', () => selectAdultCategory(category.id, true));
-    els.categoryTabs?.appendChild(button);
-  });
+  if (showRouteCategories) {
+    categories.forEach(category => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'category-tab';
+      button.textContent = category.label;
+      button.dataset.categoryId = category.id;
+      button.addEventListener('click', () => selectAdultCategory(category.id, true));
+      els.categoryTabs?.appendChild(button);
+    });
+  }
 
-  if (els.categoryCount) els.categoryCount.textContent = `${categories.length} açık`;
-  els.categorySection?.classList.toggle('hidden', categories.length <= 1);
+  if (els.categoryCount) els.categoryCount.textContent = showRouteCategories ? '2 doğrulanmış tür' : '';
+  els.categorySection?.classList.toggle('hidden', !showRouteCategories);
   els.positionSection?.classList.remove('hidden');
 
   const selectedCategory = categories.find(item => item.id === state.activeAdultCategory) || categories[0];
@@ -2723,7 +2760,12 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
   const positions = unlockedAdultPositions(scene)
-    .filter(item => !isWarmupPosition(item) && item.categoryId === categoryId);
+    .filter(item => {
+      if (isWarmupPosition(item)) return false;
+      if (categoryId === 'all') return true;
+      return String(item.activityType || '') === categoryId &&
+        Number(item.activityTypeConfidence || 0) >= 0.78;
+    });
 
   if (!positions.length) return;
 
@@ -2952,9 +2994,12 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
 
   if (canReact) {
     const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
-    const exactTempoPool = Array.isArray(groups[targetTempo]) ? groups[targetTempo] : [];
-    const verifiedPool = position.movements.filter(item => item?.sourceVerified === true);
-    const pool = exactTempoPool.length > 1 ? exactTempoPool : verifiedPool;
+    const activeChoice = (position.movementChoices || []).find(
+      choice => choice.id === state.activeMovementChoiceId ||
+        choice.variants?.some(item => item.id === currentMovement?.id)
+    );
+    const coherentPool = (activeChoice?.variants || []).filter(item => item?.sourceVerified === true);
+    const pool = coherentPool.length ? coherentPool : (currentMovement ? [currentMovement] : []);
     const movement = pickNextVariant(
       pool,
       currentMovement?.id || null,
@@ -3115,6 +3160,10 @@ function selectAdultMovement(
   const effectiveToken = selectionToken ?? beginAdultSelection();
   state.activeAdultPreludeId = null;
   state.activeMovementId = movement.id;
+  const matchingChoice = (position.movementChoices || []).find(
+    choice => choice.variants?.some(item => item.id === movement.id)
+  );
+  if (matchingChoice) state.activeMovementChoiceId = matchingChoice.id;
   state.lastAdultMediaTime = null;
   els.movementChoices?.querySelectorAll('.movement-choice-card').forEach(button => {
     const variants = String(button.dataset.variantIds || '').split(',');
