@@ -11,13 +11,16 @@ import {
   expandVerifiedMovementVariants,
   computeWarmupSelectionDelta,
   isOutcomeUnlocked,
+  groupVerifiedMovementsByTempo,
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
   pickNextVariant,
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
-  requiredWarmupDiscoveries
+  requiredWarmupDiscoveries,
+  nearestAvailableTempo,
+  tapRhythm
 } from '../public/adult-gameplay.js';
 
 test('averageAdultProgress clamps both values and averages them', () => {
@@ -96,6 +99,25 @@ test('pickNextVariant avoids the active variant and prefers least-played real se
   const counts = new Map([['a', 0], ['b', 3], ['c', 1]]);
   assert.equal(pickNextVariant(variants, 'a', counts)?.id, 'c');
   assert.equal(pickNextVariant([variants[0]], 'a', counts)?.id, 'a');
+});
+
+test('tap rhythm reacts to slow, moderate and fast touch cadence', () => {
+  assert.equal(tapRhythm([0, 700, 1400], 1400).tempo, 'slow');
+  assert.equal(tapRhythm([0, 350, 700, 1050], 1050).tempo, 'moderate');
+  assert.equal(tapRhythm([0, 180, 360, 540], 540).tempo, 'fast');
+  assert.equal(tapRhythm([100], 100).tempo, 'unclear');
+});
+
+test('rhythm control uses only source-verified explicitly classified variants', () => {
+  const groups = groupVerifiedMovementsByTempo([
+    { id: 'slow', movementTempo: 'slow', sourceVerified: true, loopStartTime: 0, loopEndTime: 12 },
+    { id: 'fast', movementTempo: 'fast', sourceVerified: true, loopStartTime: 20, loopEndTime: 35 },
+    { id: 'invented', movementTempo: 'moderate', sourceVerified: false, loopStartTime: 40, loopEndTime: 55 }
+  ]);
+  assert.deepEqual(groups.slow.map(item => item.id), ['slow']);
+  assert.deepEqual(groups.moderate, []);
+  assert.deepEqual(groups.fast.map(item => item.id), ['fast']);
+  assert.equal(nearestAvailableTempo('moderate', groups), 'slow');
 });
 
 test('outcomes unlock only after the configured verified-scene progress threshold', () => {
