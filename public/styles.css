@@ -3261,6 +3261,15 @@ pre {
 .quota-status.available { color: #52e9b9; border-color: rgba(82,233,185,.35); }
 .quota-status.blocked, .quota-status.unconfigured { color: #ff8a9c; border-color: rgba(255,91,116,.42); }
 
+.choice-sensory {
+  margin-top: 4px;
+  color: #b8ebdc;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.25;
+  opacity: .88;
+}
+
 .adult-panel-toggle-btn { display: none; }
 
 /* The adult controls remain descendants of the fullscreen stage. */
