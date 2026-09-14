@@ -7,11 +7,14 @@ import {
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
   expandVerifiedMovementVariants,
+  findAdultSceneForTimeline,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   monotonicAdultPhase,
   nearestAvailableTempo,
   normalizeOutcomeUnlockProgress,
+  pickNearbyRhythmVariant,
+  pickNextChronologicalVariant,
   pickNextVariant,
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
@@ -1906,7 +1909,7 @@ function isBonusPosition(position) {
 
 const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 8;
 
-function mergeAdultSceneFragments(scenes) {
+function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const merged = [];
@@ -1919,7 +1922,13 @@ function mergeAdultSceneFragments(scenes) {
     }
 
     const gap = Number(scene.startTime) - Number(previous.endTime);
-    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS) {
+    const narrativeBarrier = gap > 0.15 && nonAdultActions.some(action => {
+      const start = Number(action.startTime);
+      const end = Number(action.endTime);
+      return Number.isFinite(start) && Number.isFinite(end) &&
+        Math.min(end, Number(scene.startTime)) - Math.max(start, Number(previous.endTime)) >= 0.5;
+    });
+    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier) {
       merged.push({ ...scene });
       continue;
     }
@@ -1927,6 +1936,10 @@ function mergeAdultSceneFragments(scenes) {
     previous.startTime = Math.min(Number(previous.startTime), Number(scene.startTime));
     previous.endTime = Math.max(Number(previous.endTime), Number(scene.endTime));
     previous.postSceneTime = Math.max(Number(previous.postSceneTime), Number(scene.postSceneTime));
+    previous.sourceSceneIds = [...new Set([
+      ...(previous.sourceSceneIds || [previous.id]),
+      ...(scene.sourceSceneIds || [scene.id])
+    ])];
     previous.foreplay = [...(previous.foreplay || []), ...(scene.foreplay || [])]
       .sort((a, b) => Number(a.startTime) - Number(b.startTime));
     previous.positions = [...(previous.positions || []), ...(scene.positions || [])]
@@ -1953,6 +1966,7 @@ function prepareAdultScenes() {
     if (!sceneMap.has(sceneId)) {
       sceneMap.set(sceneId, {
         id: sceneId,
+        sourceSceneIds: [sceneId],
         title: 'Etkileşimli Sahne',
         startTime: Number(action.adultSceneStartTime ?? action.startTime),
         endTime: Number(action.adultSceneEndTime ?? action.endTime),
@@ -1967,6 +1981,10 @@ function prepareAdultScenes() {
     const scene = sceneMap.get(sceneId);
     scene.startTime = Math.min(scene.startTime, Number(action.adultSceneStartTime ?? action.startTime));
     scene.endTime = Math.max(scene.endTime, Number(action.adultSceneEndTime ?? action.endTime));
+    scene.postSceneTime = Math.max(
+      Number(scene.postSceneTime) || 0,
+      Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime) || 0
+    );
 
     const outcomeType = String(action.outcomeType || 'none').toLowerCase();
     const isOutcome = outcomeType === 'climax' || action.actionType === 'outcome';
@@ -2133,14 +2151,35 @@ function prepareAdultScenes() {
         foreplay,
         outcomes,
         positions: [...scene.positions.values()]
-          .map(position => ({
-            ...position,
-            movements: expandVerifiedMovementVariants(
+          .map(position => {
+            let movements = expandVerifiedMovementVariants(
               position.movements,
               position.startTime,
               position.endTime
-            )
-          }))
+            );
+            if (!movements.length && position.endTime - position.startTime >= 10) {
+              const verifiedBase = {
+                id: `${position.id}:verified-base`,
+                actionId: `${position.id}:verified-base`,
+                label: `${position.label} · Gerçek sekans`,
+                startTime: position.startTime,
+                endTime: position.endTime,
+                loopStartTime: position.startTime,
+                loopEndTime: position.endTime,
+                movementType: position.familyId,
+                movementTempo: 'unclear',
+                sourceVerified: true,
+                maleProgressRate: 1,
+                femaleProgressRate: 1
+              };
+              movements = expandVerifiedMovementVariants(
+                [verifiedBase],
+                position.startTime,
+                position.endTime
+              );
+            }
+            return { ...position, movements };
+          })
           .filter(position => position.endTime - position.startTime >= 10)
           .sort((a, b) => a.startTime - b.startTime)
       };
@@ -2148,7 +2187,10 @@ function prepareAdultScenes() {
     .filter(scene => scene.positions.length || scene.foreplay.length)
     .sort((a, b) => a.startTime - b.startTime);
 
-  state.adultScenes = mergeAdultSceneFragments(state.adultScenes);
+  state.adultScenes = mergeAdultSceneFragments(
+    state.adultScenes,
+    actions.filter(action => !action.adultScene)
+  );
 
   state.adultScenes.forEach(scene => {
     const totals = new Map();
@@ -2190,11 +2232,10 @@ function prepareAdultScenes() {
 }
 
 function findAdultSceneAt(time) {
-  return (state.adultScenes || []).find(scene =>
-    !state.completedAdultSceneIds?.has(scene.id) &&
-    time >= scene.startTime - 0.15 &&
-    time < scene.endTime
-  ) || null;
+  return findAdultSceneForTimeline(state.adultScenes, {
+    time,
+    completedSceneIds: state.completedAdultSceneIds
+  });
 }
 
 
@@ -2611,6 +2652,34 @@ function renderAdultPanel(scene) {
   renderAdultProgressiveUI(true);
 }
 
+function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}) {
+  if (!scene || state.completedAdultSceneIds?.has(scene.id) || !els.video) return false;
+
+  if (state.stopListener) {
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+  }
+  state.activeAction = null;
+  els.choices.innerHTML = '';
+  els.choices.classList.add('hidden');
+  document.querySelector('.choice-navigation')?.classList.add('hidden');
+
+  const sameSession = state.adultMode && state.adultScene?.id === scene.id;
+  const mediaTime = Number(els.video.currentTime) || 0;
+  const insideScene = mediaTime >= Number(scene.startTime) - 0.15 &&
+    mediaTime < Number(scene.endTime) - 0.04;
+  if (forceStart && !sameSession && (!insideScene || mediaTime > Number(scene.startTime) + 1)) {
+    els.video.pause();
+    els.video.currentTime = Math.max(0, Number(scene.startTime) || 0);
+  }
+
+  state.gameCursorTime = Math.max(0, Number(scene.startTime) || 0);
+  renderAdultPanel(scene);
+  setGameState('SEGMENT_PLAYING');
+  logEngineEvent('ADULT_SCENE_ENTERED', { sceneId: scene.id, reason, sameSession });
+  return true;
+}
+
 function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
   if (!stage || !els.adultInteractionPanel) return;
   const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
@@ -2769,10 +2838,13 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
 function updateVariantButton(position) {
   if (!els.nextVariantBtn) return;
   const count = position?.movements?.length || 0;
+  const next = pickNextChronologicalVariant(position?.movements || [], state.activeMovementId);
   els.nextVariantBtn.classList.toggle('hidden', count < 2);
-  els.nextVariantBtn.disabled = count < 2 || state.adultOutcomePhase !== 'idle';
-  els.nextVariantBtn.textContent = count >= 2
-    ? `↻ Sonraki gerçek varyasyon (${count})`
+  els.nextVariantBtn.disabled = count < 2 || !next || state.adultOutcomePhase !== 'idle';
+  els.nextVariantBtn.textContent = count >= 2 && next
+    ? '→ Sonraki gerçek varyasyon'
+    : count >= 2
+      ? 'Bu pozisyon bölümü tamamlandı'
     : 'Tek gerçek varyasyon';
 }
 
@@ -2835,11 +2907,22 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
   const canSwitch = state.adultTapTempo === 'unclear' ||
     (state.adultTapCandidateCount >= 2 && now - state.adultLastTempoSwitchAt >= 320);
   if (canSwitch && targetTempo !== state.adultTapTempo) {
-    const movement = pickNextVariant(
+    const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
+    const movement = pickNearbyRhythmVariant(
       groups[targetTempo],
-      state.activeMovementId,
-      state.adultMovementPlayCounts
+      currentMovement,
+      Number(els.video?.currentTime),
+      state.adultMovementPlayCounts,
+      { maxForwardSeconds: 35 }
     );
+    if (!movement) {
+      state.adultTapCandidateCount = 0;
+      if (els.rhythmTapStatus) {
+        els.rhythmTapStatus.textContent = 'Uzak bölüme atlamadan mevcut sekans korunuyor';
+      }
+      if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
+      return;
+    }
     if (movement) {
       state.adultTapTempo = targetTempo;
       state.adultLastTempoSwitchAt = now;
@@ -2871,11 +2954,7 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
 function playNextAdultVariant() {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   if (!position) return;
-  const next = pickNextVariant(
-    position.movements,
-    state.activeMovementId,
-    state.adultMovementPlayCounts
-  );
+  const next = pickNextChronologicalVariant(position.movements, state.activeMovementId);
   if (next) selectAdultMovement(next.id, true);
 }
 
@@ -3045,16 +3124,32 @@ function finishAdultScene() {
   els.adultPanelToggleBtn?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
-  if (els.video) {
-    els.video.currentTime = Math.min(scene.postSceneTime, els.video.duration || scene.postSceneTime);
-    els.video.play().catch(() => {});
-  }
   state.gameCursorTime = Math.max(
     Number(scene.postSceneTime) || 0,
     Number(scene.endTime) + 0.05
   );
   persistRuntimeSnapshot('adult-scene-complete', true);
-  renderChoices();
+
+  if (!els.video) {
+    renderChoices();
+    return;
+  }
+
+  const target = Math.min(state.gameCursorTime, els.video.duration || state.gameCursorTime);
+  state.navigationSeeking = true;
+  els.video.pause();
+  els.video.currentTime = target;
+  let exitSettled = false;
+  const finishExit = () => {
+    if (exitSettled) return;
+    exitSettled = true;
+    state.navigationSeeking = false;
+    els.video.removeEventListener('seeked', finishExit);
+    setGameState('DECISION_PENDING');
+    renderChoices();
+  };
+  els.video.addEventListener('seeked', finishExit);
+  setTimeout(finishExit, 1200);
 }
 
 function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
@@ -3062,7 +3157,15 @@ function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
 
   cancelAdultSeek();
   const requestId = state.adultSeekRequestId;
-  const target = Math.max(0, Number(targetTime) || 0);
+  const requestedTarget = Math.max(0, Number(targetTime) || 0);
+  const sceneStart = Number(state.adultScene?.startTime);
+  const sceneEnd = Number(state.adultScene?.endTime);
+  const target = state.adultMode && Number.isFinite(sceneStart) && Number.isFinite(sceneEnd)
+    ? Math.min(Math.max(requestedTarget, sceneStart), Math.max(sceneStart, sceneEnd - 0.05))
+    : requestedTarget;
+  if (Math.abs(target - requestedTarget) > 0.01) {
+    logEngineEvent('ADULT_SEEK_CLAMPED', { requestedTarget, target, sceneId: state.adultScene?.id || null });
+  }
   state.adultLoopSeeking = true;
 
   const finishSeek = (force = false) => {
@@ -3107,7 +3210,7 @@ function updateAdultPlayback(now, mediaTime) {
         resetAdultSceneGameplay();
       }
       state.lastAdultFrameNow = now;
-      renderAdultPanel(scene);
+      enterAdultScene(scene, { forceStart: false, reason: 'playback-boundary' });
     }
     return;
   }
@@ -3293,6 +3396,24 @@ function futureActions() {
 }
 
 function renderChoices() {
+  if (
+    state.adultMode &&
+    state.adultScene &&
+    !state.completedAdultSceneIds?.has(state.adultScene.id)
+  ) {
+    els.choices.innerHTML = '';
+    els.choices.classList.add('hidden');
+    document.querySelector('.choice-navigation')?.classList.add('hidden');
+    renderAdultPanel(state.adultScene);
+    setGameState('SEGMENT_PLAYING');
+    return;
+  }
+
+  const cursorScene = findAdultSceneAt(state.gameCursorTime);
+  if (cursorScene && enterAdultScene(cursorScene, { forceStart: true, reason: 'cursor-inside-scene' })) {
+    return;
+  }
+
   els.choices.classList.remove('hidden');
   els.choices.innerHTML = '';
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
@@ -3308,25 +3429,38 @@ function renderChoices() {
       .slice(0, 4);
   }
 
-  const adultCandidate = candidates.find(action => action.adultScene);
-  if (adultCandidate) {
-    const adultScene =
-      state.adultScenes.find(scene => scene.id === adultCandidate.adultSceneId) ||
-      state.adultScenes.find(scene =>
-        Number(scene.startTime) <= Number(adultCandidate.startTime) + 0.25 &&
-        Number(scene.endTime) >= Number(adultCandidate.startTime) - 0.25
-      );
+  const firstCandidate = candidates[0];
+  const candidateScene = findAdultSceneForTimeline(state.adultScenes, {
+    action: firstCandidate,
+    completedSceneIds: state.completedAdultSceneIds
+  });
+  if (candidateScene && enterAdultScene(candidateScene, { forceStart: true, reason: 'next-timeline-action' })) {
+    return;
+  }
 
-    if (adultScene && !state.completedAdultSceneIds.has(adultScene.id)) {
-      els.choices.classList.add('hidden');
-      document.querySelector('.choice-navigation')?.classList.add('hidden');
-      state.gameCursorTime = adultScene.startTime;
-      els.video.currentTime = adultScene.startTime;
-      els.video.pause();
-      renderAdultPanel(adultScene);
-      setGameState('SEGMENT_PLAYING');
-      return;
-    }
+  // Adult-scene actions are owned exclusively by the dedicated scene panel.
+  // Never let one leak into the generic centered choice overlay.
+  candidates = candidates.filter(action =>
+    !action.adultScene &&
+    !findAdultSceneForTimeline(state.adultScenes, {
+      action,
+      completedSceneIds: state.completedAdultSceneIds
+    })
+  );
+
+  if (!candidates.length) {
+    candidates = state.analysis.actions
+      .filter((action, index) =>
+        index > state.currentActionIndex &&
+        Number(action.startTime) >= state.gameCursorTime - 0.001 &&
+        !state.consumedActionIds.has(action.actionId) &&
+        !action.adultScene &&
+        !findAdultSceneForTimeline(state.adultScenes, {
+          action,
+          completedSceneIds: state.completedAdultSceneIds
+        })
+      )
+      .slice(0, 4);
   }
 
   if (!candidates.length) {
@@ -3354,6 +3488,15 @@ function renderChoices() {
 }
 
 async function playAction(action) {
+  const adultScene = findAdultSceneForTimeline(state.adultScenes, {
+    action,
+    completedSceneIds: state.completedAdultSceneIds
+  });
+  if (adultScene) {
+    enterAdultScene(adultScene, { forceStart: true, reason: 'action-route-guard' });
+    return;
+  }
+
   const guard = guardPlayable('timeline', action, { unlocked: true });
   if (!guard.allowed) {
     renderChoices();
@@ -3418,6 +3561,7 @@ function finishAction(action, decisionEndTime = action.endTime) {
 }
 
 function resetGameAtAction(index) {
+  if (state.adultMode) return;
   const actions = state.analysis?.actions || [];
   if (!actions.length) return;
 
@@ -3453,6 +3597,7 @@ function resetGameAtAction(index) {
 }
 
 function jumpChoice(direction) {
+  if (state.adultMode) return;
   const actions = state.analysis?.actions || [];
   if (!actions.length) return;
 
