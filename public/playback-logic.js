@@ -26,6 +26,29 @@ export function dialogueSegmentAt(segments, videoTime, tolerance = 0.04) {
   )[0] || null;
 }
 
+export function decisionBoundaryAfterDialogue(
+  segments,
+  actionEndTime,
+  videoDuration = Number.POSITIVE_INFINITY,
+  tolerance = 0.04
+) {
+  const actionEnd = Math.max(0, Number(actionEndTime) || 0);
+  const duration = Number.isFinite(Number(videoDuration))
+    ? Math.max(actionEnd, Number(videoDuration))
+    : Number.POSITIVE_INFINITY;
+  const pad = Math.max(0, Number(tolerance) || 0);
+  const activeEnds = (Array.isArray(segments) ? segments : [])
+    .filter(segment => {
+      const start = Number(segment?.startTime);
+      const end = Number(segment?.endTime);
+      return Number.isFinite(start) && Number.isFinite(end) && end > start &&
+        start <= actionEnd + pad && end > actionEnd + pad;
+    })
+    .map(segment => Number(segment.endTime));
+
+  return Math.min(duration, Math.max(actionEnd, ...activeEnds));
+}
+
 export function dubSegmentKey(segment, fallbackIndex = 0) {
   if (!segment) return '';
   const stableId = String(segment.segmentId || '').trim();
