@@ -2664,7 +2664,7 @@ function renderAdultOutcomes(scene) {
   if (els.outcomeCount) els.outcomeCount.textContent = `${outcomes.length} açık`;
 }
 
-function renderAdultProgressiveUI(force = false) {
+function renderAdultProgressiveUI(force = false, autoPlayInitial = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel) return;
 
@@ -2819,7 +2819,7 @@ function renderAdultProgressiveUI(force = false) {
 
   const selectedCategory = categories.find(item => item.id === state.activeAdultCategory) || categories[0];
   if (selectedCategory) {
-    selectAdultCategory(selectedCategory.id, false);
+    selectAdultCategory(selectedCategory.id, autoPlayInitial && !state.activePositionId);
   }
 }
 
@@ -2858,7 +2858,7 @@ function renderAdultPanel(scene) {
   if (els.positionTabs) els.positionTabs.innerHTML = '';
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   renderAdultProgress();
-  renderAdultProgressiveUI(true);
+  renderAdultProgressiveUI(true, previousSceneId !== scene.id && !restoringSameScene);
 }
 
 function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}) {
@@ -3187,8 +3187,14 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
-  const positionUnlocked = reachableAdultPositions(scene).some(item => item.id === position.id);
-  if (shouldSeek && !positionUnlocked) {
+  const positionUnlocked = unlockedAdultPositions(scene).some(item => item.id === position.id);
+  const activePosition = scene?.positions.find(item => item.id === state.activePositionId) || null;
+  const targetBeyondActiveWindow = Boolean(
+    activePosition &&
+    position.id !== activePosition.id &&
+    Number(position.startTime) > Number(activePosition.endTime) + 18
+  );
+  if (shouldSeek && (!positionUnlocked || targetBeyondActiveWindow)) {
     logEngineEvent('POSITION_JUMP_BLOCKED', {
       positionId: position.id,
       positionStart: position.startTime,
@@ -3249,15 +3255,6 @@ function selectAdultPosition(positionId, shouldSeek = true) {
         return;
       }
       if (!movement) return;
-      if (Number(movement.loopStartTime) < Number(els.video?.currentTime || 0) - 0.35) {
-        logEngineEvent('MOVEMENT_JUMP_BLOCKED', {
-          movementId: movement.id,
-          movementStart: movement.loopStartTime,
-          mediaTime: Number(els.video?.currentTime) || 0
-        });
-        els.video?.pause();
-        return;
-      }
       state.activeMovementChoiceId = choice.id;
       selectAdultMovement(movement.id, true);
     });
@@ -3288,8 +3285,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     if (shouldSeek && els.video) {
       applyAdultSelectionProgress(position, null, { positionChanged: changedPosition });
       els.video.pause();
-      seekAdultLoop(position.startTime, selectionToken);
-      els.video.play().catch(() => {});
+      seekAdultLoop(position.startTime, selectionToken, { playAfterSeek: true });
     }
   }
 }
@@ -3334,8 +3330,7 @@ function selectAdultMovement(
   if (shouldSeek && els.video) {
     state.adultAwaitingFire = false;
     els.video.pause();
-    seekAdultLoop(movement.loopStartTime, effectiveToken);
-    els.video.play().catch(() => {});
+    seekAdultLoop(movement.loopStartTime, effectiveToken, { playAfterSeek: true });
   }
 }
 
@@ -3423,7 +3418,11 @@ function finishAdultScene() {
   setTimeout(finishExit, 1200);
 }
 
-function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
+function seekAdultLoop(
+  targetTime,
+  selectionToken = state.adultSelectionToken,
+  { playAfterSeek = false } = {}
+) {
   if (!els.video) return false;
 
   cancelAdultSeek();
@@ -3463,6 +3462,9 @@ function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
     state.adultSeekTimer = null;
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
+    if (playAfterSeek && state.adultMode) {
+      els.video.play().catch(() => {});
+    }
   };
 
   const onSeeked = () => finishSeek(false);
