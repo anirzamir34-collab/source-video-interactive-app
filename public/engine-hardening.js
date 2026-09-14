@@ -107,6 +107,7 @@ export function validateActionInterval(action = {}, videoDuration = 0) {
 
 function semanticPositionFamily(action = {}) {
   const text = normalizedText(`${action.positionId || ''} ${action.positionLabel || ''} ${action.label || ''}`);
+  if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
   if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
   if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
   if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
