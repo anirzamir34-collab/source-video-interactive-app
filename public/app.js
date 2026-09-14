@@ -2948,53 +2948,42 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
   }
 
   const labels = { slow: 'YAVAŞ', moderate: 'ORTA', fast: 'HIZLI' };
-  let tempoChanged = false;
-  const canSwitch = state.adultTapTempo === 'unclear' ||
-    (state.adultTapCandidateCount >= 2 && now - state.adultLastTempoSwitchAt >= 320);
-  if (canSwitch && targetTempo !== state.adultTapTempo) {
-    if (groups.fallbackPlaybackRate) {
-      state.adultTapTempo = targetTempo;
-      state.adultLastTempoSwitchAt = now;
-      state.adultTapCandidateCount = 0;
-      tempoChanged = true;
-      if (els.video) {
-        els.video.playbackRate = playbackRateForTapTempo(targetTempo);
-      }
-      logEngineEvent('RHYTHM_PLAYBACK_RATE_CHANGED', {
-        positionId: position.id,
-        tempo: targetTempo,
-        playbackRate: Number(els.video?.playbackRate || 1),
-        tapsPerSecond: rhythm.tapsPerSecond
-      });
-    } else {
-      const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
-      const movement = pickNearbyRhythmVariant(
-        groups[targetTempo],
-        currentMovement,
-        Number(els.video?.currentTime),
-        state.adultMovementPlayCounts,
-        { maxForwardSeconds: 35 }
-      );
-      if (!movement) {
-        state.adultTapCandidateCount = 0;
-        if (els.rhythmTapStatus) {
-          els.rhythmTapStatus.textContent = 'Uzak bölüme atlamadan mevcut sekans korunuyor';
-        }
-        if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
-        return;
-      }
-      state.adultTapTempo = targetTempo;
-      state.adultLastTempoSwitchAt = now;
-      state.adultTapCandidateCount = 0;
-      tempoChanged = true;
-      selectAdultMovement(movement.id, true, null, { awardProgress: false, rhythmTempo: targetTempo });
-      logEngineEvent('RHYTHM_TEMPO_CHANGED', {
-        positionId: position.id,
-        movementId: movement.id,
-        tempo: targetTempo,
-        tapsPerSecond: rhythm.tapsPerSecond
+  const tempoChanged = targetTempo !== state.adultTapTempo;
+  const canReact = rhythm.sampleCount >= 2 && now - state.adultLastTempoSwitchAt >= 180;
+
+  if (canReact) {
+    const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
+    const exactTempoPool = Array.isArray(groups[targetTempo]) ? groups[targetTempo] : [];
+    const verifiedPool = position.movements.filter(item => item?.sourceVerified === true);
+    const pool = exactTempoPool.length > 1 ? exactTempoPool : verifiedPool;
+    const movement = pickNextVariant(
+      pool,
+      currentMovement?.id || null,
+      state.adultMovementPlayCounts
+    );
+
+    state.adultTapTempo = targetTempo;
+    state.adultLastTempoSwitchAt = now;
+    state.adultTapCandidateCount = 0;
+
+    if (groups.fallbackPlaybackRate && els.video) {
+      els.video.playbackRate = playbackRateForTapTempo(targetTempo);
+    }
+    if (movement && movement.id !== currentMovement?.id) {
+      selectAdultMovement(movement.id, true, null, {
+        awardProgress: false,
+        rhythmTempo: targetTempo
       });
     }
+
+    logEngineEvent('RHYTHM_TAP_APPLIED', {
+      positionId: position.id,
+      movementId: movement?.id || currentMovement?.id || null,
+      tempo: targetTempo,
+      playbackRate: Number(els.video?.playbackRate || 1),
+      tapsPerSecond: rhythm.tapsPerSecond,
+      sequenceChanged: Boolean(movement && movement.id !== currentMovement?.id)
+    });
   }
 
   els.rhythmTapBtn?.setAttribute('data-tempo', state.adultTapTempo === 'unclear' ? targetTempo : state.adultTapTempo);
