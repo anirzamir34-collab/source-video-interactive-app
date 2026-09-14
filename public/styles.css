@@ -264,7 +264,6 @@ video{width:100%;max-height:58vh;background:black;border-radius:14px}.state-row{
   }
 }
 
-
 /* VIDEOQUEST GAME MOTION */
 .choices-overlay {
   animation: decisionPanelIn .34s cubic-bezier(.2,.8,.2,1) both;
@@ -3427,4 +3426,99 @@ body { font-size: 13px; }
   .truth-card, .status-card, .upload-card, .analysis-card, .player-card, .debug-card { margin-top: 8px; padding: 10px; }
   .top-pills { max-width: 46%; }
   .video-stage, .video-stage video { border-radius: 10px !important; }
+}
+
+/* FINAL FULLSCREEN ADULT HUD — translucent, compact and video-first. */
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+  width: min(28vw, 320px) !important;
+  max-width: min(28vw, 320px) !important;
+  max-height: min(60dvh, 520px) !important;
+  padding: 6px !important;
+  border-color: rgba(91, 237, 194, .22) !important;
+  border-radius: 12px !important;
+  background: rgba(0, 0, 0, .30) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .24) !important;
+  backdrop-filter: blur(4px) saturate(108%) !important;
+  -webkit-backdrop-filter: blur(4px) saturate(108%) !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-phase-copy small,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-phase-copy small,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-discovery-gate,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-discovery-gate {
+  display: none !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-panel-header,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-panel-header,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-stage-summary,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-stage-summary {
+  margin-bottom: 4px !important;
+  gap: 4px !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-panel-header h3,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-panel-header h3,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-phase-copy strong,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-phase-copy strong {
+  font-size: .68rem !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .scene-progress-bars,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .scene-progress-bars {
+  gap: 3px !important;
+  margin: 3px 0 !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .choice-section-heading,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .choice-section-heading {
+  display: none !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tabs,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tabs,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .category-tabs,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .category-tabs {
+  gap: 3px !important;
+  margin: 3px 0 !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .category-tab,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .category-tab {
+  padding: 5px 6px !important;
+  font-size: .59rem !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-grid,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-grid {
+  gap: 4px !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-card,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-card {
+  padding: 5px 6px !important;
+  font-size: .60rem !important;
+  background: rgba(0, 0, 0, .22) !important;
+  border-color: rgba(255, 255, 255, .12) !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .rhythm-tap-btn,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .rhythm-tap-btn {
+  min-height: 39px !important;
+  padding: 5px 7px !important;
+  border-color: rgba(56, 227, 176, .36) !important;
+  background: rgba(4, 46, 36, .30) !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .rhythm-tap-btn span,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .rhythm-tap-btn span {
+  font-size: .63rem !important;
+}
+#playerSection .video-stage:fullscreen #adultInteractionPanel .rhythm-tap-btn small,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .rhythm-tap-btn small {
+  font-size: .51rem !important;
+}
+@media (orientation: portrait) {
+  #playerSection .video-stage:fullscreen #adultInteractionPanel,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+    top: auto !important;
+    right: max(8px, env(safe-area-inset-right)) !important;
+    bottom: max(8px, env(safe-area-inset-bottom)) !important;
+    left: auto !important;
+    width: min(66vw, 300px) !important;
+    max-width: min(66vw, 300px) !important;
+    max-height: 31dvh !important;
+  }
 }

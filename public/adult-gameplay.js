@@ -250,7 +250,7 @@ export function groupVerifiedMovementsByTempo(movements = []) {
   return groups;
 }
 
-export function tapRhythm(timestamps = [], now = null, windowMs = 1800) {
+export function tapRhythm(timestamps = [], now = null, windowMs = 2200) {
   const current = Number.isFinite(Number(now))
     ? Number(now)
     : Number(timestamps?.[timestamps.length - 1]);
@@ -262,7 +262,7 @@ export function tapRhythm(timestamps = [], now = null, windowMs = 1800) {
   if (recent.length < 2) return { tempo: 'unclear', tapsPerSecond: 0, sampleCount: recent.length };
 
   const intervals = recent.slice(1).map((value, index) => value - recent[index])
-    .filter(value => value >= 80 && value <= 1200)
+    .filter(value => value >= 80 && value <= 1800)
     .slice(-3);
   if (!intervals.length) return { tempo: 'unclear', tapsPerSecond: 0, sampleCount: recent.length };
 

@@ -2810,13 +2810,14 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
 
   const now = Number(timestamp) || performance.now();
   state.adultTapTimes = [...state.adultTapTimes, now]
-    .filter(value => now - value <= 1800)
+    .filter(value => now - value <= 2200)
     .slice(-8);
   const rhythm = tapRhythm(state.adultTapTimes, now);
   els.rhythmTapBtn?.classList.remove('tap-pulse');
   requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
 
   if (rhythm.tempo === 'unclear') {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
     if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Bir kez daha dokun';
     return;
   }
@@ -2830,6 +2831,7 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
   }
 
   const labels = { slow: 'YAVAŞ', moderate: 'ORTA', fast: 'HIZLI' };
+  let tempoChanged = false;
   const canSwitch = state.adultTapTempo === 'unclear' ||
     (state.adultTapCandidateCount >= 2 && now - state.adultLastTempoSwitchAt >= 320);
   if (canSwitch && targetTempo !== state.adultTapTempo) {
@@ -2842,6 +2844,7 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
       state.adultTapTempo = targetTempo;
       state.adultLastTempoSwitchAt = now;
       state.adultTapCandidateCount = 0;
+      tempoChanged = true;
       selectAdultMovement(movement.id, true, null, { awardProgress: false, rhythmTempo: targetTempo });
       logEngineEvent('RHYTHM_TEMPO_CHANGED', {
         positionId: position.id,
@@ -2859,7 +2862,10 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
   if (els.rhythmTapStatus) {
     els.rhythmTapStatus.textContent = `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · hızına göre oynuyor`;
   }
-  navigator.vibrate?.(10);
+  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+    if (tempoChanged) navigator.vibrate([10, 22, 10]);
+    else navigator.vibrate({ slow: 8, moderate: 13, fast: 19 }[state.adultTapTempo] || 10);
+  }
 }
 
 function playNextAdultVariant() {

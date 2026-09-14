@@ -103,6 +103,7 @@ test('pickNextVariant avoids the active variant and prefers least-played real se
 
 test('tap rhythm reacts to slow, moderate and fast touch cadence', () => {
   assert.equal(tapRhythm([0, 700, 1400], 1400).tempo, 'slow');
+  assert.equal(tapRhythm([0, 1500, 3000], 3000).tempo, 'slow');
   assert.equal(tapRhythm([0, 350, 700, 1050], 1050).tempo, 'moderate');
   assert.equal(tapRhythm([0, 180, 360, 540], 540).tempo, 'fast');
   assert.equal(tapRhythm([100], 100).tempo, 'unclear');
