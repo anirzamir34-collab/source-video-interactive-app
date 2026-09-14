@@ -22,9 +22,6 @@ export function adultPositionFamily(value) {
   }
   if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
   if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
-  if (/\b(pozisyon(?:u|unu|da|dan)?|pozisyon degistir|yere uzan|uzanarak|uzan)\b/.test(text)) {
-    return 'position-transition';
-  }
   return '';
 }
 
@@ -199,10 +196,8 @@ export function requiredWarmupDiscoveries(totalChoices = 0) {
 export function canUnlockCorePositions({
   flow = 0,
   warmupTotal = 0,
-  warmupUniquePlayed = 0,
-  hasVerifiedCore = false
+  warmupUniquePlayed = 0
 } = {}) {
-  if (hasVerifiedCore) return true;
   const total = Math.max(0, Math.floor(Number(warmupTotal) || 0));
   if (!total) return true;
   const played = Math.max(0, Math.floor(Number(warmupUniquePlayed) || 0));
@@ -400,11 +395,8 @@ export function findAdultSceneForTimeline(
 export function consolidateVerifiedPositions(positions = []) {
   const groups = new Map();
   for (const position of Array.isArray(positions) ? positions : []) {
-    const inferredFamily = position?.familyId || adultPositionFamily(
-      position?.positionLabel || position?.label || position?.positionId
-    );
-    if (!inferredFamily) continue;
-    const key = String(inferredFamily);
+    if (!position?.familyId) continue;
+    const key = String(position.familyId);
     const sourceId = String(position.id || key);
     const movements = (Array.isArray(position.movements) ? position.movements : [])
       .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
@@ -412,7 +404,6 @@ export function consolidateVerifiedPositions(positions = []) {
     if (!existing) {
       groups.set(key, {
         ...position,
-        familyId: key,
         id: `position:${key}`,
         occurrenceId: key,
         startTime: Number(position.startTime),
@@ -444,10 +435,9 @@ export function consolidateVerifiedPositions(positions = []) {
     }
   }
 
-  const clustered = [];
-  for (const position of groups.values()) {
+  return [...groups.values()].map(position => {
     const seen = new Set();
-    const movements = position.movements
+    position.movements = position.movements
       .filter(movement => {
         const key = String(movement.id || [
           Number(movement.loopStartTime).toFixed(3),
@@ -462,59 +452,32 @@ export function consolidateVerifiedPositions(positions = []) {
     const ranges = [...position.sourceRanges]
       .filter(range => Number.isFinite(range.startTime) && Number.isFinite(range.endTime))
       .sort((a, b) => a.startTime - b.startTime);
-
-    const clusters = [];
+    const occurrenceBySource = new Map();
     let cluster = null;
     for (const range of ranges) {
       if (!cluster || range.startTime > cluster.endTime + 1.25) {
         cluster = {
           id: `${position.familyId}:continuous-${Math.round(range.startTime * 1000)}`,
           startTime: range.startTime,
-          endTime: range.endTime,
-          sourceIds: [String(range.id)]
+          endTime: range.endTime
         };
-        clusters.push(cluster);
       } else {
         cluster.endTime = Math.max(cluster.endTime, range.endTime);
-        cluster.sourceIds.push(String(range.id));
       }
+      occurrenceBySource.set(String(range.id), cluster.id);
     }
-
-    const occurrenceBySource = new Map();
-    for (const item of clusters) {
-      for (const sourceId of item.sourceIds) occurrenceBySource.set(sourceId, item.id);
-    }
-
-    for (const item of clusters) {
-      const clusterMovements = movements
-        .filter(movement => {
-          const sourceId = String(movement.sourcePositionId || '');
-          const mapped = occurrenceBySource.get(sourceId);
-          if (mapped) return mapped === item.id;
-          const start = Number(movement.loopStartTime);
-          return start >= item.startTime - 0.2 && start <= item.endTime + 0.2;
-        })
-        .map(movement => ({
-          ...movement,
-          sourcePositionId: item.id
-        }));
-      clustered.push({
-        ...position,
-        id: `position:${item.id}`,
-        occurrenceId: item.id,
-        startTime: item.startTime,
-        endTime: item.endTime,
-        sourcePositionIds: [...new Set(item.sourceIds)],
-        sourceRanges: ranges.filter(range => item.sourceIds.includes(String(range.id))),
-        movements: clusterMovements
-      });
-    }
-  }
-  return clustered.sort((a, b) => Number(a.startTime) - Number(b.startTime));
+    position.movements = position.movements.map(movement => ({
+      ...movement,
+      sourcePositionId: occurrenceBySource.get(String(movement.sourcePositionId)) ||
+        String(movement.sourcePositionId)
+    }));
+    position.sourcePositionIds = [...new Set(position.movements.map(item => item.sourcePositionId))];
+    return position;
+  }).sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
-export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 3) {
-  const limit = Math.max(1, Math.min(3, Math.floor(Number(maxChoices) || 3)));
+export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
+  const limit = Math.max(1, Math.min(4, Math.floor(Number(maxChoices) || 4)));
   const clean = value => String(value || '')
     .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
@@ -523,48 +486,34 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const positionKey = normalize(positionLabel);
   const tempoLabels = { slow: 'Yavaş tempo', moderate: 'Orta tempo', fast: 'Hızlı tempo', unclear: 'Gerçek hareket' };
-  const occurrences = new Map();
+  const groups = new Map();
 
   for (const movement of Array.isArray(movements) ? movements : []) {
     if (movement?.sourceVerified !== true) continue;
+    const tempo = normalizeMovementTempo(movement.movementTempo);
+    const rawLabel = clean(movement.label);
+    const meaningfulLabel = rawLabel && normalize(rawLabel) !== positionKey &&
+      !normalize(rawLabel).startsWith(positionKey + ' ·');
+    const label = meaningfulLabel ? rawLabel : tempoLabels[tempo];
+    // Never pool clips from separate uninterrupted occurrences. This keeps a
+    // touch/tempo choice inside the exact position block that produced it.
     const occurrence = String(movement.sourcePositionId || 'single-occurrence');
-    if (!occurrences.has(occurrence)) occurrences.set(occurrence, []);
-    occurrences.get(occurrence).push(movement);
-  }
-
-  const choices = [];
-  const occurrenceEntries = [...occurrences.entries()];
-  for (let occurrenceIndex = 0; occurrenceIndex < occurrenceEntries.length; occurrenceIndex += 1) {
-    const [occurrence, items] = occurrenceEntries[occurrenceIndex];
-    const ordered = items.sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-    const remainingOccurrences = occurrenceEntries.length - occurrenceIndex - 1;
-    const availableCards = Math.max(1, limit - choices.length - remainingOccurrences);
-    const cardCount = Math.min(availableCards, Math.max(1, Math.ceil(ordered.length / 3)));
-    let cursor = 0;
-    for (let cardIndex = 0; cardIndex < cardCount && cursor < ordered.length; cardIndex += 1) {
-      const remaining = ordered.length - cursor;
-      const remainingCards = cardCount - cardIndex;
-      const size = Math.min(3, Math.max(1, Math.ceil(remaining / remainingCards)));
-      const variants = ordered.slice(cursor, cursor + size);
-      cursor += size;
-      const first = variants[0];
-      const tempo = normalizeMovementTempo(first.movementTempo);
-      const rawLabel = clean(first.label);
-      const meaningfulLabel = rawLabel && normalize(rawLabel) !== positionKey &&
-        !normalize(rawLabel).startsWith(positionKey + ' ·');
-      choices.push({
-        id: `movement-choice:${occurrence}:${cardIndex + 1}`,
-        label: meaningfulLabel ? rawLabel : tempoLabels[tempo],
+    const key = `${occurrence}:${tempo}:${normalize(label)}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        id: `movement-choice:${key}`,
+        label,
         tempo,
         sourcePositionId: occurrence,
-        variants
+        variants: []
       });
     }
-    if (choices.length >= limit) break;
+    const variants = groups.get(key).variants;
+    if (variants.length < 4) variants.push(movement);
   }
 
-  return choices
-    .filter(choice => choice.variants.length && choice.variants.length <= 3)
+  return [...groups.values()]
+    .filter(choice => choice.variants.length)
     .sort((a, b) => Number(a.variants[0]?.loopStartTime) - Number(b.variants[0]?.loopStartTime))
     .slice(0, limit);
 }
@@ -657,55 +606,4 @@ export function nearestAvailableTempo(requestedTempo, groups = {}) {
     Math.abs(TEMPO_ORDER.indexOf(a) - requestedIndex) -
     Math.abs(TEMPO_ORDER.indexOf(b) - requestedIndex)
   )[0];
-}
-
-export function isEnergeticFireMoment(movement = null) {
-  if (!movement || movement.sourceVerified === false) return false;
-  const tempo = normalizeMovementTempo(movement.movementTempo);
-  if (tempo === 'fast' || tempo === 'moderate') return true;
-  if (movement.corePosition === true && movement.warmup !== true) return true;
-  const text = String(movement.label || movement.movementType || movement.activityType || '')
-    .toLocaleLowerCase('tr-TR')
-    .replace(/[ıİ]/g, 'i')
-    .replace(/ş/g, 's')
-    .replace(/ç/g, 'c')
-    .replace(/ğ/g, 'g')
-    .replace(/ü/g, 'u')
-    .replace(/ö/g, 'o')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-  if (/\b(ritmik|hizli|derin|sert|thrust)\b/.test(text)) {
-    return true;
-  }
-  return false;
-}
-
-export function movementsInSameOccurrence(movements = [], current = null) {
-  const playable = (Array.isArray(movements) ? movements : [])
-    .filter(item =>
-      item &&
-      item.sourceVerified !== false &&
-      Number.isFinite(Number(item.loopStartTime)) &&
-      Number.isFinite(Number(item.loopEndTime)) &&
-      Number(item.loopEndTime) > Number(item.loopStartTime)
-    )
-    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-  if (!current) return playable;
-  const occurrence = String(current.sourcePositionId || '');
-  if (!occurrence) return playable;
-  const scoped = playable.filter(item => String(item.sourcePositionId || '') === occurrence);
-  return scoped.length ? scoped : playable;
-}
-
-export function nextFireAdvance(movements = [], currentId = null) {
-  const current = (Array.isArray(movements) ? movements : []).find(item => item?.id === currentId) || null;
-  return pickNextChronologicalVariant(movementsInSameOccurrence(movements, current), currentId);
-}
-
-export function fireMomentCopy(movement = null) {
-  const tempo = normalizeMovementTempo(movement?.movementTempo);
-  if (tempo === 'fast') return 'Hızlı tempo — bas, bu anı sen sür.';
-  if (tempo === 'moderate') return 'Derin tempo — basılı tutarak devam et.';
-  if (isEnergeticFireMoment(movement)) return 'Bu an ateşte — basınca sahne senin.';
-  return 'Ateş kapalı. Hızlı veya derin bir kesit bekleniyor.';
 }
