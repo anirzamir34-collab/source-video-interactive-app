@@ -1511,6 +1511,8 @@ Rules:
         )
         .sort((a, b) => a.startTime - b.startTime);
 
+      dialogueLastSuccessAt = Date.now();
+      dialogueQuotaBlockedUntil = 0;
       return res.json({
         available: true,
         hasDialogue: segments.length > 0,
@@ -1525,6 +1527,10 @@ Rules:
       });
     } catch (error) {
       console.error('Dialogue analysis failed:', error);
+      const details = String(error?.message || error);
+      if (details.includes('RESOURCE_EXHAUSTED') || details.includes('429') || details.includes('quota')) {
+        dialogueQuotaBlockedUntil = Date.now() + (ttsQuotaRetrySeconds(details) || 3600) * 1000;
+      }
       return res.status(502).json({
         available: false,
         reason: 'GEMINI_DIALOGUE_ERROR',
@@ -1555,6 +1561,9 @@ Rules:
 
 
 let ttsQuotaBlockedUntil = 0;
+let ttsLastSuccessAt = 0;
+let dialogueLastSuccessAt = 0;
+let dialogueQuotaBlockedUntil = 0;
 
 function ttsQuotaRetrySeconds(details) {
   const retry = String(details || '').match(/retry(?:Delay| in)?[^0-9]*(\d+(?:\.\d+)?)s/i);
@@ -1672,6 +1681,8 @@ app.post('/api/gemini-dub-block', async (req, res) => {
     const isRawPcm = /L16|pcm|raw/i.test(sourceMime) || !/wav|mpeg|ogg|webm/i.test(sourceMime);
     const finalData = isRawPcm ? pcmBase64ToWavBase64(audioData, 24000) : audioData;
 
+    ttsLastSuccessAt = Date.now();
+    ttsQuotaBlockedUntil = 0;
     return res.json({
       available: true,
       blockStart,
@@ -1681,6 +1692,10 @@ app.post('/api/gemini-dub-block', async (req, res) => {
     });
   } catch (error) {
     console.error('Gemini dub block generation failed:', error);
+    const details = String(error?.message || error);
+    if (isTtsDailyQuotaError(details) || details.includes('429')) {
+      ttsQuotaBlockedUntil = Date.now() + (ttsQuotaRetrySeconds(details) || 3600) * 1000;
+    }
     return res.status(502).json({
       available: false,
       message: 'Toplu dublaj sesi üretilemedi.',
@@ -1779,6 +1794,8 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
       ? pcmBase64ToWavBase64(audioData, 24000)
       : audioData;
 
+    ttsLastSuccessAt = Date.now();
+    ttsQuotaBlockedUntil = 0;
     return res.json({
       available: true,
       speakerId,
@@ -1808,6 +1825,42 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
       error: details
     });
   }
+});
+
+app.get('/api/ai-usage-status', (_req, res) => {
+  const now = Date.now();
+  const configured = Boolean(process.env.GEMINI_API_KEY);
+  const statusFor = (blockedUntil, lastSuccessAt, label) => {
+    if (!configured) {
+      return { state: 'unconfigured', available: false, message: `${label} için Gemini API anahtarı yapılandırılmamış.` };
+    }
+    if (blockedUntil > now) {
+      return {
+        state: 'blocked',
+        available: false,
+        retryAfterSeconds: Math.ceil((blockedUntil - now) / 1000),
+        lastSuccessAt: lastSuccessAt || null,
+        remainingKnown: false,
+        message: `${label} kotası şu anda engelli. Kalan kesin kredi miktarı Gemini tarafından paylaşılmıyor.`
+      };
+    }
+    return {
+      state: 'available',
+      available: true,
+      lastSuccessAt: lastSuccessAt || null,
+      remainingKnown: false,
+      message: lastSuccessAt
+        ? `${label} son kullanımda çalıştı. Kalan kesin kredi miktarı Gemini tarafından paylaşılmıyor.`
+        : `${label} yapılandırılmış. Kalan kesin kredi miktarı ilk istekten önce Gemini tarafından paylaşılmıyor.`
+    };
+  };
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    checkedAt: now,
+    subtitles: statusFor(dialogueQuotaBlockedUntil, dialogueLastSuccessAt, 'Türkçe altyazı'),
+    dubbing: statusFor(ttsQuotaBlockedUntil, ttsLastSuccessAt, 'Türkçe dublaj')
+  });
 });
 
 app.get('/health', (_req, res) => {
