@@ -341,3 +341,31 @@ test('never mixes separate position occurrences or exposes twenty clips in one s
     new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
   ));
 });
+
+
+test('joins overlapping raw detections but keeps later returns in a separate clip pool', () => {
+  const [position] = consolidateVerifiedPositions([
+    {
+      id: 'raw-a', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
+      startTime: 10, endTime: 24,
+      movements: [{ id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 10, loopEndTime: 20, sourceVerified: true }]
+    },
+    {
+      id: 'raw-b', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
+      startTime: 23.5, endTime: 38,
+      movements: [{ id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 24, loopEndTime: 34, sourceVerified: true }]
+    },
+    {
+      id: 'raw-c', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
+      startTime: 70, endTime: 84,
+      movements: [{ id: 'c', label: 'Kovboy Pozisyonu · Sekans 3', movementTempo: 'slow', loopStartTime: 70, loopEndTime: 80, sourceVerified: true }]
+    }
+  ]);
+
+  const choices = buildVerifiedMovementChoices(position.movements, position.label, 4);
+  assert.equal(position.sourcePositionIds.length, 2);
+  assert.deepEqual(choices.map(choice => choice.variants.map(item => item.id)), [
+    ['a', 'b'],
+    ['c']
+  ]);
+});
