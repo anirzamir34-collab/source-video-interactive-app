@@ -236,6 +236,7 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
     req.body?.protagonistProfile || ''
   ).trim();
   const dialogueContext = String(req.body?.dialogueContext || '[]');
+  const sensoryAudioContext = String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
   const qualityMode = String(req.body?.qualityMode || 'ultra');
   const reviewMode = String(req.body?.reviewMode || '') === '1';
   const reviewCandidates = String(req.body?.reviewCandidates || '[]').slice(0, 18000);
@@ -283,10 +284,13 @@ DIALOGUE AND SCENE CONTEXT:
 Quality mode: ${qualityMode}
 Time-aligned dialogue segments:
 ${dialogueContext}
+Time-aligned non-speech audio observations:
+${sensoryAudioContext}
 
 - Use dialogue only when its timestamp overlaps the visible scene.
 - Use verified spoken meaning to improve scene understanding and Turkish choice wording.
 - Dialogue never overrides contradictory visual evidence.
+- Non-speech audio may support intensity only when its timestamp overlaps the action. Audio alone never proves pain, pleasure, consent, a relationship or an internal feeling.
 - Never invent speech, responses or outcomes.
 - Connect dialogue choices only to matching visible MAIN_MALE actions.
 
@@ -411,6 +415,13 @@ Return ONLY valid JSON with this exact shape:
       "movementType": "string",
       "movementVariant": "string",
       "movementTempo": "still|slow|moderate|fast|changing|unclear",
+      "audioIntensity": "none|low|moderate|high|unclear",
+      "nonSpeechAudio": "none|breathing|moan|laughter|crying|vocal_reaction|mixed|unclear",
+      "gazeIntensity": "none|brief|sustained|mutual|unclear",
+      "observedAffect": "neutral|relaxed|tense|happy|sad|fearful|excited|distressed|unclear",
+      "bodyResponse": "relaxed|tense|recoil|rhythmic|still|changing|unclear",
+      "sensoryEvidence": "brief directly observed audio/visual cues",
+      "sensoryConfidence": 0.0,
       "bodyPart": "string",
       "direction": "string",
       "posture": "string",
@@ -458,6 +469,8 @@ Rules:
 - Position and movement choices must seek to their own verified visible segment, not merely to the parent adult-scene start.
 - When evidence conflicts between sampled frames, prefer omission and add a warning instead of guessing.
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
+- For every action, fuse only time-aligned evidence: audible non-speech intensity, visible gaze duration, facial expression, posture and body response. Report observable cues, not hidden mental states.
+- Never claim pain, pleasure, happiness, fear, consent or climax from one ambiguous facial expression, sound or body movement. Use observedAffect unclear unless multiple consistent cues support a cautious visible description.
 - Use canonical positionId values consistently: oral, manual, missionary, cowgirl, spoon, standing-rear, rear, standing, or other-stable-N.
 - positionId, positionLabel and the visible body configuration described by label must agree. If they conflict, omit the position instead of guessing.
 - Use missionary only when the receiving partner is visibly below/on their back and MAIN_MALE is visibly above/front-facing in that configuration.
@@ -650,6 +663,13 @@ Rules:
           movementTempo: ['still', 'slow', 'moderate', 'fast', 'changing', 'unclear'].includes(
             String(action.movementTempo || '').toLowerCase()
           ) ? String(action.movementTempo).toLowerCase() : 'unclear',
+          audioIntensity: ['none', 'low', 'moderate', 'high', 'unclear'].includes(String(action.audioIntensity || '').toLowerCase()) ? String(action.audioIntensity).toLowerCase() : 'unclear',
+          nonSpeechAudio: ['none', 'breathing', 'moan', 'laughter', 'crying', 'vocal_reaction', 'mixed', 'unclear'].includes(String(action.nonSpeechAudio || '').toLowerCase()) ? String(action.nonSpeechAudio).toLowerCase() : 'unclear',
+          gazeIntensity: ['none', 'brief', 'sustained', 'mutual', 'unclear'].includes(String(action.gazeIntensity || '').toLowerCase()) ? String(action.gazeIntensity).toLowerCase() : 'unclear',
+          observedAffect: ['neutral', 'relaxed', 'tense', 'happy', 'sad', 'fearful', 'excited', 'distressed', 'unclear'].includes(String(action.observedAffect || '').toLowerCase()) ? String(action.observedAffect).toLowerCase() : 'unclear',
+          bodyResponse: ['relaxed', 'tense', 'recoil', 'rhythmic', 'still', 'changing', 'unclear'].includes(String(action.bodyResponse || '').toLowerCase()) ? String(action.bodyResponse).toLowerCase() : 'unclear',
+          sensoryEvidence: String(action.sensoryEvidence || '').trim(),
+          sensoryConfidence: Math.max(0, Math.min(1, Number(action.sensoryConfidence) || 0)),
           loopStartTime: Number(action.loopStartTime ?? action.startTime),
           loopEndTime: Number(action.loopEndTime ?? action.endTime),
           maleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.maleProgressRate) || 1)),
@@ -1330,7 +1350,7 @@ app.post(
       }
 
       const prompt = `
-Analyze only the audible dialogue and speech in this video.
+Analyze audible dialogue and separately observe non-speech human vocal reactions in this video.
 
 VOICE IDENTITY CONTEXT:
 - Use voice continuity and diarization to keep every audible speaker distinct.
@@ -1378,6 +1398,18 @@ Return valid JSON only, with this exact structure:
       "confidence": 0.0
     }
   ],
+  "nonSpeechEvents": [
+    {
+      "eventId": "snd-001",
+      "startTime": 0.0,
+      "endTime": 2.5,
+      "speakerId": "speaker-01|unknown",
+      "soundType": "breathing|moan|laughter|crying|vocal_reaction|mixed|unclear",
+      "intensity": "low|moderate|high|unclear",
+      "confidence": 0.0,
+      "evidence": "short audible observation without interpreting an internal state"
+    }
+  ],
   "warnings": []
 }
 
@@ -1397,7 +1429,8 @@ Rules:
 - Treat every speaker equally and include every intelligible spoken line regardless of its subject.
 - Preserve the meaning, tone and emotion of the original dialogue.
 - Split long speech into readable subtitle segments, normally 1 to 7 seconds.
-- Do not include music, breathing, moans, sound effects or silence as dialogue.
+- Do not include music, breathing, moans, sound effects or silence as dialogue. Put only clearly audible human breathing, moans, laughter, crying or vocal reactions in nonSpeechEvents without transcribing them as words.
+- Measure non-speech intensity from relative loudness, repetition and audible change over time. Never infer pain, pleasure, consent or identity from a sound alone.
 - If there is no intelligible speech, return hasDialogue false and an empty segments array.
 - Never add dialogue that is not audible in the source video.
 `;
@@ -1605,6 +1638,20 @@ Rules:
         )
         .sort((a, b) => a.startTime - b.startTime);
 
+      const nonSpeechEvents = (Array.isArray(parsed.nonSpeechEvents) ? parsed.nonSpeechEvents : [])
+        .map((event, index) => ({
+          eventId: String(event.eventId || `snd-${String(index + 1).padStart(3, '0')}`),
+          startTime: Math.max(0, Number(event.startTime || 0)),
+          endTime: Math.max(0, Number(event.endTime || 0)),
+          speakerId: String(event.speakerId || 'unknown'),
+          soundType: ['breathing', 'moan', 'laughter', 'crying', 'vocal_reaction', 'mixed'].includes(String(event.soundType || '').toLowerCase()) ? String(event.soundType).toLowerCase() : 'unclear',
+          intensity: ['low', 'moderate', 'high'].includes(String(event.intensity || '').toLowerCase()) ? String(event.intensity).toLowerCase() : 'unclear',
+          confidence: Math.max(0, Math.min(1, Number(event.confidence || 0))),
+          evidence: String(event.evidence || '').trim()
+        }))
+        .filter(event => event.endTime > event.startTime && event.confidence >= 0.55 && (!duration || event.startTime <= duration))
+        .sort((a, b) => a.startTime - b.startTime);
+
       dialogueLastSuccessAt = Date.now();
       dialogueQuotaBlockedUntil = 0;
       return res.json({
@@ -1614,6 +1661,7 @@ Rules:
         summaryTr: String(parsed.summaryTr || ''),
         speakers: [...speakerProfiles.values()],
         segments,
+        nonSpeechEvents,
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
         transcriptionEngine: String(parsed.transcriptionEngine || 'gemini-3.8-flash-fallback'),
         translationEngine: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
