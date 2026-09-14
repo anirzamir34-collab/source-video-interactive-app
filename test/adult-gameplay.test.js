@@ -8,13 +8,17 @@ import {
   canUnlockCorePositions,
   canUnlockOutcome,
   computeAdultSelectionDelta,
+  dedupeVerifiedTimelineActions,
   expandVerifiedMovementVariants,
   computeWarmupSelectionDelta,
+  findAdultSceneForTimeline,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
+  pickNearbyRhythmVariant,
+  pickNextChronologicalVariant,
   pickNextVariant,
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
@@ -99,6 +103,58 @@ test('pickNextVariant avoids the active variant and prefers least-played real se
   const counts = new Map([['a', 0], ['b', 3], ['c', 1]]);
   assert.equal(pickNextVariant(variants, 'a', counts)?.id, 'c');
   assert.equal(pickNextVariant([variants[0]], 'a', counts)?.id, 'a');
+});
+
+test('chronological variant navigation never wraps back to an earlier segment', () => {
+  const variants = [
+    { id: 'middle', loopStartTime: 40, loopEndTime: 55 },
+    { id: 'first', loopStartTime: 10, loopEndTime: 25 },
+    { id: 'last', loopStartTime: 80, loopEndTime: 95 }
+  ];
+  assert.equal(pickNextChronologicalVariant(variants, null)?.id, 'first');
+  assert.equal(pickNextChronologicalVariant(variants, 'first')?.id, 'middle');
+  assert.equal(pickNextChronologicalVariant(variants, 'last'), null);
+});
+
+test('rhythm switching stays local and never seeks backward or to a distant ending', () => {
+  const current = { id: 'current', loopStartTime: 100, loopEndTime: 115 };
+  const variants = [
+    { id: 'past', loopStartTime: 50, loopEndTime: 65 },
+    { id: 'near', loopStartTime: 125, loopEndTime: 140 },
+    { id: 'ending', loopStartTime: 220, loopEndTime: 235 }
+  ];
+  assert.equal(pickNearbyRhythmVariant(variants, current, 110)?.id, 'near');
+  assert.equal(pickNearbyRhythmVariant([variants[0], variants[2]], current, 110), null);
+});
+
+test('timeline routes generic actions inside a prepared adult scene to its dedicated panel', () => {
+  const scenes = [{
+    id: 'scene-main',
+    sourceSceneIds: ['scene-main', 'scene-fragment-2'],
+    startTime: 100,
+    endTime: 240
+  }];
+  assert.equal(findAdultSceneForTimeline(scenes, {
+    action: { adultSceneId: 'scene-fragment-2', startTime: 210, endTime: 220 }
+  })?.id, 'scene-main');
+  assert.equal(findAdultSceneForTimeline(scenes, {
+    action: { startTime: 145, endTime: 155 }
+  })?.id, 'scene-main');
+  assert.equal(findAdultSceneForTimeline(scenes, {
+    action: { startTime: 145, endTime: 155 },
+    completedSceneIds: new Set(['scene-main'])
+  }), null);
+});
+
+test('timeline dedupe preserves overlapping parent positions and child movement loops', () => {
+  const actions = dedupeVerifiedTimelineActions([
+    { actionId: 'position', label: 'Pozisyon', startTime: 100, endTime: 180, confidence: 0.92 },
+    { actionId: 'movement-1', label: 'Yavaş ritim', startTime: 105, endTime: 125, confidence: 0.88 },
+    { actionId: 'movement-2', label: 'Hızlı ritim', startTime: 125, endTime: 150, confidence: 0.9 },
+    { actionId: 'movement-1', label: 'Eski kopya', startTime: 105, endTime: 125, confidence: 0.6 }
+  ]);
+  assert.deepEqual(actions.map(item => item.actionId), ['position', 'movement-1', 'movement-2']);
+  assert.equal(actions.find(item => item.actionId === 'movement-1')?.label, 'Yavaş ritim');
 });
 
 test('tap rhythm reacts to slow, moderate and fast touch cadence', () => {
