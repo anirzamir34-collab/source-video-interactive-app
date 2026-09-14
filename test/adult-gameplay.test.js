@@ -8,6 +8,7 @@ import {
   canUnlockCorePositions,
   canUnlockOutcome,
   computeAdultSelectionDelta,
+  expandVerifiedMovementVariants,
   computeWarmupSelectionDelta,
   isOutcomeUnlocked,
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
@@ -15,6 +16,7 @@ import {
   normalizeOutcomeUnlockProgress,
   pickNextVariant,
   positionUnlockProgress,
+  requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries
 } from '../public/adult-gameplay.js';
 
@@ -59,8 +61,23 @@ test('position unlocks are progressive and special categories arrive later', () 
   assert.equal(positionUnlockProgress({ categoryId: 'oral', index: 3 }), 0);
   assert.equal(positionUnlockProgress({ categoryId: 'vaginal', index: 0 }), 35);
   assert.equal(positionUnlockProgress({ categoryId: 'vaginal', index: 1 }), 47);
-  assert.equal(positionUnlockProgress({ categoryId: 'anal', index: 0 }), 72);
+  assert.equal(positionUnlockProgress({ categoryId: 'anal', index: 0 }), 78);
   assert.equal(positionUnlockProgress({ categoryId: 'vaginal', bootstrap: true }), 0);
+});
+
+test('outcome pacing scales with scene length and remains deliberately slow', () => {
+  assert.equal(requiredCorePlaySecondsForOutcome(60), 75);
+  assert.equal(requiredCorePlaySecondsForOutcome(480), 297.6);
+  assert.equal(requiredCorePlaySecondsForOutcome(1000), 300);
+});
+
+test('long verified position becomes four playable variants of at least ten seconds', () => {
+  const variants = expandVerifiedMovementVariants([
+    { id: 'doggy-long', label: 'Doggy-style ritmi', loopStartTime: 120, loopEndTime: 300 }
+  ], 120, 300);
+  assert.equal(variants.length, 4);
+  assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 10));
+  assert.deepEqual(variants.map(item => item.loopStartTime), [120, 165, 210, 255]);
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
