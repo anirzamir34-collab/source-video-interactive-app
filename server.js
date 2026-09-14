@@ -484,6 +484,22 @@ Rules:
 `;
 
     const ai = new GoogleGenAI({ apiKey });
+    const unverifiedGapResult = (startTime, endTime, reason) => ({
+      available: true,
+      videoDuration: duration,
+      introEndTime: chunkIndex === 0 ? Math.max(0, startTime) : chunkStart,
+      playStartTime: chunkIndex === 0 ? Math.max(0, startTime) : chunkStart,
+      protagonistProfile,
+      videoPrompt: '',
+      storyContext: {},
+      actions: [],
+      analysisGaps: [{
+        startTime: Math.max(0, Number(startTime) || 0),
+        endTime: Math.min(duration, Math.max(Number(startTime) || 0, Number(endTime) || 0)),
+        reason: String(reason || 'MODEL_RETURNED_NO_VERIFIABLE_RESULT')
+      }],
+      warnings: ['Bu aralık modelden doğrulanabilir sonuç alınamadığı için seçenek üretilmeden geçildi.']
+    });
     const generateStoryboardJson = async (requestPrompt, requestFiles, retryLabel = 'full') => {
       const parts = [
         { text: requestPrompt },
@@ -532,16 +548,24 @@ Rules:
     try {
       parsed = await generateStoryboardJson(prompt, files);
     } catch (fullChunkError) {
-      if (files.length < 2) throw fullChunkError;
+      if (files.length < 2) {
+        console.warn(`[gemini-storyboard-gap] chunk ${chunkIndex + 1}/${chunkCount} kept as a non-playable verified gap after repeated empty responses`);
+        parsed = unverifiedGapResult(
+          chunkStart,
+          chunkEnd,
+          String(fullChunkError?.message || fullChunkError)
+        );
+      }
 
-      const allTimestamps = (() => {
+      const allTimestamps = files.length >= 2 ? (() => {
         try {
           const value = JSON.parse(timestamps);
           return Array.isArray(value) ? value.map(Number).filter(Number.isFinite) : [];
         } catch {
           return [];
         }
-      })();
+      })() : [];
+      if (files.length >= 2) {
       const framesPerSheet = Math.max(1, Math.ceil(allTimestamps.length / files.length));
       const recoveredParts = [];
       console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${files.length} smaller requests`);
@@ -558,11 +582,20 @@ Rules:
           .replace(`Timestamp metadata for this chunk: ${timestamps}`, `Timestamp metadata for this recovery segment: ${JSON.stringify(splitTimestamps)}`)
           .replace(`Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.`, `Analyze ONLY the interval ${splitStart} to ${splitEnd} seconds.`)
           .replace('Examine this short interval deeply instead of summarizing the whole video.', 'This is one smaller recovery segment. Examine only these supplied frames and timestamps.');
-        recoveredParts.push(await generateStoryboardJson(
-          splitPrompt,
-          [files[fileIndex]],
-          `split-${fileIndex + 1}`
-        ));
+        try {
+          recoveredParts.push(await generateStoryboardJson(
+            splitPrompt,
+            [files[fileIndex]],
+            `split-${fileIndex + 1}`
+          ));
+        } catch (splitError) {
+          console.warn(`[gemini-storyboard-gap] split ${fileIndex + 1}/${files.length} in chunk ${chunkIndex + 1} kept non-playable`);
+          recoveredParts.push(unverifiedGapResult(
+            splitStart,
+            splitEnd,
+            String(splitError?.message || splitError)
+          ));
+        }
       }
 
       parsed = {
@@ -575,11 +608,13 @@ Rules:
         ),
         videoPrompt: recoveredParts.map(item => String(item?.videoPrompt || '').trim()).filter(Boolean).join('\n\n'),
         actions: recoveredParts.flatMap(item => Array.isArray(item?.actions) ? item.actions : []),
+        analysisGaps: recoveredParts.flatMap(item => Array.isArray(item?.analysisGaps) ? item.analysisGaps : []),
         warnings: [
           ...recoveredParts.flatMap(item => Array.isArray(item?.warnings) ? item.warnings : []),
           `Chunk ${chunkIndex + 1} recovered from ${files.length} smaller verified segments.`
         ]
       };
+      }
     }
     const resolvedDuration = Math.max(0, duration || Number(parsed.videoDuration || 0));
     const introEndTime = Math.min(
@@ -692,6 +727,7 @@ Rules:
       videoPrompt: String(parsed.videoPrompt || ''),
       storyContext: parsed.storyContext && typeof parsed.storyContext === 'object' ? parsed.storyContext : {},
       actions,
+      analysisGaps: Array.isArray(parsed.analysisGaps) ? parsed.analysisGaps : [],
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []
     });
   } catch (error) {
