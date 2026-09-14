@@ -321,3 +321,23 @@ test('builds at most four subchoices and keeps multiple clips in each choice poo
   assert.deepEqual(slow.variants.map(item => item.id), ['a', 'b']);
   assert.deepEqual(kiss.variants.map(item => item.id), ['c', 'd']);
 });
+
+
+test('never mixes separate position occurrences or exposes twenty clips in one subchoice', () => {
+  const movements = Array.from({ length: 20 }, (_, index) => ({
+    id: `clip-${index}`,
+    label: 'Kovboy Pozisyonu · Sekans 1',
+    movementTempo: 'moderate',
+    loopStartTime: index * 12,
+    loopEndTime: index * 12 + 10,
+    sourceVerified: true,
+    sourcePositionId: index < 10 ? 'occurrence-a' : 'occurrence-b'
+  }));
+
+  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
+  assert.equal(choices.length, 2);
+  assert.ok(choices.every(choice => choice.variants.length <= 4));
+  assert.ok(choices.every(choice =>
+    new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
+  ));
+});
