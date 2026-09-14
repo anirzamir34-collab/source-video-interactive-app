@@ -546,7 +546,14 @@ Rules:
           }
           });
           const raw = String(response.text || '').trim();
-          if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
+          if (!raw) {
+            const finishReason = String(
+              response?.candidates?.[0]?.finishReason ||
+              response?.promptFeedback?.blockReason ||
+              'UNKNOWN'
+            );
+            throw new Error(`GEMINI_EMPTY_JSON_RESPONSE:${finishReason}`);
+          }
           return JSON.parse(raw.replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
         } catch (error) {
           lastGenerationError = error;
@@ -639,6 +646,25 @@ Rules:
       };
       }
     }
+    const unresolvedGaps = Array.isArray(parsed?.analysisGaps)
+      ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
+      : [];
+    if (unresolvedGaps.length) {
+      return res.status(503).json({
+        available: false,
+        retryable: true,
+        reason: 'CHUNK_ANALYSIS_GAP',
+        message:
+          `Bölüm ${chunkIndex + 1}/${chunkCount} modelden eksiksiz okunamadı. ` +
+          'Boş aralık başarı sayılmadı; bu bölüm yeniden denenmeli.',
+        chunkIndex,
+        chunkCount,
+        chunkStart,
+        chunkEnd,
+        analysisGaps: unresolvedGaps
+      });
+    }
+
     const resolvedDuration = Math.max(0, duration || Number(parsed.videoDuration || 0));
     const introEndTime = Math.min(
       resolvedDuration,
