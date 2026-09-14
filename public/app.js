@@ -2255,6 +2255,7 @@ function prepareAdultScenes() {
     }
 
     const position = scene.positions.get(positionKey);
+    if (action.sourceVerified === true) position.sourceVerified = true;
     position.startTime = Math.min(
       position.startTime,
       Number(action.positionStartTime ?? action.startTime)
@@ -2477,7 +2478,9 @@ function unlockedAdultPositions(scene = state.adultScene) {
   const flow = currentAdultFlow();
   const positions = scene?.positions || [];
   const { warmupTotal, warmupUniquePlayed } = adultWarmupStats(scene);
-  const corePositions = positions.filter(position => !isWarmupPosition(position) && !isBonusPosition(position));
+  const corePositions = positions.filter(position =>
+    position.sourceVerified === true && !isWarmupPosition(position) && !isBonusPosition(position)
+  );
   const coreVisitedCount = corePositions.filter(position => state.adultVisitedPositionIds.has(position.id)).length;
   const coreAllowed = canUnlockCorePositions({
     flow,
@@ -2492,8 +2495,15 @@ function unlockedAdultPositions(scene = state.adultScene) {
     bootstrap: warmupTotal === 0 && corePositions.length === 0
   });
 
+  const firstVerifiedCoreId = corePositions[0]?.id || null;
   return positions.filter(position => {
-    if (flow + 0.001 < Number(position.unlockProgress || 0)) return false;
+    // Unverified detections never become playable choices.
+    if (position.sourceVerified !== true) return false;
+    // The first real core occurrence is the scene's entry door. It is not
+    // gated by warmup count or a Lust threshold; later occurrences retain
+    // their progressive thresholds.
+    const isFirstCore = position.id === firstVerifiedCoreId;
+    if (!isFirstCore && flow + 0.001 < Number(position.unlockProgress || 0)) return false;
     if (isWarmupPosition(position)) return true;
     if (isBonusPosition(position)) return coreAllowed && bonusAllowed;
     return coreAllowed;
@@ -2700,6 +2710,9 @@ function renderAdultProgressiveUI(force = false, autoPlayInitial = false) {
   const flow = currentAdultFlow();
   const unlockedPositions = unlockedAdultPositions(scene);
   const unlockedCore = unlockedPositions.filter(position => !isWarmupPosition(position));
+  const hasVerifiedCore = (scene.positions || []).some(position =>
+    position.sourceVerified === true && !isWarmupPosition(position) && !isBonusPosition(position)
+  );
   const unlockedBonus = unlockedCore.filter(isBonusPosition);
   const outcomes = unlockedAdultOutcomes(scene);
   const proposedPhase = adultDiscoveryPhase({
@@ -2752,7 +2765,7 @@ function renderAdultProgressiveUI(force = false, autoPlayInitial = false) {
 
   const next = nextAdultDiscovery(scene);
   const warmupStats = adultWarmupStats(scene);
-  const warmupRequired = requiredWarmupDiscoveries(warmupStats.warmupTotal);
+  const warmupRequired = hasVerifiedCore ? 0 : requiredWarmupDiscoveries(warmupStats.warmupTotal);
   const warmupRemaining = Math.max(0, warmupRequired - warmupStats.warmupUniquePlayed);
   if (els.discoveryGate) {
     const hideGate = phase === 'final' || (!next && warmupRemaining === 0);
