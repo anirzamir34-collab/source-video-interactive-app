@@ -395,8 +395,11 @@ export function findAdultSceneForTimeline(
 export function consolidateVerifiedPositions(positions = []) {
   const groups = new Map();
   for (const position of Array.isArray(positions) ? positions : []) {
-    if (!position?.familyId) continue;
-    const key = String(position.familyId);
+    const inferredFamily = position?.familyId || adultPositionFamily(
+      position?.positionLabel || position?.label || position?.positionId
+    );
+    if (!inferredFamily) continue;
+    const key = String(inferredFamily);
     const sourceId = String(position.id || key);
     const movements = (Array.isArray(position.movements) ? position.movements : [])
       .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
@@ -404,6 +407,7 @@ export function consolidateVerifiedPositions(positions = []) {
     if (!existing) {
       groups.set(key, {
         ...position,
+        familyId: key,
         id: `position:${key}`,
         occurrenceId: key,
         startTime: Number(position.startTime),

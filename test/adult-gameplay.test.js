@@ -306,6 +306,22 @@ test('keeps gapped returns as separate playable occurrences to avoid timeline ju
   assert.equal(result[1].endTime, 58);
   assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a']);
   assert.deepEqual(result[1].movements.map(item => item.id), ['fast-a']);
+
+  const inferred = consolidateVerifiedPositions([{
+    id: 'doggy-label-only',
+    label: 'Doggy-style pozisyonu',
+    startTime: 70,
+    endTime: 78,
+    movements: [{
+      id: 'doggy-cut',
+      loopStartTime: 70,
+      loopEndTime: 78,
+      sourceVerified: true
+    }]
+  }]);
+  assert.equal(inferred.length, 1);
+  assert.equal(inferred[0].familyId, 'rear');
+  assert.equal(inferred[0].id, 'position:rear:continuous-70000');
 });
 
 test('builds at most eight subchoices and keeps multiple clips in each choice pool', () => {

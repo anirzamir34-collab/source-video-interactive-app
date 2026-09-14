@@ -1796,6 +1796,7 @@ function normalizeAnalysis(body) {
     .filter(a => Number.isFinite(a.startTime) && Number.isFinite(a.endTime) && a.endTime > a.startTime && a.sourceVerified)
     .sort((a, b) => a.startTime - b.startTime);
 
+  routeVerifiedAdultActions(cleaned);
   assignPositionOccurrenceIds(cleaned);
 
   return {
@@ -1947,6 +1948,79 @@ function canonicalAdultPosition(action) {
   };
 }
 
+function verifiedAdultPositionFamily(action) {
+  if (action?.sourceVerified !== true) return '';
+  return adultSemanticFamily(action.positionLabel) ||
+    adultSemanticFamily(action.label) ||
+    adultSemanticFamily(action.positionId);
+}
+
+function isVerifiedAdultPositionAction(action) {
+  const family = verifiedAdultPositionFamily(action);
+  if (!family) return false;
+  const start = Number(action?.positionStartTime ?? action?.startTime);
+  const end = Number(action?.positionEndTime ?? action?.endTime);
+  return Number.isFinite(start) && Number.isFinite(end) && end > start;
+}
+
+function routeVerifiedAdultActions(actions = []) {
+  const candidates = (Array.isArray(actions) ? actions : [])
+    .map(action => ({
+      action,
+      family: verifiedAdultPositionFamily(action),
+      startTime: Number(action?.positionStartTime ?? action?.startTime),
+      endTime: Number(action?.positionEndTime ?? action?.endTime)
+    }))
+    .filter(item => item.family && Number.isFinite(item.startTime) &&
+      Number.isFinite(item.endTime) && item.endTime > item.startTime)
+    .sort((a, b) => a.startTime - b.startTime);
+
+  const clustersByFamily = new Map();
+  for (const item of candidates) {
+    if (!clustersByFamily.has(item.family)) clustersByFamily.set(item.family, []);
+    const clusters = clustersByFamily.get(item.family);
+    let cluster = clusters[clusters.length - 1];
+    if (!cluster || item.startTime > cluster.endTime + 1.25) {
+      cluster = { startTime: item.startTime, endTime: item.endTime, items: [] };
+      clusters.push(cluster);
+    } else {
+      cluster.endTime = Math.max(cluster.endTime, item.endTime);
+    }
+    cluster.items.push(item);
+  }
+
+  for (const [family, clusters] of clustersByFamily) {
+    for (const cluster of clusters) {
+      if (cluster.endTime - cluster.startTime < 6) continue;
+      const occurrenceId = `${family}:continuous-${Math.round(cluster.startTime * 1000)}`;
+      const sceneId = `adult:${occurrenceId}`;
+      for (const { action } of cluster.items) {
+        const canonical = canonicalAdultPosition(action);
+        action.adultScene = true;
+        action.adultSceneId ||= sceneId;
+        action.adultSceneStartTime = Math.min(
+          Number(action.adultSceneStartTime) || cluster.startTime,
+          cluster.startTime
+        );
+        action.adultSceneEndTime = Math.max(
+          Number(action.adultSceneEndTime) || cluster.endTime,
+          cluster.endTime
+        );
+        action.postSceneTime = Math.max(Number(action.postSceneTime) || 0, cluster.endTime);
+        action.positionId ||= family;
+        action.positionLabel ||= canonical.label;
+        action.positionOccurrenceId ||= occurrenceId;
+        action.positionStartTime = Number.isFinite(Number(action.positionStartTime))
+          ? Number(action.positionStartTime)
+          : Number(action.startTime);
+        action.positionEndTime = Number.isFinite(Number(action.positionEndTime))
+          ? Number(action.positionEndTime)
+          : Number(action.endTime);
+      }
+    }
+  }
+}
+
 function adultCategoryFor(action, positionId) {
   const explicit = normalizeAdultLabel(action.activityType);
 
@@ -2045,22 +2119,11 @@ function prepareAdultScenes() {
   const verifiedPositionSceneIds = new Set(
     actions.filter(action => {
       if (action?.adultScene !== true || action?.sourceVerified !== true) return false;
-      if (String(action.actionType || '').toLowerCase() !== 'position') return false;
-      const family = adultSemanticFamily(action.positionLabel || action.positionId || action.label);
+      const family = verifiedAdultPositionFamily(action);
       if (!family) return false;
-      const route = String(action.activityType || '').toLowerCase();
-      const explicitRoute = ['vaginal', 'anal', 'oral', 'manual'].includes(route);
-      const routeEvidence = String(action.activityEvidence || '').trim();
-      // A body arrangement alone (lap sitting, hugging, dancing) is not enough.
-      // Penetrative/oral/manual evidence must be independently asserted and
-      // supported before the dedicated adult player can own the timeline.
-      if (!explicitRoute || Number(action.activityTypeConfidence || 0) < 0.78 || !routeEvidence) {
-        return false;
-      }
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
-      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6 &&
-        Number(action.confidence || 0) >= 0.78;
+      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6;
     }).map(sceneIdFor)
   );
 
@@ -2195,7 +2258,7 @@ function prepareAdultScenes() {
       Number(action.positionEndTime ?? action.endTime)
     );
 
-    if (action.actionType !== 'position' && action.movementType) {
+    if (action.movementType || action.actionType === 'position') {
       const movementStart = Math.max(
         position.startTime,
         Number(action.loopStartTime ?? action.startTime)
@@ -2208,7 +2271,7 @@ function prepareAdultScenes() {
         `${action.movementType || ''} ${action.label || ''}`
       );
 
-      if (!movementFamily || movementFamily === canonical.id) {
+      if (movementEnd - movementStart >= 2 && (!movementFamily || movementFamily === canonical.id)) {
         position.movements.push({
           ...action,
           id: action.actionId || `movement-${index}`,
@@ -2254,13 +2317,20 @@ function prepareAdultScenes() {
 
       const positions = [...scene.positions.values()]
           .map(position => {
+            const verifiedCuts = position.movements
+              .filter(item => item?.sourceVerified === true &&
+                Number(item.loopEndTime) > Number(item.loopStartTime))
+              .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
             let movements = expandVerifiedMovementVariants(
-              position.movements,
+              verifiedCuts,
               position.startTime,
               position.endTime,
               { baseLabel: position.label }
             );
-            if (!movements.length && position.endTime - position.startTime >= 10) {
+            if (!movements.length && verifiedCuts.length) {
+              movements = verifiedCuts;
+            }
+            if (!movements.length && position.endTime - position.startTime >= 6) {
               const verifiedBase = {
                 id: `${position.id}:verified-base`,
                 actionId: `${position.id}:verified-base`,
@@ -2275,16 +2345,18 @@ function prepareAdultScenes() {
                 maleProgressRate: 1,
                 femaleProgressRate: 1
               };
-              movements = expandVerifiedMovementVariants(
-                [verifiedBase],
-                position.startTime,
-                position.endTime,
-                { baseLabel: position.label }
-              );
+              movements = position.endTime - position.startTime >= 10
+                ? expandVerifiedMovementVariants(
+                    [verifiedBase],
+                    position.startTime,
+                    position.endTime,
+                    { baseLabel: position.label }
+                  )
+                : [verifiedBase];
             }
             return { ...position, movements };
           })
-          .filter(position => position.endTime - position.startTime >= 10)
+          .filter(position => position.endTime - position.startTime >= 6)
           .sort((a, b) => a.startTime - b.startTime);
       if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
       const interactionStart = Math.min(...positions.map(position => Number(position.startTime)));
@@ -2993,14 +3065,13 @@ function updateFireControl(position = null) {
     null;
   const movement = currentAdultMovement();
   const energetic = Boolean(movement && isEnergeticFireMoment(movement));
-  const canDrive = Boolean(
+  const showControl = Boolean(
     activePosition &&
     !isWarmupPosition(activePosition) &&
-    state.adultOutcomePhase === 'idle' &&
-    movement
+    state.adultOutcomePhase === 'idle'
   );
-  state.adultFireArmed = canDrive && energetic;
-  els.rhythmControl?.classList.toggle('hidden', !canDrive);
+  state.adultFireArmed = showControl && Boolean(movement) && energetic;
+  els.rhythmControl?.classList.toggle('hidden', !showControl);
   if (els.rhythmTapBtn) {
     els.rhythmTapBtn.disabled = !state.adultFireArmed;
     els.rhythmTapBtn.classList.toggle('fire-armed', state.adultFireArmed);
@@ -3016,7 +3087,7 @@ function updateFireControl(position = null) {
         : 'ATEŞ KAPALI';
   }
   if (els.rhythmTapStatus) {
-    els.rhythmTapStatus.textContent = canDrive
+    els.rhythmTapStatus.textContent = showControl && movement
       ? fireMomentCopy(movement)
       : 'Önce bu pozisyondaki gerçek bir kesiti seç';
   }
@@ -3038,10 +3109,8 @@ function fireAdvanceOrReplay(position, currentMovement, { awardProgress = true }
     return true;
   }
   if (els.video) {
-    state.adultAwaitingFire = false;
+    state.adultAwaitingFire = true;
     els.video.pause();
-    seekAdultLoop(currentMovement.loopStartTime, state.adultSelectionToken);
-    els.video.play().catch(() => {});
   }
   return false;
 }
@@ -3609,9 +3678,15 @@ function renderChoices() {
       .slice(0, 4);
   }
 
-  const firstCandidate = candidates[0];
-  const candidateScene = findAdultSceneForTimeline(state.adultScenes, {
-    action: firstCandidate,
+  const adultCandidate = candidates.find(action =>
+    isVerifiedAdultPositionAction(action) &&
+    findAdultSceneForTimeline(state.adultScenes, {
+      action,
+      completedSceneIds: state.completedAdultSceneIds
+    })
+  );
+  const candidateScene = adultCandidate && findAdultSceneForTimeline(state.adultScenes, {
+    action: adultCandidate,
     completedSceneIds: state.completedAdultSceneIds
   });
   if (candidateScene && enterAdultScene(candidateScene, { forceStart: true, reason: 'next-timeline-action' })) {
@@ -3621,6 +3696,7 @@ function renderChoices() {
   // Only actions owned by a validated adult-scene graph are removed from
   // the normal timeline. A raw model flag alone must never orphan an action.
   candidates = candidates.filter(action =>
+    !isVerifiedAdultPositionAction(action) &&
     !findAdultSceneForTimeline(state.adultScenes, {
       action,
       completedSceneIds: state.completedAdultSceneIds
@@ -3633,6 +3709,7 @@ function renderChoices() {
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
         !state.consumedActionIds.has(action.actionId) &&
+        !isVerifiedAdultPositionAction(action) &&
         !findAdultSceneForTimeline(state.adultScenes, {
           action,
           completedSceneIds: state.completedAdultSceneIds
