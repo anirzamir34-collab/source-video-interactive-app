@@ -1134,10 +1134,9 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.subtitleOverlay?.classList.add('hidden');
 
   try {
-  // The sensory pass also needs the audio track when the user only requests
-  // movement choices. Subtitle rendering remains disabled unless explicitly
-  // selected, but non-speech observations are forwarded to scene analysis.
-  if (modes.subtitles || modes.dubbing || modes.motion) {
+  // Full audio extraction is an explicit subtitle/dubbing operation.
+  // Motion-only analysis stays visual and must not spend time or AI quota on audio.
+  if (modes.subtitles || modes.dubbing) {
     try {
       const dialogue = await analyzeSelectedDialogue(file);
 
