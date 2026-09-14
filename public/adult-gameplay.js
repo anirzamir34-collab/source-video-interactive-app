@@ -1,5 +1,30 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
+export function adultPositionFamily(value) {
+  const text = String(value || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (/\b(oral|sakso|blowjob|yala|agiz)\b/.test(text)) return 'oral';
+  if (/\b(manuel|manual|elle|handjob|masturb)\b/.test(text)) return 'manual';
+  if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
+  if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
+  if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
+  if (/\b(kasik|spoon|yan yatarak)\b/.test(text)) return 'spoon';
+  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text) && /\b(ayakta|standing)\b/.test(text)) {
+    return 'standing-rear';
+  }
+  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
+  if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
+  return '';
+}
+
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
 export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
 export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
@@ -67,44 +92,79 @@ export function expandVerifiedMovementVariants(
   movements,
   positionStart,
   positionEnd,
-  { minSeconds = 10, maxVariants = 4 } = {}
+  { minSeconds = 10, maxVariants = 4, baseLabel = '' } = {}
 ) {
   const start = Math.max(0, Number(positionStart) || 0);
   const end = Math.max(start, Number(positionEnd) || start);
   const minimum = Math.max(10, Number(minSeconds) || 10);
   const limit = Math.max(1, Math.min(4, Math.floor(Number(maxVariants) || 4)));
-  const source = (Array.isArray(movements) ? movements : [])
-    .filter(item => Number(item?.loopEndTime) - Number(item?.loopStartTime) >= minimum)
+  const positionDuration = end - start;
+  const rawSource = (Array.isArray(movements) ? movements : [])
+    .map(item => ({
+      ...item,
+      loopStartTime: Math.max(start, Number(item?.loopStartTime)),
+      loopEndTime: Math.min(end, Number(item?.loopEndTime))
+    }))
+    .filter(item => item.loopEndTime - item.loopStartTime >= minimum)
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 
-  if (!source.length || source.length >= 3 || end - start < minimum * 2) {
-    return source.slice(0, limit);
-  }
+  const source = rawSource.reduce((items, item) => {
+    const duplicateIndex = items.findIndex(existing => {
+      const overlap = Math.max(0,
+        Math.min(existing.loopEndTime, item.loopEndTime) -
+        Math.max(existing.loopStartTime, item.loopStartTime)
+      );
+      const shorter = Math.min(
+        existing.loopEndTime - existing.loopStartTime,
+        item.loopEndTime - item.loopStartTime
+      );
+      return shorter > 0 && overlap / shorter >= 0.88;
+    });
+    if (duplicateIndex < 0) items.push(item);
+    else if (Number(item.confidence || 0) > Number(items[duplicateIndex].confidence || 0)) {
+      items[duplicateIndex] = item;
+    }
+    return items;
+  }, []).sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 
-  const positionDuration = end - start;
+  if (!source.length || positionDuration < minimum) return [];
+
   const desired = Math.min(
     limit,
-    Math.max(source.length, positionDuration >= 60 ? 4 : positionDuration >= 30 ? 3 : 2)
+    Math.floor(positionDuration / minimum),
+    positionDuration >= 60 ? 4 : positionDuration >= 30 ? 3 : positionDuration >= 20 ? 2 : 1
   );
-  const coverageStart = Math.max(start, Math.min(...source.map(item => Number(item.loopStartTime))));
-  const coverageEnd = Math.min(end, Math.max(...source.map(item => Number(item.loopEndTime))));
-  const coverage = coverageEnd - coverageStart;
-  if (coverage < desired * minimum) return source.slice(0, limit);
 
-  const sliceDuration = coverage / desired;
+  const naturallyDistinct = source.filter((item, index, list) =>
+    index === 0 || Number(item.loopStartTime) >= Number(list[index - 1].loopEndTime) - 0.25
+  );
+  if (naturallyDistinct.length >= desired) return naturallyDistinct.slice(0, limit);
+
+  const sliceDuration = positionDuration / desired;
   return Array.from({ length: desired }, (_, index) => {
-    const sliceStart = coverageStart + sliceDuration * index;
-    const sliceEnd = index === desired - 1 ? coverageEnd : coverageStart + sliceDuration * (index + 1);
-    const evidence = source.find(item =>
-      Number(item.loopStartTime) < sliceEnd && Number(item.loopEndTime) > sliceStart
-    ) || source[0];
+    const sliceStart = start + sliceDuration * index;
+    const sliceEnd = index === desired - 1 ? end : start + sliceDuration * (index + 1);
+    const rankedEvidence = source.map(item => ({
+      item,
+      overlap: Math.max(0,
+        Math.min(Number(item.loopEndTime), sliceEnd) -
+        Math.max(Number(item.loopStartTime), sliceStart)
+      )
+    })).sort((a, b) => b.overlap - a.overlap);
+    const evidence = rankedEvidence[0]?.item || source[0];
+    const tempoDirectlySupported = Number(rankedEvidence[0]?.overlap || 0) >= (sliceEnd - sliceStart) * 0.65;
+    const labelBase = String(baseLabel || evidence.label || 'Gerçek pozisyon sekansı')
+      .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '');
     return {
       ...evidence,
-      id: `${evidence.id}:variant-${index + 1}`,
-      label: `${String(evidence.label || 'Gerçek hareket').replace(/\s+·\s+Bölüm\s+\d+$/iu, '')} · Bölüm ${index + 1}`,
+      id: `${evidence.id}:variant-${index + 1}-${Math.round(sliceStart * 1000)}`,
+      label: `${labelBase} · Sekans ${index + 1}`,
       loopStartTime: sliceStart,
       loopEndTime: sliceEnd,
-      derivedFromVerifiedSegment: evidence.id
+      movementTempo: tempoDirectlySupported ? evidence.movementTempo : 'unclear',
+      sourceVerified: true,
+      derivedFromVerifiedSegment: evidence.id,
+      derivedFromVerifiedPosition: !tempoDirectlySupported
     };
   });
 }
@@ -360,6 +420,10 @@ export function normalizeMovementTempo(value) {
   const tempo = String(value || '').trim().toLowerCase();
   if (tempo === 'medium' || tempo === 'normal') return 'moderate';
   return TEMPO_ORDER.includes(tempo) ? tempo : 'unclear';
+}
+
+export function playbackRateForTapTempo(value) {
+  return { slow: 0.88, moderate: 1, fast: 1.12 }[normalizeMovementTempo(value)] || 1;
 }
 
 export function groupVerifiedMovementsByTempo(movements = []) {

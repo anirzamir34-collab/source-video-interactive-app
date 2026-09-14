@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  adultPositionFamily,
   adultDiscoveryPhase,
   averageAdultProgress,
   canUnlockBonusPositions,
@@ -17,6 +18,7 @@ import {
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
+  playbackRateForTapTempo,
   pickNearbyRhythmVariant,
   pickNextChronologicalVariant,
   pickNextVariant,
@@ -67,6 +69,7 @@ test('warmup progress can build lust but repeated farming loses value', () => {
 test('position unlocks are progressive and special categories arrive later', () => {
   assert.equal(positionUnlockProgress({ categoryId: 'oral', index: 3 }), 0);
   assert.equal(positionUnlockProgress({ categoryId: 'vaginal', index: 0 }), 35);
+  assert.equal(positionUnlockProgress({ categoryId: 'position', familyId: 'prone-bone', index: 0 }), 35);
   assert.equal(positionUnlockProgress({ categoryId: 'vaginal', index: 1 }), 47);
   assert.equal(positionUnlockProgress({ categoryId: 'anal', index: 0 }), 78);
   assert.equal(positionUnlockProgress({ categoryId: 'vaginal', bootstrap: true }), 0);
@@ -85,6 +88,34 @@ test('long verified position becomes four playable variants of at least ten seco
   assert.equal(variants.length, 4);
   assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 10));
   assert.deepEqual(variants.map(item => item.loopStartTime), [120, 165, 210, 255]);
+});
+
+test('duplicate movement detections become distinct non-overlapping position sequences', () => {
+  const duplicate = {
+    id: 'prone-repeat',
+    label: 'Prone Bone',
+    loopStartTime: 100,
+    loopEndTime: 180,
+    sourceVerified: true,
+    movementTempo: 'slow'
+  };
+  const variants = expandVerifiedMovementVariants([
+    duplicate,
+    { ...duplicate, id: 'prone-repeat-2' },
+    { ...duplicate, id: 'prone-repeat-3' }
+  ], 100, 180, { baseLabel: 'Prone Bone Pozisyonu' });
+  assert.equal(variants.length, 4);
+  assert.equal(new Set(variants.map(item => item.loopStartTime)).size, 4);
+  assert.deepEqual(variants.map(item => [item.loopStartTime, item.loopEndTime]), [
+    [100, 120], [120, 140], [140, 160], [160, 180]
+  ]);
+  assert.ok(variants.every((item, index) => item.label === `Prone Bone Pozisyonu · Sekans ${index + 1}`));
+});
+
+test('prone bone stays a separate canonical position family', () => {
+  assert.equal(adultPositionFamily('Pronebone'), 'prone-bone');
+  assert.equal(adultPositionFamily('Yüzüstü arkadan pozisyon'), 'prone-bone');
+  assert.equal(adultPositionFamily('Doggy style'), 'rear');
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
@@ -163,6 +194,9 @@ test('tap rhythm reacts to slow, moderate and fast touch cadence', () => {
   assert.equal(tapRhythm([0, 350, 700, 1050], 1050).tempo, 'moderate');
   assert.equal(tapRhythm([0, 180, 360, 540], 540).tempo, 'fast');
   assert.equal(tapRhythm([100], 100).tempo, 'unclear');
+  assert.equal(playbackRateForTapTempo('slow'), 0.88);
+  assert.equal(playbackRateForTapTempo('moderate'), 1);
+  assert.equal(playbackRateForTapTempo('fast'), 1.12);
 });
 
 test('rhythm control uses only source-verified explicitly classified variants', () => {

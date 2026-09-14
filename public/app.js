@@ -1,4 +1,5 @@
 import {
+  adultPositionFamily,
   adultDiscoveryPhase,
   averageAdultProgress,
   canUnlockBonusPositions,
@@ -13,6 +14,7 @@ import {
   monotonicAdultPhase,
   nearestAvailableTempo,
   normalizeOutcomeUnlockProgress,
+  playbackRateForTapTempo,
   pickNearbyRhythmVariant,
   pickNextChronologicalVariant,
   pickNextVariant,
@@ -1822,18 +1824,7 @@ function normalizeAdultLabel(value) {
 }
 
 function adultSemanticFamily(value) {
-  const text = normalizeAdultLabel(value);
-  if (/\b(oral|sakso|blowjob|yala|agiz)\b/.test(text)) return 'oral';
-  if (/\b(manuel|manual|elle|handjob|masturb)\b/.test(text)) return 'manual';
-  if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
-  if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
-  if (/\b(kasik|spoon|yan yatarak)\b/.test(text)) return 'spoon';
-  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text) && /\b(ayakta|standing)\b/.test(text)) {
-    return 'standing-rear';
-  }
-  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
-  if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
-  return '';
+  return adultPositionFamily(value);
 }
 
 function canonicalAdultPosition(action) {
@@ -1848,6 +1839,7 @@ function canonicalAdultPosition(action) {
   const labels = {
     oral: 'Oral Seks',
     manual: 'Manuel Uyarım',
+    'prone-bone': 'Prone Bone Pozisyonu',
     missionary: 'Misyoner Pozisyonu',
     cowgirl: 'Kovboy Pozisyonu',
     spoon: 'Kaşık Pozisyonu',
@@ -1878,6 +1870,9 @@ function adultCategoryFor(action, positionId) {
 
   if (positionId === 'oral') return { id: 'oral', label: 'Oral' };
   if (positionId === 'manual') return { id: 'manual', label: 'Manuel' };
+  if (['prone-bone', 'missionary', 'cowgirl', 'spoon', 'standing-rear', 'rear', 'standing'].includes(positionId)) {
+    return { id: 'position', label: 'Pozisyonlar' };
+  }
 
   const source = normalizeAdultLabel([
     action.positionLabel,
@@ -2155,7 +2150,8 @@ function prepareAdultScenes() {
             let movements = expandVerifiedMovementVariants(
               position.movements,
               position.startTime,
-              position.endTime
+              position.endTime,
+              { baseLabel: position.label }
             );
             if (!movements.length && position.endTime - position.startTime >= 10) {
               const verifiedBase = {
@@ -2175,7 +2171,8 @@ function prepareAdultScenes() {
               movements = expandVerifiedMovementVariants(
                 [verifiedBase],
                 position.startTime,
-                position.endTime
+                position.endTime,
+                { baseLabel: position.label }
               );
             }
             return { ...position, movements };
@@ -2855,24 +2852,38 @@ function resetAdultTapRhythm() {
   state.adultTapCandidateCount = 0;
   state.adultLastTempoSwitchAt = 0;
   els.rhythmTapBtn?.removeAttribute('data-tempo');
+  if (els.video && Number(els.video.playbackRate) !== 1) els.video.playbackRate = 1;
   if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'RİTİMİ BAŞLAT';
   if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Hızını algılamak için ritimli dokun';
 }
 
 function rhythmGroupsForPosition(position) {
-  if (!['vaginal', 'anal'].includes(String(position?.activityType || position?.categoryId || ''))) {
-    return null;
-  }
+  if (!position || isWarmupPosition(position)) return null;
+  const playableCount = (position.movements || []).filter(item => item?.sourceVerified === true).length;
+  if (playableCount < 2) return null;
   const groups = groupVerifiedMovementsByTempo(position?.movements || []);
   const tempoCount = Object.values(groups).filter(items => items.length).length;
-  return tempoCount >= 2 ? groups : null;
+  groups.fallbackPlaybackRate = tempoCount < 2;
+  return groups;
 }
 
 function updateRhythmControl(position) {
+  const eligible = Boolean(
+    position &&
+    !isWarmupPosition(position) &&
+    (position.movements?.length || 0) >= 2
+  );
   const groups = rhythmGroupsForPosition(position);
-  els.rhythmControl?.classList.toggle('hidden', !groups);
+  els.rhythmControl?.classList.toggle('hidden', !eligible);
   if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !groups || state.adultOutcomePhase !== 'idle';
-  if (!groups) resetAdultTapRhythm();
+  if (!groups) {
+    resetAdultTapRhythm();
+    if (eligible && els.rhythmTapStatus) {
+      els.rhythmTapStatus.textContent = 'En az iki doğrulanmış hız sekansı gerekli';
+    }
+  } else if (groups.fallbackPlaybackRate && els.rhythmTapStatus) {
+    els.rhythmTapStatus.textContent = 'Dokunma hızın mevcut gerçek sekansın temposunu yönetir';
+  }
 }
 
 function handleAdultRhythmTap(timestamp = performance.now()) {
@@ -2894,7 +2905,9 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
     return;
   }
 
-  const targetTempo = nearestAvailableTempo(rhythm.tempo, groups);
+  const targetTempo = groups.fallbackPlaybackRate
+    ? rhythm.tempo
+    : nearestAvailableTempo(rhythm.tempo, groups);
   if (!targetTempo) return;
   if (state.adultTapCandidateTempo === targetTempo) state.adultTapCandidateCount += 1;
   else {
@@ -2907,23 +2920,37 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
   const canSwitch = state.adultTapTempo === 'unclear' ||
     (state.adultTapCandidateCount >= 2 && now - state.adultLastTempoSwitchAt >= 320);
   if (canSwitch && targetTempo !== state.adultTapTempo) {
-    const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
-    const movement = pickNearbyRhythmVariant(
-      groups[targetTempo],
-      currentMovement,
-      Number(els.video?.currentTime),
-      state.adultMovementPlayCounts,
-      { maxForwardSeconds: 35 }
-    );
-    if (!movement) {
+    if (groups.fallbackPlaybackRate) {
+      state.adultTapTempo = targetTempo;
+      state.adultLastTempoSwitchAt = now;
       state.adultTapCandidateCount = 0;
-      if (els.rhythmTapStatus) {
-        els.rhythmTapStatus.textContent = 'Uzak bölüme atlamadan mevcut sekans korunuyor';
+      tempoChanged = true;
+      if (els.video) {
+        els.video.playbackRate = playbackRateForTapTempo(targetTempo);
       }
-      if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
-      return;
-    }
-    if (movement) {
+      logEngineEvent('RHYTHM_PLAYBACK_RATE_CHANGED', {
+        positionId: position.id,
+        tempo: targetTempo,
+        playbackRate: Number(els.video?.playbackRate || 1),
+        tapsPerSecond: rhythm.tapsPerSecond
+      });
+    } else {
+      const currentMovement = position.movements.find(item => item.id === state.activeMovementId) || null;
+      const movement = pickNearbyRhythmVariant(
+        groups[targetTempo],
+        currentMovement,
+        Number(els.video?.currentTime),
+        state.adultMovementPlayCounts,
+        { maxForwardSeconds: 35 }
+      );
+      if (!movement) {
+        state.adultTapCandidateCount = 0;
+        if (els.rhythmTapStatus) {
+          els.rhythmTapStatus.textContent = 'Uzak bölüme atlamadan mevcut sekans korunuyor';
+        }
+        if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(6);
+        return;
+      }
       state.adultTapTempo = targetTempo;
       state.adultLastTempoSwitchAt = now;
       state.adultTapCandidateCount = 0;
@@ -2943,7 +2970,9 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
     els.rhythmTapLabel.textContent = `RİTİM: ${labels[state.adultTapTempo] || labels[targetTempo]}`;
   }
   if (els.rhythmTapStatus) {
-    els.rhythmTapStatus.textContent = `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · hızına göre oynuyor`;
+    els.rhythmTapStatus.textContent = groups.fallbackPlaybackRate
+      ? `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · ${Number(els.video?.playbackRate || 1).toFixed(2)}× oynuyor`
+      : `${rhythm.tapsPerSecond.toFixed(1)} dokunuş/sn · hızına göre gerçek sekans seçiliyor`;
   }
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
     if (tempoChanged) navigator.vibrate([10, 22, 10]);
@@ -3084,6 +3113,7 @@ function playAdultOutcome(outcomeId) {
   state.adultOutcomePhase = 'outcome';
   state.activeAdultOutcomeId = outcome.id;
   state.activeAdultPreludeId = null;
+  els.video.playbackRate = 1;
   state.activeMovementId = null;
   updateVariantButton(null);
   renderAdultFlowStatus();
@@ -3120,6 +3150,7 @@ function finishAdultScene() {
   state.activeAdultPreludeId = null;
   state.adultOutcomePhase = 'idle';
   state.lastAdultMediaTime = null;
+  if (els.video) els.video.playbackRate = 1;
   els.adultInteractionPanel?.classList.add('hidden');
   els.adultPanelToggleBtn?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
