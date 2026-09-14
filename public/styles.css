@@ -394,7 +394,6 @@ video{width:100%;max-height:58vh;background:black;border-radius:14px}.state-row{
   }
 }
 
-
 /* CINEMATIC MODERN THEME */
 :root {
   --cinema-bg: #07090c;
@@ -3521,4 +3520,109 @@ body { font-size: 13px; }
     max-width: min(66vw, 300px) !important;
     max-height: 31dvh !important;
   }
+}
+
+/* FULLSCREEN STAGE V8 — definitive non-overlapping layout. */
+#playerSection .video-stage:fullscreen,
+#playerSection .video-stage:-webkit-full-screen { --vq-rail: clamp(300px, 31vw, 430px); }
+
+#playerSection .video-stage:fullscreen:has(#adultInteractionPanel:not(.hidden):not(.fullscreen-collapsed)) #video,
+#playerSection .video-stage:-webkit-full-screen:has(#adultInteractionPanel:not(.hidden):not(.fullscreen-collapsed)) #video,
+#playerSection .video-stage:fullscreen:has(#choices:not(.hidden):not(:empty)) #video,
+#playerSection .video-stage:-webkit-full-screen:has(#choices:not(.hidden):not(:empty)) #video {
+  right: auto !important;
+  width: calc(100% - var(--vq-rail) - 1px) !important;
+}
+
+#playerSection .video-stage:fullscreen #choices,
+#playerSection .video-stage:-webkit-full-screen #choices,
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+  box-sizing: border-box !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: auto !important;
+  width: var(--vq-rail) !important;
+  max-width: var(--vq-rail) !important;
+  height: 100dvh !important;
+  max-height: none !important;
+  border: 0 !important;
+  border-left: 1px solid rgba(255,255,255,.11) !important;
+  border-radius: 0 !important;
+  background: linear-gradient(180deg, #080b0a, #020303) !important;
+  box-shadow: -18px 0 48px rgba(0,0,0,.32) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#playerSection .video-stage:fullscreen #choices,
+#playerSection .video-stage:-webkit-full-screen #choices {
+  padding: max(58px, calc(env(safe-area-inset-top) + 48px)) 12px max(14px, env(safe-area-inset-bottom)) !important;
+  justify-content: center !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+  padding: max(54px, calc(env(safe-area-inset-top) + 46px)) 12px max(12px, env(safe-area-inset-bottom)) !important;
+  scrollbar-gutter: stable !important;
+}
+
+#playerSection .video-stage:fullscreen #choices.hidden,
+#playerSection .video-stage:-webkit-full-screen #choices.hidden,
+#playerSection .video-stage:fullscreen #choices:empty,
+#playerSection .video-stage:-webkit-full-screen #choices:empty { display: none !important; }
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-grid,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-grid,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .discovery-choice-grid,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .discovery-choice-grid,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .outcome-choice-grid,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .outcome-choice-grid {
+  grid-template-columns: 1fr !important;
+  gap: 6px !important;
+}
+
+#playerSection .video-stage:fullscreen .fullscreen-btn,
+#playerSection .video-stage:-webkit-full-screen .fullscreen-btn { right: calc(var(--vq-rail) + 12px) !important; }
+
+#playerSection .video-stage:fullscreen .adult-panel-toggle-btn,
+#playerSection .video-stage:-webkit-full-screen .adult-panel-toggle-btn {
+  top: max(10px, env(safe-area-inset-top)) !important;
+  right: 12px !important;
+}
+
+@media (orientation: portrait) {
+  #playerSection .video-stage:fullscreen,
+  #playerSection .video-stage:-webkit-full-screen { --vq-rail: 40dvh; }
+
+  #playerSection .video-stage:fullscreen:has(#adultInteractionPanel:not(.hidden):not(.fullscreen-collapsed)) #video,
+  #playerSection .video-stage:-webkit-full-screen:has(#adultInteractionPanel:not(.hidden):not(.fullscreen-collapsed)) #video,
+  #playerSection .video-stage:fullscreen:has(#choices:not(.hidden):not(:empty)) #video,
+  #playerSection .video-stage:-webkit-full-screen:has(#choices:not(.hidden):not(:empty)) #video {
+    right: 0 !important;
+    bottom: auto !important;
+    width: 100% !important;
+    height: calc(100% - var(--vq-rail) - 1px) !important;
+  }
+
+  #playerSection .video-stage:fullscreen #choices,
+  #playerSection .video-stage:-webkit-full-screen #choices,
+  #playerSection .video-stage:fullscreen #adultInteractionPanel,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+    top: auto !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: var(--vq-rail) !important;
+    max-height: var(--vq-rail) !important;
+    padding: 10px max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)) !important;
+    border-top: 1px solid rgba(255,255,255,.11) !important;
+    border-left: 0 !important;
+  }
+
+  #playerSection .video-stage:fullscreen .fullscreen-btn,
+  #playerSection .video-stage:-webkit-full-screen .fullscreen-btn { right: max(10px, env(safe-area-inset-right)) !important; }
 }
