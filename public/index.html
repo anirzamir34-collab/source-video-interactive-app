@@ -92,7 +92,7 @@
 
         <label class="mode-switch">
           <span>
-            <b>Türkçe altyazı</b>
+            <b>Türkçe altyazı <em id="subtitleQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
             <small>Diyalog, konuşmacı ve zaman damgaları</small>
           </span>
           <input id="subtitleMode" type="checkbox" />
@@ -101,7 +101,7 @@
 
         <label class="mode-switch">
           <span>
-            <b>Türkçe dublaj</b>
+            <b>Türkçe dublaj <em id="dubQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
             <small>Kadın ve erkek için ayrı Türkçe sesler</small>
           </span>
           <input id="dubMode" type="checkbox" />
@@ -158,6 +158,9 @@
           </button>
           <button id="dubToggleBtn" class="dub-toggle-btn hidden" type="button">
             TR DUBLAJ: AÇIK
+          </button>
+          <button id="adultPanelToggleBtn" class="adult-panel-toggle-btn hidden" type="button">
+            SEÇİMLER
           </button>
           <div class="choice-navigation" aria-label="Seçim navigasyonu">
             <button id="prevChoiceBtn" type="button">⏮ Önceki seçim</button>
