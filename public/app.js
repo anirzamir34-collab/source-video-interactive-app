@@ -3946,11 +3946,9 @@ async function resolveVideoUrl() {
       throw new Error(result.message || 'Bu sayfada kullanılabilir video bulunamadı.');
     }
 
-    if (result.type === 'hls') {
-      throw new Error('HLS/m3u8 kaynağı bulundu; ancak yerel kare analizi için MP4/WebM kaynağı gerekiyor.');
-    }
-
-    setUrlStatus('Video bulundu. Cihaza geçici olarak hazırlanıyor...');
+    setUrlStatus(result.type === 'hls'
+      ? 'HLS akışı bulundu. Analiz için MP4 hazırlanıyor...'
+      : 'Video bulundu. Cihaza geçici olarak hazırlanıyor...');
     const blob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
 
     if (!blob.size) throw new Error('Video boş geldi.');
