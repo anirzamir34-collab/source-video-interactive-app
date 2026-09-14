@@ -2390,6 +2390,28 @@ function prepareAdultScenes() {
   );
 
   state.adultScenes.forEach(scene => {
+    const existingWarmupIds = new Set((scene.foreplay || []).map(item => item.id));
+    const windowWarmups = actions.filter(action => {
+      if (action?.sourceVerified !== true || verifiedAdultPositionFamily(action)) return false;
+      const actionType = String(action.actionType || '').toLowerCase();
+      const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
+      const warmupType = ['kiss', 'touch', 'clothing', 'body_transition'].includes(actionType);
+      const warmupLabel = /\b(op|opus|boyun|gogus|dokun|oksa|saril|yaklas|yonlendir)\b/.test(labelKey);
+      const start = Number(action.startTime);
+      const end = Number(action.endTime);
+      return (warmupType || warmupLabel) && Number.isFinite(start) && Number.isFinite(end) &&
+        Math.min(end, Number(scene.endTime)) - Math.max(start, Number(scene.startTime)) >= 0.5;
+    }).map(action => ({
+      id: action.actionId,
+      label: action.label,
+      startTime: Math.max(Number(scene.startTime), Number(action.startTime)),
+      endTime: Math.min(Number(scene.endTime), Number(action.endTime)),
+      maleProgressRate: Number(action.maleProgressRate || 1),
+      femaleProgressRate: Number(action.femaleProgressRate || 1)
+    })).filter(item => !existingWarmupIds.has(item.id));
+    scene.foreplay = [...(scene.foreplay || []), ...windowWarmups]
+      .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
       movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
@@ -2416,7 +2438,7 @@ function prepareAdultScenes() {
 function findAdultSceneAt(time) {
   return findAdultSceneForTimeline(state.adultScenes, {
     time,
-    completedSceneIds: state.completedAdultSceneIds
+    completedSceneIds: new Set()
   });
 }
 
@@ -2869,7 +2891,8 @@ function renderAdultPanel(scene) {
 }
 
 function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}) {
-  if (!scene || state.completedAdultSceneIds?.has(scene.id) || !els.video) return false;
+  if (!scene || !els.video) return false;
+  state.completedAdultSceneIds?.delete(scene.id);
 
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
@@ -3364,9 +3387,16 @@ function playAdultOutcome(outcomeId) {
   els.video.play().catch(() => {});
 }
 
-function finishAdultScene() {
+function finishAdultScene(reason = '') {
   const scene = state.adultScene;
   if (!scene) return;
+  if (!['outcome', 'aftermath', 'skip'].includes(String(reason))) {
+    logEngineEvent('ADULT_SCENE_FINISH_BLOCKED', {
+      sceneId: scene.id,
+      reason: String(reason || 'selection')
+    });
+    return;
+  }
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
   state.completedAdultSceneIds.add(scene.id);
   const sceneActions = (state.analysis?.actions || []).filter(action => {
@@ -3525,7 +3555,7 @@ function updateAdultPlayback(now, mediaTime) {
         seekAdultLoop(aftermath.startTime, token);
         els.video.play().catch(() => {});
       } else {
-        finishAdultScene();
+        finishAdultScene('outcome');
       }
     }
     state.lastAdultFrameNow = now;
@@ -3535,7 +3565,7 @@ function updateAdultPlayback(now, mediaTime) {
   if (state.adultOutcomePhase === 'aftermath') {
     const aftermath = state.adultScene?.aftermath;
     if (!aftermath || mediaTime >= aftermath.endTime - 0.04) {
-      finishAdultScene();
+      finishAdultScene('aftermath');
     }
     state.lastAdultFrameNow = now;
     return;
@@ -3552,8 +3582,12 @@ function updateAdultPlayback(now, mediaTime) {
       state.activeAdultPreludeId = null;
       return;
     }
-    if (mediaTime >= item.endTime - 0.04 || mediaTime < item.startTime - 0.15) {
-      seekAdultLoop(item.startTime, state.adultSelectionToken);
+    if (mediaTime >= item.endTime - 0.04) {
+      els.video.pause();
+      return;
+    }
+    if (mediaTime < item.startTime - 0.15) {
+      seekAdultLoop(item.startTime, state.adultSelectionToken, { playAfterSeek: true });
       return;
     }
     state.maleSceneProgress = Math.min(
@@ -3632,7 +3666,7 @@ function adultFrameLoop(now, metadata) {
 }
 
 if (els.finishAdultSceneBtn) {
-  els.finishAdultSceneBtn.addEventListener('click', finishAdultScene);
+  els.finishAdultSceneBtn.addEventListener('click', () => finishAdultScene('skip'));
 }
 
 if (els.nextVariantBtn) {
@@ -3735,15 +3769,14 @@ function renderChoices() {
   }
 
   const adultCandidate = candidates.find(action =>
-    isVerifiedAdultPositionAction(action) &&
     findAdultSceneForTimeline(state.adultScenes, {
       action,
-      completedSceneIds: state.completedAdultSceneIds
+      completedSceneIds: new Set()
     })
   );
   const candidateScene = adultCandidate && findAdultSceneForTimeline(state.adultScenes, {
     action: adultCandidate,
-    completedSceneIds: state.completedAdultSceneIds
+    completedSceneIds: new Set()
   });
   if (candidateScene && enterAdultScene(candidateScene, { forceStart: true, reason: 'next-timeline-action' })) {
     return;
@@ -3755,7 +3788,7 @@ function renderChoices() {
     !isVerifiedAdultPositionAction(action) &&
     !findAdultSceneForTimeline(state.adultScenes, {
       action,
-      completedSceneIds: state.completedAdultSceneIds
+      completedSceneIds: new Set()
     })
   );
 
@@ -3768,7 +3801,7 @@ function renderChoices() {
         !isVerifiedAdultPositionAction(action) &&
         !findAdultSceneForTimeline(state.adultScenes, {
           action,
-          completedSceneIds: state.completedAdultSceneIds
+          completedSceneIds: new Set()
         })
       )
       .slice(0, 4);
@@ -3801,7 +3834,7 @@ function renderChoices() {
 async function playAction(action) {
   const adultScene = findAdultSceneForTimeline(state.adultScenes, {
     action,
-    completedSceneIds: state.completedAdultSceneIds
+    completedSceneIds: new Set()
   });
   if (adultScene) {
     enterAdultScene(adultScene, { forceStart: true, reason: 'action-route-guard' });
