@@ -6,11 +6,13 @@ import {
   canUnlockOutcome,
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
+  expandVerifiedMovementVariants,
   isOutcomeUnlocked,
   monotonicAdultPhase,
   normalizeOutcomeUnlockProgress,
   pickNextVariant,
   positionUnlockProgress,
+  requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries
 } from './adult-gameplay.js';
 import {
@@ -168,6 +170,8 @@ const els = {
   maleProgressBar: $('maleProgressBar'),
   femaleProgressText: $('femaleProgressText'),
   femaleProgressBar: $('femaleProgressBar'),
+  climaxProgressText: $('climaxProgressText'),
+  climaxProgressBar: $('climaxProgressBar'),
   adultFlowStatus: $('adultFlowStatus'),
   nextVariantBtn: $('nextVariantBtn'),
   outcomeSection: $('outcomeSection'),
@@ -2053,9 +2057,11 @@ function prepareAdultScenes() {
         positions: [...scene.positions.values()]
           .map(position => ({
             ...position,
-            movements: position.movements
-              .filter(item => item.loopEndTime - item.loopStartTime >= 10)
-              .sort((a, b) => a.loopStartTime - b.loopStartTime)
+            movements: expandVerifiedMovementVariants(
+              position.movements,
+              position.startTime,
+              position.endTime
+            )
           }))
           .filter(position => position.endTime - position.startTime >= 10)
           .sort((a, b) => a.startTime - b.startTime)
@@ -2183,7 +2189,10 @@ function unlockedAdultOutcomes(scene = state.adultScene) {
       outcome,
       climaxProgress: state.adultClimaxProgress,
       coreVisitedCount,
-      corePlaySeconds: state.adultCorePlaySeconds
+      corePlaySeconds: state.adultCorePlaySeconds,
+      requiredCorePlaySeconds: requiredCorePlaySecondsForOutcome(
+        Math.max(0, Number(scene?.endTime) - Number(scene?.startTime))
+      )
     })
   );
 }
@@ -2233,6 +2242,8 @@ function renderAdultProgress() {
   if (els.femaleProgressText) els.femaleProgressText.textContent = `${Math.round(female)}%`;
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${male}%`;
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${female}%`;
+  if (els.climaxProgressText) els.climaxProgressText.textContent = `${Math.round(state.adultClimaxProgress)}%`;
+  if (els.climaxProgressBar) els.climaxProgressBar.style.width = `${state.adultClimaxProgress}%`;
   renderAdultFlowStatus();
   persistRuntimeSnapshot('adult-progress');
   renderAdultProgressiveUI(false);
@@ -2664,7 +2675,8 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   state.maleSceneProgress = Math.min(100, state.maleSceneProgress + delta.male);
   state.femaleSceneProgress = Math.min(100, state.femaleSceneProgress + delta.female);
   if (!isWarmupPosition(position)) {
-    const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.8;
+    // A selection unlocks discovery, but cannot rush the final meter.
+    const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
     state.adultClimaxProgress = Math.min(100, state.adultClimaxProgress + climaxDelta);
   }
   renderAdultProgress();
@@ -2825,6 +2837,16 @@ function finishAdultScene() {
   if (!scene) return;
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
   state.completedAdultSceneIds.add(scene.id);
+  const sceneActions = (state.analysis?.actions || []).filter(action => {
+    const start = Number(action.startTime);
+    return start >= Number(scene.startTime) - 0.15 && start < Number(scene.endTime) + 0.15;
+  });
+  sceneActions.forEach(action => state.consumedActionIds.add(action.actionId));
+  const lastSceneActionIndex = (state.analysis?.actions || []).reduce(
+    (last, action, index) => sceneActions.includes(action) ? Math.max(last, index) : last,
+    state.currentActionIndex
+  );
+  state.currentActionIndex = lastSceneActionIndex;
   setAdultMachinePhase('complete');
   logEngineEvent('ADULT_SCENE_COMPLETED', { sceneId: scene.id });
   state.adultSelectionToken += 1;
@@ -2845,7 +2867,10 @@ function finishAdultScene() {
     els.video.currentTime = Math.min(scene.postSceneTime, els.video.duration || scene.postSceneTime);
     els.video.play().catch(() => {});
   }
-  state.gameCursorTime = scene.postSceneTime;
+  state.gameCursorTime = Math.max(
+    Number(scene.postSceneTime) || 0,
+    Number(scene.endTime) + 0.05
+  );
   persistRuntimeSnapshot('adult-scene-complete', true);
   renderChoices();
 }
@@ -3003,21 +3028,18 @@ function updateAdultPlayback(now, mediaTime) {
       Number(movement.femaleProgressRate || 1)
     );
     state.adultCorePlaySeconds += elapsed;
-    state.adultClimaxProgress = Math.min(
-      100,
-      state.adultClimaxProgress + elapsed * 0.9 * movementRate
+    const requiredSeconds = requiredCorePlaySecondsForOutcome(
+      Math.max(0, Number(state.adultScene?.endTime) - Number(state.adultScene?.startTime))
+    );
+    const ratePerSecond = 100 / requiredSeconds;
+    state.adultClimaxProgress = Math.min(100,
+      state.adultClimaxProgress + elapsed * ratePerSecond * movementRate
     );
   }
   renderAdultProgress();
 
-  const outcomes = state.adultScene?.outcomes || [];
-  if (
-    !outcomes.length &&
-    state.adultClimaxProgress >= 100 &&
-    state.adultCorePlaySeconds >= 18
-  ) {
-    finishAdultScene();
-  }
+  // Never auto-complete a scene merely because a meter reached 100. The
+  // verified outcome/aftermath or the explicit scene-finish control owns exit.
 }
 
 function adultFrameLoop(now, metadata) {
@@ -3097,7 +3119,7 @@ function renderChoices() {
         Number(scene.endTime) >= Number(adultCandidate.startTime) - 0.25
       );
 
-    if (adultScene) {
+    if (adultScene && !state.completedAdultSceneIds.has(adultScene.id)) {
       els.choices.classList.add('hidden');
       document.querySelector('.choice-navigation')?.classList.add('hidden');
       state.gameCursorTime = adultScene.startTime;
