@@ -1227,7 +1227,16 @@ els.analyzeBtn.addEventListener('click', async () => {
     form.append('dialogueContext', JSON.stringify(chunkDialogue));
     form.append('qualityMode', modes.quality);
     form.append('protagonistProfile', protagonistProfile);
-    form.append('storyContextMemory', JSON.stringify(storyContextMemory));
+      form.append('storyContextMemory', JSON.stringify(storyContextMemory));
+
+      const freshChunkForm = () => {
+        const next = new FormData();
+        form.forEach((value, key) => {
+          if (typeof value === 'string') next.append(key, value);
+          else next.append(key, value, value.name || 'storyboard.jpg');
+        });
+        return next;
+      };
 
       els.analysisTitle.textContent =
         `Derin analiz: bölüm ${chunkIndex + 1}/${chunkCount}`;
@@ -1254,7 +1263,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         try {
           response = await fetch('/api/gemini-storyboard-analyze', {
             method: 'POST',
-            body: form,
+            body: freshChunkForm(),
             signal: AbortSignal.timeout(240000)
           });
 
@@ -1278,7 +1287,7 @@ els.analyzeBtn.addEventListener('click', async () => {
                 `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} kritik aday ikinci kez doğrulanıyor...`;
               const reviewResponse = await fetch('/api/gemini-storyboard-analyze', {
                 method: 'POST',
-                body: form,
+                body: freshChunkForm(),
                 signal: AbortSignal.timeout(240000)
               });
               const reviewBody = await reviewResponse.json();
@@ -1392,6 +1401,9 @@ els.analyzeBtn.addEventListener('click', async () => {
         actions: mergedActions,
         warnings: chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
+        ),
+        analysisGaps: chunkResults.flatMap(result =>
+          Array.isArray(result.analysisGaps) ? result.analysisGaps : []
         ),
         analysisMode: 'MULTI_PASS_DEEP_HARDENED',
         chunkCount: chunkResults.length,
