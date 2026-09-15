@@ -2,7 +2,7 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 
 
 export const ANALYSIS_SCHEMA_VERSION = 5;
 export const ENGINE_VERSION = 'videoquest-story-v1';
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 export const ADULT_PHASE_ORDER = Object.freeze({
   foreplay: 0,
