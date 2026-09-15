@@ -67,6 +67,7 @@ const state = {
   serviceConnected: false,
   serviceCapabilities: null,
   selectedFile: null,
+  selectedRemoteVideo: null,
   analysis: null,
   dialogue: null,
   subtitlesEnabled: true,
@@ -471,7 +472,7 @@ function updateAnalysisModesUI() {
 
 function updateAnalyzeAvailability() {
   const hasMode = updateAnalysisModesUI();
-  els.analyzeBtn.disabled = !state.selectedFile || !hasMode;
+  els.analyzeBtn.disabled = !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
 }
 
 [
@@ -489,6 +490,7 @@ els.healthBtn.addEventListener('click', checkHealth);
 els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
   state.selectedFile = file;
+  state.selectedRemoteVideo = null;
   resetDubState();
   if (file) {
     els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • ${file.type || 'video'}`;
@@ -1110,7 +1112,7 @@ els.video.addEventListener('timeupdate', renderSubtitle);
 els.video.addEventListener('seeked', renderSubtitle);
 
 els.analyzeBtn.addEventListener('click', async () => {
-  if (!state.selectedFile) return;
+  if (!state.selectedFile && !state.selectedRemoteVideo) return;
   els.analyzeBtn.disabled = true;
   els.analysisCard.classList.remove('hidden');
   els.analysisTitle.textContent = 'Harici servis analiz isteği';
@@ -1118,7 +1120,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisOutput.textContent = 'Video harici analiz servisine gönderiliyor…\nSahte fallback kullanılmayacak.';
   setGameState('ANALYZING');
 
-  const file = state.selectedFile;
+  let file = state.selectedFile;
   const modes = selectedAnalysisModes();
 
   // Every analysis run must start from a clean dialogue/dub timeline.
@@ -1140,6 +1142,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Motion-only analysis stays visual and must not spend time or AI quota on audio.
   if (modes.subtitles || modes.dubbing) {
     try {
+      if (!file) {
+        els.analysisTitle.textContent = 'Ses analizi için video indiriliyor';
+        file = await ensureSelectedRemoteFile();
+      }
       const dialogue = await analyzeSelectedDialogue(file);
 
       state.subtitlesEnabled = Boolean(modes.subtitles && dialogue.segments.length);
@@ -1195,14 +1201,20 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisState.textContent = 'LOCAL_PROCESSING';
 
   const { extractStoryboard } = await import('./storyboard.js');
-  const storyboard = await extractStoryboard(file, (progress) => {
-    els.analysisTitle.textContent = `Video telefonda hazırlanıyor: %${progress}`;
+  const storyboardSource = file || state.selectedRemoteVideo?.proxyUrl;
+  const storyboard = await extractStoryboard(storyboardSource, (progress) => {
+    els.analysisTitle.textContent = state.selectedRemoteVideo && !file
+      ? `Video akışından kareler hazırlanıyor: %${progress}`
+      : `Video telefonda hazırlanıyor: %${progress}`;
   });
 
-  const originalMB = (file.size / 1024 / 1024).toFixed(1);
   const storyboardMB = (storyboard.totalBytes / 1024 / 1024).toFixed(1);
+  const sourceSize = file?.size || state.selectedRemoteVideo?.size || 0;
+  const sourceSizeText = sourceSize
+    ? `${(sourceSize / 1024 / 1024).toFixed(1)} MB yerine `
+    : '';
   els.analysisTitle.textContent =
-    `${storyboard.timestamps.length} kare hazır • ${originalMB} MB yerine ${storyboardMB} MB gönderiliyor`;
+    `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
     const sheetsPerChunk = 2;
@@ -1509,14 +1521,15 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (
     body?.available &&
     (!Array.isArray(body.actions) || !body.actions.length) &&
-    state.selectedFile
+    (state.selectedFile || state.selectedRemoteVideo)
   ) {
     els.analysisState.textContent = 'EXTERNAL_FALLBACK';
     els.analysisTitle.textContent = 'Hareket motoru devreye giriyor';
-    const fallbackForm = new FormData();
-    fallbackForm.append('video', state.selectedFile, state.selectedFile.name);
 
     try {
+      const fallbackFile = state.selectedFile || await ensureSelectedRemoteFile();
+      const fallbackForm = new FormData();
+      fallbackForm.append('video', fallbackFile, fallbackFile.name);
       const fallbackResponse = await fetch('/api/external-analyze', {
         method: 'POST',
         body: fallbackForm,
@@ -3952,6 +3965,47 @@ async function downloadUrlVideo(proxyUrl, sourceUrl) {
   return new Blob(chunks, { type: contentType });
 }
 
+async function probeSeekableVideo(proxyUrl) {
+  try {
+    const response = await fetch(proxyUrl, {
+      headers: { Range: 'bytes=0-1' }
+    });
+    const contentRange = String(response.headers.get('content-range') || '');
+    const size = Number(contentRange.match(/\/(\d+)$/)?.[1]) || 0;
+    const contentType = response.headers.get('content-type') || 'video/mp4';
+    try { await response.body?.cancel(); } catch {}
+    return {
+      seekable: response.status === 206 && /^bytes\s/i.test(contentRange),
+      size,
+      contentType
+    };
+  } catch {
+    return { seekable: false, size: 0, contentType: '' };
+  }
+}
+
+function remoteVideoFileName(sourceUrl, contentType = '') {
+  const sourcePath = new URL(sourceUrl).pathname;
+  const sourceName = decodeURIComponent(sourcePath.split('/').pop() || '');
+  const extension = sourceName.match(/\.(mp4|webm|m4v|mov)$/i)?.[0] ||
+    (contentType.includes('webm') ? '.webm' : '.mp4');
+  return sourceName || `url-video${extension}`;
+}
+
+async function ensureSelectedRemoteFile() {
+  if (state.selectedFile) return state.selectedFile;
+  const remote = state.selectedRemoteVideo;
+  if (!remote?.proxyUrl) throw new Error('İndirilecek uzak video kaynağı bulunamadı.');
+  setUrlStatus('Bu analiz modu için video cihaza geçici olarak indiriliyor...');
+  const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl);
+  if (!blob.size) throw new Error('Video boş geldi.');
+  const file = new File([blob], remote.fileName, { type: blob.type || remote.contentType || 'video/mp4' });
+  state.selectedFile = file;
+  state.selectedRemoteVideo = { ...remote, size: blob.size, contentType: file.type };
+  els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • URL kaynağı`;
+  return file;
+}
+
 async function resolveVideoUrl() {
   const pageUrl = videoUrlInput?.value.trim();
   if (!pageUrl) {
@@ -3980,21 +4034,41 @@ async function resolveVideoUrl() {
     }
 
     const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
+    const fileName = remoteVideoFileName(result.sourceUrl);
+    if (result.type === 'video') {
+      setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Akış desteği kontrol ediliyor...`);
+      const probe = await probeSeekableVideo(result.proxyUrl);
+      if (probe.seekable) {
+        state.selectedFile = null;
+        state.selectedRemoteVideo = {
+          proxyUrl: result.proxyUrl,
+          sourceUrl: result.sourceUrl,
+          fileName,
+          size: probe.size,
+          contentType: probe.contentType
+        };
+        resetDubState();
+        els.video.src = result.proxyUrl;
+        const sizeText = probe.size ? ` • ${(probe.size / 1024 / 1024).toFixed(1)} MB` : '';
+        els.fileMeta.textContent = `${fileName}${sizeText} • URL akışı`;
+        updateAnalyzeAvailability();
+        renderDebug();
+        setUrlStatus('Video akıştan hazır. Tam indirme yapmadan analiz edebilirsin.', 'success');
+        return;
+      }
+    }
+
     setUrlStatus(result.type === 'hls'
       ? `HLS akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
-      : `Video ${resolveSeconds} sn içinde bulundu. Cihaza geçici olarak hazırlanıyor...`);
+      : `Kaynak ileri sarmayı desteklemiyor. Video cihaza hazırlanıyor...`);
     const blob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
 
     if (!blob.size) throw new Error('Video boş geldi.');
 
-    const sourcePath = new URL(result.sourceUrl).pathname;
-    const sourceName = decodeURIComponent(sourcePath.split('/').pop() || '');
-    const extension = sourceName.match(/\.(mp4|webm|m4v|mov)$/i)?.[0] ||
-      (blob.type.includes('webm') ? '.webm' : '.mp4');
-    const fileName = sourceName || `url-video${extension}`;
     const file = new File([blob], fileName, { type: blob.type || 'video/mp4' });
 
     state.selectedFile = file;
+    state.selectedRemoteVideo = null;
     resetDubState();
     els.video.src = URL.createObjectURL(file);
     els.fileMeta.textContent =
@@ -4005,6 +4079,7 @@ async function resolveVideoUrl() {
     setUrlStatus('Video hazır. Şimdi “Videoyu analiz et” düğmesine bas.', 'success');
   } catch (error) {
     state.selectedFile = null;
+    state.selectedRemoteVideo = null;
     updateAnalyzeAvailability();
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
   } finally {
