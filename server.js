@@ -242,9 +242,57 @@ function cropStoryboardRow(file, rowIndex) {
   });
 }
 
+function cropStoryboardCell(file, frameIndex) {
+  return new Promise((resolve, reject) => {
+    const column = frameIndex % 3;
+    const row = Math.floor(frameIndex / 3);
+    const ffmpeg = spawn(ffmpegPath, [
+      '-hide_banner', '-loglevel', 'error',
+      '-i', 'pipe:0',
+      '-vf', `crop=iw/3:ih/4:${column}*iw/3:${row}*ih/4`,
+      '-frames:v', '1',
+      '-q:v', '3',
+      '-f', 'image2pipe',
+      '-vcodec', 'mjpeg',
+      'pipe:1'
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const chunks = [];
+    let stderr = '';
+    const deadline = setTimeout(() => ffmpeg.kill('SIGKILL'), 15000);
+    ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
+    ffmpeg.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-2000); });
+    ffmpeg.on('error', reject);
+    ffmpeg.on('close', code => {
+      clearTimeout(deadline);
+      if (code !== 0 || !chunks.length) {
+        reject(new Error(stderr || `STORYBOARD_CELL_CROP_FAILED:${code}`));
+        return;
+      }
+      resolve({
+        ...file,
+        buffer: Buffer.concat(chunks),
+        size: chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+        mimetype: 'image/jpeg',
+        originalname: `${path.parse(file.originalname || 'storyboard').name}-frame-${frameIndex + 1}.jpg`
+      });
+    });
+    ffmpeg.stdin.end(file.buffer);
+  });
+}
+
 async function splitSingleStoryboardSheet(file, timestampValues) {
   const frameCount = Math.min(12, timestampValues.length);
   const occupiedRows = Math.ceil(frameCount / 3);
+  if (frameCount >= 2 && occupiedRows < 2) {
+    const cells = [];
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      cells.push({
+        file: await cropStoryboardCell(file, frameIndex),
+        timestamps: [timestampValues[frameIndex]]
+      });
+    }
+    return cells;
+  }
   if (occupiedRows < 2) return [];
   const rows = [];
   for (let rowIndex = 0; rowIndex < occupiedRows; rowIndex += 1) {
@@ -575,6 +623,23 @@ Rules:
       }],
       warnings: ['Bu aralık modelden doğrulanabilir sonuç alınamadığı için seçenek üretilmeden geçildi.']
     });
+    const restrictedTerminalResult = (startTime, endTime, reason) => ({
+      available: true,
+      videoDuration: duration,
+      introEndTime: chunkIndex === 0 ? Math.max(0, startTime) : chunkStart,
+      playStartTime: chunkIndex === 0 ? Math.max(0, startTime) : chunkStart,
+      protagonistProfile,
+      videoPrompt: '',
+      storyContext: {},
+      actions: [],
+      analysisGaps: [],
+      restrictedRanges: [{
+        startTime: Math.max(0, Number(startTime) || 0),
+        endTime: Math.min(duration, Math.max(Number(startTime) || 0, Number(endTime) || 0)),
+        reason: String(reason || 'PROHIBITED_CONTENT')
+      }],
+      warnings: ['Son kısıtlı aralık seçim üretmeden atlandı; önceki doğrulanmış bölümler korundu.']
+    });
     const generateStoryboardJson = async (requestPrompt, requestFiles, retryLabel = 'full') => {
       const parts = [
         { text: requestPrompt },
@@ -659,13 +724,15 @@ Rules:
         }
       }
 
+      const terminalProhibited = chunkIndex === chunkCount - 1 &&
+        /PROHIBITED_CONTENT/i.test(String(fullChunkError?.message || fullChunkError));
       if (recoverySegments.length <= 1) {
-        console.warn(`[gemini-storyboard-gap] chunk ${chunkIndex + 1}/${chunkCount} kept as a non-playable verified gap after repeated empty responses`);
-        parsed = unverifiedGapResult(
-          chunkStart,
-          chunkEnd,
-          String(fullChunkError?.message || fullChunkError)
-        );
+        console.warn(terminalProhibited
+          ? `[gemini-storyboard-restricted-tail] chunk ${chunkIndex + 1}/${chunkCount} contains no selectable verified action`
+          : `[gemini-storyboard-gap] chunk ${chunkIndex + 1}/${chunkCount} kept as a non-playable verified gap after repeated empty responses`);
+        parsed = terminalProhibited
+          ? restrictedTerminalResult(chunkStart, chunkEnd, String(fullChunkError?.message || fullChunkError))
+          : unverifiedGapResult(chunkStart, chunkEnd, String(fullChunkError?.message || fullChunkError));
       } else {
       const recoveredParts = [];
       console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${recoverySegments.length} smaller requests`);
@@ -688,11 +755,12 @@ Rules:
           ));
         } catch (splitError) {
           console.warn(`[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} in chunk ${chunkIndex + 1} kept non-playable`);
-          recoveredParts.push(unverifiedGapResult(
-            splitStart,
-            splitEnd,
-            String(splitError?.message || splitError)
-          ));
+          const splitReason = String(splitError?.message || splitError);
+          recoveredParts.push(
+            chunkIndex === chunkCount - 1 && /PROHIBITED_CONTENT/i.test(splitReason)
+              ? restrictedTerminalResult(splitStart, splitEnd, splitReason)
+              : unverifiedGapResult(splitStart, splitEnd, splitReason)
+          );
         }
       }
 
@@ -707,6 +775,7 @@ Rules:
         videoPrompt: recoveredParts.map(item => String(item?.videoPrompt || '').trim()).filter(Boolean).join('\n\n'),
         actions: recoveredParts.flatMap(item => Array.isArray(item?.actions) ? item.actions : []),
         analysisGaps: recoveredParts.flatMap(item => Array.isArray(item?.analysisGaps) ? item.analysisGaps : []),
+        restrictedRanges: recoveredParts.flatMap(item => Array.isArray(item?.restrictedRanges) ? item.restrictedRanges : []),
         warnings: [
           ...recoveredParts.flatMap(item => Array.isArray(item?.warnings) ? item.warnings : []),
           `Chunk ${chunkIndex + 1} recovered from ${recoverySegments.length} smaller verified segments.`
@@ -854,6 +923,7 @@ Rules:
       storyContext: parsed.storyContext && typeof parsed.storyContext === 'object' ? parsed.storyContext : {},
       actions: dedupedActions,
       analysisGaps: Array.isArray(parsed.analysisGaps) ? parsed.analysisGaps : [],
+      restrictedRanges: Array.isArray(parsed.restrictedRanges) ? parsed.restrictedRanges : [],
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []
     });
   } catch (error) {
