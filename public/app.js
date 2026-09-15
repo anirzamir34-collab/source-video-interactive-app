@@ -3961,6 +3961,7 @@ async function resolveVideoUrl() {
 
   resolveUrlBtn.disabled = true;
   setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor...');
+  const resolveStartedAt = performance.now();
 
   try {
     const resolveResponse = await fetch('/api/resolve-video-url', {
@@ -3978,9 +3979,10 @@ async function resolveVideoUrl() {
       );
     }
 
+    const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
     setUrlStatus(result.type === 'hls'
-      ? 'HLS akışı bulundu. Analiz için MP4 hazırlanıyor...'
-      : 'Video bulundu. Cihaza geçici olarak hazırlanıyor...');
+      ? `HLS akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
+      : `Video ${resolveSeconds} sn içinde bulundu. Cihaza geçici olarak hazırlanıyor...`);
     const blob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
 
     if (!blob.size) throw new Error('Video boş geldi.');

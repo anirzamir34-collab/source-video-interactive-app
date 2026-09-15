@@ -1044,10 +1044,16 @@ async function probeVideoCandidate(candidate, referer, cookie = '') {
 }
 
 const resolvedVideoSessions = new Map();
+const resolvedVideoCache = new Map();
+const pendingVideoResolutions = new Map();
+const VIDEO_RESOLUTION_CACHE_MS = 20 * 60 * 1000;
 setInterval(() => {
   const now = Date.now();
   for (const [token, session] of resolvedVideoSessions) {
     if (session.expiresAt <= now) resolvedVideoSessions.delete(token);
+  }
+  for (const [url, cached] of resolvedVideoCache) {
+    if (cached.expiresAt <= now) resolvedVideoCache.delete(url);
   }
 }, 10 * 60 * 1000).unref();
 
@@ -1092,9 +1098,23 @@ async function resolvePublicVideoPage(startUrl) {
     return score(left.url) - score(right.url);
   }).slice(0, 30);
 
-  for (const item of preferred) {
-    const verified = await probeVideoCandidate(item.url, item.referer, item.cookie);
-    if (verified) return { ...verified, pageUrl: item.referer, cookie: item.cookie };
+  // Candidate probes are independent. Small parallel batches avoid waiting up
+  // to 18 seconds for every dead source while keeping traffic bounded.
+  const probeConcurrency = 4;
+  for (let offset = 0; offset < preferred.length; offset += probeConcurrency) {
+    const batch = preferred.slice(offset, offset + probeConcurrency);
+    const results = await Promise.all(batch.map(async item => ({
+      item,
+      verified: await probeVideoCandidate(item.url, item.referer, item.cookie)
+    })));
+    const match = results.find(result => result.verified);
+    if (match) {
+      return {
+        ...match.verified,
+        pageUrl: match.item.referer,
+        cookie: match.item.cookie
+      };
+    }
   }
   return null;
 }
@@ -1128,6 +1148,9 @@ async function resolveWithSiteExtractor(rawUrl) {
     browserImpersonation = true;
   } catch (error) {
     impersonationError = String(error?.stderr || error?.message || error).slice(0, 500);
+    // Unsupported URLs fail before browser impersonation matters. Repeating
+    // the same extractor call without impersonation only doubles the wait.
+    if (/unsupported url/i.test(impersonationError)) throw error;
     output = await youtubedl(rawUrl, baseOptions, runtimeOptions);
   }
 
@@ -1173,6 +1196,7 @@ async function resolveWithSiteExtractor(rawUrl) {
 
 app.post('/api/resolve-video-url', async (req, res) => {
   try {
+    const startedAt = Date.now();
     const requestedUrl = String(req.body?.url || '').trim();
     if (!requestedUrl) {
       return res.status(400).json({ ok: false, reason: 'URL_REQUIRED', message: 'Video sayfası URL’si gerekli.' });
@@ -1193,14 +1217,38 @@ app.post('/api/resolve-video-url', async (req, res) => {
 
     let resolved = null;
     let extractorError = '';
-    try {
-      resolved = await resolveWithSiteExtractor(normalizedUrl);
-    } catch (error) {
-      extractorError = String(error?.stderr || error?.message || error).slice(0, 900);
-      console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, extractorError);
+    const cached = resolvedVideoCache.get(normalizedUrl);
+    const cacheHit = Boolean(cached?.expiresAt > Date.now());
+    if (cacheHit) {
+      resolved = cached.resolved;
+    } else {
+      if (cached) resolvedVideoCache.delete(normalizedUrl);
+      let pending = pendingVideoResolutions.get(normalizedUrl);
+      if (!pending) {
+        pending = (async () => {
+          let candidate = null;
+          let candidateError = '';
+          try {
+            candidate = await resolveWithSiteExtractor(normalizedUrl);
+          } catch (error) {
+            candidateError = String(error?.stderr || error?.message || error).slice(0, 900);
+            console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, candidateError);
+          }
+          if (!candidate) candidate = await resolvePublicVideoPage(normalizedUrl);
+          if (candidate) {
+            resolvedVideoCache.set(normalizedUrl, {
+              resolved: candidate,
+              expiresAt: Date.now() + VIDEO_RESOLUTION_CACHE_MS
+            });
+          }
+          return { resolved: candidate, extractorError: candidateError };
+        })().finally(() => pendingVideoResolutions.delete(normalizedUrl));
+        pendingVideoResolutions.set(normalizedUrl, pending);
+      }
+      const resolution = await pending;
+      resolved = resolution.resolved;
+      extractorError = resolution.extractorError;
     }
-
-    if (!resolved) resolved = await resolvePublicVideoPage(normalizedUrl);
     if (!resolved) {
       const protectedSite = /captcha|sign in|login|cookies|forbidden|403|unsupported url|drm/i.test(extractorError);
       return res.status(422).json({
@@ -1231,7 +1279,9 @@ app.post('/api/resolve-video-url', async (req, res) => {
       type: resolved.type,
       sourceUrl: resolved.sourceUrl,
       pageUrl: resolved.pageUrl,
-      proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`
+      proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`,
+      cached: cacheHit,
+      resolveMs: Date.now() - startedAt
     });
   } catch (error) {
     res.status(502).json({
