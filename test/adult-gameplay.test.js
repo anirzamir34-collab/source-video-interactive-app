@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   adultPositionFamily,
+  verifiedAdultPositionFamily,
   adultDiscoveryPhase,
   averageAdultProgress,
   canUnlockBonusPositions,
@@ -337,6 +338,23 @@ test('position family ignores furniture, kissing and ordinary hand-contact wordi
   assert.equal(adultPositionFamily('Eliyle belini tut'), '');
   assert.equal(adultPositionFamily('Ayakta arkadan pozisyon'), 'standing-rear');
   assert.equal(adultPositionFamily('Doggy style'), 'rear');
+});
+
+test('verified position labels work even when optional position metadata is missing or stale', () => {
+  assert.equal(verifiedAdultPositionFamily({
+    sourceVerified: true,
+    label: 'Ters kovboy pozisyonunda devam et'
+  }), 'reverse-cowgirl');
+  assert.equal(verifiedAdultPositionFamily({
+    sourceVerified: true,
+    positionId: 'cowgirl',
+    positionLabel: 'Kovboy Pozisyonu',
+    label: 'Ters kovboy pozisyonunda devam et'
+  }), 'reverse-cowgirl');
+  assert.equal(verifiedAdultPositionFamily({
+    sourceVerified: false,
+    label: 'Ters kovboy pozisyonunda devam et'
+  }), '');
 });
 
 test('movement cards keep concrete action text and remove sensory metadata', () => {
