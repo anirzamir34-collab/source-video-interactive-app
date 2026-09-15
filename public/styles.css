@@ -3651,3 +3651,66 @@ body { font-size: 13px; }
   padding: 4px 6px;
   font-size: .56rem;
 }
+
+/* FULLSCREEN STORY CHOICES V9 — compact action-only overlay. */
+#playerSection .video-stage:fullscreen:has(#choices:not(.hidden):not(:empty)) #video,
+#playerSection .video-stage:-webkit-full-screen:has(#choices:not(.hidden):not(:empty)) #video {
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#playerSection .video-stage:fullscreen #choices,
+#playerSection .video-stage:-webkit-full-screen #choices {
+  top: auto !important;
+  right: auto !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  left: max(12px, env(safe-area-inset-left)) !important;
+  width: min(34vw, 360px) !important;
+  max-width: 360px !important;
+  height: auto !important;
+  max-height: 52dvh !important;
+  padding: 6px !important;
+  justify-content: flex-end !important;
+  gap: 5px !important;
+  border: 1px solid rgba(255,255,255,.08) !important;
+  border-radius: 12px !important;
+  background: rgba(3,7,8,.54) !important;
+  box-shadow: 0 12px 32px rgba(0,0,0,.34) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .choice,
+#playerSection .video-stage:-webkit-full-screen #choices .choice {
+  min-height: 0 !important;
+  padding: 8px 26px 8px 10px !important;
+  border-radius: 9px !important;
+  background: rgba(6,14,15,.82) !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .choice-title,
+#playerSection .video-stage:-webkit-full-screen #choices .choice-title {
+  font-size: clamp(11px, 1.25vw, 14px) !important;
+  line-height: 1.2 !important;
+  font-weight: 750 !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .choice-meta,
+#playerSection .video-stage:-webkit-full-screen #choices .choice-meta,
+#playerSection .video-stage:fullscreen #choices .choice-sensory,
+#playerSection .video-stage:-webkit-full-screen #choices .choice-sensory {
+  display: none !important;
+}
+
+@media (orientation: portrait) {
+  #playerSection .video-stage:fullscreen #choices,
+  #playerSection .video-stage:-webkit-full-screen #choices {
+    right: max(10px, env(safe-area-inset-right)) !important;
+    left: max(10px, env(safe-area-inset-left)) !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 34dvh !important;
+  }
+}
