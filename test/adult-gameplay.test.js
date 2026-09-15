@@ -31,6 +31,7 @@ import {
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
   resolveVerifiedAdultPosition,
+  summarizeAdultSceneGraph,
   nearestAvailableTempo,
   tapRhythm
 } from '../public/adult-gameplay.js';
@@ -38,6 +39,32 @@ import {
 test('averageAdultProgress clamps both values and averages them', () => {
   assert.equal(averageAdultProgress(120, -10), 50);
   assert.equal(averageAdultProgress(80, 60), 70);
+});
+
+test('adult graph report exposes duplicate family tabs and movement variants', () => {
+  const report = summarizeAdultSceneGraph([{
+    id: 'scene-a', startTime: 100, endTime: 180,
+    positions: [
+      {
+        id: 'reverse-a', familyId: 'reverse-cowgirl', occurrenceId: 'occ-a',
+        label: 'Ters Kovboy', startTime: 120, endTime: 140,
+        sourcePositionIds: ['raw-a'], movements: [{ id: 'm1' }],
+        movementChoices: [{ id: 'c1', label: 'Ritmi sürdür', variants: [{ id: 'm1', loopStartTime: 121, loopEndTime: 130 }] }]
+      },
+      {
+        id: 'reverse-b', familyId: 'reverse-cowgirl', occurrenceId: 'occ-b',
+        label: 'Ters Kovboy', startTime: 145, endTime: 170,
+        sourcePositionIds: ['raw-b'], movements: [{ id: 'm2' }, { id: 'm3' }],
+        movementChoices: [{ id: 'c2', label: 'Hızlı hareket', variants: [{ id: 'm2' }, { id: 'm3' }] }]
+      }
+    ]
+  }]);
+
+  assert.equal(report.positionCount, 2);
+  assert.equal(report.movementCount, 3);
+  assert.equal(report.duplicateFamilies.length, 1);
+  assert.equal(report.duplicateFamilies[0].familyId, 'reverse-cowgirl');
+  assert.equal(report.scenes[0].positions[1].movementChoices[0].variantCount, 2);
 });
 
 test('selection progress rewards novelty and reduces repeated farming', () => {

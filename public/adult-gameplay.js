@@ -703,6 +703,80 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   });
 }
 
+export function summarizeAdultSceneGraph(scenes = []) {
+  const sceneReports = (Array.isArray(scenes) ? scenes : []).map(scene => {
+    const positions = (Array.isArray(scene?.positions) ? scene.positions : []).map(position => ({
+      id: String(position?.id || ''),
+      familyId: String(position?.familyId || ''),
+      occurrenceId: String(position?.occurrenceId || ''),
+      label: String(position?.label || ''),
+      startTime: Number(position?.startTime),
+      endTime: Number(position?.endTime),
+      duration: Number((Number(position?.endTime) - Number(position?.startTime)).toFixed(3)),
+      sourcePositionIds: [...(position?.sourcePositionIds || [])].map(String),
+      sourceRanges: (position?.sourceRanges || []).map(range => ({
+        id: String(range?.id || ''),
+        startTime: Number(range?.startTime),
+        endTime: Number(range?.endTime)
+      })),
+      movementCount: Array.isArray(position?.movements) ? position.movements.length : 0,
+      movementChoiceCount: Array.isArray(position?.movementChoices) ? position.movementChoices.length : 0,
+      movementChoices: (position?.movementChoices || []).map(choice => ({
+        id: String(choice?.id || ''),
+        label: String(choice?.label || ''),
+        sourcePositionId: String(choice?.sourcePositionId || ''),
+        variantCount: Array.isArray(choice?.variants) ? choice.variants.length : 0,
+        variants: (choice?.variants || []).map(variant => ({
+          id: String(variant?.id || variant?.actionId || ''),
+          label: String(variant?.label || ''),
+          startTime: Number(variant?.loopStartTime ?? variant?.startTime),
+          endTime: Number(variant?.loopEndTime ?? variant?.endTime),
+          sourcePositionId: String(variant?.sourcePositionId || '')
+        }))
+      }))
+    }));
+    const familyGroups = new Map();
+    positions.forEach(position => {
+      const family = position.familyId || 'unknown';
+      if (!familyGroups.has(family)) familyGroups.set(family, []);
+      familyGroups.get(family).push(position);
+    });
+    const duplicateFamilies = [...familyGroups.entries()]
+      .filter(([, items]) => items.length > 1)
+      .map(([familyId, items]) => ({
+        familyId,
+        tabCount: items.length,
+        occurrences: items.map(item => ({
+          id: item.id,
+          occurrenceId: item.occurrenceId,
+          startTime: item.startTime,
+          endTime: item.endTime,
+          sourcePositionIds: item.sourcePositionIds
+        }))
+      }));
+    return {
+      id: String(scene?.id || ''),
+      startTime: Number(scene?.startTime),
+      endTime: Number(scene?.endTime),
+      positionCount: positions.length,
+      movementCount: positions.reduce((sum, item) => sum + item.movementCount, 0),
+      movementChoiceCount: positions.reduce((sum, item) => sum + item.movementChoiceCount, 0),
+      duplicateFamilies,
+      positions
+    };
+  });
+  return {
+    sceneCount: sceneReports.length,
+    positionCount: sceneReports.reduce((sum, scene) => sum + scene.positionCount, 0),
+    movementCount: sceneReports.reduce((sum, scene) => sum + scene.movementCount, 0),
+    movementChoiceCount: sceneReports.reduce((sum, scene) => sum + scene.movementChoiceCount, 0),
+    duplicateFamilies: sceneReports.flatMap(scene =>
+      scene.duplicateFamilies.map(item => ({ sceneId: scene.id, ...item }))
+    ),
+    scenes: sceneReports
+  };
+}
+
 export function isEnergeticSexMoment(movement = null) {
   if (!movement || movement.sourceVerified !== true) return false;
   const tempo = normalizeMovementTempo(movement.movementTempo);

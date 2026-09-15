@@ -26,6 +26,7 @@ import {
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
   resolveVerifiedAdultPosition,
+  summarizeAdultSceneGraph,
   tapRhythm,
   verifiedAdultPositionFamily
 } from './adult-gameplay.js';
@@ -97,6 +98,7 @@ const state = {
   femaleSceneProgress: 0,
   lastAdultMediaTime: null,
   adultScenes: [],
+  adultAnalysisTrace: null,
   completedAdultSceneIds: new Set(),
   adultLoopSeeking: false,
   adultSeekTimer: null,
@@ -170,6 +172,9 @@ const els = {
   prevChoiceBtn: $('prevChoiceBtn'),
   nextChoiceBtn: $('nextChoiceBtn'),
   timelineList: $('timelineList'),
+  adultTraceToggleBtn: $('adultTraceToggleBtn'),
+  adultTraceDownloadBtn: $('adultTraceDownloadBtn'),
+  adultTraceOutput: $('adultTraceOutput'),
   videoPrompt: $('videoPrompt'),
   debugOutput: $('debugOutput'),
   adultInteractionPanel: $('adultInteractionPanel'),
@@ -1136,6 +1141,12 @@ els.analyzeBtn.addEventListener('click', async () => {
   state.analysisFingerprint = '';
   state.engineEvents = [];
   state.integrityReport = null;
+  state.adultAnalysisTrace = null;
+  if (els.adultTraceOutput) {
+    els.adultTraceOutput.classList.add('hidden');
+    els.adultTraceOutput.textContent = '';
+  }
+  renderAdultAnalysisTrace();
   state.dubbingEnabled = false;
   state.subtitlesEnabled = false;
   resetDubState();
@@ -2050,22 +2061,76 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
 
 function prepareAdultScenes() {
   const actions = state.analysis?.actions || [];
+  const traceRows = actions.map((action, index) => ({
+    index,
+    actionId: String(action?.actionId || `action-${index}`),
+    label: String(action?.label || ''),
+    startTime: Number(action?.startTime),
+    endTime: Number(action?.endTime),
+    sourceVerified: action?.sourceVerified === true,
+    confidence: Number(action?.confidence || 0),
+    input: {
+      adultScene: Boolean(action?.adultScene),
+      adultSceneId: String(action?.adultSceneId || ''),
+      positionId: String(action?.positionId || ''),
+      positionLabel: String(action?.positionLabel || ''),
+      positionOccurrenceId: String(action?.positionOccurrenceId || ''),
+      actionType: String(action?.actionType || ''),
+      movementType: String(action?.movementType || ''),
+      movementTempo: String(action?.movementTempo || ''),
+      positionStartTime: Number(action?.positionStartTime),
+      positionEndTime: Number(action?.positionEndTime),
+      loopStartTime: Number(action?.loopStartTime),
+      loopEndTime: Number(action?.loopEndTime)
+    },
+    detectedFamily: verifiedAdultPositionFamily(action) || '',
+    sceneCandidate: false,
+    sceneCandidateReason: 'NOT_EVALUATED',
+    route: 'NOT_ROUTED',
+    routeReason: 'NOT_EVALUATED',
+    finalSceneId: '',
+    finalPositionKey: '',
+    movementAccepted: false
+  }));
+  const traceByAction = new Map(actions.map((action, index) => [action, traceRows[index]]));
+  state.adultAnalysisTrace = {
+    reportVersion: 1,
+    generatedAt: new Date().toISOString(),
+    engineVersion: ENGINE_VERSION,
+    analysisFingerprint: state.analysisFingerprint || '',
+    sourceActionCount: actions.length,
+    actions: traceRows,
+    graph: null,
+    warnings: []
+  };
   const sceneMap = new Map();
   const sceneIdFor = action => action.adultSceneId ||
     `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
   const verifiedPositionSceneIds = new Set(
     actions.filter(action => {
-      if (action?.sourceVerified !== true) return false;
+      const row = traceByAction.get(action);
+      if (action?.sourceVerified !== true) {
+        row.sceneCandidateReason = 'REJECTED_SOURCE_NOT_VERIFIED';
+        return false;
+      }
       // A verified position may arrive without the optional adultScene flag
       // or activityEvidence. The canonical family in its label is enough to
       // route it into the dedicated adult panel; never require model-only
       // metadata that would otherwise leak the action into normal choices.
       const family = verifiedAdultPositionFamily(action);
-      if (!family) return false;
+      if (!family) {
+        row.sceneCandidateReason = 'REJECTED_NO_CANONICAL_POSITION_FAMILY';
+        return false;
+      }
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
-      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 6 &&
-        Number(action.confidence || 0) >= 0.6;
+      const validTime = Number.isFinite(start) && Number.isFinite(end) && end - start >= 6;
+      const validConfidence = Number(action.confidence || 0) >= 0.6;
+      row.sceneCandidate = validTime && validConfidence;
+      row.sceneCandidateReason = !validTime
+        ? 'REJECTED_POSITION_SHORTER_THAN_6_SECONDS_OR_INVALID_TIME'
+        : (!validConfidence ? 'REJECTED_CONFIDENCE_BELOW_0_60' : 'ACCEPTED_VERIFIED_POSITION');
+      return row.sceneCandidate;
     }).map(sceneIdFor)
   );
 
@@ -2073,6 +2138,8 @@ function prepareAdultScenes() {
     verifiedPositionSceneIds.has(sceneIdFor(action))
   ).forEach((action, index) => {
     const sceneId = sceneIdFor(action);
+    const traceRow = traceByAction.get(action);
+    traceRow.finalSceneId = sceneId;
 
     if (!sceneMap.has(sceneId)) {
       sceneMap.set(sceneId, {
@@ -2102,6 +2169,8 @@ function prepareAdultScenes() {
     const isAftermath = outcomeType === 'aftermath' || action.actionType === 'aftermath';
 
     if (isOutcome || isAftermath) {
+      traceRow.route = isAftermath ? 'AFTERMATH' : 'OUTCOME';
+      traceRow.routeReason = 'ACTION_OUTCOME_TYPE';
       const startTime = Math.max(
         scene.startTime,
         Number(action.outcomeStartTime ?? action.startTime)
@@ -2157,6 +2226,8 @@ function prepareAdultScenes() {
         Number.isFinite(endTime) &&
         endTime - startTime >= 2
       ) {
+        traceRow.route = 'FOREPLAY';
+        traceRow.routeReason = 'EXPLICIT_OR_LABEL_WARMUP';
         scene.foreplay.push({
           id: action.actionId || `${sceneId}:warmup-${index}`,
           label: action.label,
@@ -2166,11 +2237,19 @@ function prepareAdultScenes() {
           femaleProgressRate: Number(action.femaleProgressRate || 1)
         });
       }
+      if (traceRow.route === 'NOT_ROUTED') {
+        traceRow.route = 'REJECTED';
+        traceRow.routeReason = 'NO_POSITION_EVIDENCE_AND_NOT_VALID_WARMUP';
+      }
       return;
     }
 
     const canonical = canonicalAdultPosition(action);
-    if (!canonical.id) return;
+    if (!canonical.id) {
+      traceRow.route = 'REJECTED';
+      traceRow.routeReason = 'CANONICAL_POSITION_RESOLUTION_FAILED';
+      return;
+    }
 
     const correctedStart = canonical.correctedFromAction
       ? Number(action.startTime)
@@ -2186,6 +2265,15 @@ function prepareAdultScenes() {
     );
     const routeNamespace = activityOccurrenceNamespace(action);
     const positionKey = `${category.id}:${canonical.id}:${routeNamespace}:${occurrenceId}`;
+    traceRow.route = 'POSITION';
+    traceRow.routeReason = canonical.correctedFromAction
+      ? 'LABEL_FAMILY_OVERRULED_INCONSISTENT_POSITION_METADATA'
+      : 'CANONICAL_POSITION_ACCEPTED';
+    traceRow.canonicalFamily = canonical.id;
+    traceRow.canonicalLabel = canonical.label;
+    traceRow.occurrenceId = occurrenceId;
+    traceRow.routeNamespace = routeNamespace;
+    traceRow.finalPositionKey = positionKey;
 
     if (!scene.positions.has(positionKey)) {
       scene.positions.set(positionKey, {
@@ -2224,6 +2312,8 @@ function prepareAdultScenes() {
         Number(action.loopEndTime ?? action.endTime)
       );
       if (movementBelongsToVerifiedPosition(action, canonical.id)) {
+        traceRow.movementAccepted = true;
+        traceRow.movementReason = 'MOVEMENT_MATCHES_CANONICAL_POSITION';
         position.movements.push({
           ...action,
           id: action.actionId || `movement-${index}`,
@@ -2231,7 +2321,11 @@ function prepareAdultScenes() {
           loopStartTime: movementStart,
           loopEndTime: movementEnd
         });
+      } else {
+        traceRow.movementReason = 'REJECTED_MOVEMENT_POSITION_CONFLICT';
       }
+    } else {
+      traceRow.movementReason = 'NO_MOVEMENT_LABEL_OR_TYPE';
     }
   });
 
@@ -2351,6 +2445,56 @@ function prepareAdultScenes() {
       });
     });
   });
+
+  const graph = summarizeAdultSceneGraph(state.adultScenes);
+  state.adultAnalysisTrace.graph = graph;
+  state.adultAnalysisTrace.warnings = [
+    ...graph.duplicateFamilies.map(item => ({
+      code: 'DUPLICATE_POSITION_FAMILY_TABS',
+      message: `${item.familyId} aynı sahnede ${item.tabCount} ayrı sekmeye bölündü.`,
+      ...item
+    })),
+    ...graph.scenes.flatMap(scene => scene.positions
+      .filter(position => position.movementChoiceCount <= 1)
+      .map(position => ({
+        code: 'SPARSE_MOVEMENT_CHOICES',
+        message: `${position.label || position.familyId} için ${position.movementCount} hareketten ${position.movementChoiceCount} kart üretildi.`,
+        sceneId: scene.id,
+        positionId: position.id,
+        movementCount: position.movementCount,
+        movementChoiceCount: position.movementChoiceCount
+      })))
+  ];
+  renderAdultAnalysisTrace();
+}
+
+function adultAnalysisTraceText() {
+  return JSON.stringify(state.adultAnalysisTrace || {
+    reportVersion: 1,
+    error: 'Henüz tamamlanmış bir analiz raporu yok.'
+  }, null, 2);
+}
+
+function renderAdultAnalysisTrace() {
+  const ready = Boolean(state.adultAnalysisTrace?.graph);
+  if (els.adultTraceToggleBtn) els.adultTraceToggleBtn.disabled = !ready;
+  if (els.adultTraceDownloadBtn) els.adultTraceDownloadBtn.disabled = !ready;
+  if (els.adultTraceOutput && !els.adultTraceOutput.classList.contains('hidden')) {
+    els.adultTraceOutput.textContent = adultAnalysisTraceText();
+  }
+}
+
+function downloadAdultAnalysisTrace() {
+  if (!state.adultAnalysisTrace?.graph) return;
+  const blob = new Blob([adultAnalysisTraceText()], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `videoquest-sex-analysis-${Date.now()}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function findAdultSceneAt(time) {
@@ -3886,6 +4030,14 @@ document.querySelectorAll('.tab').forEach(btn => {
 
 els.prevChoiceBtn?.addEventListener('click', () => jumpChoice(-1));
 els.nextChoiceBtn?.addEventListener('click', () => jumpChoice(1));
+els.adultTraceToggleBtn?.addEventListener('click', () => {
+  if (!state.adultAnalysisTrace?.graph) return;
+  const opening = els.adultTraceOutput.classList.contains('hidden');
+  els.adultTraceOutput.classList.toggle('hidden', !opening);
+  els.adultTraceToggleBtn.textContent = opening ? 'RAPORU GİZLE' : 'SEKS ANALİZ RAPORU';
+  if (opening) els.adultTraceOutput.textContent = adultAnalysisTraceText();
+});
+els.adultTraceDownloadBtn?.addEventListener('click', downloadAdultAnalysisTrace);
 
 els.video.addEventListener('seeking', () => {
   if (state.adultMode || state.adultLoopSeeking) {

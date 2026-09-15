@@ -3763,3 +3763,36 @@ body { font-size: 13px; }
   background: rgba(4, 10, 12, .94) !important;
   border: 1px solid rgba(88, 235, 191, .35) !important;
 }
+
+.adult-trace-card {
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid rgba(88, 235, 191, .22);
+  border-radius: 14px;
+  background: rgba(6, 14, 16, .72);
+}
+
+.adult-trace-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.adult-trace-toolbar button {
+  flex: 1 1 180px;
+}
+
+.adult-trace-help {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: .8rem;
+}
+
+.adult-trace-output {
+  max-height: min(58vh, 620px);
+  margin-top: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: .72rem;
+}
