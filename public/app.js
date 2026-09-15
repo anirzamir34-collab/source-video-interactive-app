@@ -15,6 +15,7 @@ import {
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   monotonicAdultPhase,
+  movementBelongsToVerifiedPosition,
   nearestAvailableTempo,
   normalizeOutcomeUnlockProgress,
   playbackRateForTapTempo,
@@ -1993,29 +1994,6 @@ function isBonusPosition(position) {
   return category === 'anal' || category === 'other';
 }
 
-function movementBelongsToPosition(action, canonicalId) {
-  const text = normalizeAdultLabel([
-    action?.label,
-    action?.movementType,
-    action?.activityEvidence,
-    action?.sensoryEvidence
-  ].filter(Boolean).join(' '));
-  const family = adultSemanticFamily(text);
-  if (family && family !== canonicalId) return false;
-
-  // Warm-up actions must stay in the warm-up panel. A model can attach a
-  // kiss/touch label to a position row; that is not proof of a position-local
-  // movement and must never become a selectable position card.
-  if (!family && /\b(op|opus|kiss|dudak|oksa|okus|sivaz|oksa|saril|dokun|temas|touch|caress|kiss)\b/.test(text)) {
-    return false;
-  }
-  if (/\b(vajinal|vaginal|anal|penetrasyon|penetration|birlesme|gecis|transition|pozisyon\s+degistir|donerken|yonlendir)\b/.test(text)) {
-    return false;
-  }
-  return true;
-}
-
-
 // One encounter is often split into several model scene ids even though the
 // source continues with other verified positions. Keep nearby occurrences in
 // one gameplay graph so progression can reveal them instead of ending early.
@@ -2245,7 +2223,7 @@ function prepareAdultScenes() {
         Number(action.positionEndTime ?? position.endTime),
         Number(action.loopEndTime ?? action.endTime)
       );
-      if (movementBelongsToPosition(action, canonical.id)) {
+      if (movementBelongsToVerifiedPosition(action, canonical.id)) {
         position.movements.push({
           ...action,
           id: action.actionId || `movement-${index}`,
@@ -2714,16 +2692,13 @@ function renderAdultProgressiveUI(force = false) {
     els.foreplaySection?.classList.add('hidden');
   }
 
-  if (phase === 'final') {
-    els.categorySection?.classList.add('hidden');
-    els.positionSection?.classList.add('hidden');
-    els.movementSection?.classList.add('hidden');
+  const showFinalOutcomes = phase === 'final' && outcomes.length > 0;
+  if (showFinalOutcomes) {
     renderAdultOutcomes(scene);
-    return;
+  } else {
+    els.outcomeSection?.classList.add('hidden');
+    els.outcomeChoices && (els.outcomeChoices.innerHTML = '');
   }
-
-  els.outcomeSection?.classList.add('hidden');
-  els.outcomeChoices && (els.outcomeChoices.innerHTML = '');
 
   if (showWarmup || !unlockedCore.length) {
     els.categorySection?.classList.add('hidden');
@@ -3291,9 +3266,9 @@ function finishAdultScene() {
   const sceneActions = (state.analysis?.actions || []).filter(action => {
     const start = Number(action.startTime);
     const actionSceneId = String(action.adultSceneId || '').trim();
-    const sameScene = actionSceneId
-      ? sceneSourceIds.has(actionSceneId)
-      : start >= Number(scene.startTime) - 0.15 && start < Number(scene.endTime) + 0.15;
+    const insideMergedEncounter = start >= Number(scene.startTime) - 0.15 &&
+      start < Number(scene.endTime) + 0.15;
+    const sameScene = sceneSourceIds.has(actionSceneId) || insideMergedEncounter;
     return sameScene && start < Number(scene.endTime) + 0.15;
   });
   sceneActions.forEach(action => state.consumedActionIds.add(action.actionId));
