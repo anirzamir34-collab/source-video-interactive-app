@@ -14,7 +14,7 @@ export function adultPositionFamily(value) {
   if (/\b(oral(?:\s+seks)?|sakso|blowjob|fellatio|cunnilingus)\b/.test(text)) return 'oral';
   if (/\b(manuel\s+uyarim|manual\s+stimulation|handjob|masturbasyon)\b/.test(text)) return 'manual';
   if (/\b(reverse\s+cowgirl|reverse\s+rider|ters\s+kovboy|ters\s+cowgirl|ters\s+rider|ters\s+kucak(?:ta)?|arkasi\s+donuk\s+kovboy|sirtini\s+donerek\s+ustte)\b/.test(text)) return 'reverse-cowgirl';
-  if (/\b(lap\s+dance|kucakta|kucaginda|lotus|yuz\s+yuze\s+oturarak|seated\s+face[\s-]?to[\s-]?face)\b/.test(text)) return 'seated-facing';
+  if (/\b(lap\s+dance|kucakta|kucaginda|kucagindaki|kucaginda\s+oturan|lotus|yuz\s+yuze\s+oturarak|seated\s+face[\s-]?to[\s-]?face)\b/.test(text)) return 'seated-facing';
   if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
   if (/\b(piledriver|omuzda|bacaklar\s+yukari|legs\s+up)\b/.test(text)) return 'legs-up';
   if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
@@ -47,7 +47,11 @@ export function resolveVerifiedAdultPosition(action = {}) {
     ? adultPositionFamily([action.label, action.movementType].filter(Boolean).join(' '))
     : '';
   const declared = [labelFamily, idFamily, actionFamily].filter(Boolean);
-  const explicitPositionLabel = /\b(pozisyon\w*|position\w*)\b/i.test(String(action.label || ''));
+  const explicitPositionLabel = /\b(pozisyon\w*|position\w*|ters\s+(?:kovboy|cowgirl)|kucag?\w*|lap\s+dance|lotus|misyoner|missionary|doggy)\b/i.test(
+    String(action.label || '')
+      .toLocaleLowerCase('tr-TR')
+      .replace(/ğ/g, 'g')
+  );
   const correctedFromAction = Boolean(
     explicitPositionLabel &&
     actionFamily &&
@@ -561,8 +565,8 @@ export function consolidateVerifiedPositions(positions = []) {
   return clustered.sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
-export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 3) {
-  const limit = Math.max(1, Math.min(3, Math.floor(Number(maxChoices) || 3)));
+export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
+  const limit = Math.max(1, Math.min(6, Math.floor(Number(maxChoices) || 4)));
   const clean = value => String(value || '')
     .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
@@ -604,7 +608,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   for (let index = 0; index < cardCount; index += 1) {
     const remaining = local.length - cursor;
     const remainingCards = cardCount - index;
-    const size = Math.min(3, Math.max(1, Math.ceil(remaining / remainingCards)));
+    const size = Math.max(1, Math.ceil(remaining / remainingCards));
     const variants = local.slice(cursor, cursor + size);
     cursor += size;
     const first = variants[0];
@@ -674,8 +678,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       return;
     }
     existing.variants = [...existing.variants, ...card.variants]
-      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))
-      .slice(0, 3);
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
     existing.tempoVariants = ['fast', 'moderate', 'slow'].map(kind =>
       existing.variants.find(item => normalizeMovementTempo(item.movementTempo) === kind)
     ).filter(Boolean);
