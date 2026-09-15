@@ -578,13 +578,17 @@ Rules:
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
 - For every action, fuse only time-aligned evidence: audible non-speech intensity, visible gaze duration, facial expression, posture and body response. Report observable cues, not hidden mental states.
 - Never claim pain, pleasure, happiness, fear, consent or climax from one ambiguous facial expression, sound or body movement. Use observedAffect unclear unless multiple consistent cues support a cautious visible description.
-- Use canonical positionId values consistently: oral, manual, prone-bone, missionary, cowgirl, spoon, standing-rear, rear, standing, or other-stable-N.
+- Use canonical positionId values consistently: oral, manual, reverse-cowgirl, seated-facing, prone-bone, legs-up, missionary, cowgirl, spoon, reverse-spoon, standing-rear, rear, seated, standing, or other-stable-N.
 - A furniture or direction word is never position evidence by itself: "koltuğun arkasına", "arkaya yönlendir", "ağzından öp" and ordinary hand contact must not become rear, oral or manual position families.
 - rear requires a clearly visible from-behind body configuration; standing-rear additionally requires both partners to be visibly upright. If those body arrangements are not clear at start, midpoint and end, omit the position.
 - Use prone-bone only when the receiving partner is visibly lying face-down/flat with hips low while penetration is from behind. Do not collapse prone-bone into rear/doggy, missionary, spoon or a generic lying position.
 - positionId, positionLabel and the visible body configuration described by label must agree. If they conflict, omit the position instead of guessing.
 - Use missionary only when the receiving partner is visibly below/on their back and MAIN_MALE is visibly above/front-facing in that configuration.
 - Use cowgirl only when the partner is visibly on top/straddling MAIN_MALE. Never reuse missionary for a cowgirl segment or cowgirl for a missionary segment.
+- Use reverse-cowgirl only when the partner is visibly on top/straddling MAIN_MALE while facing away from him. Never collapse reverse-cowgirl into cowgirl.
+- Use seated-facing only when partners are visibly seated/lap-positioned and facing each other. Use seated only for other clearly seated sexual configurations.
+- Use legs-up only when legs are visibly raised in a sustained stable configuration. Do not use it for a brief transition.
+- Use reverse-spoon only when side-lying orientation is visibly the reverse/back-facing spoon configuration. Do not collapse it into spoon.
 - When the visible body configuration changes from one canonical position to another, end the previous occurrence before the change and start a new occurrence at the first clearly verified frame of the new position.
 - Two labels describing the same visible body configuration must reuse one canonical positionId; wording, tempo, camera angle, or minor pose variation must never create another position.
 - Oral activity, manual activity, undressing, and transitions are separate position families and must never appear beneath missionary, rear, standing-rear, cowgirl, spoon, or another penetrative position.

@@ -2005,6 +2005,12 @@ pre {
   overscroll-behavior: contain;
 }
 
+.movement-choice-wrap {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
 .movement-choice-card {
   position: relative;
   min-height: 92px;
@@ -2031,6 +2037,21 @@ pre {
 .movement-choice-card small {
   display: block;
 }
+
+.movement-tempo-btn {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid rgba(126, 234, 203, .35);
+  border-radius: 9px;
+  color: #a9f5de;
+  background: rgba(26, 92, 75, .28);
+  font-size: .62rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.movement-tempo-btn:active { transform: translateY(1px); }
 
 .movement-choice-card strong {
   margin-bottom: 7px;
@@ -3584,7 +3605,12 @@ body { font-size: 13px; }
 }
 
 #playerSection .video-stage:fullscreen .fullscreen-btn,
-#playerSection .video-stage:-webkit-full-screen .fullscreen-btn { right: calc(var(--vq-rail) + 12px) !important; }
+#playerSection .video-stage:-webkit-full-screen .fullscreen-btn {
+  top: max(10px, env(safe-area-inset-top)) !important;
+  left: max(10px, env(safe-area-inset-left)) !important;
+  right: auto !important;
+  z-index: 100 !important;
+}
 
 #playerSection .video-stage:fullscreen .adult-panel-toggle-btn,
 #playerSection .video-stage:-webkit-full-screen .adult-panel-toggle-btn {
@@ -3624,5 +3650,39 @@ body { font-size: 13px; }
   }
 
   #playerSection .video-stage:fullscreen .fullscreen-btn,
-  #playerSection .video-stage:-webkit-full-screen .fullscreen-btn { right: max(10px, env(safe-area-inset-right)) !important; }
+  #playerSection .video-stage:-webkit-full-screen .fullscreen-btn {
+    top: max(10px, env(safe-area-inset-top)) !important;
+    left: max(10px, env(safe-area-inset-left)) !important;
+    right: auto !important;
+  }
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .rhythm-control,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .rhythm-control {
+  position: sticky;
+  bottom: 0;
+  z-index: 8;
+  margin-top: 8px;
+  padding: 6px 0 max(8px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(5, 8, 11, 0), rgba(5, 8, 11, .96) 24%);
+}
+
+.video-stage:fullscreen .movement-choice-wrap,
+.video-stage:-webkit-full-screen .movement-choice-wrap {
+  flex: 0 0 150px;
+  min-width: 150px;
+}
+
+.video-stage:fullscreen .movement-tempo-btn,
+.video-stage:-webkit-full-screen .movement-tempo-btn {
+  min-height: 26px;
+  padding: 4px 6px;
+  font-size: .56rem;
 }

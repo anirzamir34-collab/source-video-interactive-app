@@ -129,6 +129,9 @@ const state = {
   adultTapCandidateTempo: 'unclear',
   adultTapCandidateCount: 0,
   adultLastTempoSwitchAt: 0,
+  adultFireHeld: false,
+  adultFireArmed: false,
+  adultAwaitingFire: false,
 };
 
 const els = {
@@ -1936,12 +1939,17 @@ function canonicalAdultPosition(action) {
   const labels = {
     oral: 'Oral Seks',
     manual: 'Manuel Uyarım',
+    'reverse-cowgirl': 'Ters Kovboy Pozisyonu',
+    'seated-facing': 'Kucakta Yüz Yüze Pozisyon',
     'prone-bone': 'Prone Bone Pozisyonu',
+    'legs-up': 'Bacaklar Yukarı Pozisyon',
     missionary: 'Misyoner Pozisyonu',
     cowgirl: 'Kovboy Pozisyonu',
     spoon: 'Kaşık Pozisyonu',
+    'reverse-spoon': 'Ters Kaşık Pozisyonu',
     'standing-rear': 'Ayakta Arkadan Pozisyon',
     rear: 'Arkadan Pozisyon',
+    seated: 'Oturarak Pozisyon',
     standing: 'Ayakta Pozisyon'
   };
 
@@ -1960,7 +1968,7 @@ function adultCategoryFor(action, positionId) {
 
   if (positionId === 'oral') return { id: 'oral', label: 'Oral' };
   if (positionId === 'manual') return { id: 'manual', label: 'Manuel' };
-  if (['prone-bone', 'missionary', 'cowgirl', 'spoon', 'standing-rear', 'rear', 'standing'].includes(positionId)) {
+  if (['reverse-cowgirl', 'seated-facing', 'prone-bone', 'legs-up', 'missionary', 'cowgirl', 'spoon', 'reverse-spoon', 'standing-rear', 'rear', 'seated', 'standing'].includes(positionId)) {
     return { id: 'position', label: 'Pozisyonlar' };
   }
 
@@ -2980,17 +2988,22 @@ function resetAdultTapRhythm() {
 
 function updateRhythmControl(position) {
   const movement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
+  const activeChoice = (position?.movementChoices || []).find(choice =>
+    choice.id === state.activeMovementChoiceId ||
+    choice.variants?.some(item => item.id === state.activeMovementId)
+  );
+  const hasEnergeticVariant = Boolean(activeChoice?.variants?.some(item => isEnergeticSexMoment(item)));
   const eligible = Boolean(
     position && !isWarmupPosition(position) &&
     state.adultOutcomePhase === 'idle' &&
-    isEnergeticSexMoment(movement)
+    (isEnergeticSexMoment(movement) || hasEnergeticVariant)
   );
-  els.rhythmControl?.classList.toggle('hidden', !eligible);
+  els.rhythmControl?.classList.remove('hidden');
   if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !eligible;
   if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? 'SEKS' : 'SEKS KAPALI';
   if (els.rhythmTapStatus) {
     els.rhythmTapStatus.textContent = eligible
-      ? 'Doğrulanmış hızlı, sert veya derin kesit — dokunarak aynı an içinde ilerlet'
+      ? 'Yoğun doğrulanmış kesit hazır — dokununca aynı pozisyonda ileri alır'
       : 'Bu kesitte doğrulanmış yoğun hareket yok';
   }
 }
@@ -2998,7 +3011,7 @@ function updateRhythmControl(position) {
 function handleAdultRhythmTap(timestamp = performance.now()) {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const currentMovement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
-  if (!position || !isEnergeticSexMoment(currentMovement) || state.adultOutcomePhase !== 'idle') return;
+  if (!position || state.adultOutcomePhase !== 'idle') return;
 
   els.rhythmTapBtn?.classList.remove('tap-pulse');
   requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
@@ -3007,12 +3020,17 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
     choice.variants?.some(item => item.id === currentMovement.id)
   );
   const pool = (activeChoice?.variants || [])
-    .filter(item => item.sourceVerified === true && item.sourcePositionId === currentMovement.sourcePositionId)
+    .filter(item => item.sourceVerified === true && item.sourcePositionId === (currentMovement?.sourcePositionId || activeChoice?.sourcePositionId))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-  const next = pickNextChronologicalVariant(pool, currentMovement.id);
+  const energeticPool = pool.filter(item => isEnergeticSexMoment(item));
+  if (!isEnergeticSexMoment(currentMovement) && !energeticPool.length) return;
+  const next = pickNextChronologicalVariant(
+    energeticPool.length ? energeticPool : pool,
+    currentMovement?.id || null
+  ) || (energeticPool.length ? energeticPool[0] : null);
   if (next) {
     selectAdultMovement(next.id, true, null, { awardProgress: false });
-  } else if (els.video && Number(els.video.currentTime) < Number(currentMovement.loopEndTime) - 0.08) {
+  } else if (currentMovement && els.video && Number(els.video.currentTime) < Number(currentMovement.loopEndTime) - 0.08) {
     els.video.play().catch(() => {});
   } else {
     els.video?.pause();
@@ -3032,6 +3050,21 @@ function playNextAdultVariant() {
   if (!position) return;
   const next = pickNextChronologicalVariant(position.movements, state.activeMovementId);
   if (next) selectAdultMovement(next.id, true);
+}
+
+function tempoLabel(value) {
+  return { slow: 'Yavaş', moderate: 'Normal', fast: 'Hızlı' }[String(value || '')] || 'Tempo';
+}
+
+function selectMovementTempoVariant(choice) {
+  const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
+  if (!position || !choice?.tempoVariants?.length) return;
+  const currentIndex = choice.tempoVariants.findIndex(item => item.id === state.activeMovementId);
+  const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % choice.tempoVariants.length;
+  const next = choice.tempoVariants[nextIndex];
+  if (!next) return;
+  state.activeMovementChoiceId = choice.id;
+  selectAdultMovement(next.id, true, null, { awardProgress: false });
 }
 
 function selectAdultPosition(positionId, shouldSeek = true) {
@@ -3070,12 +3103,17 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   els.movementSection?.classList.remove('hidden');
 
   movementChoices.forEach(choice => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'movement-choice-wrap';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'movement-choice-card';
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
-    button.innerHTML = `<span>${escapeHtml(choice.label)}</span>`;
+    const tempoSummary = choice.hasTempoShift && choice.tempoVariants?.length
+      ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
+      : '';
+    button.innerHTML = `<span>${escapeHtml(choice.label)}</span>${tempoSummary}`;
     button.addEventListener('click', () => {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
@@ -3085,7 +3123,19 @@ function selectAdultPosition(positionId, shouldSeek = true) {
       state.activeMovementChoiceId = choice.id;
       selectAdultMovement(movement.id, true);
     });
-    els.movementChoices?.appendChild(button);
+    wrapper.appendChild(button);
+    if (choice.hasTempoShift && choice.tempoVariants?.length > 1) {
+      const tempoButton = document.createElement('button');
+      tempoButton.type = 'button';
+      tempoButton.className = 'movement-tempo-btn';
+      tempoButton.textContent = 'Tempo değişimini oynat';
+      tempoButton.addEventListener('click', event => {
+        event.stopPropagation();
+        selectMovementTempoVariant(choice);
+      });
+      wrapper.appendChild(tempoButton);
+    }
+    els.movementChoices?.appendChild(wrapper);
   });
 
   updateVariantButton(position);

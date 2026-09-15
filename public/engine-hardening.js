@@ -158,13 +158,19 @@ export function validateActionInterval(action = {}, videoDuration = 0) {
 
 function semanticPositionFamily(action = {}) {
   const text = normalizedText(`${action.positionId || ''} ${action.positionLabel || ''} ${action.label || ''}`);
+  if (/\b(reverse cowgirl|reverse rider|ters kovboy|ters cowgirl|ters rider|arkasi donuk kovboy|sirtini donerek ustte)\b/.test(text)) return 'reverse-cowgirl';
+  if (/\b(lap dance|kucakta|kucaginda|lotus|yuz yuze oturarak|seated face to face)\b/.test(text)) return 'seated-facing';
   if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
+  if (/\b(piledriver|omuzda|bacaklar yukari|legs up)\b/.test(text)) return 'legs-up';
   if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
   if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
+  if (/\b(arkadan|doggy|dort ayak)\b/.test(text) && /\b(ayakta|standing)\b/.test(text)) return 'standing-rear';
   if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
-  if (/\b(kasik|spoon)\b/.test(text)) return 'spoon';
+  if (/\b(ters kasik|reverse spoon)\b/.test(text)) return 'reverse-spoon';
+  if (/\b(kasik|spoon|yan yatarak|side lying|yan pozisyon)\b/.test(text)) return 'spoon';
   if (/\b(oral|sakso|blowjob|agiz)\b/.test(text)) return 'oral';
   if (/\b(manual|manuel|handjob|elle)\b/.test(text)) return 'manual';
+  if (/\b(oturarak|seated|chair|sandalye|koltukta)\b/.test(text)) return 'seated';
   if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
   return String(action.positionId || '').trim().toLowerCase();
 }
