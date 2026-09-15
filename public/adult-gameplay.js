@@ -11,16 +11,16 @@ export function adultPositionFamily(value) {
     .replace(/ö/g, 'o')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
-  if (/\b(oral|sakso|blowjob|yala|agiz)\b/.test(text)) return 'oral';
-  if (/\b(manuel|manual|elle|handjob|masturb)\b/.test(text)) return 'manual';
+  if (/\b(oral(?:\s+seks)?|sakso|blowjob|fellatio|cunnilingus)\b/.test(text)) return 'oral';
+  if (/\b(manuel\s+uyarim|manual\s+stimulation|handjob|masturbasyon)\b/.test(text)) return 'manual';
   if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
   if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
   if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
   if (/\b(kasik|spoon|yan yatarak)\b/.test(text)) return 'spoon';
-  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text) && /\b(ayakta|standing)\b/.test(text)) {
+  if (/\b(arkadan|doggy(?:\s+style)?|dort\s+ayak)\b/.test(text) && /\b(ayakta|standing)\b/.test(text)) {
     return 'standing-rear';
   }
-  if (/\b(arka|arkadan|doggy|dort ayak)\b/.test(text)) return 'rear';
+  if (/\b(arkadan|doggy(?:\s+style)?|dort\s+ayak)\b/.test(text)) return 'rear';
   if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
   return '';
 }
@@ -503,9 +503,12 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
     .trim();
   const normalize = value => clean(value).toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u').replace(/ö/g, 'o')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const positionKey = normalize(positionLabel);
-  const tempoLabels = { slow: 'Yavaş tempo', moderate: 'Orta tempo', fast: 'Hızlı tempo' };
+  const tempoLabels = { slow: 'Yavaş hareket', moderate: 'Ritmik hareket', fast: 'Hızlı hareket' };
   const verified = (Array.isArray(movements) ? movements : [])
     .filter(movement => movement?.sourceVerified === true)
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
@@ -530,14 +533,21 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     cursor += size;
     const first = variants[0];
     const tempo = normalizeMovementTempo(first.movementTempo);
-    const rawLabel = clean(first.label);
+    const rawLabel = clean(first.label)
+      .split('·')
+      .map(part => part.trim())
+      .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
+      .join(' · ')
+      .trim();
     const normalizedRaw = normalize(rawLabel);
+    const concreteChange = /(hizli|yavas|ritm|sert|derin|op|okus|oksa|tut|kavra|dokun|temas|kalca|gogus|bel|yon|aci|tempo|hareket)/u.test(normalizedRaw);
     const meaningfulLabel = rawLabel && normalizedRaw !== positionKey &&
       !normalizedRaw.startsWith(positionKey + ' ·') &&
-      !/^(gercek hareket|gercek sekans)$/u.test(normalizedRaw);
+      !/^(gercek hareket|gercek sekans)$/u.test(normalizedRaw) &&
+      concreteChange;
     const label = meaningfulLabel
       ? rawLabel
-      : tempoLabels[tempo] || `Gerçek kesit ${index + 1}`;
+      : tempoLabels[tempo] || 'Hareketi sürdür';
 
     cards.push({
       id: `movement-choice:${occurrence}:${index + 1}`,
