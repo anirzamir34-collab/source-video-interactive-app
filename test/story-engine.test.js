@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   mergeStoryContexts,
   normalizeStoryContext,
+  selectDiverseStoryActions,
   sensoryActionMeta,
+  storyChoiceIntentKey,
   storyChoiceLabelForAction
 } from '../public/story-engine.js';
 
@@ -58,4 +60,21 @@ test('merges chunk story context while keeping facts and unknowns', () => {
   assert.match(merged.synopsisTr, /Erkek eve gelir/);
   assert.equal(merged.facts.length, 2);
   assert.equal(merged.unknowns.length, 1);
+});
+
+test('collapses synonymous story choices while preserving distinct actions', () => {
+  assert.equal(storyChoiceIntentKey({ label: 'Kızı izle' }), 'observe');
+  assert.equal(storyChoiceIntentKey({ label: 'Kızı süz' }), 'observe');
+  assert.equal(storyChoiceIntentKey({ label: 'Kıza bak' }), 'observe');
+
+  const choices = selectDiverseStoryActions([
+    { actionId: 'watch', label: 'Kızı izle' },
+    { actionId: 'scan', label: 'Kızı süz' },
+    { actionId: 'look', label: 'Kıza bak' },
+    { actionId: 'approach', label: 'Kıza yaklaş' },
+    { actionId: 'talk', label: 'Kızla konuş' },
+    { actionId: 'leave', label: 'Oradan uzaklaş' }
+  ], 3);
+
+  assert.deepEqual(choices.map((choice) => choice.actionId), ['watch', 'approach', 'talk']);
 });
