@@ -29,8 +29,10 @@ export function detectSceneBoundaries(motionProfile = [], interval = 1) {
   return boundaries;
 }
 
-export async function extractStoryboard(file, onProgress = () => {}, signal) {
-  const url = URL.createObjectURL(file);
+export async function extractStoryboard(source, onProgress = () => {}, signal) {
+  const ownsObjectUrl = source instanceof Blob;
+  const url = ownsObjectUrl ? URL.createObjectURL(source) : String(source || '');
+  if (!url) throw new Error('Video kaynağı bulunamadı.');
   const video = document.createElement('video');
   video.preload = 'metadata';
   video.muted = true;
@@ -183,6 +185,6 @@ export async function extractStoryboard(file, onProgress = () => {}, signal) {
     video.pause();
     video.removeAttribute('src');
     video.load();
-    URL.revokeObjectURL(url);
+    if (ownsObjectUrl) URL.revokeObjectURL(url);
   }
 }
