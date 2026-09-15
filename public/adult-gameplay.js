@@ -62,6 +62,34 @@ export function resolveVerifiedAdultPosition(action = {}) {
   };
 }
 
+export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '') {
+  const source = [
+    action.label,
+    action.movementType,
+    action.activityEvidence,
+    action.sensoryEvidence
+  ].filter(Boolean).join(' ');
+  const family = adultPositionFamily(source);
+  if (family && family !== canonicalId) return false;
+  if (family && family === canonicalId) return true;
+
+  const text = String(source || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  // Only an explicit change to another configuration is a transition.
+  // Words describing the ongoing verified activity (vaginal, penetration,
+  // kissing or touching) are legitimate position-local movement choices.
+  return !/\b(gecis|transition|pozisyon\s+degistir|donerken|yonlendir)\b/.test(text);
+}
+
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
 export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
 export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
