@@ -602,12 +602,36 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     });
   }
 
+  // Several chronological clips of the same observed action are variants of
+  // one choice, not separate "Cut 1/2/3" choices. Clicking the card cycles its
+  // verified clips through the existing variant picker.
+  const groupedCards = [];
+  cards.forEach(card => {
+    const key = normalize(card.label);
+    const existing = groupedCards.find(item => normalize(item.label) === key);
+    if (!existing) {
+      groupedCards.push({ ...card });
+      return;
+    }
+    existing.variants = [...existing.variants, ...card.variants]
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))
+      .slice(0, 3);
+    existing.tempoVariants = ['fast', 'moderate', 'slow'].map(kind =>
+      existing.variants.find(item => normalizeMovementTempo(item.movementTempo) === kind)
+    ).filter(Boolean);
+    existing.hasTempoShift = new Set(
+      existing.variants
+        .map(item => normalizeMovementTempo(item.movementTempo))
+        .filter(item => item !== 'unclear')
+    ).size > 1;
+  });
+
   const labelCounts = new Map();
-  return cards.map((card, index) => {
+  return groupedCards.map((card, index) => {
     const key = normalize(card.label);
     const seen = (labelCounts.get(key) || 0) + 1;
     labelCounts.set(key, seen);
-    const total = cards.filter(item => normalize(item.label) === key).length;
+    const total = groupedCards.filter(item => normalize(item.label) === key).length;
     return {
       ...card,
       label: total > 1 ? `${card.label} · Kesit ${seen}` : card.label,
