@@ -24,6 +24,7 @@ import {
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
+  resolveVerifiedAdultPosition,
   tapRhythm,
   verifiedAdultPositionFamily
 } from './adult-gameplay.js';
@@ -1925,21 +1926,9 @@ function adultSemanticFamily(value) {
 }
 
 function canonicalAdultPosition(action) {
-  const labelFamily = adultSemanticFamily(action.positionLabel);
-  const idFamily = adultSemanticFamily(action.positionId);
-  const actionFamily = verifiedAdultPositionFamily(action);
-  const declaredFamilies = [labelFamily, idFamily, actionFamily].filter(Boolean);
-  const explicitActionPosition = /\b(pozisyon|position)\b/.test(normalizeAdultLabel(action.label || ''));
-  // Models sometimes keep the previous parent positionId after a clearly
-  // labelled orientation change. A verified explicit position label owns the
-  // new occurrence instead of being hidden as a field conflict.
-  const correctedFromAction = Boolean(
-    explicitActionPosition &&
-    actionFamily &&
-    [labelFamily, idFamily].some(value => value && value !== actionFamily)
-  );
-  if (new Set(declaredFamilies).size > 1 && !correctedFromAction) return { id: '', label: '' };
-  const family = correctedFromAction ? actionFamily : (declaredFamilies[0] || '');
+  // A verified explicit label such as "ters kovboy pozisyonunda" corrects
+  // stale parent metadata that still says cowgirl.
+  const { family, correctedFromAction } = resolveVerifiedAdultPosition(action);
 
   const labels = {
     oral: 'Oral Seks',
@@ -3521,6 +3510,28 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
+    // Play verified clips as one connected source-video sequence. When the
+    // current clip ends, continue forward inside the position; when that
+    // position is exhausted, reveal and enter the next unlocked occurrence.
+    if (mediaTime >= movement.loopEndTime - 0.04) {
+      const nextMovement = pickNextChronologicalVariant(position.movements, movement.id);
+      if (nextMovement) {
+        selectAdultMovement(nextMovement.id, true, null, { awardProgress: false });
+        return;
+      }
+      const nextPosition = unlockedAdultPositions(state.adultScene)
+        .filter(item =>
+          !isWarmupPosition(item) &&
+          item.id !== position.id &&
+          !state.adultVisitedPositionIds.has(item.id) &&
+          Number(item.startTime) >= Number(position.endTime) - 0.25
+        )
+        .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
+      if (nextPosition) {
+        selectAdultPosition(nextPosition.id, true);
+        return;
+      }
+    }
     seekAdultLoop(movement.loopStartTime, state.adultSelectionToken);
     return;
   }
