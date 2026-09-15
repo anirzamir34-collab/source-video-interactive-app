@@ -585,7 +585,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     ].filter(Boolean).join(' ')).join(' '));
     const label = meaningfulLabel
       ? rawLabel
-      : inferredAction || tempoLabels[tempo] || 'Pozisyon içi hareket';
+      : inferredAction || tempoLabels[tempo] || `${clean(positionLabel) || 'Doğrulanmış pozisyon'} sekansını oynat`;
     const tempoVariants = ['fast', 'moderate', 'slow'].map(kind =>
       variants.find(item => normalizeMovementTempo(item.movementTempo) === kind)
     ).filter(Boolean);
