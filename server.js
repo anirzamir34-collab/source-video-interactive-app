@@ -989,29 +989,6 @@ app.post('/api/external-analyze', upload.single('video'), async (req, res) => {
   }
 });
 
-app.post('/api/external-analyze-segment', upload.single('video'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ available: false, reason: 'VIDEO_REQUIRED' });
-  }
-
-  try {
-    const form = new FormData();
-    form.append('video', new Blob([req.file.buffer], { type: req.file.mimetype || 'application/octet-stream' }), req.file.originalname || 'segment.mp4');
-    if (req.body?.startTime) form.append('startTime', String(req.body.startTime));
-    if (req.body?.endTime) form.append('endTime', String(req.body.endTime));
-
-    const upstream = await fetch(`${EXTERNAL_ANALYSIS_URL}/analyze-segment`, {
-      method: 'POST',
-      body: form,
-      signal: AbortSignal.timeout(900000)
-    });
-    const body = await readJsonSafe(upstream);
-    return res.status(upstream.status).json(body ?? {});
-  } catch (error) {
-    return res.status(503).json({ available: false, reason: 'UPSTREAM_UNAVAILABLE', error: error?.message || String(error) });
-  }
-});
-
 app.use((error, _req, res, next) => {
   if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({
@@ -2240,108 +2217,6 @@ function pcmBase64ToWavBase64(pcmBase64, sampleRate = 24000) {
   return wav.toString('base64');
 }
 
-
-app.post('/api/gemini-dub-block', async (req, res) => {
-  try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({ available: false, reason: 'GEMINI_NOT_CONFIGURED' });
-    }
-
-    const blockStart = Math.max(0, Number(req.body?.blockStart) || 0);
-    const blockEnd = Math.max(blockStart + 1, Number(req.body?.blockEnd) || blockStart + 120);
-    const segments = (Array.isArray(req.body?.segments) ? req.body.segments : [])
-      .map((segment, index) => ({
-        speaker: String(segment?.gender || '').toLowerCase() === 'female' ? 'KADIN' : 'ERKEK',
-        text: String(segment?.turkishText || '').trim(),
-        startTime: Math.max(blockStart, Number(segment?.startTime) || blockStart),
-        endTime: Math.min(blockEnd, Math.max(Number(segment?.endTime) || blockStart, Number(segment?.startTime) || blockStart)),
-        index
-      }))
-      .filter(segment => segment.text && segment.startTime < blockEnd)
-      .sort((a, b) => a.startTime - b.startTime)
-      .slice(0, 100);
-
-    if (!segments.length) {
-      return res.status(400).json({ available: false, reason: 'EMPTY_DUB_BLOCK' });
-    }
-
-    let cursor = blockStart;
-    const script = [];
-    for (const segment of segments) {
-      const pause = Math.max(0, segment.startTime - cursor);
-      if (pause >= 0.25) script.push(`[${pause.toFixed(2)} saniye sessizlik]`);
-      script.push(`${segment.speaker}: ${segment.text}`);
-      cursor = Math.max(cursor, segment.endTime);
-    }
-    const tailPause = Math.max(0, blockEnd - cursor);
-    if (tailPause >= 0.25) script.push(`[${tailPause.toFixed(2)} saniye sessizlik]`);
-
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview',
-      contents: [{
-        role: 'user',
-        parts: [{
-          text:
-            'Aşağıdaki zaman sıralı Türkçe dublaj metnini aynen seslendir. ' +
-            'ERKEK satırlarını yalnızca ERKEK, KADIN satırlarını yalnızca KADIN konuşsun. ' +
-            'Köşeli parantez içindeki sessizlik sürelerini konuşma; belirtilen süre kadar sessiz kal. ' +
-            'Hiçbir kelime ekleme, çıkarma, açıklama veya tekrar yapma.\n\n' +
-            script.join('\n')
-        }]
-      }],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          multiSpeakerVoiceConfig: {
-            speakerVoiceConfigs: [
-              {
-                speaker: 'ERKEK',
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } }
-              },
-              {
-                speaker: 'KADIN',
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
-              }
-            ]
-          }
-        }
-      }
-    });
-
-    const parts = response?.candidates?.[0]?.content?.parts || [];
-    const audioPart = parts.find(part => part?.inlineData?.data);
-    const audioData = audioPart?.inlineData?.data;
-    const sourceMime = String(audioPart?.inlineData?.mimeType || 'audio/L16;rate=24000');
-
-    if (!audioData) throw new Error('GEMINI_TTS_BLOCK_AUDIO_MISSING');
-
-    const isRawPcm = /L16|pcm|raw/i.test(sourceMime) || !/wav|mpeg|ogg|webm/i.test(sourceMime);
-    const finalData = isRawPcm ? pcmBase64ToWavBase64(audioData, 24000) : audioData;
-
-    ttsLastSuccessAt = Date.now();
-    ttsQuotaBlockedUntil = 0;
-    return res.json({
-      available: true,
-      blockStart,
-      blockEnd,
-      mimeType: isRawPcm ? 'audio/wav' : sourceMime,
-      audioBase64: finalData
-    });
-  } catch (error) {
-    console.error('Gemini dub block generation failed:', error);
-    const details = String(error?.message || error);
-    if (isTtsDailyQuotaError(details) || details.includes('429')) {
-      ttsQuotaBlockedUntil = Date.now() + (ttsQuotaRetrySeconds(details) || 3600) * 1000;
-    }
-    return res.status(502).json({
-      available: false,
-      message: 'Toplu dublaj sesi üretilemedi.',
-      error: error?.message || String(error)
-    });
-  }
-});
 
 app.post('/api/gemini-dub-segment', async (req, res) => {
   try {
