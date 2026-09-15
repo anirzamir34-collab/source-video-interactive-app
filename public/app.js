@@ -3067,9 +3067,11 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     const first = choice.variants[0];
+    const last = choice.variants[choice.variants.length - 1] || first;
     const sensory = sensoryActionMeta(first);
     const sensoryLine = sensory.cues.length ? ` · ${escapeHtml(sensory.cues.join(' · '))}` : '';
-    button.innerHTML = `<span>${escapeHtml(choice.label)}</span><small>${choice.variants.length} gerçek sekans${sensoryLine}</small>`;
+    const range = `${adultTimeLabel(first.loopStartTime)} – ${adultTimeLabel(last.loopEndTime)}`;
+    button.innerHTML = `<span>${escapeHtml(choice.label)}</span><small>${escapeHtml(range)} · ${choice.variants.length} bağlı gerçek kesit${sensoryLine}</small>`;
     button.addEventListener('click', () => {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
