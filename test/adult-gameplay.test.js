@@ -21,6 +21,7 @@ import {
   isEnergeticSexMoment,
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
+  movementBelongsToVerifiedPosition,
   normalizeOutcomeUnlockProgress,
   playbackRateForTapTempo,
   pickNearbyRhythmVariant,
@@ -363,6 +364,21 @@ test('verified position labels work even when optional position metadata is miss
     positionLabel: 'Kovboy Pozisyonu',
     label: 'Ters cowgirl pozisyonunda ritmik tempoyu sürdür'
   }), { family: 'reverse-cowgirl', correctedFromAction: true });
+});
+
+test('keeps verified activity and contact actions inside their position panel', () => {
+  assert.equal(movementBelongsToVerifiedPosition({
+    label: 'Ters cowgirl pozisyonunda vajinal tempoyu koru',
+    movementType: 'rhythmic'
+  }, 'reverse-cowgirl'), true);
+  assert.equal(movementBelongsToVerifiedPosition({
+    label: 'Kadının boynunu öperek sarıl',
+    movementType: 'kiss'
+  }, 'cowgirl'), true);
+  assert.equal(movementBelongsToVerifiedPosition({
+    label: 'Ters cowgirl pozisyonuna geçiş',
+    movementType: 'transition'
+  }, 'cowgirl'), false);
 });
 
 test('movement cards keep concrete action text and remove sensory metadata', () => {
