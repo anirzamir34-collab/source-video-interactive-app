@@ -1927,8 +1927,8 @@ function adultSemanticFamily(value) {
 function canonicalAdultPosition(action) {
   const labelFamily = adultSemanticFamily(action.positionLabel);
   const idFamily = adultSemanticFamily(action.positionId);
-  const actionFamily = String(action.actionType || '').toLowerCase() === 'position'
-    ? adultSemanticFamily(action.label)
+  const actionFamily = action?.sourceVerified === true
+    ? adultSemanticFamily([action.label, action.movementType].filter(Boolean).join(' '))
     : '';
   const declaredFamilies = [labelFamily, idFamily, actionFamily].filter(Boolean);
   // Conflicting model fields are not visual proof. Hiding an uncertain tab is
@@ -2022,7 +2022,10 @@ function movementBelongsToPosition(action, canonicalId) {
 }
 
 
-const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 0.4;
+// One encounter is often split into several model scene ids even though the
+// source continues with other verified positions. Keep nearby occurrences in
+// one gameplay graph so progression can reveal them instead of ending early.
+const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 180;
 
 function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
@@ -2037,10 +2040,13 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
     }
 
     const gap = Number(scene.startTime) - Number(previous.endTime);
-    const narrativeBarrier = gap > 0.15 && nonAdultActions.some(action => {
+    const narrativeBarrier = gap >= 30 && nonAdultActions.some(action => {
       const start = Number(action.startTime);
       const end = Number(action.endTime);
-      return Number.isFinite(start) && Number.isFinite(end) &&
+      const actionType = String(action.actionType || '').toLowerCase();
+      const explicitNarrativeBreak = ['dialogue', 'story', 'scene_transition'].includes(actionType);
+      return action?.sourceVerified === true && explicitNarrativeBreak &&
+        Number.isFinite(start) && Number.isFinite(end) &&
         Math.min(end, Number(scene.startTime)) - Math.max(start, Number(previous.endTime)) >= 0.5;
     });
     if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier) {
@@ -2292,7 +2298,7 @@ function prepareAdultScenes() {
               const verifiedBase = {
                 id: `${position.id}:verified-base`,
                 actionId: `${position.id}:verified-base`,
-                label: `${position.label} · Gerçek sekans`,
+                label: `${position.label} sekansını oynat`,
                 startTime: position.startTime,
                 endTime: position.endTime,
                 loopStartTime: position.startTime,
@@ -2301,30 +2307,35 @@ function prepareAdultScenes() {
                 movementTempo: 'unclear',
                 sourceVerified: true,
                 maleProgressRate: 1,
-                femaleProgressRate: 1
+                femaleProgressRate: 1,
+                positionOnlyFallback: true
               };
-              movements = expandVerifiedMovementVariants(
-                [verifiedBase],
-                position.startTime,
-                position.endTime,
-                { baseLabel: position.label }
-              );
+              // A verified position without separately verified inner actions
+              // is one honest choice, not three invented "cut" choices.
+              movements = [verifiedBase];
             }
             return { ...position, movements };
           })
           .filter(position => position.endTime - position.startTime >= 10)
           .sort((a, b) => a.startTime - b.startTime);
       if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
-      const interactionStart = Math.min(...positions.map(position => Number(position.startTime)));
+      const positionStart = Math.min(...positions.map(position => Number(position.startTime)));
       const interactionEnd = Math.max(...positions.map(position => Number(position.endTime)));
+      const playableForeplay = foreplay.filter(item =>
+        Number(item.endTime) > Number(scene.startTime) &&
+        Number(item.startTime) < interactionEnd
+      );
+      const interactionStart = playableForeplay.length
+        ? Math.min(positionStart, ...playableForeplay.map(item => Number(item.startTime)))
+        : positionStart;
       return {
         ...scene,
-        // The interactive panel starts only when a verified position is on
-        // screen, never at an earlier conversation/approach/foreplay frame.
+        // Verified approach choices are part of the same playable occurrence;
+        // their exact source times must not be clamped to the first position.
         startTime: interactionStart,
         endTime: interactionEnd,
         postSceneTime: Math.max(Number(scene.postSceneTime) || 0, interactionEnd),
-        foreplay: foreplay.filter(item => Number(item.startTime) >= interactionStart - 0.05),
+        foreplay: playableForeplay,
         outcomes: outcomes.filter(item => Number(item.startTime) >= interactionStart - 0.05),
         positions
       };
@@ -3257,6 +3268,20 @@ function playAdultOutcome(outcomeId) {
 function finishAdultScene() {
   const scene = state.adultScene;
   if (!scene) return;
+
+  // "Skip scene" doubles as a safe next-step control. Never terminate the
+  // encounter while another verified, currently unlocked position has not
+  // been played yet.
+  const remainingPosition = unlockedAdultPositions(scene)
+    .filter(position =>
+      !isWarmupPosition(position) &&
+      !state.adultVisitedPositionIds.has(position.id)
+    )
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
+  if (remainingPosition) {
+    selectAdultPosition(remainingPosition.id, true);
+    return;
+  }
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
   state.completedAdultSceneIds.add(scene.id);
   const sceneSourceIds = new Set([scene.id, ...(scene.sourceSceneIds || [])].map(String));
