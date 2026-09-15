@@ -2214,7 +2214,7 @@ function prepareAdultScenes() {
       correctedEnd
     );
 
-    if (action.actionType !== 'position' && action.movementType) {
+    if (action.label || action.movementType) {
       const movementStart = Math.max(
         position.startTime,
         Number(action.loopStartTime ?? action.startTime)
@@ -2332,7 +2332,7 @@ function prepareAdultScenes() {
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 4)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -3102,7 +3102,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   const movementChoices = position.movementChoices?.length
     ? position.movementChoices
-    : buildVerifiedMovementChoices(position.movements, position.label, 3);
+    : buildVerifiedMovementChoices(position.movements, position.label, 4);
   position.movementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
@@ -3778,6 +3778,11 @@ function resetGameAtAction(index) {
 
   const safeIndex = Math.max(0, Math.min(index, actions.length - 1));
   const target = actions[safeIndex];
+  const targetAdultScene = findAdultSceneForTimeline(state.adultScenes, {
+    action: target,
+    time: Number(target.startTime),
+    completedSceneIds: new Set()
+  });
 
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
@@ -3790,6 +3795,18 @@ function resetGameAtAction(index) {
   state.consumedActionIds = new Set(
     actions.slice(0, safeIndex).map(action => action.actionId)
   );
+
+  if (targetAdultScene) {
+    state.completedAdultSceneIds.delete(targetAdultScene.id);
+    resetAdultSceneGameplay();
+    state.restoredAdultSceneId = null;
+    enterAdultScene(targetAdultScene, {
+      forceStart: true,
+      reason: 'choice-navigation-adult-scene'
+    });
+    persistRuntimeSnapshot('adult-scene-reopened', true);
+    return;
+  }
 
   els.video.pause();
   state.navigationSeeking = true;
