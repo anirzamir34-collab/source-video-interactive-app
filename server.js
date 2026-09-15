@@ -579,6 +579,8 @@ Rules:
 - For every action, fuse only time-aligned evidence: audible non-speech intensity, visible gaze duration, facial expression, posture and body response. Report observable cues, not hidden mental states.
 - Never claim pain, pleasure, happiness, fear, consent or climax from one ambiguous facial expression, sound or body movement. Use observedAffect unclear unless multiple consistent cues support a cautious visible description.
 - Use canonical positionId values consistently: oral, manual, prone-bone, missionary, cowgirl, spoon, standing-rear, rear, standing, or other-stable-N.
+- A furniture or direction word is never position evidence by itself: "koltuğun arkasına", "arkaya yönlendir", "ağzından öp" and ordinary hand contact must not become rear, oral or manual position families.
+- rear requires a clearly visible from-behind body configuration; standing-rear additionally requires both partners to be visibly upright. If those body arrangements are not clear at start, midpoint and end, omit the position.
 - Use prone-bone only when the receiving partner is visibly lying face-down/flat with hips low while penetration is from behind. Do not collapse prone-bone into rear/doggy, missionary, spoon or a generic lying position.
 - positionId, positionLabel and the visible body configuration described by label must agree. If they conflict, omit the position instead of guessing.
 - Use missionary only when the receiving partner is visibly below/on their back and MAIN_MALE is visibly above/front-facing in that configuration.
@@ -589,6 +591,8 @@ Rules:
 - A movement may belong to a position only when its entire loopStartTime-loopEndTime interval is visibly contained inside that exact positionStartTime-positionEndTime range.
 - Reject any position or movement when the claimed body configuration is not visibly present at its start, midpoint, and end timestamps.
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
+- Internal movement labels must name only the directly visible change, for example hızlı hareket, ritmik hareket, sert hareket, derin hareket, öpme, okşama, tutuş or a similarly concrete interaction actually visible in that interval.
+- Never put timestamps, duration, sequence numbers, "gerçek kesit", breathing, moaning, gaze, emotion, appearance or confidence text inside an internal movement label. Those belong only to metadata.
 - Set movementTempo from directly visible cadence only. Use slow, moderate or fast for stable segments; split a changing cadence into separate 10+ second verified segments whenever the source duration permits. Use unclear when speed cannot be verified.
 - Use fast only when repeated motion is visibly and consistently fast across the complete interval. Put words such as sert, derin or güçlü in movementType/label only when that exact quality is directly visible throughout the same time-aligned segment; never infer it from dialogue, audio alone or the surrounding adult scene.
 - These explicit movementTempo and movementType observations control the optional on-screen sex interaction button. If no source-verified fast, hard or deep interval exists, do not manufacture one and allow the button to remain unavailable for the entire video.

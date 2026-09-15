@@ -1922,13 +1922,16 @@ function adultSemanticFamily(value) {
 }
 
 function canonicalAdultPosition(action) {
-  // Prefer human-readable visual evidence over a conflicting machine id.
-  // This prevents a stale/wrong positionId from turning a visibly labelled
-  // cowgirl segment into a missionary button (or the reverse).
-  const family =
-    adultSemanticFamily(action.positionLabel) ||
-    adultSemanticFamily(action.label) ||
-    adultSemanticFamily(action.positionId);
+  const labelFamily = adultSemanticFamily(action.positionLabel);
+  const idFamily = adultSemanticFamily(action.positionId);
+  const actionFamily = String(action.actionType || '').toLowerCase() === 'position'
+    ? adultSemanticFamily(action.label)
+    : '';
+  const declaredFamilies = [labelFamily, idFamily, actionFamily].filter(Boolean);
+  // Conflicting model fields are not visual proof. Hiding an uncertain tab is
+  // safer than selecting one of two incompatible body configurations.
+  if (new Set(declaredFamilies).size > 1) return { id: '', label: '' };
+  const family = declaredFamilies[0] || '';
 
   const labels = {
     oral: 'Oral Seks',
@@ -1944,14 +1947,7 @@ function canonicalAdultPosition(action) {
 
   if (family) return { id: family, label: labels[family] };
 
-  const fallback = normalizeAdultLabel(
-    action.positionLabel || action.positionId || action.label || 'pozisyon'
-  ).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-
-  return {
-    id: fallback || `position-${Math.round(Number(action.startTime) || 0)}`,
-    label: action.positionLabel || action.label || 'Pozisyon'
-  };
+  return { id: '', label: '' };
 }
 
 function adultCategoryFor(action, positionId) {
@@ -3079,12 +3075,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.className = 'movement-choice-card';
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
-    const first = choice.variants[0];
-    const last = choice.variants[choice.variants.length - 1] || first;
-    const sensory = sensoryActionMeta(first);
-    const sensoryLine = sensory.cues.length ? ` · ${escapeHtml(sensory.cues.join(' · '))}` : '';
-    const range = `${adultTimeLabel(first.loopStartTime)} – ${adultTimeLabel(last.loopEndTime)}`;
-    button.innerHTML = `<span>${escapeHtml(choice.label)}</span><small>${escapeHtml(range)} · ${choice.variants.length} bağlı gerçek kesit${sensoryLine}</small>`;
+    button.innerHTML = `<span>${escapeHtml(choice.label)}</span>`;
     button.addEventListener('click', () => {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
