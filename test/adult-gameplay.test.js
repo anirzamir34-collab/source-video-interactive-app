@@ -29,6 +29,7 @@ import {
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
+  resolveVerifiedAdultPosition,
   nearestAvailableTempo,
   tapRhythm
 } from '../public/adult-gameplay.js';
@@ -355,6 +356,13 @@ test('verified position labels work even when optional position metadata is miss
     sourceVerified: false,
     label: 'Ters kovboy pozisyonunda devam et'
   }), '');
+
+  assert.deepEqual(resolveVerifiedAdultPosition({
+    sourceVerified: true,
+    positionId: 'cowgirl',
+    positionLabel: 'Kovboy Pozisyonu',
+    label: 'Ters cowgirl pozisyonunda ritmik tempoyu sürdür'
+  }), { family: 'reverse-cowgirl', correctedFromAction: true });
 });
 
 test('movement cards keep concrete action text and remove sensory metadata', () => {
