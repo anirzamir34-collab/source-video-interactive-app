@@ -2367,7 +2367,12 @@ function prepareAdultScenes() {
               position.movements,
               position.startTime,
               position.endTime,
-              { baseLabel: position.label }
+              {
+                baseLabel: position.label,
+                minSeconds: 5,
+                maxVariants: 24,
+                splitEachMovement: true
+              }
             );
             if (!movements.length && position.endTime - position.startTime >= 10) {
               const verifiedBase = {
@@ -2426,7 +2431,7 @@ function prepareAdultScenes() {
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 4)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 6)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -3137,25 +3142,33 @@ function resetAdultTapRhythm() {
   if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Yalnızca hızlı, sert veya derin doğrulanmış kesitlerde açılır';
 }
 
+function nextEnergeticPositionMovement(position, currentMovement = null) {
+  const energetic = (position?.movements || [])
+    .filter(item => isEnergeticSexMoment(item))
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+  if (!energetic.length) return null;
+  if (!currentMovement) return energetic[0];
+  const currentStart = Number(currentMovement.loopStartTime);
+  return energetic.find(item =>
+    item.id !== currentMovement.id && Number(item.loopStartTime) > currentStart + 0.04
+  ) || null;
+}
+
 function updateRhythmControl(position) {
   const movement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
-  const activeChoice = (position?.movementChoices || []).find(choice =>
-    choice.id === state.activeMovementChoiceId ||
-    choice.variants?.some(item => item.id === state.activeMovementId)
-  );
-  const hasEnergeticVariant = Boolean(activeChoice?.variants?.some(item => isEnergeticSexMoment(item)));
+  const nextEnergetic = nextEnergeticPositionMovement(position, movement);
   const eligible = Boolean(
     position && !isWarmupPosition(position) &&
     state.adultOutcomePhase === 'idle' &&
-    (isEnergeticSexMoment(movement) || hasEnergeticVariant)
+    nextEnergetic
   );
   els.rhythmControl?.classList.remove('hidden');
   if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !eligible;
   if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? 'SEKS' : 'SEKS KAPALI';
   if (els.rhythmTapStatus) {
     els.rhythmTapStatus.textContent = eligible
-      ? 'Yoğun doğrulanmış kesit hazır — dokununca aynı pozisyonda ileri alır'
-      : 'Bu kesitte doğrulanmış yoğun hareket yok';
+      ? 'Sonraki yoğun doğrulanmış kesit hazır — dokununca aynı pozisyonda ilerler'
+      : 'Bu pozisyonda ilerlenebilecek başka yoğun kesit yok';
   }
 }
 
@@ -3166,31 +3179,19 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
 
   els.rhythmTapBtn?.classList.remove('tap-pulse');
   requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
-  const activeChoice = (position.movementChoices || []).find(choice =>
-    choice.id === state.activeMovementChoiceId ||
-    choice.variants?.some(item => item.id === currentMovement.id)
-  );
-  const pool = (activeChoice?.variants || [])
-    .filter(item => item.sourceVerified === true && item.sourcePositionId === (currentMovement?.sourcePositionId || activeChoice?.sourcePositionId))
-    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-  const energeticPool = pool.filter(item => isEnergeticSexMoment(item));
-  if (!isEnergeticSexMoment(currentMovement) && !energeticPool.length) return;
-  const next = pickNextChronologicalVariant(
-    energeticPool.length ? energeticPool : pool,
-    currentMovement?.id || null
-  ) || (energeticPool.length ? energeticPool[0] : null);
+  const next = nextEnergeticPositionMovement(position, currentMovement);
+  if (!next) {
+    updateRhythmControl(position);
+    return;
+  }
   if (next) {
     selectAdultMovement(next.id, true, null, { awardProgress: false });
-  } else if (currentMovement && els.video && Number(els.video.currentTime) < Number(currentMovement.loopEndTime) - 0.08) {
-    els.video.play().catch(() => {});
-  } else {
-    els.video?.pause();
   }
   logEngineEvent('SEX_CONTROL_APPLIED', {
     positionId: position.id,
     occurrenceId: position.occurrenceId,
-    movementId: next?.id || currentMovement.id,
-    advanced: Boolean(next),
+    movementId: next.id,
+    advanced: true,
     timestamp: Number(timestamp) || performance.now()
   });
   if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([12, 18, 20]);
@@ -3246,7 +3247,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   const movementChoices = position.movementChoices?.length
     ? position.movementChoices
-    : buildVerifiedMovementChoices(position.movements, position.label, 4);
+    : buildVerifiedMovementChoices(position.movements, position.label, 6);
   position.movementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;

@@ -32,12 +32,7 @@ export function adultPositionFamily(value) {
 
 export function verifiedAdultPositionFamily(action = {}) {
   if (action?.sourceVerified !== true) return '';
-  return adultPositionFamily([
-    action.positionLabel,
-    action.positionId,
-    action.label,
-    action.movementType
-  ].filter(Boolean).join(' '));
+  return resolveVerifiedAdultPosition(action).family;
 }
 
 export function resolveVerifiedAdultPosition(action = {}) {
@@ -46,23 +41,22 @@ export function resolveVerifiedAdultPosition(action = {}) {
   const actionFamily = action?.sourceVerified === true
     ? adultPositionFamily([action.label, action.movementType].filter(Boolean).join(' '))
     : '';
-  const declared = [labelFamily, idFamily, actionFamily].filter(Boolean);
-  const explicitPositionLabel = /\b(pozisyon\w*|position\w*|ters\s+(?:kovboy|cowgirl)|kucag?\w*|lap\s+dance|lotus|misyoner|missionary|doggy)\b/i.test(
+  // Position metadata describes the parent body configuration. Movement text
+  // describes what happens inside it and must never reclassify a verified
+  // cowgirl row merely because it contains words such as "kucağında".
+  // Prefer the human-readable position label, then the id, and only infer from
+  // the action when the provider omitted both parent fields.
+  const declaredFamily = labelFamily || idFamily || '';
+  const explicitNamedActionPosition = /\b(?:ters\s+(?:kovboy|cowgirl)|reverse\s+(?:cowgirl|rider)|misyoner|missionary|doggy(?:\s+style)?|prone[\s-]?bone|kasik|spoon|ayakta\s+arkadan)\b/iu.test(
     String(action.label || '')
-      .toLocaleLowerCase('tr-TR')
-      .replace(/ğ/g, 'g')
   );
   const correctedFromAction = Boolean(
-    explicitPositionLabel &&
-    actionFamily &&
-    [labelFamily, idFamily].some(family => family && family !== actionFamily)
+    declaredFamily && actionFamily && actionFamily !== declaredFamily && explicitNamedActionPosition
   );
-  if (new Set(declared).size > 1 && !correctedFromAction) {
-    return { family: '', correctedFromAction: false };
-  }
+  const family = correctedFromAction ? actionFamily : (declaredFamily || actionFamily || '');
   return {
-    family: correctedFromAction ? actionFamily : (declared[0] || ''),
-    correctedFromAction
+    family,
+    correctedFromAction: correctedFromAction || Boolean(!declaredFamily && actionFamily)
   };
 }
 
@@ -161,12 +155,12 @@ export function expandVerifiedMovementVariants(
   movements,
   positionStart,
   positionEnd,
-  { minSeconds = 10, maxVariants = 4, baseLabel = '' } = {}
+  { minSeconds = 10, maxVariants = 4, baseLabel = '', splitEachMovement = false } = {}
 ) {
   const start = Math.max(0, Number(positionStart) || 0);
   const end = Math.max(start, Number(positionEnd) || start);
-  const minimum = Math.max(10, Number(minSeconds) || 10);
-  const limit = Math.max(1, Math.min(4, Math.floor(Number(maxVariants) || 4)));
+  const minimum = Math.max(5, Number(minSeconds) || 10);
+  const limit = Math.max(1, Math.min(24, Math.floor(Number(maxVariants) || 4)));
   const positionDuration = end - start;
   const rawSource = (Array.isArray(movements) ? movements : [])
     .map(item => ({
@@ -197,6 +191,33 @@ export function expandVerifiedMovementVariants(
   }, []).sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 
   if (!source.length || positionDuration < minimum) return [];
+
+  if (splitEachMovement) {
+    const variants = [];
+    for (const item of source) {
+      const itemStart = Number(item.loopStartTime);
+      const itemEnd = Number(item.loopEndTime);
+      const duration = itemEnd - itemStart;
+      const desiredParts = duration >= 18 ? 3 : duration >= 10 ? 2 : 1;
+      const partCount = Math.max(1, Math.min(desiredParts, Math.floor(duration / minimum)));
+      for (let index = 0; index < partCount && variants.length < limit; index += 1) {
+        const partStart = itemStart + (duration / partCount) * index;
+        const partEnd = index === partCount - 1
+          ? itemEnd
+          : itemStart + (duration / partCount) * (index + 1);
+        variants.push({
+          ...item,
+          id: `${item.id}:variant-${index + 1}-${Math.round(partStart * 1000)}`,
+          label: item.label || baseLabel || 'Gerçek pozisyon hareketi',
+          loopStartTime: partStart,
+          loopEndTime: partEnd,
+          sourceVerified: true,
+          derivedFromVerifiedSegment: item.id
+        });
+      }
+    }
+    return variants;
+  }
 
   const desired = Math.min(
     limit,
@@ -504,7 +525,7 @@ export function consolidateVerifiedPositions(positions = []) {
     }
   }
 
-  const clustered = [];
+  const consolidated = [];
   for (const position of groups.values()) {
     const seen = new Set();
     position.movements = position.movements
@@ -522,47 +543,21 @@ export function consolidateVerifiedPositions(positions = []) {
     const ranges = [...position.sourceRanges]
       .filter(range => Number.isFinite(range.startTime) && Number.isFinite(range.endTime))
       .sort((a, b) => a.startTime - b.startTime);
-    const clusters = [];
-    let cluster = null;
-    for (const range of ranges) {
-      if (!cluster || range.startTime > cluster.endTime + 1.25) {
-        cluster = {
-          id: `${position.familyId}:continuous-${Math.round(range.startTime * 1000)}`,
-          startTime: range.startTime,
-          endTime: range.endTime,
-          sourceIds: [String(range.id)]
-        };
-        clusters.push(cluster);
-      } else {
-        cluster.endTime = Math.max(cluster.endTime, range.endTime);
-        cluster.sourceIds.push(String(range.id));
-      }
-    }
-
-    for (const item of clusters) {
-      const sourceIds = new Set(item.sourceIds);
-      const clusterMovements = position.movements
-        .filter(movement => {
-          if (sourceIds.has(String(movement.sourcePositionId || ''))) return true;
-          const start = Number(movement.loopStartTime);
-          const end = Number(movement.loopEndTime);
-          return Number.isFinite(start) && Number.isFinite(end) &&
-            start >= item.startTime - 0.2 && end <= item.endTime + 0.2;
-        })
-        .map(movement => ({ ...movement, sourcePositionId: item.id }));
-      clustered.push({
-        ...position,
-        id: `position:${item.id}`,
-        occurrenceId: item.id,
-        startTime: item.startTime,
-        endTime: item.endTime,
-        sourcePositionIds: [...sourceIds],
-        sourceRanges: ranges.filter(range => sourceIds.has(String(range.id))),
-        movements: clusterMovements
-      });
-    }
+    // The UI represents a canonical position once. Separate returns to that
+    // position remain real source ranges and playable movement variants under
+    // the same tab instead of becoming duplicate tabs.
+    consolidated.push({
+      ...position,
+      id: `position:${position.familyId}`,
+      occurrenceId: `${position.familyId}:all-occurrences`,
+      startTime: Math.min(...ranges.map(range => range.startTime)),
+      endTime: Math.max(...ranges.map(range => range.endTime)),
+      sourcePositionIds: ranges.map(range => String(range.id)),
+      sourceRanges: ranges,
+      movements: position.movements
+    });
   }
-  return clustered.sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  return consolidated.sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
 export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
@@ -594,23 +589,26 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   if (!verified.length) return [];
 
-  // One position object represents one uninterrupted occurrence. If malformed
-  // input contains another occurrence, keep only the earliest one instead of
-  // exposing a card that can jump to a different body configuration.
-  const occurrence = String(verified[0].sourcePositionId || 'single-occurrence');
-  const local = verified.filter(item =>
-    String(item.sourcePositionId || 'single-occurrence') === occurrence
-  );
-  const cardCount = Math.min(limit, local.length);
+  // One canonical position can occur several times in the source. Group every
+  // verified clip by its concrete action label so one tab can expose all real
+  // returns to the same movement instead of silently keeping only occurrence 1.
+  const occurrence = 'all-occurrences';
+  const grouped = [];
+  verified.forEach(item => {
+    const key = normalize(item.label) || `${normalizeMovementTempo(item.movementTempo)}:${normalize(item.movementType)}`;
+    const existing = grouped.find(group => group.key === key);
+    if (existing) existing.items.push(item);
+    else grouped.push({ key, items: [item] });
+  });
+  const cardGroups = grouped.slice(0, limit);
+  grouped.slice(limit).forEach((group, index) => {
+    cardGroups[index % cardGroups.length].items.push(...group.items);
+  });
   const cards = [];
-  let cursor = 0;
 
-  for (let index = 0; index < cardCount; index += 1) {
-    const remaining = local.length - cursor;
-    const remainingCards = cardCount - index;
-    const size = Math.max(1, Math.ceil(remaining / remainingCards));
-    const variants = local.slice(cursor, cursor + size);
-    cursor += size;
+  for (let index = 0; index < cardGroups.length; index += 1) {
+    const variants = [...cardGroups[index].items]
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
     const first = variants[0];
     const tempo = normalizeMovementTempo(first.movementTempo);
     const rawLabel = clean(first.label)

@@ -304,7 +304,7 @@ test('discovery phases are content-driven and never regress once a later phase w
 });
 
 
-test('keeps disconnected occurrences of one family isolated', () => {
+test('one canonical family becomes one tab while retaining every occurrence', () => {
   const positions = [
     {
       id: 'cowgirl-1',
@@ -327,13 +327,11 @@ test('keeps disconnected occurrences of one family isolated', () => {
   ];
 
   const result = consolidateVerifiedPositions(positions);
-  assert.equal(result.length, 2);
-  assert.deepEqual(result.map(item => item.id), [
-    'position:cowgirl:continuous-10000',
-    'position:cowgirl:continuous-40000'
-  ]);
-  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a']);
-  assert.deepEqual(result[1].movements.map(item => item.id), ['fast-a']);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 'position:cowgirl');
+  assert.equal(result[0].occurrenceId, 'cowgirl:all-occurrences');
+  assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1', 'cowgirl-2']);
+  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a', 'fast-a']);
 });
 
 test('sex control requires verified fast, hard or deep evidence', () => {
@@ -398,7 +396,7 @@ test('verified position labels work even when optional position metadata is miss
     positionId: 'cowgirl',
     positionLabel: 'Kovboy Pozisyonu',
     label: 'Kucağındaki kadını öperek ritmik şekilde hareket et'
-  }), { family: 'seated-facing', correctedFromAction: true });
+  }), { family: 'cowgirl', correctedFromAction: false });
 });
 
 test('movement choice grouping retains every verified clip', () => {
@@ -467,7 +465,7 @@ test('position-only evidence stays one honest playable card without generic cut 
 });
 
 
-test('never mixes separate occurrences and groups matching clips under one local card', () => {
+test('one movement card retains matching clips from every occurrence', () => {
   const movements = Array.from({ length: 20 }, (_, index) => ({
     id: `clip-${index}`,
     label: 'Kovboy Pozisyonu · Sekans 1',
@@ -480,15 +478,15 @@ test('never mixes separate occurrences and groups matching clips under one local
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
   assert.equal(choices.length, 1);
-  assert.equal(choices.flatMap(choice => choice.variants).length, 10);
-  assert.ok(choices.every(choice =>
-    new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
-  ));
-  assert.ok(choices.every(choice => choice.sourcePositionId === 'occurrence-a'));
+  assert.equal(choices.flatMap(choice => choice.variants).length, 20);
+  assert.deepEqual(
+    [...new Set(choices[0].variants.map(item => item.sourcePositionId))],
+    ['occurrence-a', 'occurrence-b']
+  );
 });
 
 
-test('joins overlapping raw detections but keeps later returns as separate positions', () => {
+test('joins overlapping and later returns under one canonical position tab', () => {
   const positions = consolidateVerifiedPositions([
     {
       id: 'raw-a', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
@@ -507,13 +505,35 @@ test('joins overlapping raw detections but keeps later returns as separate posit
     }
   ]);
 
-  assert.equal(positions.length, 2);
-  assert.equal(positions[0].sourcePositionIds.length, 2);
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].sourcePositionIds.length, 3);
   assert.deepEqual(
-    positions.map(position =>
-      buildVerifiedMovementChoices(position.movements, position.label, 3)
-        .flatMap(choice => choice.variants.map(item => item.id))
-    ),
-    [['a', 'b'], ['c']]
+    buildVerifiedMovementChoices(positions[0].movements, positions[0].label, 3)
+      .flatMap(choice => choice.variants.map(item => item.id)),
+    ['a', 'b', 'c']
+  );
+});
+
+test('splits each verified movement into repeatable real subclips', () => {
+  const variants = expandVerifiedMovementVariants([{
+    id: 'fast-action',
+    label: 'Hızlı hareketi sürdür',
+    movementTempo: 'fast',
+    loopStartTime: 100,
+    loopEndTime: 121,
+    sourceVerified: true,
+    sourcePositionId: 'cowgirl-a'
+  }], 100, 121, {
+    minSeconds: 5,
+    maxVariants: 24,
+    splitEachMovement: true
+  });
+
+  assert.equal(variants.length, 3);
+  assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 5));
+  assert.ok(variants.every(item => item.derivedFromVerifiedSegment === 'fast-action'));
+  assert.deepEqual(
+    variants.map(item => [item.loopStartTime, item.loopEndTime]),
+    [[100, 107], [107, 114], [114, 121]]
   );
 });
