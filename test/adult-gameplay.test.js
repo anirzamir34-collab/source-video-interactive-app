@@ -340,6 +340,7 @@ test('position family ignores furniture, kissing and ordinary hand-contact wordi
   assert.equal(adultPositionFamily('Eliyle belini tut'), '');
   assert.equal(adultPositionFamily('Ayakta arkadan pozisyon'), 'standing-rear');
   assert.equal(adultPositionFamily('Doggy style'), 'rear');
+  assert.equal(adultPositionFamily('Kucağındaki kadını öperek ritmik şekilde hareket et'), 'seated-facing');
 });
 
 test('verified position labels work even when optional position metadata is missing or stale', () => {
@@ -364,6 +365,32 @@ test('verified position labels work even when optional position metadata is miss
     positionLabel: 'Kovboy Pozisyonu',
     label: 'Ters cowgirl pozisyonunda ritmik tempoyu sürdür'
   }), { family: 'reverse-cowgirl', correctedFromAction: true });
+
+  assert.deepEqual(resolveVerifiedAdultPosition({
+    sourceVerified: true,
+    positionId: 'cowgirl',
+    positionLabel: 'Kovboy Pozisyonu',
+    label: 'Kucağındaki kadını öperek ritmik şekilde hareket et'
+  }), { family: 'seated-facing', correctedFromAction: true });
+});
+
+test('movement choice grouping retains every verified clip', () => {
+  const movements = Array.from({ length: 11 }, (_, index) => ({
+    id: `reverse-${index}`,
+    label: index % 2 ? 'Ters kovboy pozisyonunda ritmi sürdür' : 'Kadının kalçasını tut',
+    movementType: index % 2 ? 'rhythmic' : 'hold',
+    movementTempo: index % 3 === 0 ? 'fast' : 'moderate',
+    loopStartTime: 490 + index * 11,
+    loopEndTime: 500 + index * 11,
+    sourceVerified: true,
+    sourcePositionId: 'reverse-occurrence'
+  }));
+  const choices = buildVerifiedMovementChoices(movements, 'Ters Kovboy Pozisyonu', 4);
+  assert.ok(choices.length <= 4);
+  assert.deepEqual(
+    choices.flatMap(choice => choice.variants).map(item => item.id).sort(),
+    movements.map(item => item.id).sort()
+  );
 });
 
 test('keeps verified activity and contact actions inside their position panel', () => {
@@ -426,7 +453,7 @@ test('never mixes separate occurrences and groups matching clips under one local
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
   assert.equal(choices.length, 1);
-  assert.ok(choices.every(choice => choice.variants.length <= 3));
+  assert.equal(choices.flatMap(choice => choice.variants).length, 10);
   assert.ok(choices.every(choice =>
     new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
   ));
