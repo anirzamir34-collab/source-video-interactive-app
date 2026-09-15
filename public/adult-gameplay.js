@@ -516,6 +516,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   const tempoLabels = { slow: 'Yavaş hareket', moderate: 'Ritmik hareket', fast: 'Hızlı hareket' };
   const actionLabels = [
     [/(\bop|\bopus|\bdudak|kiss)/u, 'Öpüşmeyi sürdür'],
+    [/(gogus|breast).*(oksa|okus|dokun|touch|caress)|(oksa|okus|dokun|touch|caress).*(gogus|breast)/u, 'Göğüslerine dokun'],
     [/(okus|oksa|sivaz|touch|caress)/u, 'Okşamayı sürdür'],
     [/(tut|kavra|bel|kalca|gogus|hold|grip)/u, 'Tutuşu değiştir'],
     [/(derin|deep)/u, 'Derin hareketi sürdür'],
@@ -558,15 +559,30 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     const concreteChange = /(hizli|yavas|ritm|sert|derin|op|okus|oksa|tut|kavra|dokun|temas|kalca|gogus|bel|yon|aci|tempo|hareket)/u.test(normalizedRaw);
     const meaningfulLabel = rawLabel && normalizedRaw !== positionKey &&
       !normalizedRaw.startsWith(positionKey + ' ·') &&
-      !/^(gercek hareket|gercek sekans)$/u.test(normalizedRaw) &&
+      !/^(gercek hareket|gercek sekans|seçenek|secenek|option|choice|hareket)\s*\d*$/u.test(normalizedRaw) &&
       concreteChange;
+    const actionForVariant = variant => {
+      const text = normalize([
+        variant?.label,
+        variant?.movementType,
+        variant?.activityEvidence,
+        variant?.sensoryEvidence
+      ].filter(Boolean).join(' '));
+      return actionLabels.find(([pattern]) => pattern.test(text))?.[1] || '';
+    };
+    const inferredLabels = variants.map(actionForVariant).filter(Boolean);
+    const inferredAction = inferredLabels.length
+      ? [...new Set(inferredLabels)].sort((a, b) =>
+        inferredLabels.filter(label => label === b).length -
+        inferredLabels.filter(label => label === a).length
+      )[0]
+      : '';
     const variantsText = normalize(variants.map(item => [
       item.label,
       item.movementType,
       item.activityEvidence,
       item.sensoryEvidence
     ].filter(Boolean).join(' ')).join(' '));
-    const inferredAction = actionLabels.find(([pattern]) => pattern.test(variantsText))?.[1] || '';
     const label = meaningfulLabel
       ? rawLabel
       : inferredAction || tempoLabels[tempo] || 'Pozisyon içi hareket';
