@@ -326,9 +326,31 @@ test('builds at most four subchoices and keeps multiple clips in each choice poo
   assert.ok(choices.length <= 4);
   const slow = choices.find(choice => choice.tempo === 'slow');
   const kiss = choices.find(choice => choice.label === 'Öpüşerek devam');
-  assert.equal(slow.label, 'Yavaş tempo');
+  assert.equal(slow.label, 'Yavaş hareket');
   assert.deepEqual(slow.variants.map(item => item.id), ['a', 'b']);
   assert.deepEqual(kiss.variants.map(item => item.id), ['c', 'd']);
+});
+
+test('position family ignores furniture, kissing and ordinary hand-contact wording', () => {
+  assert.equal(adultPositionFamily('Kadını koltuğun arkasına yönlendir'), '');
+  assert.equal(adultPositionFamily('Kadını ağzından öp'), '');
+  assert.equal(adultPositionFamily('Eliyle belini tut'), '');
+  assert.equal(adultPositionFamily('Ayakta arkadan pozisyon'), 'standing-rear');
+  assert.equal(adultPositionFamily('Doggy style'), 'rear');
+});
+
+test('movement cards keep concrete action text and remove sensory metadata', () => {
+  const choices = buildVerifiedMovementChoices([{
+    id: 'fast-kiss',
+    label: 'Öperek hızlı hareket et · Yoğun nefes · Uzun bakış',
+    movementTempo: 'fast',
+    loopStartTime: 10,
+    loopEndTime: 22,
+    sourceVerified: true,
+    sourcePositionId: 'occurrence-a'
+  }], 'Kovboy Pozisyonu', 3);
+  assert.equal(choices[0].label, 'Öperek hızlı hareket et');
+  assert.doesNotMatch(choices[0].label, /nefes|bakış|kesit|sekans|\d+:\d+/i);
 });
 
 
