@@ -3904,33 +3904,6 @@ checkAiUsageStatus();
 setInterval(checkAiUsageStatus, 60 * 1000);
 renderDebug();
 
-function restoreSavedAnalysis() {
-  try {
-    const raw = localStorage.getItem("videoquest:last-analysis");
-    if (!raw) return;
-
-    const saved = JSON.parse(raw);
-    let normalized = normalizeAnalysis(saved);
-    const hardened = reviewAndHardenAnalysis({ ...saved, ...normalized });
-    normalized = hardened.analysis;
-    if (hardened.integrity.fatal || !normalized.actions.length) {
-      localStorage.removeItem("videoquest:last-analysis");
-      localStorage.removeItem(RUNTIME_SAVE_KEY);
-      return;
-    }
-
-    state.analysis = normalized;
-    state.integrityReport = hardened.integrity;
-    state.analysisFingerprint = analysisFingerprint(normalized);
-    els.analysisState.textContent = "TIMELINE_RESTORED";
-    els.analysisTitle.textContent = `${normalized.actions.length} kayıtlı eylem geri yüklendi`;
-    initializeInteractive(normalized);
-  } catch (error) {
-    console.warn("Saved analysis could not be restored:", error);
-    localStorage.removeItem("videoquest:last-analysis");
-  }
-}
-
 function clearPreviousGameResidue() {
   localStorage.removeItem('videoquest:last-analysis');
   localStorage.removeItem('videoquest:last-dialogue');
