@@ -206,6 +206,56 @@ const storyboardUpload = multer({
   }
 });
 
+function cropStoryboardRow(file, rowIndex) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn(ffmpegPath, [
+      '-hide_banner', '-loglevel', 'error',
+      '-i', 'pipe:0',
+      '-vf', `crop=iw:ih/4:0:${rowIndex}*ih/4`,
+      '-frames:v', '1',
+      '-q:v', '3',
+      '-f', 'image2pipe',
+      '-vcodec', 'mjpeg',
+      'pipe:1'
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const chunks = [];
+    let stderr = '';
+    const deadline = setTimeout(() => ffmpeg.kill('SIGKILL'), 15000);
+    ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
+    ffmpeg.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-2000); });
+    ffmpeg.on('error', reject);
+    ffmpeg.on('close', code => {
+      clearTimeout(deadline);
+      if (code !== 0 || !chunks.length) {
+        reject(new Error(stderr || `STORYBOARD_ROW_CROP_FAILED:${code}`));
+        return;
+      }
+      resolve({
+        ...file,
+        buffer: Buffer.concat(chunks),
+        size: chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+        mimetype: 'image/jpeg',
+        originalname: `${path.parse(file.originalname || 'storyboard').name}-row-${rowIndex + 1}.jpg`
+      });
+    });
+    ffmpeg.stdin.end(file.buffer);
+  });
+}
+
+async function splitSingleStoryboardSheet(file, timestampValues) {
+  const frameCount = Math.min(12, timestampValues.length);
+  const occupiedRows = Math.ceil(frameCount / 3);
+  if (occupiedRows < 2) return [];
+  const rows = [];
+  for (let rowIndex = 0; rowIndex < occupiedRows; rowIndex += 1) {
+    rows.push({
+      file: await cropStoryboardRow(file, rowIndex),
+      timestamps: timestampValues.slice(rowIndex * 3, (rowIndex + 1) * 3)
+    });
+  }
+  return rows.filter(row => row.timestamps.length);
+}
+
 app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards', 20), async (req, res) => {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -568,6 +618,9 @@ Rules:
             details.includes("Unexpected token") ||
             details.includes("not valid JSON") ||
             details.includes("GEMINI_EMPTY_JSON_RESPONSE");
+          // Safety-blocked image groups are deterministic. Hand control to the
+          // smaller visual recovery path instead of resending the same group.
+          if (details.includes('PROHIBITED_CONTENT')) throw error;
           if (!retryable || attempt === 4) throw error;
           console.warn(`[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/4: ${details}`);
           await new Promise(resolve => setTimeout(resolve, attempt * 1800));
@@ -580,33 +633,46 @@ Rules:
     try {
       parsed = await generateStoryboardJson(prompt, files);
     } catch (fullChunkError) {
-      if (files.length < 2) {
-        console.warn(`[gemini-storyboard-gap] chunk ${chunkIndex + 1}/${chunkCount} kept as a non-playable verified gap after repeated empty responses`);
-        parsed = unverifiedGapResult(
-          chunkStart,
-          chunkEnd,
-          String(fullChunkError?.message || fullChunkError)
-        );
-      }
-
-      const allTimestamps = files.length >= 2 ? (() => {
+      const allTimestamps = (() => {
         try {
           const value = JSON.parse(timestamps);
           return Array.isArray(value) ? value.map(Number).filter(Number.isFinite) : [];
         } catch {
           return [];
         }
-      })() : [];
-      if (files.length >= 2) {
+      })();
       const framesPerSheet = Math.max(1, Math.ceil(allTimestamps.length / files.length));
-      const recoveredParts = [];
-      console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${files.length} smaller requests`);
-
-      for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
-        const splitTimestamps = allTimestamps.slice(
+      let recoverySegments = files.map((file, fileIndex) => ({
+        file,
+        timestamps: allTimestamps.slice(
           fileIndex * framesPerSheet,
           (fileIndex + 1) * framesPerSheet
+        )
+      }));
+
+      if (files.length === 1 && /PROHIBITED_CONTENT/i.test(String(fullChunkError?.message || fullChunkError))) {
+        try {
+          const rowSegments = await splitSingleStoryboardSheet(files[0], allTimestamps);
+          if (rowSegments.length) recoverySegments = rowSegments;
+        } catch (cropError) {
+          console.warn(`[gemini-storyboard-crop-error] chunk ${chunkIndex + 1}/${chunkCount}: ${cropError?.message || cropError}`);
+        }
+      }
+
+      if (recoverySegments.length <= 1) {
+        console.warn(`[gemini-storyboard-gap] chunk ${chunkIndex + 1}/${chunkCount} kept as a non-playable verified gap after repeated empty responses`);
+        parsed = unverifiedGapResult(
+          chunkStart,
+          chunkEnd,
+          String(fullChunkError?.message || fullChunkError)
         );
+      } else {
+      const recoveredParts = [];
+      console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${recoverySegments.length} smaller requests`);
+
+      for (let fileIndex = 0; fileIndex < recoverySegments.length; fileIndex += 1) {
+        const segment = recoverySegments[fileIndex];
+        const splitTimestamps = segment.timestamps;
         const splitStart = Number(splitTimestamps[0] ?? chunkStart);
         const splitLast = Number(splitTimestamps[splitTimestamps.length - 1] ?? splitStart);
         const splitEnd = Math.min(chunkEnd, Math.max(splitStart + 0.1, splitLast + Math.max(0.1, (chunkEnd - chunkStart) / Math.max(1, allTimestamps.length))));
@@ -617,11 +683,11 @@ Rules:
         try {
           recoveredParts.push(await generateStoryboardJson(
             splitPrompt,
-            [files[fileIndex]],
+            [segment.file],
             `split-${fileIndex + 1}`
           ));
         } catch (splitError) {
-          console.warn(`[gemini-storyboard-gap] split ${fileIndex + 1}/${files.length} in chunk ${chunkIndex + 1} kept non-playable`);
+          console.warn(`[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} in chunk ${chunkIndex + 1} kept non-playable`);
           recoveredParts.push(unverifiedGapResult(
             splitStart,
             splitEnd,
@@ -643,7 +709,7 @@ Rules:
         analysisGaps: recoveredParts.flatMap(item => Array.isArray(item?.analysisGaps) ? item.analysisGaps : []),
         warnings: [
           ...recoveredParts.flatMap(item => Array.isArray(item?.warnings) ? item.warnings : []),
-          `Chunk ${chunkIndex + 1} recovered from ${files.length} smaller verified segments.`
+          `Chunk ${chunkIndex + 1} recovered from ${recoverySegments.length} smaller verified segments.`
         ]
       };
       }
