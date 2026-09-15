@@ -56,8 +56,7 @@ import {
 import {
   mergeStoryContexts,
   normalizeStoryContext,
-  sensoryActionMeta,
-  storyActionMeta,
+  selectDiverseStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
 
@@ -3608,7 +3607,7 @@ function futureActions() {
 
   const seenChoices = new Set();
 
-  return pool.filter((action) => {
+  const unique = pool.filter((action) => {
     const key = action.choiceKey ||
       action.label.trim().toLocaleLowerCase('tr-TR');
 
@@ -3619,6 +3618,7 @@ function futureActions() {
     seenChoices.add(key);
     return true;
   });
+  return selectDiverseStoryActions(unique, 3);
 }
 
 function renderChoices() {
@@ -3643,16 +3643,15 @@ function renderChoices() {
   els.choices.classList.remove('hidden');
   els.choices.innerHTML = '';
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
-  let candidates = futureActions().slice(0, 4);
+  let candidates = futureActions();
 
   if (!candidates.length && state.analysis?.actions?.length) {
-    candidates = state.analysis.actions
+    candidates = selectDiverseStoryActions(state.analysis.actions
       .filter((action, index) =>
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
         !state.consumedActionIds.has(action.actionId)
-      )
-      .slice(0, 4);
+      ), 3);
   }
 
   const firstCandidate = candidates[0];
@@ -3674,7 +3673,7 @@ function renderChoices() {
   );
 
   if (!candidates.length) {
-    candidates = state.analysis.actions
+    candidates = selectDiverseStoryActions(state.analysis.actions
       .filter((action, index) =>
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
@@ -3683,8 +3682,7 @@ function renderChoices() {
           action,
           completedSceneIds: state.completedAdultSceneIds
         })
-      )
-      .slice(0, 4);
+      ), 3);
   }
 
   if (!candidates.length) {
@@ -3697,13 +3695,8 @@ function renderChoices() {
     const button = document.createElement('button');
     button.className = 'choice';
     const storyLabel = storyChoiceLabelForAction(action);
-    const storyMeta = storyActionMeta(action);
-    const sensory = sensoryActionMeta(action);
-    const scenePrefix = storyMeta.sceneTitle ? `${escapeHtml(storyMeta.sceneTitle)} · ` : '';
     button.innerHTML = `
       <div class="choice-title">${escapeHtml(storyLabel)}</div>
-      <div class="choice-meta">${scenePrefix}${action.startTime.toFixed(2)} → ${action.endTime.toFixed(2)} sn • ${(action.confidence * 100).toFixed(0)}%</div>
-      ${sensory.cues.length ? `<div class="choice-sensory">◌ ${escapeHtml(sensory.cues.join(' · '))}</div>` : ''}
     `;
     button.addEventListener('click', () => playAction(action));
     els.choices.appendChild(button);
