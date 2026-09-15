@@ -3325,7 +3325,15 @@ function finishAdultScene() {
     state.navigationSeeking = false;
     els.video.removeEventListener('seeked', finishExit);
     setGameState('DECISION_PENDING');
-    renderChoices();
+    const nextAdultScene = findAdultSceneAt(state.gameCursorTime);
+    if (nextAdultScene) {
+      enterAdultScene(nextAdultScene, {
+        forceStart: true,
+        reason: 'adult-scene-complete-next-occurrence'
+      });
+    } else {
+      renderChoices();
+    }
   };
   els.video.addEventListener('seeked', finishExit);
   setTimeout(finishExit, 1200);
