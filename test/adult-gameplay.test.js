@@ -371,7 +371,7 @@ test('position-only evidence stays one honest playable card without generic cut 
 });
 
 
-test('never mixes separate occurrences and exposes at most three local cards', () => {
+test('never mixes separate occurrences and groups matching clips under one local card', () => {
   const movements = Array.from({ length: 20 }, (_, index) => ({
     id: `clip-${index}`,
     label: 'Kovboy Pozisyonu · Sekans 1',
@@ -383,7 +383,7 @@ test('never mixes separate occurrences and exposes at most three local cards', (
   }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 3);
+  assert.equal(choices.length, 1);
   assert.ok(choices.every(choice => choice.variants.length <= 3));
   assert.ok(choices.every(choice =>
     new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
