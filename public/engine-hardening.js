@@ -2,7 +2,7 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 
 
 export const ANALYSIS_SCHEMA_VERSION = 5;
 export const ENGINE_VERSION = 'videoquest-story-v1';
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export const ADULT_PHASE_ORDER = Object.freeze({
   foreplay: 0,
@@ -407,6 +407,28 @@ export function reviewAndHardenAnalysis(input = {}) {
       const familyB = semanticPositionFamily(b);
       if (!familyA || !familyB || familyA === familyB) continue;
       if (overlapSeconds(a, b) < 1.5) continue;
+
+      // A later verified position can begin while the model's previous parent
+      // range still extends too far. Preserve both real occurrences by ending
+      // the earlier one at the orientation change instead of deleting either.
+      const aStart = numberOr(a.startTime);
+      const bStart = numberOr(b.startTime);
+      const earlier = aStart <= bStart ? a : b;
+      const later = earlier === a ? b : a;
+      const transition = numberOr(later.startTime);
+      if (transition - numberOr(earlier.startTime) >= 10) {
+        earlier.endTime = Math.min(numberOr(earlier.endTime), transition);
+        earlier.positionEndTime = Math.min(numberOr(earlier.positionEndTime, earlier.endTime), transition);
+        earlier.loopEndTime = Math.min(numberOr(earlier.loopEndTime, earlier.endTime), transition);
+        issues.push({
+          severity: 'repair',
+          code: 'POSITION_TRANSITION_TRIMMED',
+          actionId: earlier.actionId,
+          nextActionId: later.actionId,
+          transition
+        });
+        continue;
+      }
       const winner = chooseHigherConfidence(a, b);
       const loser = winner === a ? b : a;
       removed.add(String(loser.actionId));
