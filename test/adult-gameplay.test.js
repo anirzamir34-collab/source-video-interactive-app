@@ -353,6 +353,23 @@ test('movement cards keep concrete action text and remove sensory metadata', () 
   assert.doesNotMatch(choices[0].label, /nefes|bakış|kesit|sekans|\d+:\d+/i);
 });
 
+test('position-only evidence stays one honest playable card without generic cut labels', () => {
+  const choices = buildVerifiedMovementChoices([{
+    id: 'cowgirl-position-only',
+    label: 'Kovboy Pozisyonu sekansını oynat',
+    movementTempo: 'unclear',
+    loopStartTime: 382,
+    loopEndTime: 430,
+    sourceVerified: true,
+    sourcePositionId: 'cowgirl-occurrence',
+    positionOnlyFallback: true
+  }], 'Kovboy Pozisyonu', 3);
+
+  assert.equal(choices.length, 1);
+  assert.equal(choices[0].label, 'Kovboy Pozisyonu sekansını oynat');
+  assert.doesNotMatch(choices[0].label, /Pozisyon içi hareket|Kesit\s+\d/i);
+});
+
 
 test('never mixes separate occurrences and exposes at most three local cards', () => {
   const movements = Array.from({ length: 20 }, (_, index) => ({
