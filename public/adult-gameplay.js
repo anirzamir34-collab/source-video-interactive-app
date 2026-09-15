@@ -40,6 +40,28 @@ export function verifiedAdultPositionFamily(action = {}) {
   ].filter(Boolean).join(' '));
 }
 
+export function resolveVerifiedAdultPosition(action = {}) {
+  const labelFamily = adultPositionFamily(action.positionLabel);
+  const idFamily = adultPositionFamily(action.positionId);
+  const actionFamily = action?.sourceVerified === true
+    ? adultPositionFamily([action.label, action.movementType].filter(Boolean).join(' '))
+    : '';
+  const declared = [labelFamily, idFamily, actionFamily].filter(Boolean);
+  const explicitPositionLabel = /\b(pozisyon\w*|position\w*)\b/i.test(String(action.label || ''));
+  const correctedFromAction = Boolean(
+    explicitPositionLabel &&
+    actionFamily &&
+    [labelFamily, idFamily].some(family => family && family !== actionFamily)
+  );
+  if (new Set(declared).size > 1 && !correctedFromAction) {
+    return { family: '', correctedFromAction: false };
+  }
+  return {
+    family: correctedFromAction ? actionFamily : (declared[0] || ''),
+    correctedFromAction
+  };
+}
+
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
 export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
 export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
