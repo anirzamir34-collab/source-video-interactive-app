@@ -24,7 +24,8 @@ import {
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
-  tapRhythm
+  tapRhythm,
+  verifiedAdultPositionFamily
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
@@ -1926,9 +1927,7 @@ function adultSemanticFamily(value) {
 function canonicalAdultPosition(action) {
   const labelFamily = adultSemanticFamily(action.positionLabel);
   const idFamily = adultSemanticFamily(action.positionId);
-  const actionFamily = action?.sourceVerified === true
-    ? adultSemanticFamily([action.label, action.movementType].filter(Boolean).join(' '))
-    : '';
+  const actionFamily = verifiedAdultPositionFamily(action);
   const declaredFamilies = [labelFamily, idFamily, actionFamily].filter(Boolean);
   const explicitActionPosition = /\b(pozisyon|position)\b/.test(normalizeAdultLabel(action.label || ''));
   // Models sometimes keep the previous parent positionId after a clearly
@@ -2094,12 +2093,7 @@ function prepareAdultScenes() {
       // or activityEvidence. The canonical family in its label is enough to
       // route it into the dedicated adult panel; never require model-only
       // metadata that would otherwise leak the action into normal choices.
-      const family = adultSemanticFamily([
-        action.positionLabel,
-        action.positionId,
-        action.label,
-        action.movementType
-      ].filter(Boolean).join(' '));
+      const family = verifiedAdultPositionFamily(action);
       if (!family) return false;
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
@@ -2173,7 +2167,14 @@ function prepareAdultScenes() {
       return;
     }
 
-    const hasPositionEvidence = Boolean(action.positionId || action.positionLabel);
+    // Some analysis providers correctly identify the visible position in the
+    // verified label but omit the optional positionId/positionLabel fields.
+    // Treat that evidence as a real position so it stays in this panel.
+    const hasPositionEvidence = Boolean(
+      action.positionId ||
+      action.positionLabel ||
+      verifiedAdultPositionFamily(action)
+    );
     if (!hasPositionEvidence) {
       const actionType = String(action.actionType || '').toLowerCase();
       const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
@@ -3602,7 +3603,8 @@ function futureActions() {
     idx > state.currentActionIndex &&
     a.startTime >= state.gameCursorTime - 0.001 &&
     a.startTime <= windowEnd &&
-    !state.consumedActionIds.has(a.actionId)
+    !state.consumedActionIds.has(a.actionId) &&
+    !verifiedAdultPositionFamily(a)
   );
 
   const seenChoices = new Set();
@@ -3650,7 +3652,8 @@ function renderChoices() {
       .filter((action, index) =>
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
-        !state.consumedActionIds.has(action.actionId)
+        !state.consumedActionIds.has(action.actionId) &&
+        !verifiedAdultPositionFamily(action)
       ), 3);
   }
 
@@ -3678,6 +3681,7 @@ function renderChoices() {
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
         !state.consumedActionIds.has(action.actionId) &&
+        !verifiedAdultPositionFamily(action) &&
         !findAdultSceneForTimeline(state.adultScenes, {
           action,
           completedSceneIds: state.completedAdultSceneIds
@@ -3739,9 +3743,7 @@ async function playAction(action) {
 
   const seekTarget = Math.max(state.gameCursorTime, actionStart);
   els.video.currentTime = seekTarget;
-  const mobilePlayPromise = els.video.play().catch(() => {
-    els.video.controls = true;
-  });
+  const mobilePlayPromise = els.video.play().catch(() => {});
 
   await waitForEvent(els.video, 'seeked', 5000).catch(() => {});
   setGameState('SEGMENT_PLAYING');
@@ -3998,7 +4000,16 @@ fullscreenBtn?.addEventListener('click', async () => {
   }
 });
 
+function keepGameVideoControlsHidden() {
+  if (!els.video) return;
+  els.video.controls = false;
+  els.video.removeAttribute('controls');
+}
+
+keepGameVideoControlsHidden();
+
 document.addEventListener('fullscreenchange', () => {
+  keepGameVideoControlsHidden();
   syncAdultPanelPlacement(fullscreenStage);
   if (fullscreenBtn) {
     fullscreenBtn.textContent = document.fullscreenElement
