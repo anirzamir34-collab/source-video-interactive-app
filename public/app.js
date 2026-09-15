@@ -1931,10 +1931,17 @@ function canonicalAdultPosition(action) {
     ? adultSemanticFamily([action.label, action.movementType].filter(Boolean).join(' '))
     : '';
   const declaredFamilies = [labelFamily, idFamily, actionFamily].filter(Boolean);
-  // Conflicting model fields are not visual proof. Hiding an uncertain tab is
-  // safer than selecting one of two incompatible body configurations.
-  if (new Set(declaredFamilies).size > 1) return { id: '', label: '' };
-  const family = declaredFamilies[0] || '';
+  const explicitActionPosition = /\b(pozisyon|position)\b/.test(normalizeAdultLabel(action.label || ''));
+  // Models sometimes keep the previous parent positionId after a clearly
+  // labelled orientation change. A verified explicit position label owns the
+  // new occurrence instead of being hidden as a field conflict.
+  const correctedFromAction = Boolean(
+    explicitActionPosition &&
+    actionFamily &&
+    [labelFamily, idFamily].some(value => value && value !== actionFamily)
+  );
+  if (new Set(declaredFamilies).size > 1 && !correctedFromAction) return { id: '', label: '' };
+  const family = correctedFromAction ? actionFamily : (declaredFamilies[0] || '');
 
   const labels = {
     oral: 'Oral Seks',
@@ -1953,9 +1960,9 @@ function canonicalAdultPosition(action) {
     standing: 'Ayakta Pozisyon'
   };
 
-  if (family) return { id: family, label: labels[family] };
+  if (family) return { id: family, label: labels[family], correctedFromAction };
 
-  return { id: '', label: '' };
+  return { id: '', label: '', correctedFromAction: false };
 }
 
 function adultCategoryFor(action, positionId) {
@@ -2198,10 +2205,17 @@ function prepareAdultScenes() {
     const canonical = canonicalAdultPosition(action);
     if (!canonical.id) return;
 
+    const correctedStart = canonical.correctedFromAction
+      ? Number(action.startTime)
+      : Number(action.positionStartTime ?? action.startTime);
+    const correctedEnd = canonical.correctedFromAction
+      ? Number(action.endTime)
+      : Number(action.positionEndTime ?? action.endTime);
+
     const category = adultCategoryFor(action, canonical.id);
     const occurrenceId = String(
       action.positionOccurrenceId ||
-      `${sceneId}:${canonical.id}:legacy-${Math.round((Number(action.positionStartTime ?? action.startTime) || 0) * 1000)}`
+      `${sceneId}:${canonical.id}:legacy-${Math.round((correctedStart || 0) * 1000)}`
     );
     const routeNamespace = activityOccurrenceNamespace(action);
     const positionKey = `${category.id}:${canonical.id}:${routeNamespace}:${occurrenceId}`;
@@ -2216,8 +2230,8 @@ function prepareAdultScenes() {
         label: activityDisplayLabel(canonical.label, action),
         categoryId: category.id,
         categoryLabel: category.label,
-        startTime: Number(action.positionStartTime ?? action.startTime),
-        endTime: Number(action.positionEndTime ?? action.endTime),
+        startTime: correctedStart,
+        endTime: correctedEnd,
         unlockProgress: 0,
         movements: []
       });
@@ -2226,11 +2240,11 @@ function prepareAdultScenes() {
     const position = scene.positions.get(positionKey);
     position.startTime = Math.min(
       position.startTime,
-      Number(action.positionStartTime ?? action.startTime)
+      correctedStart
     );
     position.endTime = Math.max(
       position.endTime,
-      Number(action.positionEndTime ?? action.endTime)
+      correctedEnd
     );
 
     if (action.actionType !== 'position' && action.movementType) {
