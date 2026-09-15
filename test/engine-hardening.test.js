@@ -197,6 +197,28 @@ test('conflicting overlapping positions keep the higher-confidence candidate', (
   assert.deepEqual(analysis.actions.map(action => action.actionId), ['m']);
 });
 
+test('sequential cowgirl orientation change preserves reverse cowgirl occurrence', () => {
+  const { analysis, integrity } = reviewAndHardenAnalysis({
+    videoDuration: 120,
+    actions: [
+      {
+        actionId: 'cowgirl', label: 'Kovboy pozisyonunda ritmik hareket', startTime: 20, endTime: 95,
+        adultScene: true, adultSceneId: 's', actionType: 'position', positionId: 'cowgirl', positionLabel: 'Kovboy Pozisyonu',
+        positionStartTime: 20, positionEndTime: 95, loopStartTime: 20, loopEndTime: 95, confidence: 0.94
+      },
+      {
+        actionId: 'reverse', label: 'Ters kovboy pozisyonunda ritmik hareket', startTime: 70, endTime: 105,
+        adultScene: true, adultSceneId: 's', actionType: 'position', positionId: 'reverse-cowgirl', positionLabel: 'Ters Kovboy Pozisyonu',
+        positionStartTime: 70, positionEndTime: 105, loopStartTime: 70, loopEndTime: 105, confidence: 0.92
+      }
+    ]
+  });
+
+  assert.deepEqual(analysis.actions.map(action => action.actionId), ['cowgirl', 'reverse']);
+  assert.equal(analysis.actions[0].endTime, 70);
+  assert.ok(integrity.issues.some(issue => issue.code === 'POSITION_TRANSITION_TRIMMED'));
+});
+
 test('state machine is monotonic and centralized permission guard blocks invalid final', () => {
   assert.equal(advanceAdultPhase('positions', 'foreplay'), 'positions');
   assert.equal(advanceAdultPhase('positions', 'reward'), 'reward');
