@@ -1407,7 +1407,9 @@ app.post('/api/resolve-video-url', async (req, res) => {
       type: resolved.type,
       userAgent: resolved.userAgent,
       extractor: resolved.extractor,
-      expiresAt: Date.now() + 30 * 60 * 1000
+      // Stream-first analysis seeks through this proxy throughout analysis and
+      // later gameplay, so the source session must outlive a long mobile run.
+      expiresAt: Date.now() + 4 * 60 * 60 * 1000
     });
 
     res.json({
