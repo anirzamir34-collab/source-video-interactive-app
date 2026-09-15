@@ -332,7 +332,7 @@ test('builds at most four subchoices and keeps multiple clips in each choice poo
 });
 
 
-test('never mixes separate position occurrences or exposes twenty clips in one subchoice', () => {
+test('never mixes separate occurrences and exposes at most three local cards', () => {
   const movements = Array.from({ length: 20 }, (_, index) => ({
     id: `clip-${index}`,
     label: 'Kovboy Pozisyonu · Sekans 1',
@@ -344,11 +344,12 @@ test('never mixes separate position occurrences or exposes twenty clips in one s
   }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 2);
-  assert.ok(choices.every(choice => choice.variants.length <= 4));
+  assert.equal(choices.length, 3);
+  assert.ok(choices.every(choice => choice.variants.length <= 3));
   assert.ok(choices.every(choice =>
     new Set(choice.variants.map(item => item.sourcePositionId)).size === 1
   ));
+  assert.ok(choices.every(choice => choice.sourcePositionId === 'occurrence-a'));
 });
 
 

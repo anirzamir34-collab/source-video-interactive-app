@@ -505,37 +505,61 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   const normalize = value => clean(value).toLocaleLowerCase('tr-TR')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const positionKey = normalize(positionLabel);
-  const tempoLabels = { slow: 'Yavaş tempo', moderate: 'Orta tempo', fast: 'Hızlı tempo', unclear: 'Gerçek hareket' };
-  const groups = new Map();
+  const tempoLabels = { slow: 'Yavaş tempo', moderate: 'Orta tempo', fast: 'Hızlı tempo' };
+  const verified = (Array.isArray(movements) ? movements : [])
+    .filter(movement => movement?.sourceVerified === true)
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+  if (!verified.length) return [];
 
-  for (const movement of Array.isArray(movements) ? movements : []) {
-    if (movement?.sourceVerified !== true) continue;
-    const tempo = normalizeMovementTempo(movement.movementTempo);
-    const rawLabel = clean(movement.label);
-    const meaningfulLabel = rawLabel && normalize(rawLabel) !== positionKey &&
-      !normalize(rawLabel).startsWith(positionKey + ' ·');
-    const label = meaningfulLabel ? rawLabel : tempoLabels[tempo];
-    // Never pool clips from separate uninterrupted occurrences. This keeps a
-    // touch/tempo choice inside the exact position block that produced it.
-    const occurrence = String(movement.sourcePositionId || 'single-occurrence');
-    const key = `${occurrence}:${tempo}:${normalize(label)}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        id: `movement-choice:${key}`,
-        label,
-        tempo,
-        sourcePositionId: occurrence,
-        variants: []
-      });
-    }
-    const variants = groups.get(key).variants;
-    if (variants.length < 3) variants.push(movement);
+  // One position object represents one uninterrupted occurrence. If malformed
+  // input contains another occurrence, keep only the earliest one instead of
+  // exposing a card that can jump to a different body configuration.
+  const occurrence = String(verified[0].sourcePositionId || 'single-occurrence');
+  const local = verified.filter(item =>
+    String(item.sourcePositionId || 'single-occurrence') === occurrence
+  );
+  const cardCount = Math.min(limit, local.length);
+  const cards = [];
+  let cursor = 0;
+
+  for (let index = 0; index < cardCount; index += 1) {
+    const remaining = local.length - cursor;
+    const remainingCards = cardCount - index;
+    const size = Math.min(3, Math.max(1, Math.ceil(remaining / remainingCards)));
+    const variants = local.slice(cursor, cursor + size);
+    cursor += size;
+    const first = variants[0];
+    const tempo = normalizeMovementTempo(first.movementTempo);
+    const rawLabel = clean(first.label);
+    const normalizedRaw = normalize(rawLabel);
+    const meaningfulLabel = rawLabel && normalizedRaw !== positionKey &&
+      !normalizedRaw.startsWith(positionKey + ' ·') &&
+      !/^(gercek hareket|gercek sekans)$/u.test(normalizedRaw);
+    const label = meaningfulLabel
+      ? rawLabel
+      : tempoLabels[tempo] || `Gerçek kesit ${index + 1}`;
+
+    cards.push({
+      id: `movement-choice:${occurrence}:${index + 1}`,
+      label,
+      tempo,
+      sourcePositionId: occurrence,
+      variants
+    });
   }
 
-  return [...groups.values()]
-    .filter(choice => choice.variants.length)
-    .sort((a, b) => Number(a.variants[0]?.loopStartTime) - Number(b.variants[0]?.loopStartTime))
-    .slice(0, limit);
+  const labelCounts = new Map();
+  return cards.map((card, index) => {
+    const key = normalize(card.label);
+    const seen = (labelCounts.get(key) || 0) + 1;
+    labelCounts.set(key, seen);
+    const total = cards.filter(item => normalize(item.label) === key).length;
+    return {
+      ...card,
+      label: total > 1 ? `${card.label} · Kesit ${seen}` : card.label,
+      displayIndex: index + 1
+    };
+  });
 }
 
 export function isEnergeticSexMoment(movement = null) {
