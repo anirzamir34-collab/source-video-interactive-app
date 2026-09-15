@@ -141,6 +141,53 @@ export function storyChoiceLabelForAction(action = {}) {
   return fallback;
 }
 
+function normalizeChoiceIntentText(value) {
+  return String(value || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u').replace(/ö/g, 'o')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function storyChoiceIntentKey(action = {}) {
+  const text = normalizeChoiceIntentText(storyChoiceLabelForAction(action));
+  const intentPatterns = [
+    ['observe', /\b(bak|izle|seyret|suz|gozlem|incele)\b/],
+    ['approach', /\b(yaklas|yanina git|yanina ilerle|ileri git)\b/],
+    ['talk', /\b(konus|sohbet|sor|cevap ver|seslen|soyle)\b/],
+    ['leave', /\b(uzaklas|ayril|geri cekil|oradan git|disari cik)\b/],
+    ['follow', /\b(takip et|pesinden git)\b/],
+    ['touch', /\b(dokun|oksa|tut|saril|elini uzat)\b/],
+    ['take', /\b(al|kaldir|cebine koy)\b/],
+    ['open', /\b(ac|kilidi ac)\b/],
+    ['enter', /\b(gir|iceri gir)\b/]
+  ];
+  const intent = intentPatterns.find(([, pattern]) => pattern.test(text))?.[0];
+  if (intent) return intent;
+  const tokens = text.split(' ').filter(token =>
+    token.length > 2 && !['kizi', 'kadini', 'kadinla', 'kadin', 'erkegi', 'erkek', 'biraz', 'devam'].includes(token)
+  );
+  return tokens.slice(0, 3).join('-') || text;
+}
+
+export function selectDiverseStoryActions(actions = [], limit = 3) {
+  const maximum = Math.max(1, Math.min(4, Math.floor(Number(limit) || 3)));
+  const selected = [];
+  const intents = new Set();
+  for (const action of Array.isArray(actions) ? actions : []) {
+    const intent = storyChoiceIntentKey(action);
+    if (!intent || intents.has(intent)) continue;
+    intents.add(intent);
+    selected.push(action);
+    if (selected.length >= maximum) break;
+  }
+  return selected;
+}
+
 export function storyActionMeta(action = {}) {
   return {
     sceneTitle: cleanText(action.sceneTitle, 140),
