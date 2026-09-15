@@ -3215,6 +3215,17 @@ pre {
   }
 }
 
+/* Game playback owns seeking; native media controls must not cover the video. */
+#playerSection #video::-webkit-media-controls,
+#playerSection #video::-webkit-media-controls-enclosure,
+#playerSection #video::-webkit-media-controls-panel,
+#playerSection #video::-webkit-media-controls-timeline,
+#playerSection #video::-webkit-media-controls-current-time-display,
+#playerSection #video::-webkit-media-controls-time-remaining-display {
+  display: none !important;
+  -webkit-appearance: none !important;
+}
+
 #dubToggleBtn[data-unavailable="true"] {
   color: #ffd0d5 !important;
   border-color: rgba(255,90,110,.58) !important;
@@ -3712,5 +3723,26 @@ body { font-size: 13px; }
     width: auto !important;
     max-width: none !important;
     max-height: 34dvh !important;
+  }
+}
+
+/* FULLSCREEN STORY CHOICES V11 — final centered placement override. */
+#playerSection .video-stage:fullscreen #choices,
+#playerSection .video-stage:-webkit-full-screen #choices {
+  right: auto !important;
+  bottom: max(18px, env(safe-area-inset-bottom)) !important;
+  left: 50% !important;
+  width: min(48vw, 520px) !important;
+  max-width: 520px !important;
+  transform: translateX(-50%) !important;
+}
+
+@media (orientation: portrait) {
+  #playerSection .video-stage:fullscreen #choices,
+  #playerSection .video-stage:-webkit-full-screen #choices {
+    right: auto !important;
+    left: 50% !important;
+    width: min(calc(100% - 24px), 520px) !important;
+    max-width: 520px !important;
   }
 }
