@@ -158,7 +158,7 @@ export function validateActionInterval(action = {}, videoDuration = 0) {
 
 function semanticPositionFamily(action = {}) {
   const text = normalizedText(`${action.positionId || ''} ${action.positionLabel || ''} ${action.label || ''}`);
-  if (/\b(reverse cowgirl|reverse rider|ters kovboy|ters cowgirl|ters rider|arkasi donuk kovboy|sirtini donerek ustte)\b/.test(text)) return 'reverse-cowgirl';
+  if (/\b(reverse cowgirl|reverse rider|ters kovboy|ters cowgirl|ters rider|ters kucak(?:ta)?|arkasi donuk kovboy|sirtini donerek ustte)\b/.test(text)) return 'reverse-cowgirl';
   if (/\b(lap dance|kucakta|kucaginda|lotus|yuz yuze oturarak|seated face to face)\b/.test(text)) return 'seated-facing';
   if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
   if (/\b(piledriver|omuzda|bacaklar yukari|legs up)\b/.test(text)) return 'legs-up';

@@ -571,6 +571,8 @@ Rules:
 - If the visible route changes between vaginal and anal while the body position stays the same, end the previous action at the verified transition and create a new action with a new positionOccurrenceId. Never carry the previous activityType across that transition.
 - Verify every position and internal movement against its exact start frame, midpoint frame and end frame from the source video.
 - The Turkish label must directly describe what is visibly happening at the midpoint timestamp; if the midpoint does not visibly prove that label, omit the item.
+- A position movement must describe a visible change while the same canonical body configuration is maintained. Do not attach kissing, caressing, breast touching, clothing adjustment, transition, dialogue or generic excitement to a penetrative position; emit it as a separate warm-up action or omit it.
+- Do not use penetration-route words (vaginal/anal/penetration), position-transition words (turning, guiding, changing position) or a different position name as a movement label. Those belong to a separately verified occurrence; otherwise omit the action.
 - All returned times are absolute source-video seconds, never scene-relative or chunk-relative seconds.
 - Never attach a label detected in one part of the video to an earlier or later segment.
 - Position and movement choices must seek to their own verified visible segment, not merely to the parent adult-scene start.

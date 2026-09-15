@@ -13,7 +13,7 @@ export function adultPositionFamily(value) {
     .replace(/[\u0300-\u036f]/g, '');
   if (/\b(oral(?:\s+seks)?|sakso|blowjob|fellatio|cunnilingus)\b/.test(text)) return 'oral';
   if (/\b(manuel\s+uyarim|manual\s+stimulation|handjob|masturbasyon)\b/.test(text)) return 'manual';
-  if (/\b(reverse\s+cowgirl|reverse\s+rider|ters\s+kovboy|ters\s+cowgirl|ters\s+rider|arkasi\s+donuk\s+kovboy|sirtini\s+donerek\s+ustte)\b/.test(text)) return 'reverse-cowgirl';
+  if (/\b(reverse\s+cowgirl|reverse\s+rider|ters\s+kovboy|ters\s+cowgirl|ters\s+rider|ters\s+kucak(?:ta)?|arkasi\s+donuk\s+kovboy|sirtini\s+donerek\s+ustte)\b/.test(text)) return 'reverse-cowgirl';
   if (/\b(lap\s+dance|kucakta|kucaginda|lotus|yuz\s+yuze\s+oturarak|seated\s+face[\s-]?to[\s-]?face)\b/.test(text)) return 'seated-facing';
   if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
   if (/\b(piledriver|omuzda|bacaklar\s+yukari|legs\s+up)\b/.test(text)) return 'legs-up';

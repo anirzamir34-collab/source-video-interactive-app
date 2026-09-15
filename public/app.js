@@ -1999,6 +1999,28 @@ function isBonusPosition(position) {
   return category === 'anal' || category === 'other';
 }
 
+function movementBelongsToPosition(action, canonicalId) {
+  const text = normalizeAdultLabel([
+    action?.label,
+    action?.movementType,
+    action?.activityEvidence,
+    action?.sensoryEvidence
+  ].filter(Boolean).join(' '));
+  const family = adultSemanticFamily(text);
+  if (family && family !== canonicalId) return false;
+
+  // Warm-up actions must stay in the warm-up panel. A model can attach a
+  // kiss/touch label to a position row; that is not proof of a position-local
+  // movement and must never become a selectable position card.
+  if (!family && /\b(op|opus|kiss|dudak|oksa|okus|sivaz|oksa|saril|dokun|temas|touch|caress|kiss)\b/.test(text)) {
+    return false;
+  }
+  if (/\b(vajinal|vaginal|anal|penetrasyon|penetration|birlesme|gecis|transition|pozisyon\s+degistir|donerken|yonlendir)\b/.test(text)) {
+    return false;
+  }
+  return true;
+}
+
 
 const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 0.4;
 
@@ -2214,11 +2236,7 @@ function prepareAdultScenes() {
         Number(action.positionEndTime ?? position.endTime),
         Number(action.loopEndTime ?? action.endTime)
       );
-      const movementFamily = adultSemanticFamily(
-        `${action.movementType || ''} ${action.label || ''}`
-      );
-
-      if (!movementFamily || movementFamily === canonical.id) {
+      if (movementBelongsToPosition(action, canonical.id)) {
         position.movements.push({
           ...action,
           id: action.actionId || `movement-${index}`,
@@ -3241,16 +3259,23 @@ function finishAdultScene() {
   if (!scene) return;
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
   state.completedAdultSceneIds.add(scene.id);
+  const sceneSourceIds = new Set([scene.id, ...(scene.sourceSceneIds || [])].map(String));
   const sceneActions = (state.analysis?.actions || []).filter(action => {
     const start = Number(action.startTime);
-    return start >= Number(scene.startTime) - 0.15 && start < Number(scene.endTime) + 0.15;
+    const actionSceneId = String(action.adultSceneId || '').trim();
+    const sameScene = actionSceneId
+      ? sceneSourceIds.has(actionSceneId)
+      : start >= Number(scene.startTime) - 0.15 && start < Number(scene.endTime) + 0.15;
+    return sameScene && start < Number(scene.endTime) + 0.15;
   });
   sceneActions.forEach(action => state.consumedActionIds.add(action.actionId));
   const lastSceneActionIndex = (state.analysis?.actions || []).reduce(
     (last, action, index) => sceneActions.includes(action) ? Math.max(last, index) : last,
     state.currentActionIndex
   );
-  state.currentActionIndex = lastSceneActionIndex;
+  if (lastSceneActionIndex >= state.currentActionIndex) {
+    state.currentActionIndex = lastSceneActionIndex;
+  }
   setAdultMachinePhase('complete');
   logEngineEvent('ADULT_SCENE_COMPLETED', { sceneId: scene.id });
   state.adultSelectionToken += 1;
@@ -3269,9 +3294,18 @@ function finishAdultScene() {
   els.adultPanelToggleBtn?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
-  state.gameCursorTime = Math.max(
+  const nextScene = state.adultScenes
+    .filter(item => item.id !== scene.id && !state.completedAdultSceneIds.has(item.id))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime))
+    .find(item => Number(item.startTime) > Number(scene.startTime) + 0.05);
+  const requestedExit = Math.max(
     Number(scene.postSceneTime) || 0,
     Number(scene.endTime) + 0.05
+  );
+  const nextSceneStart = nextScene ? Number(nextScene.startTime) : Number.POSITIVE_INFINITY;
+  state.gameCursorTime = Math.max(
+    Number(scene.endTime) + 0.05,
+    Math.min(requestedExit, nextSceneStart - 0.05)
   );
   persistRuntimeSnapshot('adult-scene-complete', true);
 
