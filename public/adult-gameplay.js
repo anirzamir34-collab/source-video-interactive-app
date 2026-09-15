@@ -30,6 +30,16 @@ export function adultPositionFamily(value) {
   return '';
 }
 
+export function verifiedAdultPositionFamily(action = {}) {
+  if (action?.sourceVerified !== true) return '';
+  return adultPositionFamily([
+    action.positionLabel,
+    action.positionId,
+    action.label,
+    action.movementType
+  ].filter(Boolean).join(' '));
+}
+
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
 export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
 export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
