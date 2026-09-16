@@ -2581,6 +2581,22 @@ pre {
   background: rgba(0, 0, 0, .16);
 }
 
+.orgasm-decision {
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 103, 151, .38);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 72, 132, .16), rgba(20, 10, 24, .92));
+}
+
+.orgasm-decision.hidden { display: none !important; }
+.orgasm-decision strong,
+.orgasm-decision small { display: block; }
+.orgasm-decision strong { margin-top: 4px; color: #fff; }
+.orgasm-decision small { margin-top: 5px; color: #c9b8c2; line-height: 1.4; }
+.orgasm-decision-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.orgasm-decision-actions button { min-height: 44px; border-radius: 12px; font-weight: 800; }
+
 .adult-discovery-gate {
   display: flex;
   align-items: center;
