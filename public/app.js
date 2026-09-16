@@ -16,6 +16,7 @@ import {
   isPlayableVerifiedPositionDuration,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
+  initialWarmupBeforeFirstPosition,
   monotonicAdultPhase,
   movementBelongsToVerifiedPosition,
   nearestAvailableTempo,
@@ -2505,10 +2506,12 @@ function prepareAdultScenes() {
       if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
       const positionStart = Math.min(...positions.map(position => Number(position.startTime)));
       const interactionEnd = Math.max(...positions.map(position => Number(position.endTime)));
-      const playableForeplay = foreplay.filter(item =>
-        Number(item.endTime) > Number(scene.startTime) &&
-        Number(item.startTime) < interactionEnd
-      );
+      // The Lust warm-up panel is only for source actions that occur before
+      // the first verified position. A later partner switch must never be
+      // offered as the first choice and seek the player hundreds of seconds
+      // forward in the source timeline.
+      const playableForeplay = initialWarmupBeforeFirstPosition(foreplay, positions)
+        .filter(item => Number(item.endTime) > Number(scene.startTime));
       const interactionStart = playableForeplay.length
         ? Math.min(positionStart, ...playableForeplay.map(item => Number(item.startTime)))
         : positionStart;
