@@ -363,7 +363,7 @@ ${reviewCandidates}
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
   const targetActionCount = Math.max(
     5,
-    Math.min(16, Math.round(chunkDuration / 12))
+    Math.min(22, Math.round(chunkDuration / 12))
   );
 
     const prompt = `
@@ -752,9 +752,15 @@ Rules:
         )
       }));
 
-      if (files.length === 1 && /PROHIBITED_CONTENT/i.test(String(fullChunkError?.message || fullChunkError))) {
+      if (/PROHIBITED_CONTENT/i.test(String(fullChunkError?.message || fullChunkError))) {
         try {
-          const rowSegments = await splitSingleStoryboardSheet(files[0], allTimestamps);
+          const rowGroups = await Promise.all(
+            recoverySegments.map(async segment => {
+              const rows = await splitSingleStoryboardSheet(segment.file, segment.timestamps);
+              return rows.length ? rows : [segment];
+            })
+          );
+          const rowSegments = rowGroups.flat();
           if (rowSegments.length) recoverySegments = rowSegments;
         } catch (cropError) {
           console.warn(`[gemini-storyboard-crop-error] chunk ${chunkIndex + 1}/${chunkCount}: ${cropError?.message || cropError}`);
@@ -771,39 +777,47 @@ Rules:
           ? restrictedTerminalResult(chunkStart, chunkEnd, String(fullChunkError?.message || fullChunkError))
           : unverifiedGapResult(chunkStart, chunkEnd, String(fullChunkError?.message || fullChunkError));
       } else {
-      const recoveredParts = [];
+      const recoveredParts = new Array(recoverySegments.length);
       console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${recoverySegments.length} smaller requests`);
 
-      for (let fileIndex = 0; fileIndex < recoverySegments.length; fileIndex += 1) {
-        const segment = recoverySegments[fileIndex];
-        const splitTimestamps = segment.timestamps;
-        const splitStart = Number(splitTimestamps[0] ?? chunkStart);
-        const splitLast = Number(splitTimestamps[splitTimestamps.length - 1] ?? splitStart);
-        const splitEnd = Math.min(chunkEnd, Math.max(splitStart + 0.1, splitLast + Math.max(0.1, (chunkEnd - chunkStart) / Math.max(1, allTimestamps.length))));
-        const splitPrompt = prompt
-          .replace(`Timestamp metadata for this chunk: ${timestamps}`, `Timestamp metadata for this recovery segment: ${JSON.stringify(splitTimestamps)}`)
-          .replace(`Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.`, `Analyze ONLY the interval ${splitStart} to ${splitEnd} seconds.`)
-          .replace('Examine this short interval deeply instead of summarizing the whole video.', 'This is one smaller recovery segment. Examine only these supplied frames and timestamps.');
-        try {
-          recoveredParts.push(await generateStoryboardJson(
-            splitPrompt,
-            [segment.file],
-            `split-${fileIndex + 1}`
-          ));
-        } catch (splitError) {
-          const splitReason = String(splitError?.message || splitError);
-          const splitReasonCode = storyboardFailureReason(splitError);
-          console.warn(
-            `[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} ` +
-            `in chunk ${chunkIndex + 1} kept non-playable: ${splitReasonCode}`
-          );
-          recoveredParts.push(
-            chunkIndex === chunkCount - 1 && /PROHIBITED_CONTENT/i.test(splitReason)
-              ? restrictedTerminalResult(splitStart, splitEnd, splitReason)
-              : unverifiedGapResult(splitStart, splitEnd, splitReason)
-          );
+      let nextRecoveryIndex = 0;
+      const recoverNextSegment = async () => {
+        while (nextRecoveryIndex < recoverySegments.length) {
+          const fileIndex = nextRecoveryIndex;
+          nextRecoveryIndex += 1;
+          const segment = recoverySegments[fileIndex];
+          const splitTimestamps = segment.timestamps;
+          const splitStart = Number(splitTimestamps[0] ?? chunkStart);
+          const splitLast = Number(splitTimestamps[splitTimestamps.length - 1] ?? splitStart);
+          const splitEnd = Math.min(chunkEnd, Math.max(splitStart + 0.1, splitLast + Math.max(0.1, (chunkEnd - chunkStart) / Math.max(1, allTimestamps.length))));
+          const splitPrompt = prompt
+            .replace(`Timestamp metadata for this chunk: ${timestamps}`, `Timestamp metadata for this recovery segment: ${JSON.stringify(splitTimestamps)}`)
+            .replace(`Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.`, `Analyze ONLY the interval ${splitStart} to ${splitEnd} seconds.`)
+            .replace('Examine this short interval deeply instead of summarizing the whole video.', 'This is one smaller recovery segment. Examine only these supplied frames and timestamps.');
+          try {
+            recoveredParts[fileIndex] = await generateStoryboardJson(
+              splitPrompt,
+              [segment.file],
+              `split-${fileIndex + 1}`
+            );
+          } catch (splitError) {
+            const splitReason = String(splitError?.message || splitError);
+            const splitReasonCode = storyboardFailureReason(splitError);
+            console.warn(
+              `[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} ` +
+              `in chunk ${chunkIndex + 1} kept non-playable: ${splitReasonCode}`
+            );
+            recoveredParts[fileIndex] =
+              chunkIndex === chunkCount - 1 && /PROHIBITED_CONTENT/i.test(splitReason)
+                ? restrictedTerminalResult(splitStart, splitEnd, splitReason)
+                : unverifiedGapResult(splitStart, splitEnd, splitReason);
+          }
         }
-      }
+      };
+      const recoveryConcurrency = Math.min(2, recoverySegments.length);
+      await Promise.all(
+        Array.from({ length: recoveryConcurrency }, () => recoverNextSegment())
+      );
 
       parsed = {
         ...recoveredParts[0],
