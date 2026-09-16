@@ -360,6 +360,30 @@ test('one canonical family becomes one tab while retaining every occurrence', ()
   assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a', 'fast-a']);
 });
 
+test('same verified position with different group partners becomes separate playable tabs', () => {
+  const result = consolidateVerifiedPositions([
+    {
+      id: 'cowgirl-partner-a', familyId: 'cowgirl', label: 'Kovboy Pozisyonu · Partner A',
+      partnerTrackId: 'PARTNER_A', partnerLabel: 'Partner A', groupScene: true,
+      startTime: 10, endTime: 25,
+      movements: [{ id: 'a', loopStartTime: 10, loopEndTime: 20, sourceVerified: true }]
+    },
+    {
+      id: 'cowgirl-partner-b', familyId: 'cowgirl', label: 'Kovboy Pozisyonu · Partner B',
+      partnerTrackId: 'PARTNER_B', partnerLabel: 'Partner B', groupScene: true,
+      startTime: 40, endTime: 58,
+      movements: [{ id: 'b', loopStartTime: 42, loopEndTime: 54, sourceVerified: true }]
+    }
+  ]);
+
+  assert.equal(result.length, 2);
+  assert.deepEqual(result.map(item => item.partnerTrackId), ['PARTNER_A', 'PARTNER_B']);
+  assert.deepEqual(result.map(item => item.id), [
+    'position:cowgirl:PARTNER_A',
+    'position:cowgirl:PARTNER_B'
+  ]);
+});
+
 test('sex control requires verified fast, hard or deep evidence', () => {
   assert.equal(isEnergeticSexMoment({ sourceVerified: true, movementTempo: 'fast' }), true);
   assert.equal(isEnergeticSexMoment({ sourceVerified: true, movementTempo: 'slow', label: 'Derin hareket' }), true);
