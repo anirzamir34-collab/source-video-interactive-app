@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSceneBoundaries } from '../public/storyboard.js';
+import { detectSceneBoundaries, sheetsPerAnalysisChunk } from '../public/storyboard.js';
+
+test('analysis chunk planning reduces calls without dropping storyboard frames', () => {
+  assert.equal(sheetsPerAnalysisChunk('ultra'), 3);
+  assert.equal(sheetsPerAnalysisChunk('balanced'), 3);
+  assert.equal(sheetsPerAnalysisChunk('fast'), 4);
+  assert.equal(Math.ceil(20 / sheetsPerAnalysisChunk('ultra')), 7);
+});
 
 test('detects spaced visual cuts without treating ordinary motion as a new scene', () => {
   const profile = [
