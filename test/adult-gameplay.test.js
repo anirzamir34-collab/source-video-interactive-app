@@ -19,6 +19,7 @@ import {
   findAdultSceneForTimeline,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
+  initialWarmupBeforeFirstPosition,
   isEnergeticSexMoment,
   isPlayableVerifiedPositionDuration,
   FEMALE_ORGASM_CYCLE_SECONDS,
@@ -175,6 +176,24 @@ test('prone bone stays a separate canonical position family', () => {
   assert.equal(adultPositionFamily('Pronebone'), 'prone-bone');
   assert.equal(adultPositionFamily('Yüzüstü arkadan pozisyon'), 'prone-bone');
   assert.equal(adultPositionFamily('Doggy style'), 'rear');
+});
+
+test('legs-up provider ids and Turkish labels resolve to one canonical family', () => {
+  assert.equal(adultPositionFamily('legs-up'), 'legs-up');
+  assert.equal(adultPositionFamily('Bacak havada birleşme'), 'legs-up');
+  assert.equal(adultPositionFamily('Bacaklar yukarıda vajinal birleşme'), 'legs-up');
+});
+
+test('later partner transitions never appear in the initial Lust warm-up choices', () => {
+  const result = initialWarmupBeforeFirstPosition([
+    { id: 'kiss', startTime: 260, endTime: 275 },
+    { id: 'switch', actionType: 'partner_transition', startTime: 471.134, endTime: 487.241 }
+  ], [
+    { id: 'partner-b-first', startTime: 289.929, endTime: 471.134 },
+    { id: 'partner-a-later', startTime: 547.643, endTime: 676.5 }
+  ]);
+
+  assert.deepEqual(result.map(item => item.id), ['kiss']);
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
