@@ -617,6 +617,17 @@ Rules:
 `;
 
     const ai = new GoogleGenAI({ apiKey });
+    const storyboardFailureReason = (error) => {
+      const details = String(error?.message || error || '');
+      if (/PROHIBITED_CONTENT/i.test(details)) return 'GEMINI_CONTENT_RESTRICTED';
+      if (/RESOURCE_EXHAUSTED|429|quota|credit/i.test(details)) return 'GEMINI_QUOTA_OR_CREDITS';
+      if (/503|UNAVAILABLE|high demand/i.test(details)) return 'GEMINI_TEMPORARILY_UNAVAILABLE';
+      if (/GEMINI_EMPTY_JSON_RESPONSE/i.test(details)) return 'GEMINI_EMPTY_RESPONSE';
+      if (/Unexpected end of JSON input|Unexpected token|not valid JSON/i.test(details)) {
+        return 'GEMINI_INVALID_JSON';
+      }
+      return 'GEMINI_STORYBOARD_ERROR';
+    };
     const unverifiedGapResult = (startTime, endTime, reason) => ({
       available: true,
       videoDuration: duration,
@@ -629,7 +640,7 @@ Rules:
       analysisGaps: [{
         startTime: Math.max(0, Number(startTime) || 0),
         endTime: Math.min(duration, Math.max(Number(startTime) || 0, Number(endTime) || 0)),
-        reason: String(reason || 'MODEL_RETURNED_NO_VERIFIABLE_RESULT')
+        reason: storyboardFailureReason(reason)
       }],
       warnings: ['Bu aralık modelden doğrulanabilir sonuç alınamadığı için seçenek üretilmeden geçildi.']
     });
@@ -764,8 +775,12 @@ Rules:
             `split-${fileIndex + 1}`
           ));
         } catch (splitError) {
-          console.warn(`[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} in chunk ${chunkIndex + 1} kept non-playable`);
           const splitReason = String(splitError?.message || splitError);
+          const splitReasonCode = storyboardFailureReason(splitError);
+          console.warn(
+            `[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} ` +
+            `in chunk ${chunkIndex + 1} kept non-playable: ${splitReasonCode}`
+          );
           recoveredParts.push(
             chunkIndex === chunkCount - 1 && /PROHIBITED_CONTENT/i.test(splitReason)
               ? restrictedTerminalResult(splitStart, splitEnd, splitReason)
@@ -797,13 +812,18 @@ Rules:
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
       : [];
     if (unresolvedGaps.length) {
-      return res.status(503).json({
+      const contentRestricted = unresolvedGaps.every(gap =>
+        String(gap?.reason || '') === 'GEMINI_CONTENT_RESTRICTED'
+      );
+      return res.status(contentRestricted ? 422 : 503).json({
         available: false,
-        retryable: true,
-        reason: 'CHUNK_ANALYSIS_GAP',
-        message:
-          `Bölüm ${chunkIndex + 1}/${chunkCount} modelden eksiksiz okunamadı. ` +
-          'Boş aralık başarı sayılmadı; bu bölüm yeniden denenmeli.',
+        retryable: !contentRestricted,
+        reason: contentRestricted ? 'GEMINI_CONTENT_RESTRICTED' : 'CHUNK_ANALYSIS_GAP',
+        message: contentRestricted
+          ? `Bölüm ${chunkIndex + 1}/${chunkCount} Gemini tarafından içerik kısıtlaması nedeniyle okunamadı. ` +
+            'Aynı görüntüleri otomatik yeniden göndermek sonucu değiştirmeyeceği için analiz durduruldu.'
+          : `Bölüm ${chunkIndex + 1}/${chunkCount} modelden eksiksiz okunamadı. ` +
+            'Boş aralık başarı sayılmadı; bu bölüm yeniden denenmeli.',
         chunkIndex,
         chunkCount,
         chunkStart,
