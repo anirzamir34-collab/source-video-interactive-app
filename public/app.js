@@ -1562,17 +1562,28 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   if (!body?.available) {
     const creditsDepleted = body?.reason === 'GEMINI_CREDITS_DEPLETED';
+    const contentRestricted =
+      body?.reason === 'GEMINI_CONTENT_RESTRICTED' ||
+      body?.failure?.reason === 'GEMINI_CONTENT_RESTRICTED';
     els.analysisState.textContent = body?.reason || 'ANALYSIS_INCOMPLETE';
     els.analysisTitle.textContent = creditsDepleted
       ? 'Gemini API kredisi tükendi'
-      : 'Video analizi eksik kaldı';
+      : contentRestricted
+        ? 'Gemini bu video bölümünü analiz etmedi'
+        : 'Video analizi eksik kaldı';
     els.analysisOutput.textContent = creditsDepleted
       ? [
           'Gemini API kredisi tükendi. Analiz başlatılamadı.',
           'Yeni kredi ekle veya geçerli bakiyesi olan başka bir Gemini API anahtarı kullan.',
           'Bu hata için otomatik tekrar deneme yapılmadı.'
         ].join('\n')
-      : (body?.message || 'Tüm video bölümleri doğrulanmadan oyun başlatılmadı.');
+      : contentRestricted
+        ? [
+            body?.failure?.message || body?.message || 'Gemini içerik kısıtlaması nedeniyle bu bölümü okuyamadı.',
+            'Aynı bölüm boş sonuçla başarı sayılmadı ve oyun modu açılmadı.',
+            'Bu bir Render, API anahtarı veya kota hatası değildir.'
+          ].join('\n')
+        : (body?.message || 'Tüm video bölümleri doğrulanmadan oyun başlatılmadı.');
     setGameState('ERROR');
     renderDebug({ lastAnalyzeBody: body });
     return;
