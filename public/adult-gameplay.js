@@ -46,7 +46,20 @@ export function resolveVerifiedAdultPosition(action = {}) {
   // cowgirl row merely because it contains words such as "kucağında".
   // Prefer the human-readable position label, then the id, and only infer from
   // the action when the provider omitted both parent fields.
-  const declaredFamily = labelFamily || idFamily || '';
+  const normalizedPositionLabel = String(action.positionLabel || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/ğ/g, 'g');
+  // "Kucakta/yüz yüze" describes orientation, not a new parent position,
+  // when the same verified provider label explicitly says Cowgirl/Kovboy and
+  // its positionId agrees. Keep that occurrence under the Cowgirl tab instead
+  // of manufacturing a separate seated-facing position card.
+  const explicitCowgirlMetadata =
+    idFamily === 'cowgirl' &&
+    /\b(kovboy|cowgirl|rider|kadin\s+ustte)\b/i.test(normalizedPositionLabel);
+  const declaredFamily = explicitCowgirlMetadata
+    ? idFamily
+    : (labelFamily || idFamily || '');
   const explicitNamedActionPosition = /\b(?:ters\s+(?:kovboy|cowgirl)|reverse\s+(?:cowgirl|rider)|misyoner|missionary|doggy(?:\s+style)?|prone[\s-]?bone|kasik|spoon|ayakta\s+arkadan)\b/iu.test(
     String(action.label || '')
   );
