@@ -58,6 +58,24 @@ test('second visual pass is selective: only critical positions, conflicts and fi
   assert.equal(shouldSecondPassReview({ actions: [final] }), true);
 });
 
+test('group scenes and partner switches always receive a second visual identity check', () => {
+  const groupPosition = {
+    actionId: 'group-position', sourceVerified: true, confidence: 0.98,
+    actionType: 'position', positionId: 'cowgirl', groupScene: true,
+    partnerTrackId: 'PARTNER_B', startTime: 20, endTime: 35
+  };
+  const partnerSwitch = {
+    actionId: 'partner-switch', sourceVerified: true, confidence: 0.98,
+    actionType: 'partner_transition', partnerSwitch: true,
+    previousPartnerTrackId: 'PARTNER_A', partnerTrackId: 'PARTNER_B',
+    startTime: 35, endTime: 42
+  };
+  assert.deepEqual(
+    secondPassReviewCandidates({ actions: [groupPosition, partnerSwitch] }).map(item => item.actionId),
+    ['group-position', 'partner-switch']
+  );
+});
+
 test('overlapping incompatible positions force a second pass even at high confidence', () => {
   const missionary = {
     actionId: 'm', startTime: 10, endTime: 25, confidence: 0.95, adultSceneId: 's',
