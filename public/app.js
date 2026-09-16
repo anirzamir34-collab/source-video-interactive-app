@@ -1731,10 +1731,11 @@ function assignPositionOccurrenceIds(actions) {
       : Number(action.endTime) || startTime;
     const endTime = Math.max(startTime, endCandidate);
     const routeNamespace = activityOccurrenceNamespace(action);
-    const key = `${sceneId}::${familyId}::${routeNamespace}`;
+    const partnerTrackId = String(action.partnerTrackId || '').trim();
+    const key = `${sceneId}::${familyId}::${routeNamespace}::${partnerTrackId || 'partner-unknown'}`;
 
     if (!groups.has(key)) {
-      groups.set(key, { sceneId, familyId, routeNamespace, entries: [] });
+      groups.set(key, { sceneId, familyId, routeNamespace, partnerTrackId, entries: [] });
     }
 
     groups.get(key).entries.push({
@@ -1797,8 +1798,11 @@ function assignPositionOccurrenceIds(actions) {
         const routeSlug = normalizeAdultLabel(group.routeNamespace || 'other')
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '') || 'other';
+        const partnerSlug = normalizeAdultLabel(group.partnerTrackId || 'partner')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'partner';
         occurrence = {
-          id: `${sceneSlug}:${familySlug}:${routeSlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
+          id: `${sceneSlug}:${familySlug}:${routeSlug}:${partnerSlug}:occ-${String(generatedCount).padStart(2, '0')}-${Math.round(entry.startTime * 1000)}`,
           startTime: entry.startTime,
           endTime: entry.endTime
         };
@@ -1851,6 +1855,16 @@ function normalizeAnalysis(body) {
       postSceneTime: Number(a.postSceneTime ?? a.endTime),
       positionId: String(a.positionId || ""),
       positionOccurrenceId: String(a.positionOccurrenceId || ""),
+      groupScene: a.groupScene === true,
+      adultParticipantCount: Math.max(0, Math.floor(Number(a.adultParticipantCount) || 0)),
+      participantTrackIds: Array.isArray(a.participantTrackIds)
+        ? a.participantTrackIds.map(value => String(value || '').trim()).filter(Boolean).slice(0, 12)
+        : [],
+      partnerTrackId: String(a.partnerTrackId || '').trim(),
+      partnerLabel: String(a.partnerLabel || '').trim(),
+      partnerEvidence: String(a.partnerEvidence || '').trim(),
+      partnerSwitch: a.partnerSwitch === true,
+      previousPartnerTrackId: String(a.previousPartnerTrackId || '').trim(),
       activityType: String(a.activityType || ""),
       activityTypeConfidence: Math.max(0, Math.min(1, Number(a.activityTypeConfidence) || 0)),
       activityEvidence: String(a.activityEvidence || ""),
@@ -2146,6 +2160,10 @@ function prepareAdultScenes() {
       positionId: String(action?.positionId || ''),
       positionLabel: String(action?.positionLabel || ''),
       positionOccurrenceId: String(action?.positionOccurrenceId || ''),
+      groupScene: action?.groupScene === true,
+      partnerTrackId: String(action?.partnerTrackId || ''),
+      partnerLabel: String(action?.partnerLabel || ''),
+      partnerSwitch: action?.partnerSwitch === true,
       actionType: String(action?.actionType || ''),
       movementType: String(action?.movementType || ''),
       movementTempo: String(action?.movementTempo || ''),
@@ -2285,7 +2303,7 @@ function prepareAdultScenes() {
     if (!hasPositionEvidence) {
       const actionType = String(action.actionType || '').toLowerCase();
       const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
-      const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition'].includes(actionType);
+      const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition', 'partner_transition'].includes(actionType);
       const labelWarmup = /\b(op|opus|dokun|oksa|soyun|cikar|saril|elle|elini|tenine)\b/.test(labelKey);
       const startTime = Math.max(scene.startTime, Number(action.startTime));
       const endTime = Math.min(scene.endTime, Number(action.endTime));
@@ -2335,7 +2353,9 @@ function prepareAdultScenes() {
       `${sceneId}:${canonical.id}:legacy-${Math.round((correctedStart || 0) * 1000)}`
     );
     const routeNamespace = activityOccurrenceNamespace(action);
-    const positionKey = `${category.id}:${canonical.id}:${routeNamespace}:${occurrenceId}`;
+    const partnerTrackId = String(action.partnerTrackId || '').trim();
+    const partnerNamespace = partnerTrackId || 'partner-unknown';
+    const positionKey = `${category.id}:${canonical.id}:${routeNamespace}:${partnerNamespace}:${occurrenceId}`;
     traceRow.route = 'POSITION';
     traceRow.routeReason = canonical.correctedFromAction
       ? 'LABEL_FAMILY_OVERRULED_INCONSISTENT_POSITION_METADATA'
@@ -2351,9 +2371,22 @@ function prepareAdultScenes() {
         id: positionKey,
         familyId: canonical.id,
         occurrenceId,
+        groupScene: action.groupScene === true,
+        adultParticipantCount: Number(action.adultParticipantCount || 0),
+        participantTrackIds: [...(action.participantTrackIds || [])],
+        partnerTrackId,
+        partnerLabel: String(action.partnerLabel || '').trim(),
+        partnerEvidence: String(action.partnerEvidence || '').trim(),
         activityType: routeNamespace,
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
-        label: activityDisplayLabel(canonical.label, action),
+        label: (() => {
+          const base = activityDisplayLabel(canonical.label, action);
+          const partnerLabel = String(action.partnerLabel || '').trim();
+          return action.groupScene === true && partnerLabel &&
+            !normalizeAdultLabel(base).includes(normalizeAdultLabel(partnerLabel))
+            ? `${base} · ${partnerLabel}`
+            : base;
+        })(),
         categoryId: category.id,
         categoryLabel: category.label,
         startTime: correctedStart,
