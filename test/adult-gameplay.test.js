@@ -397,6 +397,14 @@ test('verified position labels work even when optional position metadata is miss
     positionLabel: 'Kovboy Pozisyonu',
     label: 'Kucağındaki kadını öperek ritmik şekilde hareket et'
   }), { family: 'cowgirl', correctedFromAction: false });
+
+  assert.deepEqual(resolveVerifiedAdultPosition({
+    sourceVerified: true,
+    positionId: 'cowgirl',
+    positionLabel: 'Kucakta yüz yüze (Cowgirl)',
+    label: 'Kucağındaki kadını öperek sarıl',
+    movementType: 'ritmik hareket'
+  }), { family: 'cowgirl', correctedFromAction: false });
 });
 
 test('movement choice grouping retains every verified clip', () => {
