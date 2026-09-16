@@ -26,6 +26,23 @@ export function dialogueSegmentAt(segments, videoTime, tolerance = 0.04) {
   )[0] || null;
 }
 
+export function dialogueSegmentsAt(segments, videoTime, tolerance = 0.04) {
+  const time = Math.max(0, Number(videoTime) || 0);
+  const pad = Math.max(0, Number(tolerance) || 0);
+  return (Array.isArray(segments) ? segments : [])
+    .filter(segment => {
+      const start = Number(segment?.startTime);
+      const end = Number(segment?.endTime);
+      return Number.isFinite(start) && Number.isFinite(end) && end > start &&
+        time >= start - pad && time < end + pad &&
+        String(segment?.turkishText || '').trim();
+    })
+    .sort((left, right) =>
+      Number(left.startTime) - Number(right.startTime) ||
+      String(left.speakerId || '').localeCompare(String(right.speakerId || ''))
+    );
+}
+
 export function decisionBoundaryAfterDialogue(
   segments,
   actionEndTime,
