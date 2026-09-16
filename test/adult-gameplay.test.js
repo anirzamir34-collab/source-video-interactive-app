@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   adultPositionFamily,
+  adultPlaybackProgressDelta,
   verifiedAdultPositionFamily,
   adultDiscoveryPhase,
   averageAdultProgress,
@@ -19,6 +20,9 @@ import {
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   isEnergeticSexMoment,
+  isPlayableVerifiedPositionDuration,
+  FEMALE_ORGASM_CYCLE_SECONDS,
+  MALE_ORGASM_CYCLE_SECONDS,
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
   movementBelongsToVerifiedPosition,
@@ -31,6 +35,7 @@ import {
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
   resolveVerifiedAdultPosition,
+  shouldAdvanceMaleOrgasm,
   summarizeAdultSceneGraph,
   nearestAvailableTempo,
   tapRhythm
@@ -39,6 +44,27 @@ import {
 test('averageAdultProgress clamps both values and averages them', () => {
   assert.equal(averageAdultProgress(120, -10), 50);
   assert.equal(averageAdultProgress(80, 60), 70);
+});
+
+test('short source-verified positions remain playable without accepting flashes', () => {
+  assert.equal(isPlayableVerifiedPositionDuration(20, 23), true);
+  assert.equal(isPlayableVerifiedPositionDuration(20, 22.99), false);
+  assert.equal(isPlayableVerifiedPositionDuration('bad', 30), false);
+});
+
+test('lust and orgasm progression is slower and male/female cycles are staggered', () => {
+  const delta = adultPlaybackProgressDelta({ elapsed: 0.25, maleRate: 1, femaleRate: 1 });
+  assert.ok(delta.lust < 0.06);
+  assert.ok(delta.femaleOrgasm > delta.maleOrgasm);
+  assert.ok(FEMALE_ORGASM_CYCLE_SECONDS >= 150);
+  assert.ok(MALE_ORGASM_CYCLE_SECONDS - FEMALE_ORGASM_CYCLE_SECONDS >= 60);
+
+  const warmup = adultPlaybackProgressDelta({ elapsed: 0.25, warmup: true });
+  assert.equal(warmup.maleOrgasm, 0);
+  assert.equal(warmup.femaleOrgasm, 0);
+  assert.equal(shouldAdvanceMaleOrgasm(34.9, 0), false);
+  assert.equal(shouldAdvanceMaleOrgasm(35, 0), true);
+  assert.equal(shouldAdvanceMaleOrgasm(0, 1), true);
 });
 
 test('adult graph report exposes duplicate family tabs and movement variants', () => {
@@ -89,7 +115,7 @@ test('selection progress rewards novelty and reduces repeated farming', () => {
 
   assert.ok(novel.male > repeated.male);
   assert.ok(novel.female > repeated.female);
-  assert.ok(repeated.male >= 0.75);
+  assert.ok(repeated.male >= 0.4);
 });
 
 test('warmup progress can build lust but repeated farming loses value', () => {
@@ -405,6 +431,13 @@ test('verified position labels work even when optional position metadata is miss
     label: 'Kucağındaki kadını öperek sarıl',
     movementType: 'ritmik hareket'
   }), { family: 'cowgirl', correctedFromAction: false });
+
+  assert.deepEqual(resolveVerifiedAdultPosition({
+    sourceVerified: true,
+    positionId: 'seated-facing',
+    positionLabel: 'Kucakta Yüz Yüze Pozisyon',
+    label: 'Kısa cowgirl pozisyonunda ritmik harekete geç'
+  }), { family: 'cowgirl', correctedFromAction: true });
 });
 
 test('movement choice grouping retains every verified clip', () => {
