@@ -32,7 +32,8 @@ import {
   shouldAdvanceMaleOrgasm,
   summarizeAdultSceneGraph,
   tapRhythm,
-  verifiedAdultPositionFamily
+  verifiedAdultPositionFamily,
+  verifiedPartnerTransition
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
@@ -2132,6 +2133,10 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
     ])];
     previous.foreplay = [...(previous.foreplay || []), ...(scene.foreplay || [])]
       .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+    previous.partnerTransitions = [
+      ...(previous.partnerTransitions || []),
+      ...(scene.partnerTransitions || [])
+    ].sort((a, b) => Number(a.startTime) - Number(b.startTime));
     previous.positions = [...(previous.positions || []), ...(scene.positions || [])]
       .sort((a, b) => Number(a.startTime) - Number(b.startTime));
     previous.outcomes = [...(previous.outcomes || []), ...(scene.outcomes || [])]
@@ -2240,6 +2245,7 @@ function prepareAdultScenes() {
         endTime: Number(action.adultSceneEndTime ?? action.endTime),
         postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
         foreplay: [],
+        partnerTransitions: [],
         positions: new Map(),
         outcomes: [],
         aftermath: null
@@ -2303,8 +2309,20 @@ function prepareAdultScenes() {
     );
     if (!hasPositionEvidence) {
       const actionType = String(action.actionType || '').toLowerCase();
+      if (actionType === 'partner_transition') {
+        const transition = verifiedPartnerTransition(action);
+        if (transition) {
+          traceRow.route = 'PARTNER_TRANSITION';
+          traceRow.routeReason = 'VERIFIED_PARTNER_IDENTITY_CHANGE';
+          scene.partnerTransitions.push(transition);
+        } else {
+          traceRow.route = 'REJECTED';
+          traceRow.routeReason = 'UNVERIFIED_OR_INCOMPLETE_PARTNER_TRANSITION';
+        }
+        return;
+      }
       const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
-      const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition', 'partner_transition'].includes(actionType);
+      const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition'].includes(actionType);
       const labelWarmup = /\b(op|opus|dokun|oksa|soyun|cikar|saril|elle|elini|tenine)\b/.test(labelKey);
       const startTime = Math.max(scene.startTime, Number(action.startTime));
       const endTime = Math.min(scene.endTime, Number(action.endTime));
@@ -2523,6 +2541,9 @@ function prepareAdultScenes() {
         endTime: interactionEnd,
         postSceneTime: Math.max(Number(scene.postSceneTime) || 0, interactionEnd),
         foreplay: playableForeplay,
+        partnerTransitions: (scene.partnerTransitions || [])
+          .filter(item => Number(item.startTime) >= positionStart - 0.05 && Number(item.endTime) <= interactionEnd + 0.05)
+          .sort((a, b) => Number(a.startTime) - Number(b.startTime)),
         outcomes: outcomes.filter(item => Number(item.startTime) >= interactionStart - 0.05),
         positions
       };
