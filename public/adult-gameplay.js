@@ -114,6 +114,40 @@ export function movementsForPositionOccurrence(position = {}, occurrenceId = '')
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 }
 
+export function assignAdultSceneOccurrenceIds(actions = [], maxSilentGapSeconds = 45) {
+  const input = Array.isArray(actions) ? actions : [];
+  const assignments = new Array(input.length).fill('');
+  const runCounts = new Map();
+  let activeRawId = '';
+  let activeOccurrenceId = '';
+  let previousEnd = NaN;
+
+  input
+    .map((action, index) => ({ action, index }))
+    .filter(({ action }) => action?.adultScene === true || String(action?.adultSceneId || '').trim())
+    .sort((left, right) => Number(left.action?.startTime) - Number(right.action?.startTime))
+    .forEach(({ action, index }) => {
+      const startTime = Number(action?.startTime);
+      const endTime = Number(action?.endTime);
+      const rawId = String(action?.adultSceneId || '').trim() ||
+        `adult-${Math.round(Number(action?.adultSceneStartTime ?? startTime) || 0)}`;
+      const gap = Number.isFinite(previousEnd) && Number.isFinite(startTime)
+        ? startTime - previousEnd
+        : 0;
+      const startsNewRun = rawId !== activeRawId || gap > Math.max(1, Number(maxSilentGapSeconds) || 45);
+      if (startsNewRun) {
+        const run = Number(runCounts.get(rawId) || 0) + 1;
+        runCounts.set(rawId, run);
+        activeRawId = rawId;
+        activeOccurrenceId = run === 1 ? rawId : `${rawId}#${run}`;
+      }
+      assignments[index] = activeOccurrenceId;
+      if (Number.isFinite(endTime)) previousEnd = endTime;
+    });
+
+  return assignments;
+}
+
 export function verifiedAdultPositionFamily(action = {}) {
   if (action?.sourceVerified !== true) return '';
   return resolveVerifiedAdultPosition(action).family;
