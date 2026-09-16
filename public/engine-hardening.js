@@ -580,6 +580,12 @@ export function createRuntimeSnapshot(state = {}, fingerprint = '') {
     completedAdultSceneIds: setValues(state.completedAdultSceneIds),
     maleSceneProgress: clamp(state.maleSceneProgress, 0, 100),
     femaleSceneProgress: clamp(state.femaleSceneProgress, 0, 100),
+    adultMaleOrgasmProgress: clamp(state.adultMaleOrgasmProgress, 0, 100),
+    adultFemaleOrgasmProgress: clamp(state.adultFemaleOrgasmProgress, 0, 100),
+    adultMaleOrgasmCount: Math.max(0, Math.floor(numberOr(state.adultMaleOrgasmCount))),
+    adultFemaleOrgasmCount: Math.max(0, Math.floor(numberOr(state.adultFemaleOrgasmCount))),
+    adultSexUnlocked: Boolean(state.adultSexUnlocked),
+    adultUnlockedPositionIds: setValues(state.adultUnlockedPositionIds),
     adultClimaxProgress: clamp(state.adultClimaxProgress, 0, 100),
     adultCorePlaySeconds: Math.max(0, numberOr(state.adultCorePlaySeconds)),
     adultVisitedPositionIds: setValues(state.adultVisitedPositionIds),
@@ -612,6 +618,12 @@ export function applyRuntimeSnapshot(state, snapshot) {
   state.completedAdultSceneIds = new Set(snapshot.completedAdultSceneIds || []);
   state.maleSceneProgress = clamp(snapshot.maleSceneProgress, 0, 100);
   state.femaleSceneProgress = clamp(snapshot.femaleSceneProgress, 0, 100);
+  state.adultMaleOrgasmProgress = clamp(snapshot.adultMaleOrgasmProgress, 0, 100);
+  state.adultFemaleOrgasmProgress = clamp(snapshot.adultFemaleOrgasmProgress, 0, 100);
+  state.adultMaleOrgasmCount = Math.max(0, Math.floor(numberOr(snapshot.adultMaleOrgasmCount)));
+  state.adultFemaleOrgasmCount = Math.max(0, Math.floor(numberOr(snapshot.adultFemaleOrgasmCount)));
+  state.adultSexUnlocked = Boolean(snapshot.adultSexUnlocked);
+  state.adultUnlockedPositionIds = new Set(snapshot.adultUnlockedPositionIds || []);
   state.adultClimaxProgress = clamp(snapshot.adultClimaxProgress, 0, 100);
   state.adultCorePlaySeconds = Math.max(0, numberOr(snapshot.adultCorePlaySeconds));
   state.adultVisitedPositionIds = new Set(snapshot.adultVisitedPositionIds || []);
