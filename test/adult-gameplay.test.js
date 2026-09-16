@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   adultPositionFamily,
+  assignAdultSceneOccurrenceIds,
   adultPlaybackProgressDelta,
   verifiedAdultPositionFamily,
   adultDiscoveryPhase,
@@ -254,6 +255,24 @@ test('extra movements remain inside the active continuous occurrence', () => {
     movementsForPositionOccurrence(position, 'later-return').map(item => item.id),
     ['m3']
   );
+});
+
+test('a repeated scene id becomes a new occurrence after another scene intervenes', () => {
+  const ids = assignAdultSceneOccurrenceIds([
+    { adultScene: true, adultSceneId: 'scene-a', startTime: 100, endTime: 140 },
+    { adultScene: true, adultSceneId: 'scene-a', startTime: 140, endTime: 170 },
+    { adultScene: true, adultSceneId: 'scene-b', startTime: 180, endTime: 220 },
+    { adultScene: true, adultSceneId: 'scene-a', startTime: 230, endTime: 270 }
+  ]);
+  assert.deepEqual(ids, ['scene-a', 'scene-a', 'scene-b', 'scene-a#2']);
+});
+
+test('a long silent gap splits a reused scene id without relying on video-specific timestamps', () => {
+  const ids = assignAdultSceneOccurrenceIds([
+    { adultScene: true, adultSceneId: 'scene-x', startTime: 10, endTime: 20 },
+    { adultScene: true, adultSceneId: 'scene-x', startTime: 90, endTime: 110 }
+  ]);
+  assert.deepEqual(ids, ['scene-x', 'scene-x#2']);
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
