@@ -1,5 +1,6 @@
 import {
   adultPositionFamily,
+  adultPlaybackProgressDelta,
   adultDiscoveryPhase,
   averageAdultProgress,
   canUnlockBonusPositions,
@@ -12,6 +13,7 @@ import {
   expandVerifiedMovementVariants,
   findAdultSceneForTimeline,
   isEnergeticSexMoment,
+  isPlayableVerifiedPositionDuration,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   monotonicAdultPhase,
@@ -26,6 +28,7 @@ import {
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
   resolveVerifiedAdultPosition,
+  shouldAdvanceMaleOrgasm,
   summarizeAdultSceneGraph,
   tapRhythm,
   verifiedAdultPositionFamily
@@ -2154,11 +2157,11 @@ function prepareAdultScenes() {
       }
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
-      const validTime = Number.isFinite(start) && Number.isFinite(end) && end - start >= 6;
+      const validTime = isPlayableVerifiedPositionDuration(start, end);
       const validConfidence = Number(action.confidence || 0) >= 0.6;
       row.sceneCandidate = validTime && validConfidence;
       row.sceneCandidateReason = !validTime
-        ? 'REJECTED_POSITION_SHORTER_THAN_6_SECONDS_OR_INVALID_TIME'
+        ? 'REJECTED_POSITION_SHORTER_THAN_3_SECONDS_OR_INVALID_TIME'
         : (!validConfidence ? 'REJECTED_CONFIDENCE_BELOW_0_60' : 'ACCEPTED_VERIFIED_POSITION');
       return row.sceneCandidate;
     }).map(sceneIdFor)
@@ -2399,12 +2402,12 @@ function prepareAdultScenes() {
               position.endTime,
               {
                 baseLabel: position.label,
-                minSeconds: 5,
+                minSeconds: 3,
                 maxVariants: 24,
                 splitEachMovement: true
               }
             );
-            if (!movements.length && position.endTime - position.startTime >= 10) {
+            if (!movements.length && isPlayableVerifiedPositionDuration(position.startTime, position.endTime)) {
               const verifiedBase = {
                 id: `${position.id}:verified-base`,
                 actionId: `${position.id}:verified-base`,
@@ -2426,7 +2429,7 @@ function prepareAdultScenes() {
             }
             return { ...position, movements };
           })
-          .filter(position => position.endTime - position.startTime >= 10)
+          .filter(position => isPlayableVerifiedPositionDuration(position.startTime, position.endTime))
           .sort((a, b) => a.startTime - b.startTime);
       if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
       const positionStart = Math.min(...positions.map(position => Number(position.startTime)));
@@ -3199,8 +3202,14 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
     // A selection unlocks discovery, but cannot rush the final meter.
     const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
     state.adultClimaxProgress = Math.min(100, state.adultClimaxProgress + climaxDelta);
-    state.adultMaleOrgasmProgress = Math.min(100, state.adultMaleOrgasmProgress + delta.male * 0.45);
-    state.adultFemaleOrgasmProgress = Math.min(100, state.adultFemaleOrgasmProgress + delta.female * 0.45);
+    const maleOrgasmActive = shouldAdvanceMaleOrgasm(
+      state.adultFemaleOrgasmProgress,
+      state.adultFemaleOrgasmCount
+    );
+    if (maleOrgasmActive) {
+      state.adultMaleOrgasmProgress = Math.min(100, state.adultMaleOrgasmProgress + delta.male * 0.06);
+    }
+    state.adultFemaleOrgasmProgress = Math.min(100, state.adultFemaleOrgasmProgress + delta.female * 0.12);
   }
   renderAdultProgress();
 }
@@ -3697,7 +3706,12 @@ function updateAdultPlayback(now, mediaTime) {
       seekAdultLoop(item.startTime, state.adultSelectionToken);
       return;
     }
-    addFemaleLust(elapsed * 0.35 * Number(item.femaleProgressRate || 1));
+    const progress = adultPlaybackProgressDelta({
+      elapsed,
+      femaleRate: item.femaleProgressRate || 1,
+      warmup: true
+    });
+    addFemaleLust(progress.lust);
     renderAdultProgress();
     return;
   }
@@ -3735,7 +3749,13 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
-  addFemaleLust(elapsed * 0.55 * Number(movement.femaleProgressRate || 1));
+  const progress = adultPlaybackProgressDelta({
+    elapsed,
+    maleRate: movement.maleProgressRate || 1,
+    femaleRate: movement.femaleProgressRate || 1,
+    warmup: false
+  });
+  addFemaleLust(progress.lust);
   if (!isWarmupPosition(position)) {
     const movementRate = averageAdultProgress(
       Number(movement.maleProgressRate || 1),
@@ -3749,12 +3769,17 @@ function updateAdultPlayback(now, mediaTime) {
     state.adultClimaxProgress = Math.min(100,
       state.adultClimaxProgress + elapsed * ratePerSecond * movementRate
     );
-    const orgasmCycleSeconds = 55;
-    state.adultMaleOrgasmProgress = Math.min(100,
-      state.adultMaleOrgasmProgress + elapsed * (100 / orgasmCycleSeconds) * Number(movement.maleProgressRate || 1)
+    const maleOrgasmActive = shouldAdvanceMaleOrgasm(
+      state.adultFemaleOrgasmProgress,
+      state.adultFemaleOrgasmCount
     );
+    if (maleOrgasmActive) {
+      state.adultMaleOrgasmProgress = Math.min(100,
+        state.adultMaleOrgasmProgress + progress.maleOrgasm
+      );
+    }
     state.adultFemaleOrgasmProgress = Math.min(100,
-      state.adultFemaleOrgasmProgress + elapsed * (100 / orgasmCycleSeconds) * Number(movement.femaleProgressRate || 1)
+      state.adultFemaleOrgasmProgress + progress.femaleOrgasm
     );
   }
   renderAdultProgress();
