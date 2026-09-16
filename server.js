@@ -550,6 +550,7 @@ Rules:
 - playStartTime must equal introEndTime
 - MAIN and BONUS actions must reflect visible evidence
 - Turkish labels must be short and directly describe the male action
+- Every UI-facing string must be natural Turkish: label, narrativeChoiceLabel, sceneTitle, sceneGoal, positionLabel, movementType and outcomeLabel. Preserve proper names. Translate only what the supplied source evidence supports; never add meaning while translating.
 - Detect every verified adult scene boundary and mark adultScene true only inside that real scene.
 - Set one stable adultSceneId for every action belonging to the same adult scene.
 - Every action whose time interval falls inside a verified adult scene must keep adultScene true and the same adultSceneId, including conversation, pauses, transitions and camera changes. Never emit a generic non-adult timeline choice from inside that interval.
