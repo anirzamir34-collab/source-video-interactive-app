@@ -29,6 +29,12 @@ export function detectSceneBoundaries(motionProfile = [], interval = 1) {
   return boundaries;
 }
 
+export function sheetsPerAnalysisChunk(qualityMode = 'ultra') {
+  const mode = String(qualityMode || 'ultra').toLowerCase();
+  if (mode === 'fast') return 4;
+  return 3;
+}
+
 export async function extractStoryboard(source, onProgress = () => {}, signal) {
   const ownsObjectUrl = source instanceof Blob;
   const url = ownsObjectUrl ? URL.createObjectURL(source) : String(source || '');
