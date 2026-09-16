@@ -127,3 +127,38 @@ export function nextDialogueSegments(segments, videoTime, count = 2) {
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))
     .slice(0, wanted);
 }
+
+export function dialogueSegmentsForTarget(segments, targetTime, count = 2) {
+  const list = Array.isArray(segments) ? segments : [];
+  const wanted = Math.max(1, Math.floor(Number(count) || 1));
+  const active = dialogueSegmentAt(list, targetTime);
+  const upcoming = nextDialogueSegments(list, targetTime, wanted);
+  const result = [];
+  const seen = new Set();
+
+  [active, ...upcoming].filter(Boolean).forEach((segment, index) => {
+    const key = dubSegmentKey(segment, index);
+    if (!key || seen.has(key) || result.length >= wanted) return;
+    seen.add(key);
+    result.push(segment);
+  });
+
+  return result;
+}
+
+export function dialogueSegmentsForTargets(segments, targetTimes, limit = 12) {
+  const wanted = Math.max(1, Math.floor(Number(limit) || 1));
+  const result = [];
+  const seen = new Set();
+
+  (Array.isArray(targetTimes) ? targetTimes : []).forEach(targetTime => {
+    dialogueSegmentsForTarget(segments, targetTime, 1).forEach((segment, index) => {
+      const key = dubSegmentKey(segment, index);
+      if (!key || seen.has(key) || result.length >= wanted) return;
+      seen.add(key);
+      result.push(segment);
+    });
+  });
+
+  return result;
+}
