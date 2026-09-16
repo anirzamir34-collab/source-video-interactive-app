@@ -1,5 +1,6 @@
 import {
   adultPositionFamily,
+  assignAdultSceneOccurrenceIds,
   adultPlaybackProgressDelta,
   adultDiscoveryPhase,
   averageAdultProgress,
@@ -2203,7 +2204,11 @@ function prepareAdultScenes() {
     warnings: []
   };
   const sceneMap = new Map();
-  const sceneIdFor = action => action.adultSceneId ||
+  const sceneOccurrenceIds = assignAdultSceneOccurrenceIds(actions);
+  const sceneOccurrenceByAction = new Map(
+    actions.map((action, index) => [action, sceneOccurrenceIds[index]])
+  );
+  const sceneIdFor = action => sceneOccurrenceByAction.get(action) || action.adultSceneId ||
     `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
   const verifiedPositionSceneIds = new Set(
     actions.filter(action => {
@@ -2555,10 +2560,9 @@ function prepareAdultScenes() {
     .filter(scene => scene.positions.length)
     .sort((a, b) => a.startTime - b.startTime);
 
-  state.adultScenes = mergeAdultSceneFragments(
-    state.adultScenes,
-    actions.filter(action => !action.adultScene)
-  );
+  // Scene occurrence IDs already preserve the model's chronological scene
+  // switches. Never merge distinct runs merely because their time gap is
+  // small; doing so mixes characters and later returns into one panel.
 
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
