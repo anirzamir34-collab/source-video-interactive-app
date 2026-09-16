@@ -44,6 +44,31 @@ export function initialWarmupBeforeFirstPosition(foreplay = [], positions = []) 
   });
 }
 
+export function verifiedPartnerTransition(action = {}) {
+  const previousPartnerTrackId = String(action?.previousPartnerTrackId || '').trim();
+  const partnerTrackId = String(action?.partnerTrackId || '').trim();
+  const startTime = Number(action?.startTime);
+  const endTime = Number(action?.endTime);
+  const valid = action?.sourceVerified === true &&
+    action?.groupScene === true &&
+    action?.partnerSwitch === true &&
+    String(action?.actionType || '').toLowerCase() === 'partner_transition' &&
+    previousPartnerTrackId && partnerTrackId &&
+    previousPartnerTrackId !== partnerTrackId &&
+    Number.isFinite(startTime) && Number.isFinite(endTime) && endTime > startTime;
+  if (!valid) return null;
+  return {
+    id: String(action.actionId || `partner-transition-${Math.round(startTime * 1000)}`),
+    label: String(action.label || `${partnerTrackId} partnerine geç`),
+    startTime,
+    endTime,
+    previousPartnerTrackId,
+    partnerTrackId,
+    partnerLabel: String(action.partnerLabel || '').trim(),
+    partnerEvidence: String(action.partnerEvidence || '').trim()
+  };
+}
+
 export function verifiedAdultPositionFamily(action = {}) {
   if (action?.sourceVerified !== true) return '';
   return resolveVerifiedAdultPosition(action).family;
