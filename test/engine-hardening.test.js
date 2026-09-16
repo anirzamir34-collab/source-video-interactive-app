@@ -234,6 +234,9 @@ test('runtime save only restores into the exact analysis/engine version', () => 
     gameState: 'DECISION_PENDING', gameCursorTime: 44, currentActionIndex: 3,
     consumedActionIds: new Set(['a']), completedAdultSceneIds: new Set(['s1']),
     maleSceneProgress: 55, femaleSceneProgress: 48, adultClimaxProgress: 21,
+    adultMaleOrgasmProgress: 73, adultFemaleOrgasmProgress: 91,
+    adultMaleOrgasmCount: 2, adultFemaleOrgasmCount: 3,
+    adultSexUnlocked: true, adultUnlockedPositionIds: new Set(['p1', 'p2']),
     adultCorePlaySeconds: 31, adultVisitedPositionIds: new Set(['p1']),
     adultMovementPlayCounts: new Map([['m1', 2]]), adultPreludePlayCounts: new Map([['f1', 1]]),
     adultComboCount: 2, adultPhaseMachine: 'positions', adultLastUiPhase: 'positions',
@@ -247,6 +250,12 @@ test('runtime save only restores into the exact analysis/engine version', () => 
   assert.equal(target.gameCursorTime, 44);
   assert.equal(target.adultVisitedPositionIds.has('p1'), true);
   assert.equal(target.adultMovementPlayCounts.get('m1'), 2);
+  assert.equal(target.adultMaleOrgasmProgress, 73);
+  assert.equal(target.adultFemaleOrgasmProgress, 91);
+  assert.equal(target.adultMaleOrgasmCount, 2);
+  assert.equal(target.adultFemaleOrgasmCount, 3);
+  assert.equal(target.adultSexUnlocked, true);
+  assert.deepEqual([...target.adultUnlockedPositionIds], ['p1', 'p2']);
   assert.equal(target.restoredAdultSceneId, 'scene-active');
 });
 
