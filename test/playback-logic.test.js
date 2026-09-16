@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   dialogueSegmentAt,
+  dialogueSegmentsAt,
   dialogueSegmentsForTarget,
   dialogueSegmentsForTargets,
   decisionBoundaryAfterDialogue,
@@ -36,6 +37,15 @@ test('dialogueSegmentAt immediately switches to the newest overlapping speaker',
     { segmentId: 'son', startTime: 12.4, endTime: 15, speakerName: 'Erkek kardeş' }
   ];
   assert.equal(dialogueSegmentAt(segments, 12.5)?.segmentId, 'son');
+});
+
+test('dialogueSegmentsAt preserves every overlapping speaker for multi-channel dubbing', () => {
+  const segments = [
+    { segmentId: 'a', speakerId: 'woman-a', startTime: 10, endTime: 14, turkishText: 'Bir' },
+    { segmentId: 'b', speakerId: 'man-a', startTime: 12, endTime: 15, turkishText: 'İki' },
+    { segmentId: 'c', speakerId: 'woman-b', startTime: 16, endTime: 18, turkishText: 'Üç' }
+  ];
+  assert.deepEqual(dialogueSegmentsAt(segments, 12.5).map(item => item.segmentId), ['a', 'b']);
 });
 
 test('adult choice target primes the active Turkish line and following line once', () => {
