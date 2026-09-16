@@ -17,6 +17,8 @@ import {
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   initialWarmupBeforeFirstPosition,
+  movementsForPositionOccurrence,
+  positionOccurrenceGroups,
   monotonicAdultPhase,
   movementBelongsToVerifiedPosition,
   nearestAvailableTempo,
@@ -98,6 +100,7 @@ const state = {
   adultScene: null,
   adultMode: false,
   activePositionId: null,
+  activeAdultOccurrenceId: null,
   activeAdultCategory: null,
   activeMovementId: null,
   activeMovementChoiceId: null,
@@ -1957,6 +1960,7 @@ function initializeInteractive(analysis) {
   state.adultScene = null;
   state.completedAdultSceneIds = new Set();
   state.activePositionId = null;
+  state.activeAdultOccurrenceId = null;
   state.activeAdultCategory = null;
   state.activeMovementId = null;
   state.adultSelectionToken += 1;
@@ -2821,6 +2825,7 @@ function resetAdultSceneGameplay() {
   state.adultOrgasmDecision = null;
   state.adultSexUnlocked = false;
   state.adultUnlockedPositionIds = new Set();
+  state.activeAdultOccurrenceId = null;
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
   state.adultPreludePlayCounts = new Map();
@@ -3083,6 +3088,7 @@ function renderAdultPanel(scene) {
   if (previousSceneId !== scene.id && !restoringSameScene) {
     resetAdultSceneGameplay();
     state.activePositionId = null;
+    state.activeAdultOccurrenceId = null;
     state.activeAdultCategory = null;
     state.activeMovementId = null;
   }
@@ -3256,6 +3262,7 @@ function playAdultPrelude(preludeId) {
   const token = beginAdultSelection();
   state.activeAdultPreludeId = item.id;
   state.activePositionId = null;
+  state.activeAdultOccurrenceId = null;
   state.activeMovementId = null;
   applyAdultPreludeProgress(item);
   renderAdultProgressiveUI(true);
@@ -3330,7 +3337,7 @@ function resetAdultTapRhythm() {
 }
 
 function nextEnergeticPositionMovement(position, currentMovement = null) {
-  const energetic = (position?.movements || [])
+  const energetic = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId)
     .filter(item => isEnergeticSexMoment(item))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   if (!energetic.length) return null;
@@ -3387,7 +3394,8 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
 function playNextAdultVariant() {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   if (!position) return;
-  const next = pickNextChronologicalVariant(position.movements, state.activeMovementId);
+  const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
+  const next = pickNextChronologicalVariant(occurrenceMovements, state.activeMovementId);
   if (next) selectAdultMovement(next.id, true);
 }
 
@@ -3426,17 +3434,19 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   if (shouldSeek) state.activeAdultPreludeId = null;
   const changedPosition = state.activePositionId !== position.id;
   state.activePositionId = position.id;
-  if (changedPosition) state.activeMovementId = null;
+  if (changedPosition) {
+    state.activeMovementId = null;
+    state.activeAdultOccurrenceId = positionOccurrenceGroups(position)[0]?.id || null;
+  }
   if (changedPosition) resetAdultTapRhythm();
 
   els.positionTabs?.querySelectorAll('.position-tab').forEach(button => {
     button.classList.toggle('active', button.dataset.positionId === position.id);
   });
 
-  const movementChoices = position.movementChoices?.length
-    ? position.movementChoices
-    : buildVerifiedMovementChoices(position.movements, position.label, 6);
-  position.movementChoices = movementChoices;
+  const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
+  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 6);
+  position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
   if (els.movementChoices) els.movementChoices.innerHTML = '';
@@ -3483,11 +3493,11 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   const movement = shouldSeek
     ? pickNextVariant(
-        position.movements,
+        occurrenceMovements,
         state.activeMovementId,
         state.adultMovementPlayCounts
       )
-    : position.movements.find(item => item.id === state.activeMovementId) || position.movements[0];
+    : occurrenceMovements.find(item => item.id === state.activeMovementId) || occurrenceMovements[0];
 
   if (movement) {
     selectAdultMovement(
@@ -3518,6 +3528,16 @@ function selectAdultMovement(
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || state.adultOutcomePhase !== 'idle') return;
+  const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
+  if (!occurrenceMovements.some(item => item.id === movement.id)) {
+    logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
+      movementId: movement.id,
+      positionId: position.id,
+      occurrenceId: state.activeAdultOccurrenceId,
+      sourcePositionId: movement.sourcePositionId || null
+    });
+    return;
+  }
   const movementGuard = guardPlayable('movement', movement, {
     scene: state.adultScene,
     parentPosition: position,
@@ -3529,7 +3549,7 @@ function selectAdultMovement(
   const effectiveToken = selectionToken ?? beginAdultSelection();
   state.activeAdultPreludeId = null;
   state.activeMovementId = movement.id;
-  const matchingChoice = (position.movementChoices || []).find(
+  const matchingChoice = (position.activeMovementChoices || []).find(
     choice => choice.variants?.some(item => item.id === movement.id)
   );
   if (matchingChoice) state.activeMovementChoiceId = matchingChoice.id;
@@ -3821,27 +3841,22 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
-    // Play verified clips as one connected source-video sequence. When the
-    // current clip ends, continue forward inside the position; when that
-    // position is exhausted, reveal and enter the next unlocked occurrence.
+    // Continue only inside the active source occurrence. Never auto-enter a
+    // later occurrence or another partner when this clip ends.
     if (mediaTime >= movement.loopEndTime - 0.04) {
-      const nextMovement = pickNextChronologicalVariant(position.movements, movement.id);
+      const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
+      const nextMovement = pickNextChronologicalVariant(occurrenceMovements, movement.id);
       if (nextMovement) {
         selectAdultMovement(nextMovement.id, true, null, { awardProgress: false });
         return;
       }
-      const nextPosition = unlockedAdultPositions(state.adultScene)
-        .filter(item =>
-          !isWarmupPosition(item) &&
-          item.id !== position.id &&
-          !state.adultVisitedPositionIds.has(item.id) &&
-          Number(item.startTime) >= Number(position.endTime) - 0.25
-        )
-        .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
-      if (nextPosition) {
-        selectAdultPosition(nextPosition.id, true);
-        return;
-      }
+      els.video?.pause();
+      logEngineEvent('POSITION_OCCURRENCE_ENDED', {
+        positionId: position.id,
+        occurrenceId: state.activeAdultOccurrenceId,
+        movementId: movement.id
+      });
+      return;
     }
     seekAdultLoop(movement.loopStartTime, state.adultSelectionToken);
     return;
