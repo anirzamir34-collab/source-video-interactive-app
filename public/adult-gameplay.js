@@ -60,7 +60,7 @@ export function resolveVerifiedAdultPosition(action = {}) {
   const declaredFamily = explicitCowgirlMetadata
     ? idFamily
     : (labelFamily || idFamily || '');
-  const explicitNamedActionPosition = /\b(?:ters\s+(?:kovboy|cowgirl)|reverse\s+(?:cowgirl|rider)|misyoner|missionary|doggy(?:\s+style)?|prone[\s-]?bone|kasik|spoon|ayakta\s+arkadan)\b/iu.test(
+  const explicitNamedActionPosition = /\b(?:(?:kovboy|cowgirl|rider)(?:\s+pozisyon(?:u|unda)?)?|kadin\s+ustte|ters\s+(?:kovboy|cowgirl)|reverse\s+(?:cowgirl|rider)|misyoner|missionary|doggy(?:\s+style)?|prone[\s-]?bone|kasik|spoon|ayakta\s+arkadan)\b/iu.test(
     String(action.label || '')
   );
   const correctedFromAction = Boolean(
@@ -105,6 +105,37 @@ export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
 export const DEFAULT_POSITION_UNLOCK_PROGRESS = 35;
 export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
 export const MIN_CORE_PLAY_SECONDS_FOR_OUTCOME = 75;
+export const MIN_VERIFIED_POSITION_SECONDS = 3;
+export const FEMALE_ORGASM_CYCLE_SECONDS = 165;
+export const MALE_ORGASM_CYCLE_SECONDS = 235;
+
+export function isPlayableVerifiedPositionDuration(startTime, endTime) {
+  const start = Number(startTime);
+  const end = Number(endTime);
+  return Number.isFinite(start) && Number.isFinite(end) &&
+    end - start >= MIN_VERIFIED_POSITION_SECONDS;
+}
+
+export function adultPlaybackProgressDelta({
+  elapsed = 0,
+  maleRate = 1,
+  femaleRate = 1,
+  warmup = false
+} = {}) {
+  const seconds = clamp(elapsed, 0, 0.25);
+  const safeMaleRate = clamp(maleRate, 0.25, 2.5);
+  const safeFemaleRate = clamp(femaleRate, 0.25, 2.5);
+  return {
+    lust: seconds * (warmup ? 0.24 : 0.22) * safeFemaleRate,
+    maleOrgasm: warmup ? 0 : seconds * (100 / MALE_ORGASM_CYCLE_SECONDS) * safeMaleRate,
+    femaleOrgasm: warmup ? 0 : seconds * (100 / FEMALE_ORGASM_CYCLE_SECONDS) * safeFemaleRate
+  };
+}
+
+export function shouldAdvanceMaleOrgasm(femaleProgress = 0, femaleOrgasmCount = 0) {
+  return Math.max(0, Number(femaleOrgasmCount) || 0) > 0 ||
+    clamp(femaleProgress, 0, 100) >= 35;
+}
 
 export function averageAdultProgress(maleProgress, femaleProgress) {
   const male = clamp(maleProgress, 0, 100);
@@ -172,7 +203,7 @@ export function expandVerifiedMovementVariants(
 ) {
   const start = Math.max(0, Number(positionStart) || 0);
   const end = Math.max(start, Number(positionEnd) || start);
-  const minimum = Math.max(5, Number(minSeconds) || 10);
+  const minimum = Math.max(MIN_VERIFIED_POSITION_SECONDS, Number(minSeconds) || 10);
   const limit = Math.max(1, Math.min(24, Math.floor(Number(maxVariants) || 4)));
   const positionDuration = end - start;
   const rawSource = (Array.isArray(movements) ? movements : [])
@@ -334,13 +365,13 @@ export function computeWarmupSelectionDelta({
   femaleRate = 1
 } = {}) {
   const repeats = Math.max(0, Number(repeatCount) || 0);
-  const repeatFactor = Math.max(0.35, 1 - repeats * 0.18);
-  const comboBonus = Math.min(2, Math.max(0, Number(comboCount) || 0) * 0.35);
-  const base = 5.5 * repeatFactor + comboBonus;
+  const repeatFactor = Math.max(0.25, 1 - repeats * 0.2);
+  const comboBonus = Math.min(1, Math.max(0, Number(comboCount) || 0) * 0.18);
+  const base = 3 * repeatFactor + comboBonus;
 
   return {
-    male: clamp(base * clamp(maleRate, 0.25, 2.5), 0.75, 11),
-    female: clamp(base * clamp(femaleRate, 0.25, 2.5), 0.75, 11)
+    male: clamp(base * clamp(maleRate, 0.25, 2.5), 0.4, 7),
+    female: clamp(base * clamp(femaleRate, 0.25, 2.5), 0.4, 7)
   };
 }
 
@@ -354,17 +385,17 @@ export function computeAdultSelectionDelta({
   femaleRate = 1
 } = {}) {
   const repeats = Math.max(0, Number(repeatCount) || 0);
-  const repeatFactor = Math.max(0.3, 1 - repeats * 0.2);
+  const repeatFactor = Math.max(0.22, 1 - repeats * 0.22);
   const noveltyBonus =
-    (positionNew ? 2.5 : 0) +
-    (positionChanged ? 1.25 : 0) +
-    (movementNew ? 3.75 : 0);
-  const comboBonus = Math.min(2.5, Math.max(0, Number(comboCount) || 0) * 0.5);
-  const base = 3.5 * repeatFactor + noveltyBonus + comboBonus;
+    (positionNew ? 1.5 : 0) +
+    (positionChanged ? 0.75 : 0) +
+    (movementNew ? 2 : 0);
+  const comboBonus = Math.min(1.5, Math.max(0, Number(comboCount) || 0) * 0.25);
+  const base = 2 * repeatFactor + noveltyBonus + comboBonus;
 
   return {
-    male: clamp(base * clamp(maleRate, 0.25, 2.5), 0.75, 14),
-    female: clamp(base * clamp(femaleRate, 0.25, 2.5), 0.75, 14)
+    male: clamp(base * clamp(maleRate, 0.25, 2.5), 0.4, 9),
+    female: clamp(base * clamp(femaleRate, 0.25, 2.5), 0.4, 9)
   };
 }
 
