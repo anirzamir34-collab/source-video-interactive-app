@@ -719,6 +719,22 @@ Rules:
     try {
       parsed = await generateStoryboardJson(prompt, files);
     } catch (fullChunkError) {
+      const fullFailureReason = storyboardFailureReason(fullChunkError);
+      if (fullFailureReason === 'GEMINI_QUOTA_OR_CREDITS') {
+        console.warn(
+          `[gemini-storyboard-quota] chunk ${chunkIndex + 1}/${chunkCount} stopped without split recovery`
+        );
+        return res.status(429).json({
+          available: false,
+          retryable: false,
+          reason: 'GEMINI_CREDITS_DEPLETED',
+          message: 'Gemini API kredisi veya proje kotası kullanılamıyor. Aynı istek otomatik tekrarlanmadı.',
+          chunkIndex,
+          chunkCount,
+          chunkStart,
+          chunkEnd
+        });
+      }
       const allTimestamps = (() => {
         try {
           const value = JSON.parse(timestamps);
@@ -812,18 +828,27 @@ Rules:
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
       : [];
     if (unresolvedGaps.length) {
+      const quotaBlocked = unresolvedGaps.every(gap =>
+        String(gap?.reason || '') === 'GEMINI_QUOTA_OR_CREDITS'
+      );
       const contentRestricted = unresolvedGaps.every(gap =>
         String(gap?.reason || '') === 'GEMINI_CONTENT_RESTRICTED'
       );
-      return res.status(contentRestricted ? 422 : 503).json({
+      return res.status(quotaBlocked ? 429 : contentRestricted ? 422 : 503).json({
         available: false,
-        retryable: !contentRestricted,
-        reason: contentRestricted ? 'GEMINI_CONTENT_RESTRICTED' : 'CHUNK_ANALYSIS_GAP',
-        message: contentRestricted
-          ? `Bölüm ${chunkIndex + 1}/${chunkCount} Gemini tarafından içerik kısıtlaması nedeniyle okunamadı. ` +
-            'Aynı görüntüleri otomatik yeniden göndermek sonucu değiştirmeyeceği için analiz durduruldu.'
-          : `Bölüm ${chunkIndex + 1}/${chunkCount} modelden eksiksiz okunamadı. ` +
-            'Boş aralık başarı sayılmadı; bu bölüm yeniden denenmeli.',
+        retryable: !(quotaBlocked || contentRestricted),
+        reason: quotaBlocked
+          ? 'GEMINI_CREDITS_DEPLETED'
+          : contentRestricted
+            ? 'GEMINI_CONTENT_RESTRICTED'
+            : 'CHUNK_ANALYSIS_GAP',
+        message: quotaBlocked
+          ? 'Gemini API kredisi veya proje kotası kullanılamıyor. Aynı istek otomatik tekrarlanmadı.'
+          : contentRestricted
+            ? `Bölüm ${chunkIndex + 1}/${chunkCount} Gemini tarafından içerik kısıtlaması nedeniyle okunamadı. ` +
+              'Aynı görüntüleri otomatik yeniden göndermek sonucu değiştirmeyeceği için analiz durduruldu.'
+            : `Bölüm ${chunkIndex + 1}/${chunkCount} modelden eksiksiz okunamadı. ` +
+              'Boş aralık başarı sayılmadı; bu bölüm yeniden denenmeli.',
         chunkIndex,
         chunkCount,
         chunkStart,
