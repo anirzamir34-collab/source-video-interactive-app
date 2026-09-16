@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   dialogueSegmentAt,
+  dialogueSegmentsForTarget,
+  dialogueSegmentsForTargets,
   decisionBoundaryAfterDialogue,
   dubMasterClockCorrection,
   dubSegmentKey,
@@ -34,6 +36,34 @@ test('dialogueSegmentAt immediately switches to the newest overlapping speaker',
     { segmentId: 'son', startTime: 12.4, endTime: 15, speakerName: 'Erkek kardeş' }
   ];
   assert.equal(dialogueSegmentAt(segments, 12.5)?.segmentId, 'son');
+});
+
+test('adult choice target primes the active Turkish line and following line once', () => {
+  const segments = [
+    { segmentId: 'a', startTime: 10, endTime: 13, turkishText: 'Birinci' },
+    { segmentId: 'b', startTime: 14, endTime: 17, turkishText: 'İkinci' },
+    { segmentId: 'c', startTime: 18, endTime: 21, turkishText: 'Üçüncü' }
+  ];
+  assert.deepEqual(
+    dialogueSegmentsForTarget(segments, 11, 2).map(item => item.segmentId),
+    ['a', 'b']
+  );
+  assert.deepEqual(
+    dialogueSegmentsForTarget(segments, 13.5, 2).map(item => item.segmentId),
+    ['b', 'c']
+  );
+});
+
+test('adult position primes unique Turkish lines for all real extra variants', () => {
+  const segments = [
+    { segmentId: 'a', startTime: 10, endTime: 13, turkishText: 'Birinci' },
+    { segmentId: 'b', startTime: 20, endTime: 23, turkishText: 'İkinci' },
+    { segmentId: 'c', startTime: 30, endTime: 33, turkishText: 'Üçüncü' }
+  ];
+  assert.deepEqual(
+    dialogueSegmentsForTargets(segments, [10, 10.5, 20, 30], 12).map(item => item.segmentId),
+    ['a', 'b', 'c']
+  );
 });
 
 test('choice boundary waits for every sentence active at the action end', () => {
