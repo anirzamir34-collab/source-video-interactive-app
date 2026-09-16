@@ -16,7 +16,7 @@ export function adultPositionFamily(value) {
   if (/\b(reverse\s+cowgirl|reverse\s+rider|ters\s+kovboy|ters\s+cowgirl|ters\s+rider|ters\s+kucak(?:ta)?|arkasi\s+donuk\s+kovboy|sirtini\s+donerek\s+ustte)\b/.test(text)) return 'reverse-cowgirl';
   if (/\b(lap\s+dance|kucakta|kucaginda|kucagindaki|kucaginda\s+oturan|lotus|yuz\s+yuze\s+oturarak|seated\s+face[\s-]?to[\s-]?face)\b/.test(text)) return 'seated-facing';
   if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
-  if (/\b(piledriver|omuzda|bacaklar\s+yukari|legs\s+up)\b/.test(text)) return 'legs-up';
+  if (/\b(piledriver|omuzda|bacak(?:lar)?\s+(?:yukari(?:da)?|havada)|legs[\s-]+up)\b/.test(text)) return 'legs-up';
   if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
   if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
   if (/\b(ters\s+kasik|reverse\s+spoon)\b/.test(text)) return 'reverse-spoon';
@@ -28,6 +28,20 @@ export function adultPositionFamily(value) {
   if (/\b(oturarak|seated|chair|sandalye|koltukta)\b/.test(text)) return 'seated';
   if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
   return '';
+}
+
+export function initialWarmupBeforeFirstPosition(foreplay = [], positions = []) {
+  const verifiedPositions = (Array.isArray(positions) ? positions : [])
+    .filter(position => Number.isFinite(Number(position?.startTime)));
+  if (!verifiedPositions.length) return [];
+
+  const firstPositionStart = Math.min(...verifiedPositions.map(position => Number(position.startTime)));
+  return (Array.isArray(foreplay) ? foreplay : []).filter(item => {
+    const startTime = Number(item?.startTime);
+    const endTime = Number(item?.endTime);
+    return Number.isFinite(startTime) && Number.isFinite(endTime) &&
+      endTime > startTime && endTime <= firstPositionStart + 0.05;
+  });
 }
 
 export function verifiedAdultPositionFamily(action = {}) {
