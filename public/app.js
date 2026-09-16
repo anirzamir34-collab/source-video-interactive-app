@@ -1231,7 +1231,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
   els.analysisState.textContent = 'LOCAL_PROCESSING';
 
-  const { extractStoryboard } = await import('./storyboard.js');
+  const { extractStoryboard, sheetsPerAnalysisChunk } = await import('./storyboard.js');
   const storyboardSource = file || state.selectedRemoteVideo?.proxyUrl;
   const storyboard = await extractStoryboard(storyboardSource, (progress) => {
     els.analysisTitle.textContent = state.selectedRemoteVideo && !file
@@ -1248,7 +1248,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-    const sheetsPerChunk = 2;
+    const sheetsPerChunk = sheetsPerAnalysisChunk(modes.quality);
     const framesPerSheet = 12;
     const chunkCount = Math.ceil(
       storyboard.sheets.length / sheetsPerChunk
