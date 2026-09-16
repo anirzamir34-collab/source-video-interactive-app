@@ -20,6 +20,7 @@ import {
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   initialWarmupBeforeFirstPosition,
+  movementsForPositionOccurrence,
   isEnergeticSexMoment,
   isPlayableVerifiedPositionDuration,
   FEMALE_ORGASM_CYCLE_SECONDS,
@@ -39,6 +40,7 @@ import {
   shouldAdvanceMaleOrgasm,
   summarizeAdultSceneGraph,
   nearestAvailableTempo,
+  positionOccurrenceGroups,
   tapRhythm,
   verifiedPartnerTransition
 } from '../public/adult-gameplay.js';
@@ -223,6 +225,35 @@ test('partner transitions use general identity and chronology rules instead of v
     actionType: 'partner_transition', sourceVerified: true, groupScene: true,
     partnerSwitch: true, partnerTrackId: 'PARTNER_B', startTime: 10, endTime: 20
   }), null);
+});
+
+test('extra movements remain inside the active continuous occurrence', () => {
+  const position = {
+    sourceRanges: [
+      { id: 'early-a', startTime: 100, endTime: 120 },
+      { id: 'early-b', startTime: 120, endTime: 140 },
+      { id: 'later-return', startTime: 300, endTime: 330 }
+    ],
+    movements: [
+      { id: 'm1', sourceVerified: true, sourcePositionId: 'early-a', loopStartTime: 104, loopEndTime: 112 },
+      { id: 'm2', sourceVerified: true, sourcePositionId: 'early-b', loopStartTime: 124, loopEndTime: 136 },
+      { id: 'm3', sourceVerified: true, sourcePositionId: 'later-return', loopStartTime: 305, loopEndTime: 318 }
+    ]
+  };
+
+  const groups = positionOccurrenceGroups(position);
+  assert.deepEqual(groups.map(item => [item.id, item.startTime, item.endTime]), [
+    ['early-a', 100, 140],
+    ['later-return', 300, 330]
+  ]);
+  assert.deepEqual(
+    movementsForPositionOccurrence(position, 'early-a').map(item => item.id),
+    ['m1', 'm2']
+  );
+  assert.deepEqual(
+    movementsForPositionOccurrence(position, 'later-return').map(item => item.id),
+    ['m3']
+  );
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
