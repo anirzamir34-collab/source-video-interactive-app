@@ -359,6 +359,7 @@ ${reviewCandidates}
 - Return vaginal or anal only when the visible contact/penetration location is directly distinguishable and consistent at the candidate start, midpoint and end. Otherwise return activityType other with low activityTypeConfidence, or omit the candidate.
 - Never default an ambiguous penetrative candidate to vaginal. Correct activityType, activityTypeConfidence, activityEvidence and the Turkish label together so they cannot contradict one another.
 - Re-check narrativeChoiceLabel, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence for supplied candidates. Preserve them only when the same frames/dialogue still support them; otherwise downgrade to neutral wording.
+- For groupScene, partnerSwitch or partner_transition candidates, independently re-identify every visible adult using stable neutral track IDs. Preserve a partner change only when the source frames visibly prove MAIN_MALE changes from one adult partner to another; otherwise omit it.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
   const targetActionCount = Math.max(
@@ -489,7 +490,7 @@ Return ONLY valid JSON with this exact shape:
       "actionId": "tl-001",
       "sceneId": "scene-001",
       "actionLevel": "main|bonus",
-      "actionType": "position|tempo_change|kiss|touch|clothing|body_transition|camera_transition|outcome|aftermath|other",
+      "actionType": "position|tempo_change|kiss|touch|clothing|body_transition|partner_transition|camera_transition|outcome|aftermath|other",
       "adultScene": false,
       "adultSceneId": "",
       "adultSceneStartTime": 0,
@@ -497,6 +498,14 @@ Return ONLY valid JSON with this exact shape:
       "postSceneTime": 0,
       "positionId": "",
       "positionOccurrenceId": "",
+      "groupScene": false,
+      "adultParticipantCount": 2,
+      "participantTrackIds": [],
+      "partnerTrackId": "",
+      "partnerLabel": "",
+      "partnerEvidence": "",
+      "partnerSwitch": false,
+      "previousPartnerTrackId": "",
       "activityType": "oral|manual|vaginal|anal|other",
       "activityTypeConfidence": 0.0,
       "activityEvidence": "brief directly visible evidence or empty string",
@@ -556,12 +565,20 @@ Rules:
 - Every action whose time interval falls inside a verified adult scene must keep adultScene true and the same adultSceneId, including conversation, pauses, transitions and camera changes. Never emit a generic non-adult timeline choice from inside that interval.
 - Treat one continuous consensual intimate encounter as one adultScene across foreplay, oral/manual activity, position changes, climax and aftermath. Do not create a new adultSceneId merely because the interaction changes from touching/undressing to a sexual position or from one position to another.
 - Start a new adultSceneId only after a clear narrative, location, participant or substantial time break.
+- A verified partner switch inside one continuous group encounter is not a new adultSceneId; keep the encounter together and separate it with partnerTrackId plus a new positionOccurrenceId.
 - Detect a position only when the source visibly shows a stable adult-act body configuration sustained over time; then use actionType "position".
 - Never classify undressing, dressing, walking, approaching, preparation, conversation, camera changes, pauses or generic standing/sitting as positions.
 - Foreplay and non-position actions may remain chronological main/bonus actions, but must not receive a positionId or appear in position tabs.
 - Merge duplicate detections only when they describe the same continuous occurrence and their time ranges overlap; never bridge separate appearances of the same position into one long range.
 - Give every verified position a stable positionId, exact Turkish positionLabel, positionStartTime and positionEndTime.
 - Keep positionId as the canonical semantic position family. Give each uninterrupted occurrence of that family a stable positionOccurrenceId; if the same position returns later after another position, transition, cut, or real time gap, it must have a different positionOccurrenceId.
+- GROUP/SWINGER SCENES: When three or more clearly adult participants are visibly present in the same consensual encounter, set groupScene true and adultParticipantCount to the directly verified count. Otherwise keep groupScene false; never infer off-screen participants.
+- Give every visible adult a stable neutral participantTrackId such as MAIN_MALE, PARTNER_A, PARTNER_B. Reuse the same ID from face, hair, body, clothing and scene continuity; never use a real-world identity or infer a relationship.
+- participantTrackIds must list only adults directly involved in that exact action interval. partnerTrackId is the one adult directly paired with MAIN_MALE in that interval; partnerLabel must be a neutral Turkish UI label such as Partner A or Partner B.
+- If one exact position interval visibly involves MAIN_MALE with multiple partners simultaneously, use partnerTrackId MULTI_PARTNER, list every involved adult in participantTrackIds and use the neutral partnerLabel Birden fazla partner. Do this only from direct interval evidence.
+- When the same canonical position occurs with a different partnerTrackId, end the previous position occurrence and create a new positionOccurrenceId. They are separate playable positions and must never be merged merely because positionId is the same.
+- Set partnerSwitch true only when the frames visibly show MAIN_MALE ending interaction with previousPartnerTrackId and beginning interaction with partnerTrackId. Emit the visible transition as actionType partner_transition with a direct Turkish label such as Partner B'ye geç only when the transition itself has a valid playable interval.
+- If the edit cuts directly to a different partner without showing the transition, do not invent a partner_transition clip. Start the new partner-specific position at its first verified frame instead.
 - Set activityType to oral, manual, vaginal, anal, or other only from direct visible evidence; never guess when evidence is unclear.
 - CRITICAL: positionId never determines penetration route. Missionary, cowgirl, rear, standing-rear, standing, spoon and any other body position can be vaginal or anal. Never default a penetrative position to vaginal.
 - Classify vaginal only when the source frames directly verify vaginal penetration; classify anal only when the source frames directly verify anal penetration. Body angle, position name, dialogue, prior activity, or statistical likelihood are not sufficient by themselves.
@@ -892,6 +909,16 @@ Rules:
           postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
           positionId: String(action.positionId || ''),
           positionOccurrenceId: String(action.positionOccurrenceId || ''),
+          groupScene: action.groupScene === true,
+          adultParticipantCount: Math.max(0, Math.floor(Number(action.adultParticipantCount) || 0)),
+          participantTrackIds: Array.isArray(action.participantTrackIds)
+            ? action.participantTrackIds.map(value => String(value || '').trim()).filter(Boolean).slice(0, 12)
+            : [],
+          partnerTrackId: String(action.partnerTrackId || '').trim(),
+          partnerLabel: String(action.partnerLabel || '').trim(),
+          partnerEvidence: String(action.partnerEvidence || '').trim(),
+          partnerSwitch: action.partnerSwitch === true,
+          previousPartnerTrackId: String(action.previousPartnerTrackId || '').trim(),
           activityType: ['oral', 'manual', 'vaginal', 'anal'].includes(
             String(action.activityType || '').toLowerCase()
           )
