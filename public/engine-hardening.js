@@ -254,6 +254,11 @@ export function secondPassReviewCandidates(result = {}) {
   // Final/outcome mistakes are expensive in gameplay, so they always receive
   // one visual verification pass. Ordinary foreplay and generic actions do not.
   actions.forEach(action => {
+    if (action?.groupScene === true || action?.partnerSwitch === true ||
+      String(action?.actionType || '').toLowerCase() === 'partner_transition') {
+      selected.add(action);
+      return;
+    }
     if (isOutcomeCritical(action)) {
       selected.add(action);
       return;
