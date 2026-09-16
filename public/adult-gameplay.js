@@ -530,7 +530,14 @@ export function consolidateVerifiedPositions(positions = []) {
   const groups = new Map();
   for (const position of Array.isArray(positions) ? positions : []) {
     if (!position?.familyId) continue;
-    const key = String(position.familyId);
+    const partnerKey = String(position.partnerTrackId || '').trim() || 'partner-unknown';
+    const positionId = partnerKey === 'partner-unknown'
+      ? `position:${position.familyId}`
+      : `position:${position.familyId}:${partnerKey}`;
+    const occurrenceId = partnerKey === 'partner-unknown'
+      ? String(position.familyId)
+      : `${position.familyId}:${partnerKey}`;
+    const key = `${String(position.familyId)}::${partnerKey}`;
     const sourceId = String(position.id || key);
     const movements = (Array.isArray(position.movements) ? position.movements : [])
       .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
@@ -538,8 +545,9 @@ export function consolidateVerifiedPositions(positions = []) {
     if (!existing) {
       groups.set(key, {
         ...position,
-        id: `position:${key}`,
-        occurrenceId: key,
+        id: positionId,
+        occurrenceId,
+        partnerTrackId: partnerKey === 'partner-unknown' ? '' : partnerKey,
         startTime: Number(position.startTime),
         endTime: Number(position.endTime),
         sourcePositionIds: [sourceId],
@@ -592,8 +600,12 @@ export function consolidateVerifiedPositions(positions = []) {
     // the same tab instead of becoming duplicate tabs.
     consolidated.push({
       ...position,
-      id: `position:${position.familyId}`,
-      occurrenceId: `${position.familyId}:all-occurrences`,
+      id: position.partnerTrackId
+        ? `position:${position.familyId}:${position.partnerTrackId}`
+        : `position:${position.familyId}`,
+      occurrenceId: position.partnerTrackId
+        ? `${position.familyId}:${position.partnerTrackId}:all-occurrences`
+        : `${position.familyId}:all-occurrences`,
       startTime: Math.min(...ranges.map(range => range.startTime)),
       endTime: Math.max(...ranges.map(range => range.endTime)),
       sourcePositionIds: ranges.map(range => String(range.id)),
@@ -775,7 +787,10 @@ export function summarizeAdultSceneGraph(scenes = []) {
           endTime: Number(variant?.loopEndTime ?? variant?.endTime),
           sourcePositionId: String(variant?.sourcePositionId || '')
         }))
-      }))
+      })),
+      groupScene: position?.groupScene === true,
+      partnerTrackId: String(position?.partnerTrackId || ''),
+      partnerLabel: String(position?.partnerLabel || '')
     }));
     const familyGroups = new Map();
     positions.forEach(position => {
