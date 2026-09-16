@@ -96,6 +96,13 @@ const state = {
   activeMovementChoiceId: null,
   maleSceneProgress: 0,
   femaleSceneProgress: 0,
+  adultMaleOrgasmProgress: 0,
+  adultFemaleOrgasmProgress: 0,
+  adultMaleOrgasmCount: 0,
+  adultFemaleOrgasmCount: 0,
+  adultOrgasmDecision: null,
+  adultSexUnlocked: false,
+  adultUnlockedPositionIds: new Set(),
   lastAdultMediaTime: null,
   adultScenes: [],
   adultAnalysisTrace: null,
@@ -206,6 +213,11 @@ const els = {
   femaleProgressBar: $('femaleProgressBar'),
   climaxProgressText: $('climaxProgressText'),
   climaxProgressBar: $('climaxProgressBar'),
+  orgasmDecision: $('orgasmDecision'),
+  orgasmDecisionTitle: $('orgasmDecisionTitle'),
+  orgasmDecisionMeta: $('orgasmDecisionMeta'),
+  orgasmContinueBtn: $('orgasmContinueBtn'),
+  orgasmFinishBtn: $('orgasmFinishBtn'),
   adultFlowStatus: $('adultFlowStatus'),
   nextVariantBtn: $('nextVariantBtn'),
   rhythmControl: $('rhythmControl'),
@@ -1894,6 +1906,13 @@ function initializeInteractive(analysis) {
   cancelAdultSeek();
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
+  state.adultMaleOrgasmProgress = 0;
+  state.adultFemaleOrgasmProgress = 0;
+  state.adultMaleOrgasmCount = 0;
+  state.adultFemaleOrgasmCount = 0;
+  state.adultOrgasmDecision = null;
+  state.adultSexUnlocked = false;
+  state.adultUnlockedPositionIds = new Set();
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
   state.adultPreludePlayCounts = new Map();
@@ -2527,10 +2546,91 @@ function adultTimeLabel(seconds) {
 }
 
 function currentAdultFlow() {
-  return averageAdultProgress(
-    state.maleSceneProgress,
-    state.femaleSceneProgress
+  return Math.min(100, Math.max(0, Number(state.femaleSceneProgress) || 0));
+}
+
+const ADULT_LUST_UNLOCK_THRESHOLD = 100;
+
+function orderedLockedAdultPositions(scene = state.adultScene) {
+  return (scene?.positions || [])
+    .filter(position => !isWarmupPosition(position))
+    .filter(position => !state.adultUnlockedPositionIds.has(position.id))
+    .sort((a, b) =>
+      Number(isBonusPosition(a)) - Number(isBonusPosition(b)) ||
+      Number(a.startTime) - Number(b.startTime)
+    );
+}
+
+function unlockNextAdultPositionFromLust() {
+  const next = orderedLockedAdultPositions()[0];
+  if (!next) return null;
+  state.adultUnlockedPositionIds.add(next.id);
+  state.adultRevealedPositionIds.add(next.id);
+  state.adultSexUnlocked = true;
+  state.femaleSceneProgress = 0;
+  state.adultUiSignature = '';
+  logEngineEvent('LUST_POSITION_UNLOCKED', {
+    positionId: next.id,
+    bonus: isBonusPosition(next)
+  });
+  return next;
+}
+
+function addFemaleLust(amount) {
+  if (state.adultOrgasmDecision) return null;
+  state.femaleSceneProgress = Math.min(
+    ADULT_LUST_UNLOCK_THRESHOLD,
+    Math.max(0, Number(state.femaleSceneProgress) || 0) + Math.max(0, Number(amount) || 0)
   );
+  if (state.femaleSceneProgress + 0.001 < ADULT_LUST_UNLOCK_THRESHOLD) return null;
+  return unlockNextAdultPositionFromLust();
+}
+
+function triggerAdultOrgasmDecision() {
+  if (state.adultOrgasmDecision || state.adultOutcomePhase !== 'idle') return false;
+  const femaleReady = state.adultFemaleOrgasmProgress >= 100;
+  const maleReady = state.adultMaleOrgasmProgress >= 100;
+  if (!femaleReady && !maleReady) return false;
+  const actor = femaleReady && maleReady ? 'both' : femaleReady ? 'female' : 'male';
+  state.adultOrgasmDecision = { actor, mediaTime: Number(els.video?.currentTime || 0) };
+  state.adultOutcomePhase = 'orgasm-decision';
+  els.video?.pause();
+  els.orgasmDecision?.classList.remove('hidden');
+  if (els.orgasmDecisionTitle) {
+    els.orgasmDecisionTitle.textContent = actor === 'both'
+      ? 'Kadın ve erkek orgazm oldu'
+      : actor === 'female' ? 'Kadın orgazm oldu' : 'Erkek orgazm oldu';
+  }
+  if (els.orgasmDecisionMeta) {
+    els.orgasmDecisionMeta.textContent =
+      'Devam et: dolan orgazm barını sıfırla ve aynı gerçek video akışını sürdür. Bitir: sahneyi kapat.';
+  }
+  logEngineEvent('ORGASM_DECISION_OPENED', { actor });
+  renderAdultProgress();
+  return true;
+}
+
+function continueAfterAdultOrgasm() {
+  const actor = state.adultOrgasmDecision?.actor;
+  if (!actor) return;
+  if (actor === 'female' || actor === 'both') {
+    state.adultFemaleOrgasmProgress = 0;
+    state.adultFemaleOrgasmCount += 1;
+  }
+  if (actor === 'male' || actor === 'both') {
+    state.adultMaleOrgasmProgress = 0;
+    state.adultMaleOrgasmCount += 1;
+  }
+  state.adultOrgasmDecision = null;
+  state.adultOutcomePhase = 'idle';
+  els.orgasmDecision?.classList.add('hidden');
+  logEngineEvent('ORGASM_CONTINUED', {
+    actor,
+    femaleCount: state.adultFemaleOrgasmCount,
+    maleCount: state.adultMaleOrgasmCount
+  });
+  renderAdultProgress();
+  els.video?.play().catch(() => {});
 }
 
 function adultWarmupStats(scene = state.adultScene) {
@@ -2554,26 +2654,9 @@ function adultWarmupStats(scene = state.adultScene) {
 function unlockedAdultPositions(scene = state.adultScene) {
   const flow = currentAdultFlow();
   const positions = scene?.positions || [];
-  const { warmupTotal, warmupUniquePlayed } = adultWarmupStats(scene);
-  const corePositions = positions.filter(position => !isWarmupPosition(position) && !isBonusPosition(position));
-  const coreVisitedCount = corePositions.filter(position => state.adultVisitedPositionIds.has(position.id)).length;
-  const coreAllowed = canUnlockCorePositions({
-    flow,
-    warmupTotal,
-    warmupUniquePlayed
-  });
-  const bonusAllowed = canUnlockBonusPositions({
-    flow,
-    coreVisitedCount,
-    corePositionCount: corePositions.length,
-    bootstrap: warmupTotal === 0 && corePositions.length === 0
-  });
-
   return positions.filter(position => {
-    if (flow + 0.001 < Number(position.unlockProgress || 0)) return false;
     if (isWarmupPosition(position)) return true;
-    if (isBonusPosition(position)) return coreAllowed && bonusAllowed;
-    return coreAllowed;
+    return state.adultUnlockedPositionIds.has(position.id);
   });
 }
 
@@ -2599,52 +2682,32 @@ function unlockedAdultOutcomes(scene = state.adultScene) {
 }
 
 function nextAdultDiscovery(scene = state.adultScene) {
-  const flow = currentAdultFlow();
-  const positionTarget = (scene?.positions || [])
-    .filter(position =>
-      !isWarmupPosition(position) &&
-      Number(position.unlockProgress || 0) > flow + 0.001
-    )
-    .sort((a, b) => Number(a.unlockProgress) - Number(b.unlockProgress))[0];
-
-  const outcomeTarget = (scene?.outcomes || [])
-    .filter(outcome => Number(outcome.unlockProgress || 82) > state.adultClimaxProgress + 0.001)
-    .sort((a, b) => Number(a.unlockProgress) - Number(b.unlockProgress))[0];
-
-  const candidates = [];
-  if (positionTarget) {
-    candidates.push({
-      type: 'position',
-      progress: Number(positionTarget.unlockProgress || 0)
-    });
-  }
-  if (outcomeTarget) {
-    candidates.push({
-      type: 'outcome',
-      progress: Number(outcomeTarget.unlockProgress || 82)
-    });
-  }
-  return candidates.sort((a, b) => a.progress - b.progress)[0] || null;
+  const positionTarget = orderedLockedAdultPositions(scene)[0];
+  return positionTarget
+    ? { type: isBonusPosition(positionTarget) ? 'reward' : 'position', progress: 100 }
+    : null;
 }
 
 function renderAdultFlowStatus() {
   if (!els.adultFlowStatus) return;
   const flow = currentAdultFlow();
   els.adultFlowStatus.textContent =
-    `Lust %${Math.round(flow)} · Final %${Math.round(state.adultClimaxProgress)} · combo ${state.adultComboCount}`;
+    `Kadın Lust %${Math.round(flow)} · Açılan ${state.adultUnlockedPositionIds.size} · combo ${state.adultComboCount}`;
 }
 
 function renderAdultProgress() {
-  const male = Math.min(100, Math.max(0, state.maleSceneProgress || 0));
-  const female = Math.min(100, Math.max(0, state.femaleSceneProgress || 0));
-  state.maleSceneProgress = male;
-  state.femaleSceneProgress = female;
-  if (els.maleProgressText) els.maleProgressText.textContent = `${Math.round(male)}%`;
-  if (els.femaleProgressText) els.femaleProgressText.textContent = `${Math.round(female)}%`;
-  if (els.maleProgressBar) els.maleProgressBar.style.width = `${male}%`;
-  if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${female}%`;
-  if (els.climaxProgressText) els.climaxProgressText.textContent = `${Math.round(state.adultClimaxProgress)}%`;
-  if (els.climaxProgressBar) els.climaxProgressBar.style.width = `${state.adultClimaxProgress}%`;
+  const lust = Math.min(100, Math.max(0, state.femaleSceneProgress || 0));
+  const maleOrgasm = Math.min(100, Math.max(0, state.adultMaleOrgasmProgress || 0));
+  const femaleOrgasm = Math.min(100, Math.max(0, state.adultFemaleOrgasmProgress || 0));
+  state.femaleSceneProgress = lust;
+  state.adultMaleOrgasmProgress = maleOrgasm;
+  state.adultFemaleOrgasmProgress = femaleOrgasm;
+  if (els.maleProgressText) els.maleProgressText.textContent = `${Math.round(maleOrgasm)}%`;
+  if (els.femaleProgressText) els.femaleProgressText.textContent = `${Math.round(lust)}%`;
+  if (els.maleProgressBar) els.maleProgressBar.style.width = `${maleOrgasm}%`;
+  if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${lust}%`;
+  if (els.climaxProgressText) els.climaxProgressText.textContent = `${Math.round(femaleOrgasm)}%`;
+  if (els.climaxProgressBar) els.climaxProgressBar.style.width = `${femaleOrgasm}%`;
   renderAdultFlowStatus();
   persistRuntimeSnapshot('adult-progress');
   renderAdultProgressiveUI(false);
@@ -2653,6 +2716,13 @@ function renderAdultProgress() {
 function resetAdultSceneGameplay() {
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
+  state.adultMaleOrgasmProgress = 0;
+  state.adultFemaleOrgasmProgress = 0;
+  state.adultMaleOrgasmCount = 0;
+  state.adultFemaleOrgasmCount = 0;
+  state.adultOrgasmDecision = null;
+  state.adultSexUnlocked = false;
+  state.adultUnlockedPositionIds = new Set();
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
   state.adultPreludePlayCounts = new Map();
@@ -2667,6 +2737,7 @@ function resetAdultSceneGameplay() {
   state.adultUiSignature = '';
   state.adultLastUiPhase = 'foreplay';
   state.adultPhaseMachine = 'foreplay';
+  els.orgasmDecision?.classList.add('hidden');
   resetAdultTapRhythm();
 }
 
@@ -2764,7 +2835,7 @@ function renderAdultProgressiveUI(force = false) {
     flow,
     hasCoreUnlocked: unlockedCore.some(position => !isBonusPosition(position)),
     hasBonusUnlocked: unlockedBonus.length > 0,
-    hasOutcomeUnlocked: outcomes.length > 0
+    hasOutcomeUnlocked: false
   });
   const monotonicPhase = monotonicAdultPhase(proposedPhase, state.adultLastUiPhase);
   const phase = setAdultMachinePhase(monotonicPhase);
@@ -2773,6 +2844,8 @@ function renderAdultProgressiveUI(force = false) {
     phase,
     Math.floor(flow),
     Math.floor(state.adultClimaxProgress),
+    Math.floor(state.adultMaleOrgasmProgress),
+    Math.floor(state.adultFemaleOrgasmProgress),
     Math.floor(state.adultCorePlaySeconds),
     unlockedCore.map(item => item.id).join(','),
     outcomes.map(item => item.id).join(','),
@@ -2819,23 +2892,17 @@ function renderAdultProgressiveUI(force = false) {
       if (els.discoveryGateText) {
         els.discoveryGateText.textContent = warmupRemaining > 0
           ? 'Yakınlaşmayı biraz daha keşfet'
-          : next?.type === 'outcome'
-            ? 'Sahnenin son aşaması hâlâ gizli'
-            : 'Yeni bir seçenek yaklaşıyor';
+          : next?.type === 'reward'
+            ? 'Ödül pozisyonu yaklaşıyor'
+            : 'Yeni seks pozisyonu yaklaşıyor';
       }
       if (els.discoveryGateMeta) {
         if (warmupRemaining > 0) {
           els.discoveryGateMeta.textContent = `${warmupRemaining} yeni yakınlaşma seçimi daha keşfet`;
         } else if (next) {
-          if (next.type === 'outcome') {
-            const remaining = Math.max(0, Math.ceil(next.progress - state.adultClimaxProgress));
-            els.discoveryGateMeta.textContent =
-              `Final hazırlığı %${Math.round(state.adultClimaxProgress)} · ${remaining} puan kaldı`;
-          } else {
-            const remaining = Math.max(0, Math.ceil(next.progress - flow));
-            els.discoveryGateMeta.textContent =
-              `%${Math.round(next.progress)} Lust seviyesinde açılır · ${remaining} puan kaldı`;
-          }
+          const remaining = Math.max(0, Math.ceil(100 - flow));
+          els.discoveryGateMeta.textContent =
+            `Kadın Lust %100 olduğunda açılır · ${remaining} puan kaldı`;
         }
       }
     }
@@ -2852,7 +2919,7 @@ function renderAdultProgressiveUI(force = false) {
     els.foreplaySection?.classList.add('hidden');
   }
 
-  const showFinalOutcomes = phase === 'final' && outcomes.length > 0;
+  const showFinalOutcomes = false;
   if (showFinalOutcomes) {
     renderAdultOutcomes(scene);
   } else {
@@ -2928,6 +2995,11 @@ function renderAdultPanel(scene) {
 
   state.adultScene = scene;
   state.adultMode = true;
+  const hasWarmup = (scene.foreplay || []).length > 0 ||
+    (scene.positions || []).some(isWarmupPosition);
+  if (!hasWarmup && !state.adultUnlockedPositionIds.size) {
+    unlockNextAdultPositionFromLust();
+  }
   els.adultInteractionPanel.classList.remove('hidden');
   els.adultPanelToggleBtn?.classList.remove('hidden');
   document.querySelector('.choice-navigation')?.classList.add('hidden');
@@ -3071,8 +3143,7 @@ function applyAdultPreludeProgress(item) {
   });
 
   state.adultPreludePlayCounts.set(item.id, repeatCount + 1);
-  state.maleSceneProgress = Math.min(100, state.maleSceneProgress + delta.male);
-  state.femaleSceneProgress = Math.min(100, state.femaleSceneProgress + delta.female);
+  addFemaleLust(delta.female);
   renderAdultProgress();
 }
 
@@ -3123,12 +3194,13 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   if (movement) {
     state.adultMovementPlayCounts.set(movement.id, repeatCount + 1);
   }
-  state.maleSceneProgress = Math.min(100, state.maleSceneProgress + delta.male);
-  state.femaleSceneProgress = Math.min(100, state.femaleSceneProgress + delta.female);
+  addFemaleLust(delta.female);
   if (!isWarmupPosition(position)) {
     // A selection unlocks discovery, but cannot rush the final meter.
     const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
     state.adultClimaxProgress = Math.min(100, state.adultClimaxProgress + climaxDelta);
+    state.adultMaleOrgasmProgress = Math.min(100, state.adultMaleOrgasmProgress + delta.male * 0.45);
+    state.adultFemaleOrgasmProgress = Math.min(100, state.adultFemaleOrgasmProgress + delta.female * 0.45);
   }
   renderAdultProgress();
 }
@@ -3399,9 +3471,12 @@ function playAdultOutcome(outcomeId) {
   els.video.play().catch(() => {});
 }
 
-function finishAdultScene() {
+function finishAdultScene(options = {}) {
   const scene = state.adultScene;
   if (!scene) return;
+  const force = options?.force === true;
+  state.adultOrgasmDecision = null;
+  els.orgasmDecision?.classList.add('hidden');
 
   // "Skip scene" doubles as a safe next-step control. Never terminate the
   // encounter while another verified, currently unlocked position has not
@@ -3412,7 +3487,7 @@ function finishAdultScene() {
       !state.adultVisitedPositionIds.has(position.id)
     )
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
-  if (remainingPosition) {
+  if (remainingPosition && !force) {
     selectAdultPosition(remainingPosition.id, true);
     return;
   }
@@ -3622,14 +3697,7 @@ function updateAdultPlayback(now, mediaTime) {
       seekAdultLoop(item.startTime, state.adultSelectionToken);
       return;
     }
-    state.maleSceneProgress = Math.min(
-      100,
-      state.maleSceneProgress + elapsed * 0.35 * Number(item.maleProgressRate || 1)
-    );
-    state.femaleSceneProgress = Math.min(
-      100,
-      state.femaleSceneProgress + elapsed * 0.35 * Number(item.femaleProgressRate || 1)
-    );
+    addFemaleLust(elapsed * 0.35 * Number(item.femaleProgressRate || 1));
     renderAdultProgress();
     return;
   }
@@ -3667,14 +3735,7 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
-  state.maleSceneProgress = Math.min(
-    100,
-    state.maleSceneProgress + elapsed * Number(movement.maleProgressRate || 1)
-  );
-  state.femaleSceneProgress = Math.min(
-    100,
-    state.femaleSceneProgress + elapsed * Number(movement.femaleProgressRate || 1)
-  );
+  addFemaleLust(elapsed * 0.55 * Number(movement.femaleProgressRate || 1));
   if (!isWarmupPosition(position)) {
     const movementRate = averageAdultProgress(
       Number(movement.maleProgressRate || 1),
@@ -3688,8 +3749,16 @@ function updateAdultPlayback(now, mediaTime) {
     state.adultClimaxProgress = Math.min(100,
       state.adultClimaxProgress + elapsed * ratePerSecond * movementRate
     );
+    const orgasmCycleSeconds = 55;
+    state.adultMaleOrgasmProgress = Math.min(100,
+      state.adultMaleOrgasmProgress + elapsed * (100 / orgasmCycleSeconds) * Number(movement.maleProgressRate || 1)
+    );
+    state.adultFemaleOrgasmProgress = Math.min(100,
+      state.adultFemaleOrgasmProgress + elapsed * (100 / orgasmCycleSeconds) * Number(movement.femaleProgressRate || 1)
+    );
   }
   renderAdultProgress();
+  if (triggerAdultOrgasmDecision()) return;
 
   // Never auto-complete a scene merely because a meter reached 100. The
   // verified outcome/aftermath or the explicit scene-finish control owns exit.
@@ -3705,6 +3774,9 @@ function adultFrameLoop(now, metadata) {
 if (els.finishAdultSceneBtn) {
   els.finishAdultSceneBtn.addEventListener('click', finishAdultScene);
 }
+
+els.orgasmContinueBtn?.addEventListener('click', continueAfterAdultOrgasm);
+els.orgasmFinishBtn?.addEventListener('click', () => finishAdultScene({ force: true }));
 
 if (els.nextVariantBtn) {
   els.nextVariantBtn.addEventListener('click', playNextAdultVariant);
