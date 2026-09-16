@@ -40,6 +40,7 @@ import {
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
+  dialogueSegmentsAt,
   dialogueSegmentsForTarget,
   dialogueSegmentsForTargets,
   decisionBoundaryAfterDialogue,
@@ -945,8 +946,7 @@ function renderSubtitle() {
   els.subtitleOverlay.classList.remove('hidden');
 }
 
-const dubAudio = new Audio();
-dubAudio.preload = 'auto';
+const dubChannels = new Map();
 
 function getDubSegmentAt(videoTime) {
   return dialogueSegmentAt(state.dialogue?.segments || [], videoTime);
@@ -1009,14 +1009,13 @@ async function ensureDubSegment(segment) {
 }
 
 function stopDubPlayback() {
-  dubAudio.pause();
+  dubChannels.forEach(audio => audio.pause());
+  dubChannels.clear();
   state.activeDubSegmentId = null;
 }
 
 function resetDubState() {
-  dubAudio.pause();
-  dubAudio.removeAttribute('src');
-  dubAudio.load();
+  stopDubPlayback();
   state.dubCache.clear();
   state.dubRequests.clear();
   state.dubSyncGeneration += 1;
@@ -1027,8 +1026,32 @@ function resetDubState() {
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  nextDialogueSegments(state.dialogue?.segments || [], videoTime, 1)
+  nextDialogueSegments(state.dialogue?.segments || [], videoTime, 6)
     .forEach(segment => void ensureDubSegment(segment));
+}
+
+async function prepareCompleteDubTimeline(segments = [], concurrency = 3) {
+  const queue = (Array.isArray(segments) ? segments : [])
+    .filter(segment => String(segment?.turkishText || '').trim());
+  let cursor = 0;
+  const worker = async () => {
+    while (state.dubbingEnabled) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= queue.length) return;
+      await ensureDubSegment(queue[index]);
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, concurrency), Math.max(1, queue.length)) },
+    () => worker()
+  ));
+  const missing = queue.filter(segment => !state.dubCache.has(getDubSegmentId(segment)));
+  for (const segment of missing) {
+    if (!state.dubbingEnabled) break;
+    await ensureDubSegment(segment);
+  }
+  return queue.filter(segment => state.dubCache.has(getDubSegmentId(segment))).length;
 }
 
 function primeLanguageTracksAt(videoTime, count = 2) {
@@ -1060,22 +1083,22 @@ function resyncLanguageTracks() {
   renderSubtitle();
   if (!state.dubbingEnabled) return;
   state.dubSyncGeneration += 1;
-  dubAudio.pause();
+  stopDubPlayback();
   state.activeDubSegmentId = null;
   const time = Math.max(0, Number(els.video?.currentTime) || 0);
   primeLanguageTracksAt(time, 2);
   void syncDubPlayback();
 }
 
-function alignDubAudioToSegment(segment, videoTime) {
-  const audioDuration = Number(dubAudio.duration);
+function alignDubAudioToSegment(audio, segment, videoTime) {
+  const audioDuration = Number(audio?.duration);
   if (!Number.isFinite(audioDuration) || audioDuration <= 0) return;
 
   const segmentStart = Number(segment.startTime) || 0;
   const segmentEnd = Math.max(segmentStart + 0.05, Number(segment.endTime) || segmentStart + 0.05);
   const correction = dubMasterClockCorrection({
     videoTime,
-    audioTime: Number(dubAudio.currentTime) || 0,
+    audioTime: Number(audio.currentTime) || 0,
     segmentStart,
     segmentEnd,
     audioDuration,
@@ -1083,13 +1106,13 @@ function alignDubAudioToSegment(segment, videoTime) {
   });
 
   if (correction.mode === 'seek') {
-    dubAudio.currentTime = correction.targetTime;
+    audio.currentTime = correction.targetTime;
     logEngineEvent('DUB_HARD_RESYNC', {
       drift: Number(correction.drift.toFixed(3)),
       videoTime: Number(videoTime.toFixed(3))
     });
   }
-  dubAudio.playbackRate = correction.playbackRate;
+  audio.playbackRate = correction.playbackRate;
 }
 
 async function syncDubPlayback() {
@@ -1097,55 +1120,49 @@ async function syncDubPlayback() {
 
   const generation = state.dubSyncGeneration;
   const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
-  const segment = getDubSegmentAt(videoTime);
+  const segments = dialogueSegmentsAt(state.dialogue?.segments || [], videoTime);
 
-  if (!segment) {
+  if (!segments.length) {
     stopDubPlayback();
     prefetchDubSegmentsAround(videoTime);
     return;
   }
+  const activeIds = new Set(segments.map(getDubSegmentId));
+  dubChannels.forEach((audio, id) => {
+    if (activeIds.has(id)) return;
+    audio.pause();
+    dubChannels.delete(id);
+  });
 
-  const segmentId = getDubSegmentId(segment);
+  const sources = await Promise.all(segments.map(segment => ensureDubSegment(segment)));
+  if (!state.dubbingEnabled || generation !== state.dubSyncGeneration) return;
 
-  if (state.activeDubSegmentId === segmentId && dubAudio.src) {
-    alignDubAudioToSegment(segment, videoTime);
-    if (!els.video.paused && dubAudio.paused) {
-      dubAudio.play().catch(() => {});
+  segments.forEach((segment, index) => {
+    const source = sources[index];
+    const segmentId = getDubSegmentId(segment);
+    if (!source || !segmentId) return;
+    let audio = dubChannels.get(segmentId);
+    if (!audio) {
+      audio = new Audio();
+      audio.preload = 'auto';
+      audio.src = source;
+      audio.load();
+      dubChannels.set(segmentId, audio);
     }
-    prefetchDubSegmentsAround(videoTime);
-    return;
-  }
-
-  stopDubPlayback();
-  const source = await ensureDubSegment(segment);
-  if (!source || !state.dubbingEnabled || generation !== state.dubSyncGeneration) return;
-
-  const currentTime = Math.max(0, Number(els.video.currentTime) || 0);
-  const currentSegment = getDubSegmentAt(currentTime);
-  if (!currentSegment || getDubSegmentId(currentSegment) !== segmentId) return;
-
-  state.activeDubSegmentId = segmentId;
-  dubAudio.src = source;
-  dubAudio.load();
-
-  const start = () => {
-    if (
-      !state.dubbingEnabled ||
-      state.activeDubSegmentId !== segmentId ||
-      generation !== state.dubSyncGeneration
-    ) return;
-
-    const now = Math.max(0, Number(els.video.currentTime) || 0);
-    const stillCurrent = getDubSegmentAt(now);
-    if (!stillCurrent || getDubSegmentId(stillCurrent) !== segmentId) return;
-
-    alignDubAudioToSegment(stillCurrent, now);
-    if (!els.video.paused) dubAudio.play().catch(() => {});
-    prefetchDubSegmentsAround(now);
-  };
-
-  if (dubAudio.readyState >= 1) start();
-  else dubAudio.addEventListener('loadedmetadata', start, { once: true });
+    audio.volume = Math.min(1, 0.92 / Math.sqrt(Math.max(1, segments.length)));
+    const start = () => {
+      if (!state.dubbingEnabled || generation !== state.dubSyncGeneration || !dubChannels.has(segmentId)) return;
+      const now = Math.max(0, Number(els.video.currentTime) || 0);
+      if (!dialogueSegmentsAt(state.dialogue?.segments || [], now)
+        .some(item => getDubSegmentId(item) === segmentId)) return;
+      alignDubAudioToSegment(audio, segment, now);
+      if (!els.video.paused && audio.paused) audio.play().catch(() => {});
+    };
+    if (audio.readyState >= 1) start();
+    else audio.addEventListener('loadedmetadata', start, { once: true });
+  });
+  state.activeDubSegmentId = [...activeIds].join(',');
+  prefetchDubSegmentsAround(videoTime);
 }
 
 els.video.addEventListener('timeupdate', () => void syncDubPlayback());
@@ -1153,12 +1170,11 @@ setInterval(() => {
   if (state.dubbingEnabled && !els.video.paused && !els.video.seeking) {
     void syncDubPlayback();
   }
-}, 300);
-els.video.addEventListener('pause', () => dubAudio.pause());
+}, 100);
+els.video.addEventListener('pause', () => dubChannels.forEach(audio => audio.pause()));
 els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
-  dubAudio.pause();
-  state.activeDubSegmentId = null;
+  stopDubPlayback();
 });
 els.video.addEventListener('seeked', () => {
   if (!state.dubbingEnabled) return;
@@ -1239,7 +1255,15 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
         els.video.muted = !modes.keepOriginalAudio;
-        // İlk gerçek konuşma segmentlerini arka planda hazırla.
+        // Prepare the complete verified dialogue timeline before gameplay.
+        // Just-in-time TTS creates silent openings and cuts overlapping
+        // speakers in dialogue-heavy/group scenes.
+        els.analysisTitle.textContent = 'Türkçe dublaj zaman çizelgesi hazırlanıyor';
+        els.analysisOutput.textContent = `${dialogue.segments.length} konuşma bölümü kesintisiz oynatma için hazırlanıyor…`;
+        const preparedDubCount = await prepareCompleteDubTimeline(dialogue.segments, 3);
+        if (preparedDubCount < dialogue.segments.length && state.dubbingEnabled) {
+          throw new Error(`Dublaj eksik hazırlandı: ${preparedDubCount}/${dialogue.segments.length}`);
+        }
         prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
       }
 
