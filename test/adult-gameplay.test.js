@@ -39,7 +39,8 @@ import {
   shouldAdvanceMaleOrgasm,
   summarizeAdultSceneGraph,
   nearestAvailableTempo,
-  tapRhythm
+  tapRhythm,
+  verifiedPartnerTransition
 } from '../public/adult-gameplay.js';
 
 test('averageAdultProgress clamps both values and averages them', () => {
@@ -194,6 +195,34 @@ test('later partner transitions never appear in the initial Lust warm-up choices
   ]);
 
   assert.deepEqual(result.map(item => item.id), ['kiss']);
+});
+
+test('partner transitions use general identity and chronology rules instead of video-specific names or times', () => {
+  const verified = verifiedPartnerTransition({
+    actionId: 'switch-any-video',
+    actionType: 'partner_transition',
+    sourceVerified: true,
+    groupScene: true,
+    partnerSwitch: true,
+    previousPartnerTrackId: 'PARTNER_X',
+    partnerTrackId: 'PARTNER_Y',
+    startTime: 913.25,
+    endTime: 921.75,
+    label: "Partner Y'ye geç"
+  });
+  assert.equal(verified.previousPartnerTrackId, 'PARTNER_X');
+  assert.equal(verified.partnerTrackId, 'PARTNER_Y');
+  assert.equal(verified.startTime, 913.25);
+
+  assert.equal(verifiedPartnerTransition({
+    actionType: 'partner_transition', sourceVerified: true, groupScene: true,
+    partnerSwitch: true, previousPartnerTrackId: 'PARTNER_A', partnerTrackId: 'PARTNER_A',
+    startTime: 10, endTime: 20
+  }), null);
+  assert.equal(verifiedPartnerTransition({
+    actionType: 'partner_transition', sourceVerified: true, groupScene: true,
+    partnerSwitch: true, partnerTrackId: 'PARTNER_B', startTime: 10, endTime: 20
+  }), null);
 });
 
 test('discovery phase moves from warmup to positions, rewards, then final', () => {
