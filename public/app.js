@@ -35,6 +35,8 @@ import {
 } from './adult-gameplay.js';
 import {
   dialogueSegmentAt,
+  dialogueSegmentsForTarget,
+  dialogueSegmentsForTargets,
   decisionBoundaryAfterDialogue,
   dubMasterClockCorrection,
   dubSegmentKey,
@@ -1021,6 +1023,42 @@ function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
   nextDialogueSegments(state.dialogue?.segments || [], videoTime, 1)
     .forEach(segment => void ensureDubSegment(segment));
+}
+
+function primeLanguageTracksAt(videoTime, count = 2) {
+  if (!state.dubbingEnabled) return;
+  dialogueSegmentsForTarget(state.dialogue?.segments || [], videoTime, count)
+    .forEach(segment => void ensureDubSegment(segment));
+}
+
+function primeAdultPositionLanguage(position) {
+  if (!state.dubbingEnabled || !position) return;
+  const targetTimes = [
+    position.startTime,
+    ...(position.movements || []).map(item => item.loopStartTime)
+  ];
+  const segments = dialogueSegmentsForTargets(
+    state.dialogue?.segments || [],
+    targetTimes,
+    12
+  );
+  void (async () => {
+    for (const segment of segments) {
+      if (!state.dubbingEnabled) break;
+      await ensureDubSegment(segment);
+    }
+  })();
+}
+
+function resyncLanguageTracks() {
+  renderSubtitle();
+  if (!state.dubbingEnabled) return;
+  state.dubSyncGeneration += 1;
+  dubAudio.pause();
+  state.activeDubSegmentId = null;
+  const time = Math.max(0, Number(els.video?.currentTime) || 0);
+  primeLanguageTracksAt(time, 2);
+  void syncDubPlayback();
 }
 
 function alignDubAudioToSegment(segment, videoTime) {
@@ -3315,6 +3353,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
+  primeAdultPositionLanguage(position);
   const positionUnlocked = unlockedAdultPositions(scene).some(item => item.id === position.id);
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
@@ -3596,6 +3635,7 @@ function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
   if (Math.abs(target - requestedTarget) > 0.01) {
     logEngineEvent('ADULT_SEEK_CLAMPED', { requestedTarget, target, sceneId: state.adultScene?.id || null });
   }
+  primeLanguageTracksAt(target, 2);
   state.adultLoopSeeking = true;
 
   const finishSeek = (force = false) => {
@@ -3622,6 +3662,7 @@ function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
     state.adultSeekTimer = null;
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
+    resyncLanguageTracks();
   };
 
   const onSeeked = () => finishSeek(false);
