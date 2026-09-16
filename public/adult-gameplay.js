@@ -69,6 +69,51 @@ export function verifiedPartnerTransition(action = {}) {
   };
 }
 
+export function positionOccurrenceGroups(position = {}) {
+  const ranges = (Array.isArray(position?.sourceRanges) ? position.sourceRanges : [])
+    .map(range => ({
+      id: String(range?.id || ''),
+      startTime: Number(range?.startTime),
+      endTime: Number(range?.endTime)
+    }))
+    .filter(range => range.id && Number.isFinite(range.startTime) &&
+      Number.isFinite(range.endTime) && range.endTime > range.startTime)
+    .sort((a, b) => a.startTime - b.startTime);
+  const groups = [];
+  for (const range of ranges) {
+    const previous = groups[groups.length - 1];
+    if (previous && range.startTime <= previous.endTime + 0.25) {
+      previous.endTime = Math.max(previous.endTime, range.endTime);
+      previous.sourcePositionIds.push(range.id);
+      continue;
+    }
+    groups.push({
+      id: range.id,
+      startTime: range.startTime,
+      endTime: range.endTime,
+      sourcePositionIds: [range.id]
+    });
+  }
+  return groups;
+}
+
+export function movementsForPositionOccurrence(position = {}, occurrenceId = '') {
+  const groups = positionOccurrenceGroups(position);
+  const group = groups.find(item => item.id === String(occurrenceId || '')) || groups[0];
+  if (!group) return [];
+  const sourceIds = new Set(group.sourcePositionIds);
+  return (Array.isArray(position?.movements) ? position.movements : [])
+    .filter(movement => {
+      const startTime = Number(movement?.loopStartTime ?? movement?.startTime);
+      const endTime = Number(movement?.loopEndTime ?? movement?.endTime);
+      const sourceMatch = sourceIds.has(String(movement?.sourcePositionId || ''));
+      const timeMatch = Number.isFinite(startTime) && Number.isFinite(endTime) &&
+        startTime >= group.startTime - 0.05 && endTime <= group.endTime + 0.05;
+      return sourceMatch && timeMatch;
+    })
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+}
+
 export function verifiedAdultPositionFamily(action = {}) {
   if (action?.sourceVerified !== true) return '';
   return resolveVerifiedAdultPosition(action).family;
