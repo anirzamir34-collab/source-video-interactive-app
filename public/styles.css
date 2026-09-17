@@ -4171,3 +4171,107 @@ body { font-size: 13px; }
     max-width: none !important;
   }
 }
+
+
+/* Restored adult HUD: fixed right panel, full-size video, no compact dock. */
+#adultInteractionPanel .adult-compact-dock { display: none !important; }
+
+#playerSection .video-stage:fullscreen #video,
+#playerSection .video-stage:-webkit-full-screen #video,
+#playerSection .video-stage:fullscreen:has(#adultInteractionPanel:not(.hidden)) #video,
+#playerSection .video-stage:-webkit-full-screen:has(#adultInteractionPanel:not(.hidden)) #video {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  transform: none !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel,
+#playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded {
+  position: absolute !important;
+  z-index: 100 !important;
+  top: 58px !important;
+  right: max(10px, env(safe-area-inset-right)) !important;
+  bottom: 10px !important;
+  left: auto !important;
+  width: min(36vw, 430px) !important;
+  max-width: min(36vw, 430px) !important;
+  height: auto !important;
+  max-height: calc(100dvh - 68px) !important;
+  margin: 0 !important;
+  padding: 10px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  border-radius: 15px !important;
+  background: rgba(4, 9, 14, .86) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-panel-header,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-panel-header,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-stage-summary,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-stage-summary {
+  display: flex !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-discovery-gate,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-discovery-gate,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .progressive-stage-section,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .progressive-stage-section,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-lust-bars,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-lust-bars {
+  display: none !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tabs,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tabs {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-grid,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-grid {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 6px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-card,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-card {
+  min-height: 38px !important;
+  padding: 8px 10px !important;
+  font-size: .76rem !important;
+}
+
+@media (orientation: landscape) and (max-height: 560px) {
+  #playerSection .video-stage:fullscreen #adultInteractionPanel,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+    top: 52px !important;
+    bottom: 7px !important;
+    width: min(34vw, 390px) !important;
+    max-width: min(34vw, 390px) !important;
+    max-height: calc(100dvh - 59px) !important;
+    padding: 8px !important;
+  }
+
+  #playerSection .video-stage:fullscreen #adultInteractionPanel .adult-phase-copy small,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-phase-copy small,
+  #playerSection .video-stage:fullscreen #adultInteractionPanel .choice-section-heading,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .choice-section-heading {
+    display: none !important;
+  }
+}
