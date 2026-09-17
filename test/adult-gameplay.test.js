@@ -562,6 +562,15 @@ test('verified position labels work even when optional position metadata is miss
   }), { family: 'cowgirl', correctedFromAction: true });
 });
 
+test('direct body configuration corrects confused cowgirl and prone-bone metadata', () => {
+  assert.deepEqual(resolveVerifiedAdultPosition({
+    sourceVerified: true,
+    positionId: 'prone-bone', positionLabel: 'Prone Bone',
+    receiverBodyOrientation: 'on_top_facing', receiverSupport: 'straddling',
+    positionConfigurationConfidence: 0.96, positionEvidence: 'partner visibly remains above and straddling'
+  }), { family: 'cowgirl', correctedFromAction: true });
+});
+
 test('movement choice grouping retains every verified clip', () => {
   const movements = Array.from({ length: 11 }, (_, index) => ({
     id: `reverse-${index}`,
@@ -594,6 +603,11 @@ test('keeps verified activity and contact actions inside their position panel', 
     label: 'Ters cowgirl pozisyonuna geçiş',
     movementType: 'transition'
   }, 'cowgirl'), false);
+  assert.equal(movementBelongsToVerifiedPosition({
+    label: 'Ritmi sürdür', movementType: 'rhythmic',
+    receiverBodyOrientation: 'on_top_facing', receiverSupport: 'straddling',
+    positionConfigurationConfidence: 0.95, positionEvidence: 'partner visibly straddles MAIN_MALE'
+  }, 'prone-bone'), false);
 });
 
 test('movement cards keep concrete action text and remove sensory metadata', () => {
