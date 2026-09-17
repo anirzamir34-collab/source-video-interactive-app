@@ -4291,3 +4291,17 @@ body { font-size: 13px; }
     max-width: none !important;
   }
 }
+.approach-status {
+  display: grid;
+  gap: .25rem;
+  width: 100%;
+  padding: .75rem 1rem;
+  border: 1px solid rgba(52, 211, 153, .34);
+  border-radius: 14px;
+  background: rgba(3, 18, 18, .88);
+  color: #dffdf4;
+}
+
+.approach-status small {
+  color: rgba(223, 253, 244, .68);
+}

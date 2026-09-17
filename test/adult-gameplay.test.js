@@ -428,7 +428,7 @@ test('discovery phases are content-driven and never regress once a later phase w
 });
 
 
-test('one canonical family becomes one tab while retaining every occurrence', () => {
+test('distant returns become chronological occurrences instead of one backward-seeking tab', () => {
   const positions = [
     {
       id: 'cowgirl-1',
@@ -451,11 +451,11 @@ test('one canonical family becomes one tab while retaining every occurrence', ()
   ];
 
   const result = consolidateVerifiedPositions(positions);
-  assert.equal(result.length, 1);
+  assert.equal(result.length, 2);
   assert.equal(result[0].id, 'position:cowgirl');
-  assert.equal(result[0].occurrenceId, 'cowgirl:all-occurrences');
-  assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1', 'cowgirl-2']);
-  assert.deepEqual(result[0].movements.map(item => item.id), ['slow-a', 'fast-a']);
+  assert.equal(result[1].id, 'position:cowgirl:occ-2');
+  assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1']);
+  assert.deepEqual(result[1].sourcePositionIds, ['cowgirl-2']);
 });
 
 test('same verified position with different group partners becomes separate playable tabs', () => {
@@ -679,7 +679,7 @@ test('one movement card retains matching clips from every occurrence', () => {
 });
 
 
-test('joins overlapping and later returns under one canonical position tab', () => {
+test('joins overlap but keeps a distant return chronological', () => {
   const positions = consolidateVerifiedPositions([
     {
       id: 'raw-a', familyId: 'cowgirl', label: 'Kovboy Pozisyonu',
@@ -698,12 +698,13 @@ test('joins overlapping and later returns under one canonical position tab', () 
     }
   ]);
 
-  assert.equal(positions.length, 1);
-  assert.equal(positions[0].sourcePositionIds.length, 3);
+  assert.equal(positions.length, 2);
+  assert.equal(positions[0].sourcePositionIds.length, 2);
+  assert.equal(positions[1].sourcePositionIds.length, 1);
   assert.deepEqual(
     buildVerifiedMovementChoices(positions[0].movements, positions[0].label, 3)
       .flatMap(choice => choice.variants.map(item => item.id)),
-    ['a', 'b', 'c']
+    ['a', 'b']
   );
 });
 
