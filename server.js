@@ -70,6 +70,19 @@ function resolveGeminiApiKey(req) {
   return clientGeminiApiKey(req) || String(process.env.GEMINI_API_KEY || '').trim();
 }
 
+function emptyGeminiUsage() {
+  return { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0 };
+}
+
+function addGeminiUsage(total, metadata = {}) {
+  total.requests += 1;
+  total.inputTokens += Number(metadata.promptTokenCount || metadata.inputTokenCount || 0);
+  total.outputTokens += Number(metadata.candidatesTokenCount || metadata.outputTokenCount || 0);
+  total.thinkingTokens += Number(metadata.thoughtsTokenCount || 0);
+  total.totalTokens += Number(metadata.totalTokenCount || 0);
+  return total;
+}
+
 app.get('/login', (req, res) => {
   if (isAuthenticated(req)) return res.redirect('/');
   const failed = req.query.error === '1';
@@ -316,6 +329,7 @@ async function splitSingleStoryboardSheet(file, timestampValues) {
 
 app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards', 20), async (req, res) => {
   try {
+    const analysisUsage = emptyGeminiUsage();
     const apiKey = resolveGeminiApiKey(req);
     if (!apiKey) {
       return res.status(503).json({
@@ -709,7 +723,7 @@ Rules:
         }))
       ];
       let lastGenerationError = null;
-      for (let attempt = 1; attempt <= 4; attempt++) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const response = await ai.models.generateContent({
           model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
@@ -720,6 +734,7 @@ Rules:
             maxOutputTokens: 16384
           }
           });
+          addGeminiUsage(analysisUsage, response?.usageMetadata);
           const raw = String(response.text || '').trim();
           if (!raw) {
             const finishReason = String(
@@ -744,8 +759,8 @@ Rules:
           // Safety-blocked image groups are deterministic. Hand control to the
           // smaller visual recovery path instead of resending the same group.
           if (details.includes('PROHIBITED_CONTENT')) throw error;
-          if (!retryable || attempt === 4) throw error;
-          console.warn(`[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/4: ${details}`);
+          if (!retryable || attempt === 2) throw error;
+          console.warn(`[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/2: ${details}`);
           await new Promise(resolve => setTimeout(resolve, attempt * 1800));
         }
       }
@@ -1046,7 +1061,8 @@ Rules:
       actions: dedupedActions,
       analysisGaps: Array.isArray(parsed.analysisGaps) ? parsed.analysisGaps : [],
       restrictedRanges: Array.isArray(parsed.restrictedRanges) ? parsed.restrictedRanges : [],
-      warnings: Array.isArray(parsed.warnings) ? parsed.warnings : []
+      warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+      aiUsage: analysisUsage
     });
   } catch (error) {
     console.error('[gemini-storyboard-error]', error);
@@ -1830,6 +1846,7 @@ app.post(
   '/api/gemini-dialogue-analyze',
   dialogueUpload.single('video'),
   async (req, res) => {
+    const dialogueUsage = emptyGeminiUsage();
     const uploadId = String(req.body?.uploadId || '');
     const uploadSession = dialogueUploadSessions.get(uploadId);
 
@@ -2015,7 +2032,7 @@ Rules:
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
           const response = await ai.models.generateContent({
-            model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
+            model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
             contents: [{
               role: 'user',
               parts: [
@@ -2034,6 +2051,7 @@ Rules:
               maxOutputTokens: 16384
             }
           });
+          addGeminiUsage(dialogueUsage, response?.usageMetadata);
           const raw = String(response.text || '').trim();
           if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
           parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
@@ -2056,13 +2074,14 @@ Rules:
         for (let attempt = 1; attempt <= 3; attempt += 1) {
           try {
             const translationResponse = await ai.models.generateContent({
-              model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
+              model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
               contents: [{
                 role: 'user',
                 parts: [{ text: `Translate every supplied dialogue segment into natural Turkish. Preserve segmentId exactly. Do not omit, censor, summarize, merge, split or reorder lines. Return JSON only as {\"segments\":[{\"segmentId\":\"...\",\"turkishText\":\"...\",\"gender\":\"male|female|uncertain\",\"emotion\":\"...\",\"confidence\":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(translationInput)}` }]
               }],
               config: { responseMimeType: 'application/json', temperature: 0.05, maxOutputTokens: 16384 }
             });
+            addGeminiUsage(dialogueUsage, translationResponse?.usageMetadata);
             const raw = String(translationResponse.text || '').trim();
             if (!raw) throw new Error('GEMINI_EMPTY_TEXT_TRANSLATION');
             parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
@@ -2111,10 +2130,11 @@ Rules:
           for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
               const response = await ai.models.generateContent({
-                model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
+                model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
                 contents: [{ role: 'user', parts: [{ text: `Translate ALL supplied speech lines into natural Turkish. Preserve every segmentId. Preserve profanity, slang and sexually explicit wording literally and naturally; never soften it. Never omit, merge, censor, summarize or reorder a line. Return JSON only as {"segments":[{"segmentId":"...","turkishText":"...","gender":"male|female|uncertain","emotion":"...","confidence":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(batch)}` }] }],
                 config: { responseMimeType: 'application/json', temperature: 0.02, maxOutputTokens: 8192 }
               });
+              addGeminiUsage(dialogueUsage, response?.usageMetadata);
               const recovered = JSON.parse(String(response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
               for (const item of recovered.segments || []) {
                 const id = String(item.segmentId || '');
@@ -2250,8 +2270,9 @@ Rules:
         nonSpeechEvents,
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
         transcriptionEngine: String(parsed.transcriptionEngine || 'gemini-3.8-flash-fallback'),
-        translationEngine: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.8-flash',
-        dubbingEngine: process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview'
+        translationEngine: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
+        dubbingEngine: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
+        aiUsage: dialogueUsage
       });
     } catch (error) {
       console.error('Dialogue analysis failed:', error);
@@ -2304,7 +2325,7 @@ function ttsQuotaRetrySeconds(details) {
 function isTtsDailyQuotaError(details) {
   const text = String(details || '');
   return text.includes('generate_requests_per_model_per_day') ||
-    (text.includes('RESOURCE_EXHAUSTED') && text.includes('gemini-3.1-flash-tts'));
+    (text.includes('RESOURCE_EXHAUSTED') && /gemini-[\w.-]+-tts/i.test(text));
 }
 
 function pcmBase64ToWavBase64(pcmBase64, sampleRate = 24000) {
@@ -2379,7 +2400,7 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
     const ai = new GoogleGenAI({ apiKey });
 
     const response = await ai.models.generateContent({
-      model: process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview',
+      model: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
       contents: [{
         role: 'user',
         parts: [{
@@ -2402,6 +2423,7 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
         }
       }
     });
+    const aiUsage = addGeminiUsage(emptyGeminiUsage(), response?.usageMetadata);
 
     const parts = response?.candidates?.[0]?.content?.parts || [];
     const audioPart = parts.find(part => part.inlineData?.data);
@@ -2429,6 +2451,7 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
       speakerId,
       gender,
       voiceName,
+      aiUsage,
       mimeType: isRawPcm ? 'audio/wav' : sourceMime,
       audioBase64: finalData
     });

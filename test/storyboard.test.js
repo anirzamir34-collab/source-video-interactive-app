@@ -11,6 +11,7 @@ test('analysis chunk planning reduces calls without dropping storyboard frames',
   assert.equal(sheetsPerAnalysisChunk('ultra'), 3);
   assert.equal(sheetsPerAnalysisChunk('balanced'), 3);
   assert.equal(sheetsPerAnalysisChunk('fast'), 4);
+  assert.equal(sheetsPerAnalysisChunk('ultra', true), 1);
   assert.equal(Math.ceil(20 / sheetsPerAnalysisChunk('ultra')), 7);
 });
 

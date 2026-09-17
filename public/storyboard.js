@@ -29,7 +29,11 @@ export function detectSceneBoundaries(motionProfile = [], interval = 1) {
   return boundaries;
 }
 
-export function sheetsPerAnalysisChunk(qualityMode = 'ultra') {
+export function sheetsPerAnalysisChunk(qualityMode = 'ultra', remote = false) {
+  // Adaptive remote sampling makes one 12-frame sheet span roughly 45–60
+  // seconds. Analyze it alone so brief positions and partner transitions are
+  // not compressed into a single 150-second model request.
+  if (remote) return 1;
   const mode = String(qualityMode || 'ultra').toLowerCase();
   if (mode === 'fast') return 4;
   return 3;

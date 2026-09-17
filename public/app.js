@@ -93,6 +93,13 @@ const state = {
   dubSyncGeneration: 0,
   dubUnavailableUntil: 0,
   dubFailureReason: '',
+  aiUsage: {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    totalTokens: 0
+  },
   gameState: 'IDLE',
   gameCursorTime: 0,
   currentActionIndex: -1,
@@ -999,6 +1006,8 @@ async function analyzeSelectedDialogue(file) {
 
   const { body } = upload;
 
+  recordAiUsage(body?.aiUsage);
+
   if (!upload.ok || !body.available) {
     throw new Error(body.error || body.message || `HTTP ${upload.status}`);
   }
@@ -1051,6 +1060,14 @@ function renderSubtitle() {
 
 const dubChannels = new Map();
 
+function recordAiUsage(usage) {
+  if (!usage || typeof usage !== 'object') return;
+  for (const key of ['requests', 'inputTokens', 'outputTokens', 'thinkingTokens', 'totalTokens']) {
+    state.aiUsage[key] += Math.max(0, Number(usage[key]) || 0);
+  }
+  logEngineEvent('AI_USAGE', { ...state.aiUsage });
+}
+
 function getDubSegmentAt(videoTime) {
   return dialogueSegmentAt(state.dialogue?.segments || [], videoTime);
 }
@@ -1099,6 +1116,7 @@ async function ensureDubSegment(segment) {
       }
       throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
     }
+    recordAiUsage(body.aiUsage);
     const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
     state.dubCache.set(segmentId, source);
     return source;
@@ -1125,6 +1143,13 @@ function resetDubState() {
   state.activeDubSegmentId = null;
   state.dubFailureReason = '';
   state.dubUnavailableUntil = 0;
+  state.aiUsage = {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    totalTokens: 0
+  };
 }
 
 function prefetchDubSegmentsAround(videoTime) {
@@ -1358,15 +1383,13 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
         els.video.muted = !modes.keepOriginalAudio;
-        // Prepare the complete verified dialogue timeline before gameplay.
-        // Just-in-time TTS creates silent openings and cuts overlapping
-        // speakers in dialogue-heavy/group scenes.
-        els.analysisTitle.textContent = 'Türkçe dublaj zaman çizelgesi hazırlanıyor';
-        els.analysisOutput.textContent = `${dialogue.segments.length} konuşma bölümü kesintisiz oynatma için hazırlanıyor…`;
-        const preparedDubCount = await prepareCompleteDubTimeline(dialogue.segments, 3);
-        if (preparedDubCount < dialogue.segments.length && state.dubbingEnabled) {
-          throw new Error(`Dublaj eksik hazırlandı: ${preparedDubCount}/${dialogue.segments.length}`);
-        }
+        // One TTS request per line for the complete video can consume the
+        // model's daily request quota before playback starts. Prime only a
+        // rolling window; the existing playback prefetch keeps filling it.
+        els.analysisTitle.textContent = 'Türkçe dublaj başlangıcı hazırlanıyor';
+        els.analysisOutput.textContent = 'İlk konuşmalar hazırlanıyor; devamı oynatma sırasında önden yüklenecek…';
+        const initialSegments = nextDialogueSegments(dialogue.segments, 0, 8);
+        await Promise.all(initialSegments.map(segment => ensureDubSegment(segment)));
         prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
       }
 
@@ -1419,7 +1442,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-    const sheetsPerChunk = sheetsPerAnalysisChunk(modes.quality);
+    const remoteStoryboard = Boolean(state.selectedRemoteVideo && !file);
+    const sheetsPerChunk = sheetsPerAnalysisChunk(modes.quality, remoteStoryboard);
     const framesPerSheet = 12;
     const chunkCount = Math.ceil(
       storyboard.sheets.length / sheetsPerChunk
@@ -1523,10 +1547,10 @@ els.analyzeBtn.addEventListener('click', async () => {
       let chunkSucceeded = false;
       failureBody = null;
 
-      for (let attempt = 1; attempt <= 3 && !chunkSucceeded; attempt += 1) {
+      for (let attempt = 1; attempt <= 2 && !chunkSucceeded; attempt += 1) {
         els.analysisOutput.textContent =
           `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...\n` +
-          `Deneme ${attempt}/3 · tamamlanan ${chunkResults.length}/${chunkCount}`;
+          `Deneme ${attempt}/2 · tamamlanan ${chunkResults.length}/${chunkCount}`;
 
         // Every retry starts from a clean first pass. Review metadata is added
         // only after that first pass succeeds, so a failed review cannot poison
@@ -1543,6 +1567,7 @@ els.analyzeBtn.addEventListener('click', async () => {
           });
 
           body = await response.json();
+          recordAiUsage(body?.aiUsage);
 
           if (response.ok && body?.available) {
             const normalizedChunk = normalizeChunkActionTimes(
@@ -1582,6 +1607,7 @@ els.analyzeBtn.addEventListener('click', async () => {
                 signal: AbortSignal.timeout(240000)
               });
               let reviewBody = await reviewResponse.json();
+              recordAiUsage(reviewBody?.aiUsage);
               if (reviewResponse.ok && reviewBody?.available) {
                 const normalizedReview = normalizeChunkActionTimes(
                   reviewBody.actions,
@@ -1631,7 +1657,7 @@ els.analyzeBtn.addEventListener('click', async () => {
           break;
         }
 
-        if (attempt < 3) {
+        if (attempt < 2) {
           await new Promise(resolve => setTimeout(resolve, attempt * 1800));
         }
       }
@@ -1828,6 +1854,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${Number(body.rebasedChunkCount || 0)} bölümün yerel zamanları video zamanına düzeltildi.`,
     `Zaman çizelgesi ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyeye kadar doğrulandı.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
+    `Gemini kullanımı: ${state.aiUsage.requests} istek · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens} çıkış tokenı.`,
     'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
