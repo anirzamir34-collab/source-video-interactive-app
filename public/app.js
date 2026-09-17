@@ -179,6 +179,11 @@ const els = {
   testGeminiApiKeyBtn: $('testGeminiApiKeyBtn'),
   clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
   apiKeyStatus: $('apiKeyStatus'),
+  elevenLabsApiKeyInput: $('elevenLabsApiKeyInput'),
+  saveElevenLabsBtn: $('saveElevenLabsBtn'),
+  testElevenLabsBtn: $('testElevenLabsBtn'),
+  clearElevenLabsBtn: $('clearElevenLabsBtn'),
+  elevenLabsStatus: $('elevenLabsStatus'),
   azureSpeechKeyInput: $('azureSpeechKeyInput'),
   azureSpeechRegionInput: $('azureSpeechRegionInput'),
   saveAzureSpeechBtn: $('saveAzureSpeechBtn'),
@@ -482,6 +487,7 @@ function renderQuotaBadge(element, status) {
 }
 
 const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
+const ELEVENLABS_SESSION_KEY = 'videoquest_elevenlabs_api_key';
 const AZURE_SPEECH_SESSION_KEY = 'videoquest_azure_speech_key';
 const AZURE_SPEECH_REGION_KEY = 'videoquest_azure_speech_region';
 
@@ -559,6 +565,82 @@ function clearGeminiApiKey() {
   try { sessionStorage.removeItem(GEMINI_SESSION_KEY); } catch {}
   if (els.geminiApiKeyInput) els.geminiApiKeyInput.value = '';
   renderGeminiApiKeyState();
+  checkAiUsageStatus();
+}
+
+function activeElevenLabsApiKey() {
+  try { return String(sessionStorage.getItem(ELEVENLABS_SESSION_KEY) || '').trim(); }
+  catch { return ''; }
+}
+
+function elevenLabsHeaders(base = {}) {
+  const key = activeElevenLabsApiKey();
+  return key ? { ...base, 'X-ElevenLabs-Key': key } : base;
+}
+
+function renderElevenLabsState() {
+  const active = Boolean(activeElevenLabsApiKey());
+  if (els.elevenLabsStatus) {
+    els.elevenLabsStatus.className = active ? 'available' : '';
+    els.elevenLabsStatus.textContent = active ? 'ElevenLabs etkin · test edilmedi' : 'Anahtar girilmedi';
+  }
+  els.testElevenLabsBtn?.classList.toggle('hidden', !active);
+  els.clearElevenLabsBtn?.classList.toggle('hidden', !active);
+  if (active && els.elevenLabsApiKeyInput) els.elevenLabsApiKeyInput.value = '';
+}
+
+function saveElevenLabsKey() {
+  const key = String(els.elevenLabsApiKeyInput?.value || '').trim();
+  if (key.length < 20 || key.length > 256 || /\s/.test(key)) {
+    if (els.elevenLabsStatus) els.elevenLabsStatus.textContent = 'Anahtar eksik veya geçersiz';
+    return;
+  }
+  try { sessionStorage.setItem(ELEVENLABS_SESSION_KEY, key); } catch {}
+  resetDubState();
+  renderElevenLabsState();
+  testElevenLabsKey();
+}
+
+async function testElevenLabsKey() {
+  if (!activeElevenLabsApiKey()) return;
+  if (els.testElevenLabsBtn) {
+    els.testElevenLabsBtn.disabled = true;
+    els.testElevenLabsBtn.textContent = 'Test...';
+  }
+  if (els.elevenLabsStatus) {
+    els.elevenLabsStatus.className = 'checking';
+    els.elevenLabsStatus.textContent = 'Anahtar, sesler ve kredi kontrol ediliyor';
+  }
+  try {
+    const response = await fetch('/api/elevenlabs-status', {
+      method: 'POST',
+      headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }),
+      body: '{}'
+    });
+    const body = await response.json().catch(() => ({}));
+    if (els.elevenLabsStatus) {
+      els.elevenLabsStatus.className = response.ok ? String(body.state || 'available') : String(body.state || 'invalid');
+      els.elevenLabsStatus.textContent = body.message || (response.ok ? 'ElevenLabs çalışıyor' : 'ElevenLabs kullanılamıyor');
+    }
+    checkAiUsageStatus();
+  } catch {
+    if (els.elevenLabsStatus) {
+      els.elevenLabsStatus.className = 'invalid';
+      els.elevenLabsStatus.textContent = 'ElevenLabs bağlantısı kurulamadı';
+    }
+  } finally {
+    if (els.testElevenLabsBtn) {
+      els.testElevenLabsBtn.disabled = false;
+      els.testElevenLabsBtn.textContent = 'Test et';
+    }
+  }
+}
+
+function clearElevenLabsKey() {
+  try { sessionStorage.removeItem(ELEVENLABS_SESSION_KEY); } catch {}
+  if (els.elevenLabsApiKeyInput) els.elevenLabsApiKeyInput.value = '';
+  resetDubState();
+  renderElevenLabsState();
   checkAiUsageStatus();
 }
 
@@ -664,7 +746,9 @@ async function checkAiUsageStatus() {
     });
     const body = await response.json();
     renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
-    renderQuotaBadge(els.dubQuotaStatus, activeAzureSpeechKey()
+    renderQuotaBadge(els.dubQuotaStatus, activeElevenLabsApiKey()
+      ? { state: 'available', message: 'ElevenLabs doğal dublaj etkin' }
+      : activeAzureSpeechKey()
       ? { state: 'available', message: `Azure Speech F0 etkin · ${activeAzureSpeechRegion()}` }
       : body.dubbing);
   } catch {
@@ -733,6 +817,12 @@ els.clearGeminiApiKeyBtn?.addEventListener('click', clearGeminiApiKey);
 els.geminiApiKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveGeminiApiKey();
 });
+els.saveElevenLabsBtn?.addEventListener('click', saveElevenLabsKey);
+els.testElevenLabsBtn?.addEventListener('click', testElevenLabsKey);
+els.clearElevenLabsBtn?.addEventListener('click', clearElevenLabsKey);
+els.elevenLabsApiKeyInput?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') saveElevenLabsKey();
+});
 els.saveAzureSpeechBtn?.addEventListener('click', saveAzureSpeechKey);
 els.testAzureSpeechBtn?.addEventListener('click', testAzureSpeechKey);
 els.clearAzureSpeechBtn?.addEventListener('click', clearAzureSpeechKey);
@@ -740,6 +830,7 @@ els.azureSpeechKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveAzureSpeechKey();
 });
 renderGeminiApiKeyState();
+renderElevenLabsState();
 renderAzureSpeechState();
 
 els.videoInput.addEventListener('change', () => {
@@ -1204,43 +1295,72 @@ async function ensureDubSegment(segment) {
   if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
   if (state.dubRequests.has(segmentId)) return state.dubRequests.get(segmentId);
 
-  const useAzure = Boolean(activeAzureSpeechKey());
-  const request = fetch(useAzure ? '/api/azure-dub-segment' : '/api/gemini-dub-segment', {
-    method: 'POST',
-    headers: useAzure
-      ? azureSpeechHeaders({ 'Content-Type': 'application/json' })
-      : geminiRequestHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      text: segment.turkishText,
-      gender: segment.gender,
-      emotion: segment.emotion,
-      speakerId: segment.speakerId || segmentId
-    })
-  }).then(async response => {
-    const body = await response.json();
-    if (!response.ok || !body?.available || !body?.audioBase64) {
-      if (body?.reason === 'GEMINI_TTS_DAILY_LIMIT' || body?.reason === 'AZURE_SPEECH_QUOTA_LIMIT') {
-        const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
-        state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
-        state.dubFailureReason = body.reason;
-        state.dubbingEnabled = false;
-        stopDubPlayback();
-        if (els.dubToggleBtn) {
-          els.dubToggleBtn.textContent = `TR DUBLAJ: LİMİT DOLDU`;
-          els.dubToggleBtn.classList.remove('hidden');
-          els.dubToggleBtn.dataset.unavailable = 'true';
-        }
-        logEngineEvent('DUB_QUOTA_EXHAUSTED', { retrySeconds });
-        checkAiUsageStatus();
-        return null;
-      }
-      throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
+  const payload = JSON.stringify({
+    text: segment.turkishText,
+    gender: segment.gender,
+    emotion: segment.emotion,
+    speakerId: segment.speakerId || segmentId
+  });
+  const providers = [
+    activeElevenLabsApiKey() && {
+      id: 'elevenlabs',
+      url: '/api/elevenlabs-dub-segment',
+      headers: elevenLabsHeaders({ 'Content-Type': 'application/json' })
+    },
+    activeAzureSpeechKey() && {
+      id: 'azure',
+      url: '/api/azure-dub-segment',
+      headers: azureSpeechHeaders({ 'Content-Type': 'application/json' })
+    },
+    {
+      id: 'gemini',
+      url: '/api/gemini-dub-segment',
+      headers: geminiRequestHeaders({ 'Content-Type': 'application/json' })
     }
-    recordAiUsage(body.aiUsage);
-    const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
-    state.dubCache.set(segmentId, source);
-    return source;
-  }).catch(error => {
+  ].filter(Boolean);
+
+  const request = (async () => {
+    let lastFailure = null;
+    for (const provider of providers) {
+      try {
+        const response = await fetch(provider.url, { method: 'POST', headers: provider.headers, body: payload });
+        const body = await response.json().catch(() => ({}));
+        if (response.ok && body?.available && body?.audioBase64) {
+          recordAiUsage(body.aiUsage);
+          const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
+          state.dubCache.set(segmentId, source);
+          logEngineEvent('DUB_PROVIDER_USED', { provider: body.provider || provider.id, segmentId });
+          return source;
+        }
+        lastFailure = { provider: provider.id, response, body };
+        logEngineEvent('DUB_PROVIDER_FALLBACK', {
+          provider: provider.id,
+          reason: body?.reason || `HTTP_${response.status}`
+        });
+      } catch (error) {
+        lastFailure = { provider: provider.id, error };
+        logEngineEvent('DUB_PROVIDER_FALLBACK', { provider: provider.id, reason: 'NETWORK_ERROR' });
+      }
+    }
+
+    const body = lastFailure?.body || {};
+    if (['GEMINI_TTS_DAILY_LIMIT', 'AZURE_SPEECH_QUOTA_LIMIT', 'ELEVENLABS_QUOTA_LIMIT'].includes(body.reason)) {
+      const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
+      state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
+      state.dubFailureReason = body.reason;
+      state.dubbingEnabled = false;
+      stopDubPlayback();
+      if (els.dubToggleBtn) {
+        els.dubToggleBtn.textContent = 'TR DUBLAJ: LİMİT DOLDU';
+        els.dubToggleBtn.classList.remove('hidden');
+        els.dubToggleBtn.dataset.unavailable = 'true';
+      }
+      logEngineEvent('DUB_QUOTA_EXHAUSTED', { retrySeconds });
+      checkAiUsageStatus();
+      return null;
+    }
+    throw lastFailure?.error || new Error(body?.error || body?.message || 'Dublaj sağlayıcıları kullanılamadı');
+  })().catch(error => {
     console.error('Dub segment failed:', segmentId, error);
     return null;
   }).finally(() => state.dubRequests.delete(segmentId));
