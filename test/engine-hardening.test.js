@@ -58,11 +58,12 @@ test('second visual pass is selective: only critical positions, conflicts and fi
   assert.equal(shouldSecondPassReview({ actions: [final] }), true);
 });
 
-test('group scenes and partner switches always receive a second visual identity check', () => {
+test('group scenes are rechecked only when identity evidence is incomplete, while partner switches always are', () => {
   const groupPosition = {
     actionId: 'group-position', sourceVerified: true, confidence: 0.98,
     actionType: 'position', positionId: 'cowgirl', groupScene: true,
-    partnerTrackId: 'PARTNER_B', startTime: 20, endTime: 35
+    partnerTrackId: 'PARTNER_B', partnerEvidence: 'same visible partner at start midpoint and end',
+    participantTrackIds: ['MAIN_MALE', 'PARTNER_A', 'PARTNER_B'], startTime: 20, endTime: 35
   };
   const partnerSwitch = {
     actionId: 'partner-switch', sourceVerified: true, confidence: 0.98,
@@ -72,8 +73,9 @@ test('group scenes and partner switches always receive a second visual identity 
   };
   assert.deepEqual(
     secondPassReviewCandidates({ actions: [groupPosition, partnerSwitch] }).map(item => item.actionId),
-    ['group-position', 'partner-switch']
+    ['partner-switch']
   );
+  assert.deepEqual(secondPassReviewCandidates({ actions: [{ ...groupPosition, actionId: 'incomplete', partnerEvidence: '' }] }).map(item => item.actionId), ['incomplete']);
 });
 
 test('overlapping incompatible positions force a second pass even at high confidence', () => {
@@ -88,7 +90,7 @@ test('overlapping incompatible positions force a second pass even at high confid
   assert.deepEqual(secondPassReviewCandidates({ actions: [missionary, cowgirl] }).map(x => x.actionId), ['m', 'c']);
 });
 
-test('every explicit vaginal or anal claim receives one visual route recheck', () => {
+test('only uncertain vaginal or anal claims receive a visual route recheck', () => {
   const ambiguous = {
     actionId: 'route-low', startTime: 10, endTime: 25, confidence: 0.98, adultSceneId: 's',
     actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner',
@@ -97,7 +99,17 @@ test('every explicit vaginal or anal claim receives one visual route recheck', (
   const clear = { ...ambiguous, actionId: 'route-high', activityTypeConfidence: 0.96, activityEvidence: 'direct visible route evidence' };
   const anal = { ...clear, actionId: 'route-anal', startTime: 30, endTime: 45, activityType: 'anal' };
   assert.deepEqual(secondPassReviewCandidates({ actions: [ambiguous] }).map(x => x.actionId), ['route-low']);
-  assert.deepEqual(secondPassReviewCandidates({ actions: [clear, anal] }).map(x => x.actionId), ['route-high', 'route-anal']);
+  assert.deepEqual(secondPassReviewCandidates({ actions: [clear, anal] }).map(x => x.actionId), []);
+});
+
+test('body configuration conflict forces a focused second pass', () => {
+  const action = {
+    actionId: 'structural-conflict', startTime: 10, endTime: 25, confidence: 0.98,
+    actionType: 'position', positionId: 'prone-bone', positionLabel: 'Prone Bone',
+    receiverBodyOrientation: 'on_top_facing', receiverSupport: 'straddling',
+    positionConfigurationConfidence: 0.96, positionEvidence: 'partner visibly straddles MAIN_MALE throughout'
+  };
+  assert.deepEqual(secondPassReviewCandidates({ actions: [action] }).map(x => x.actionId), ['structural-conflict']);
 });
 
 test('verified activity route gets its own occurrence namespace and display label', () => {
