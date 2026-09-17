@@ -2612,12 +2612,7 @@ function scoreElevenVoice(voice, gender) {
   const labels = voice?.labels || voice?.sharing?.labels || {};
   const detected = elevenVoiceGender(voice);
   let score = detected === gender ? 100 : detected === 'uncertain' ? 10 : -100;
-  if (/turkish|türk|tr-tr/.test(`${description} ${Object.values(labels).join(' ')}`.toLowerCase())) score += 90;
-  const preferred = gender === 'female'
-    ? ['rachel', 'matilda', 'bella', 'alice', 'sarah']
-    : ['adam', 'antoni', 'josh', 'daniel', 'george'];
-  const preferredIndex = preferred.indexOf(name);
-  if (preferredIndex >= 0) score += 25 - preferredIndex;
+  if (/turkish|türk|tr-tr/.test(`${description} ${Object.values(labels).join(' ')}`.toLowerCase())) score += 500;
   if (/conversational|natural|warm|soft|calm/.test(description)) score += 8;
   return score;
 }
@@ -2659,14 +2654,15 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', seed, 
       body: JSON.stringify({
         text,
         model_id: 'eleven_multilingual_v2',
+        language_code: 'tr',
         seed: Number.isInteger(Number(seed)) ? Number(seed) : undefined,
         previous_text: String(previousText || '').slice(-600) || undefined,
         next_text: String(nextText || '').slice(0, 600) || undefined,
         voice_settings: {
-          stability: 0.86,
-          similarity_boost: 0.88,
+          stability: 0.95,
+          similarity_boost: 0.9,
           style: 0,
-          use_speaker_boost: true,
+          use_speaker_boost: false,
           speed: 1
         }
       })

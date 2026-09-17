@@ -98,6 +98,7 @@ const state = {
   dubQueue: Promise.resolve(),
   dubVoiceIds: { female: '', male: '' },
   dubStableSpeakerGenders: new Map(),
+  dubPlayedSegmentIds: new Set(),
   decisionDubHold: false,
   aiUsage: {
     requests: 0,
@@ -145,6 +146,7 @@ const state = {
   adultClimaxProgress: 0,
   adultCorePlaySeconds: 0,
   adultTimelineFloor: 0,
+  adultLastApproachRefreshAt: 0,
   adultOutcomePhase: 'idle',
   activeAdultOutcomeId: null,
   activeAdultPreludeId: null,
@@ -1418,6 +1420,8 @@ function resetDubState() {
   state.dubProviderLock = '';
   state.dubQueue = Promise.resolve();
   state.dubStableSpeakerGenders.clear();
+  state.dubPlayedSegmentIds.clear();
+  state.dubVoiceIds = { female: '', male: '' };
   state.decisionDubHold = false;
   state.dubUnavailableUntil = 0;
   state.aiUsage = {
@@ -1495,116 +1499,62 @@ function resyncLanguageTracks() {
   void syncDubPlayback();
 }
 
-function alignDubAudioToSegment(audio, segment, videoTime) {
-  const audioDuration = Number(audio?.duration);
-  if (!Number.isFinite(audioDuration) || audioDuration <= 0) return;
-
-  const segmentStart = Number(segment.startTime) || 0;
-  const segmentEnd = Math.max(segmentStart + 0.05, Number(segment.endTime) || segmentStart + 0.05);
-  const correction = dubMasterClockCorrection({
-    videoTime,
-    audioTime: Number(audio.currentTime) || 0,
-    segmentStart,
-    segmentEnd,
-    audioDuration,
-    videoPlaybackRate: Number(els.video.playbackRate) || 1
-  });
-
-  if (correction.mode === 'seek' && audio._vqInitialSync !== true) {
-    audio.currentTime = correction.targetTime;
-    audio._vqInitialSync = true;
-    logEngineEvent('DUB_HARD_RESYNC', {
-      drift: Number(correction.drift.toFixed(3)),
-      videoTime: Number(videoTime.toFixed(3))
-    });
-  }
-  audio._vqInitialSync = true;
-  // Preserve a natural voice cadence after the initial sync. Repeated hard
-  // seeks and large rate changes were audible as tiny cuts and tone shifts.
-  audio.playbackRate = Math.min(1.06, Math.max(0.96, correction.playbackRate));
-}
-
 async function syncDubPlayback() {
   if (!state.dubbingEnabled) return stopDubPlayback();
 
   const generation = state.dubSyncGeneration;
   const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
-  const tailAudio = state.activeDubSegmentId
+  const currentAudio = state.activeDubSegmentId
     ? dubChannels.get(state.activeDubSegmentId)
     : null;
-  const tailSegment = tailAudio?._vqSegment;
-  const tailRemaining = Number(tailAudio?.duration) - Number(tailAudio?.currentTime);
-  if (tailAudio && tailSegment && !tailAudio.paused && !tailAudio.ended && Number.isFinite(tailRemaining) && tailRemaining > 0.06 &&
-      videoTime >= Number(tailSegment.endTime) - 0.04) {
-    // Let the current sentence finish naturally while the video continues.
-    // Never seek or restart the tail; the next line waits in the serial queue.
+  if (currentAudio && !currentAudio.ended) {
+    if (!els.video.paused && currentAudio.paused) currentAudio.play().catch(() => {});
     prefetchDubSegmentsAround(videoTime);
     return;
   }
-  // One synthetic voice owns the dub channel at a time. Timestamp estimates
-  // often overlap slightly even when the speakers take turns; playing every
-  // overlapping row made the male and female voices talk over each other.
-  const primarySegment = dialogueSegmentAt(dubTimeline(), videoTime, 0.12);
-  const segments = primarySegment?.turkishText ? [primarySegment] : [];
+  if (state.activeDubSegmentId) {
+    dubChannels.delete(state.activeDubSegmentId);
+    state.activeDubSegmentId = null;
+  }
 
-  if (!segments.length) {
-    stopDubPlayback();
+  const segment = dialogueSegmentAt(dubTimeline(), videoTime, 0.12);
+  const segmentId = getDubSegmentId(segment);
+  if (!segment?.turkishText || !segmentId || state.dubPlayedSegmentIds.has(segmentId)) {
     prefetchDubSegmentsAround(videoTime);
     return;
   }
-  const activeIds = new Set(segments.map(getDubSegmentId));
-  dubChannels.forEach((audio, id) => {
-    if (activeIds.has(id)) return;
-    audio.pause();
-    dubChannels.delete(id);
-  });
 
-  const sources = await Promise.all(segments.map(segment => ensureDubSegment(segment)));
+  const source = await ensureDubSegment(segment);
   if (!state.dubbingEnabled || generation !== state.dubSyncGeneration) return;
+  if (!source || state.dubPlayedSegmentIds.has(segmentId)) return;
 
-  segments.forEach((segment, index) => {
-    const source = sources[index];
-    const segmentId = getDubSegmentId(segment);
-    if (!source || !segmentId) return;
-    let audio = dubChannels.get(segmentId);
-    if (!audio) {
-      audio = new Audio();
-      audio.preload = 'auto';
-      audio.src = source;
-      audio.preservesPitch = true;
-      audio.webkitPreservesPitch = true;
-      audio._vqSegment = segment;
-      audio.load();
-      dubChannels.set(segmentId, audio);
-    }
-    audio.volume = 0.92;
-    const start = () => {
-      if (!state.dubbingEnabled || generation !== state.dubSyncGeneration || !dubChannels.has(segmentId)) return;
-      const now = Math.max(0, Number(els.video.currentTime) || 0);
-      const current = dialogueSegmentAt(dubTimeline(), now, 0.12);
-      if (getDubSegmentId(current) !== segmentId) return;
-      alignDubAudioToSegment(audio, segment, now);
-      if (!els.video.paused && audio.paused) audio.play().catch(() => {});
-    };
-    if (audio.readyState >= 1) start();
-    else audio.addEventListener('loadedmetadata', start, { once: true });
-  });
-  state.activeDubSegmentId = [...activeIds].join(',');
+  const audio = new Audio(source);
+  audio.preload = 'auto';
+  audio.volume = 0.92;
+  audio.playbackRate = 1;
+  audio.preservesPitch = true;
+  audio.webkitPreservesPitch = true;
+  audio._vqSegment = segment;
+  audio.addEventListener('ended', () => {
+    if (state.activeDubSegmentId === segmentId) state.activeDubSegmentId = null;
+    dubChannels.delete(segmentId);
+    if (state.dubbingEnabled && !els.video.paused) void syncDubPlayback();
+  }, { once: true });
+  dubChannels.set(segmentId, audio);
+  state.activeDubSegmentId = segmentId;
+  state.dubPlayedSegmentIds.add(segmentId);
+  if (!els.video.paused) audio.play().catch(() => {});
   prefetchDubSegmentsAround(videoTime);
 }
 
 els.video.addEventListener('timeupdate', () => void syncDubPlayback());
-setInterval(() => {
-  if (state.dubbingEnabled && !els.video.paused && !els.video.seeking) {
-    void syncDubPlayback();
-  }
-}, 100);
 els.video.addEventListener('pause', () => {
   if (!state.decisionDubHold) dubChannels.forEach(audio => audio.pause());
 });
 els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
   stopDubPlayback();
+  state.dubPlayedSegmentIds.clear();
 });
 els.video.addEventListener('seeked', () => {
   if (!state.dubbingEnabled) return;
@@ -3451,6 +3401,7 @@ function resetAdultSceneGameplay() {
   state.adultClimaxProgress = 0;
   state.adultCorePlaySeconds = 0;
   state.adultTimelineFloor = Math.max(0, Number(state.adultScene?.startTime) || 0);
+  state.adultLastApproachRefreshAt = 0;
   state.adultOutcomePhase = 'idle';
   state.activeAdultOutcomeId = null;
   state.activeAdultPreludeId = null;
@@ -4439,6 +4390,19 @@ function updateAdultPlayback(now, mediaTime) {
 
   const elapsed = Math.min(0.25, Math.max(0, (now - (state.lastAdultFrameNow || now)) / 1000));
   state.lastAdultFrameNow = now;
+
+  // Passive playback is progress too. The old implementation advanced this
+  // floor only after a clicked card ended, leaving the UI permanently stuck
+  // on an earlier room even while the video had moved far ahead.
+  const previousFloor = Number(state.adultTimelineFloor) || 0;
+  state.adultTimelineFloor = Math.max(previousFloor, Number(mediaTime) || 0);
+  const floorAdvanced = state.adultTimelineFloor > previousFloor + 0.01;
+  if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
+  if (floorAdvanced && now - Number(state.adultLastApproachRefreshAt || 0) >= 750) {
+    state.adultLastApproachRefreshAt = now;
+    state.adultUiSignature = '';
+    renderAdultProgressiveUI(true);
+  }
 
   if (state.activeAdultPreludeId) {
     const item = state.adultScene?.foreplay?.find(
