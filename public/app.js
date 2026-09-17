@@ -113,6 +113,7 @@ const state = {
   adultMaleOrgasmCount: 0,
   adultFemaleOrgasmCount: 0,
   adultOrgasmDecision: null,
+  adultPlayedOutcomeIds: new Set(),
   adultSexUnlocked: false,
   adultUnlockedPositionIds: new Set(),
   lastAdultMediaTime: null,
@@ -2741,7 +2742,27 @@ function triggerAdultOrgasmDecision() {
   const maleReady = state.adultMaleOrgasmProgress >= 100;
   if (!femaleReady && !maleReady) return false;
   const actor = femaleReady && maleReady ? 'both' : femaleReady ? 'female' : 'male';
-  state.adultOrgasmDecision = { actor, mediaTime: Number(els.video?.currentTime || 0) };
+  state.adultOrgasmDecision = {
+    actor,
+    mediaTime: Number(els.video?.currentTime || 0),
+    resumePositionId: state.activePositionId,
+    resumeMovementId: state.activeMovementId
+  };
+  const outcomes = [...(state.adultScene?.outcomes || [])]
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const outcome = outcomes.find(item => !state.adultPlayedOutcomeIds.has(item.id)) || outcomes[0];
+  if (outcome) {
+    state.adultPlayedOutcomeIds.add(outcome.id);
+    logEngineEvent('ORGASM_OUTCOME_STARTED', { actor, outcomeId: outcome.id });
+    playAdultOutcome(outcome.id, { orgasmTriggered: true });
+    return true;
+  }
+  return openAdultOrgasmDecision();
+}
+
+function openAdultOrgasmDecision() {
+  const actor = state.adultOrgasmDecision?.actor;
+  if (!actor) return false;
   state.adultOutcomePhase = 'orgasm-decision';
   els.video?.pause();
   els.orgasmDecision?.classList.remove('hidden');
@@ -2760,7 +2781,8 @@ function triggerAdultOrgasmDecision() {
 }
 
 function continueAfterAdultOrgasm() {
-  const actor = state.adultOrgasmDecision?.actor;
+  const decision = state.adultOrgasmDecision;
+  const actor = decision?.actor;
   if (!actor) return;
   if (actor === 'female' || actor === 'both') {
     state.adultFemaleOrgasmProgress = 0;
@@ -2779,7 +2801,15 @@ function continueAfterAdultOrgasm() {
     maleCount: state.adultMaleOrgasmCount
   });
   renderAdultProgress();
-  els.video?.play().catch(() => {});
+  const resumePosition = state.adultScene?.positions?.find(item => item.id === decision.resumePositionId);
+  const resumeMovement = resumePosition?.movements?.find(item => item.id === decision.resumeMovementId);
+  if (resumePosition && resumeMovement) {
+    state.activePositionId = resumePosition.id;
+    state.activeAdultOccurrenceId = resumeMovement.sourcePositionId || resumePosition.occurrenceId || null;
+    selectAdultMovement(resumeMovement.id, true, null, { awardProgress: false });
+  } else {
+    els.video?.play().catch(() => {});
+  }
 }
 
 function adultWarmupStats(scene = state.adultScene) {
@@ -2897,7 +2927,24 @@ function refreshAdultCompactDock() {
     quick.type = 'button';
     quick.className = 'adult-quick-choice';
     quick.textContent = source.querySelector('span, strong')?.textContent || source.textContent.trim();
-    quick.addEventListener('click', () => source.click());
+    quick.addEventListener('click', () => {
+      const discoveryId = source.dataset.discoveryId;
+      if (discoveryId) {
+        if (source.dataset.discoveryKind === 'foreplay') playAdultPrelude(discoveryId);
+        else selectAdultPosition(discoveryId, true);
+        return;
+      }
+      const choiceId = source.dataset.movementChoiceId;
+      const position = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
+      const choice = position?.activeMovementChoices?.find(item => item.id === choiceId);
+      if (!choice) return;
+      const currentId = choice.variants.some(item => item.id === state.activeMovementId)
+        ? state.activeMovementId : null;
+      const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
+      if (!movement) return;
+      state.activeMovementChoiceId = choice.id;
+      selectAdultMovement(movement.id, true);
+    });
     els.adultQuickChoices.appendChild(quick);
   });
 }
@@ -2923,6 +2970,7 @@ function resetAdultSceneGameplay() {
   state.activeAdultOutcomeId = null;
   state.activeAdultPreludeId = null;
   state.adultUnlockedOutcomeIds = new Set();
+  state.adultPlayedOutcomeIds = new Set();
   state.adultRevealedPositionIds = new Set();
   state.adultUiSignature = '';
   state.adultLastUiPhase = 'foreplay';
@@ -2966,6 +3014,7 @@ function renderAdultWarmupChoices(scene) {
     button.type = 'button';
     button.className = 'discovery-choice-card';
     button.dataset.discoveryId = choice.id;
+    button.dataset.discoveryKind = choice.kind;
     button.innerHTML = `
       <span>${escapeHtml(choice.label)}</span>
       <small>${choice.playCount ? 'Tekrar · daha az Lust' : 'Yeni keşif · Lust kazan'}</small>
@@ -3665,11 +3714,12 @@ function selectAdultMovement(
   }
 }
 
-function playAdultOutcome(outcomeId) {
+function playAdultOutcome(outcomeId, options = {}) {
   const scene = state.adultScene;
   const outcome = scene?.outcomes?.find(item => item.id === outcomeId);
   if (!outcome || !els.video) return;
-  const outcomeReady = unlockedAdultOutcomes(scene).some(item => item.id === outcome.id);
+  const outcomeReady = options?.orgasmTriggered === true ||
+    unlockedAdultOutcomes(scene).some(item => item.id === outcome.id);
   const outcomeGuard = guardPlayable('outcome', outcome, { scene, unlocked: outcomeReady, outcomeReady });
   if (!outcomeGuard.allowed) return;
 
@@ -3875,6 +3925,11 @@ function updateAdultPlayback(now, mediaTime) {
       return;
     }
     if (mediaTime >= outcome.endTime - 0.04) {
+      if (state.adultOrgasmDecision) {
+        openAdultOrgasmDecision();
+        state.lastAdultFrameNow = now;
+        return;
+      }
       const aftermath = state.adultScene?.aftermath;
       if (aftermath) {
         const token = beginAdultSelection();
@@ -3895,7 +3950,8 @@ function updateAdultPlayback(now, mediaTime) {
   if (state.adultOutcomePhase === 'aftermath') {
     const aftermath = state.adultScene?.aftermath;
     if (!aftermath || mediaTime >= aftermath.endTime - 0.04) {
-      finishAdultScene();
+      if (state.adultOrgasmDecision) openAdultOrgasmDecision();
+      else finishAdultScene();
     }
     state.lastAdultFrameNow = now;
     return;
