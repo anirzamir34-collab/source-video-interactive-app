@@ -392,6 +392,109 @@ video{width:100%;max-height:58vh;background:black;border-radius:14px}.state-row{
   }
 }
 
+/* Restored adult HUD: fixed right panel, full-size video, no compact dock. */
+#adultInteractionPanel .adult-compact-dock { display: none !important; }
+
+#playerSection .video-stage:fullscreen #video,
+#playerSection .video-stage:-webkit-full-screen #video,
+#playerSection .video-stage:fullscreen:has(#adultInteractionPanel:not(.hidden)) #video,
+#playerSection .video-stage:-webkit-full-screen:has(#adultInteractionPanel:not(.hidden)) #video {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  transform: none !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel,
+#playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded {
+  position: absolute !important;
+  z-index: 100 !important;
+  top: 58px !important;
+  right: max(10px, env(safe-area-inset-right)) !important;
+  bottom: 10px !important;
+  left: auto !important;
+  width: min(36vw, 430px) !important;
+  max-width: min(36vw, 430px) !important;
+  height: auto !important;
+  max-height: calc(100dvh - 68px) !important;
+  margin: 0 !important;
+  padding: 10px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  border-radius: 15px !important;
+  background: rgba(4, 9, 14, .86) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-panel-header,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-panel-header,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-stage-summary,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-stage-summary {
+  display: flex !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-discovery-gate,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-discovery-gate,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .progressive-stage-section,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .progressive-stage-section,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-lust-bars,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-lust-bars {
+  display: none !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tabs,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tabs {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-grid,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-grid {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 6px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-card,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-card {
+  min-height: 38px !important;
+  padding: 8px 10px !important;
+  font-size: .76rem !important;
+}
+
+@media (orientation: landscape) and (max-height: 560px) {
+  #playerSection .video-stage:fullscreen #adultInteractionPanel,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
+    top: 52px !important;
+    bottom: 7px !important;
+    width: min(34vw, 390px) !important;
+    max-width: min(34vw, 390px) !important;
+    max-height: calc(100dvh - 59px) !important;
+    padding: 8px !important;
+  }
+
+  #playerSection .video-stage:fullscreen #adultInteractionPanel .adult-phase-copy small,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-phase-copy small,
+  #playerSection .video-stage:fullscreen #adultInteractionPanel .choice-section-heading,
+  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .choice-section-heading {
+    display: none !important;
+  }
+}
+
 /* CINEMATIC MODERN THEME */
 :root {
   --cinema-bg: #07090c;
@@ -3726,6 +3829,12 @@ body { font-size: 13px; }
 .adult-dock-meters .lust { border: 1px solid rgba(54,225,178,.25); color: #55e8bd; }
 .adult-dock-meters .female { border: 1px solid rgba(255,111,164,.25); color: #ff8bb5; }
 .adult-dock-meters .male { border: 1px solid rgba(115,168,255,.25); color: #8db8ff; }
+.adult-dock-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 4px; }
+.adult-dock-bars > i { display: block; height: 3px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.10); }
+.adult-dock-bars > i > b { display: block; width: 0; height: 100%; border-radius: inherit; transition: width .2s ease; }
+.adult-dock-bars .lust > b { background: #55e8bd; }
+.adult-dock-bars .female > b { background: #ff8bb5; }
+.adult-dock-bars .male > b { background: #8db8ff; }
 .adult-quick-choices {
   display: flex;
   min-width: 0;
@@ -4169,109 +4278,5 @@ body { font-size: 13px; }
     left: 8px !important;
     width: auto !important;
     max-width: none !important;
-  }
-}
-
-
-/* Restored adult HUD: fixed right panel, full-size video, no compact dock. */
-#adultInteractionPanel .adult-compact-dock { display: none !important; }
-
-#playerSection .video-stage:fullscreen #video,
-#playerSection .video-stage:-webkit-full-screen #video,
-#playerSection .video-stage:fullscreen:has(#adultInteractionPanel:not(.hidden)) #video,
-#playerSection .video-stage:-webkit-full-screen:has(#adultInteractionPanel:not(.hidden)) #video {
-  position: absolute !important;
-  inset: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  max-width: none !important;
-  max-height: none !important;
-  object-fit: contain !important;
-  transform: none !important;
-}
-
-#playerSection .video-stage:fullscreen #adultInteractionPanel,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel,
-#playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded {
-  position: absolute !important;
-  z-index: 100 !important;
-  top: 58px !important;
-  right: max(10px, env(safe-area-inset-right)) !important;
-  bottom: 10px !important;
-  left: auto !important;
-  width: min(36vw, 430px) !important;
-  max-width: min(36vw, 430px) !important;
-  height: auto !important;
-  max-height: calc(100dvh - 68px) !important;
-  margin: 0 !important;
-  padding: 10px !important;
-  overflow-x: hidden !important;
-  overflow-y: auto !important;
-  border-radius: 15px !important;
-  background: rgba(4, 9, 14, .86) !important;
-  backdrop-filter: blur(14px) !important;
-  -webkit-backdrop-filter: blur(14px) !important;
-}
-
-#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-panel-header,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-panel-header,
-#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-stage-summary,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-stage-summary {
-  display: flex !important;
-}
-
-#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-discovery-gate,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-discovery-gate,
-#playerSection .video-stage:fullscreen #adultInteractionPanel .progressive-stage-section,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .progressive-stage-section,
-#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-lust-bars,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-lust-bars {
-  display: none !important;
-}
-
-#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tabs,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tabs {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  gap: 6px !important;
-  max-height: none !important;
-  overflow: visible !important;
-}
-
-#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-grid,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-grid {
-  display: grid !important;
-  grid-template-columns: 1fr !important;
-  gap: 6px !important;
-  max-height: none !important;
-  overflow: visible !important;
-}
-
-#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tab,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tab,
-#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-card,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-card {
-  min-height: 38px !important;
-  padding: 8px 10px !important;
-  font-size: .76rem !important;
-}
-
-@media (orientation: landscape) and (max-height: 560px) {
-  #playerSection .video-stage:fullscreen #adultInteractionPanel,
-  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
-    top: 52px !important;
-    bottom: 7px !important;
-    width: min(34vw, 390px) !important;
-    max-width: min(34vw, 390px) !important;
-    max-height: calc(100dvh - 59px) !important;
-    padding: 8px !important;
-  }
-
-  #playerSection .video-stage:fullscreen #adultInteractionPanel .adult-phase-copy small,
-  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-phase-copy small,
-  #playerSection .video-stage:fullscreen #adultInteractionPanel .choice-section-heading,
-  #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .choice-section-heading {
-    display: none !important;
   }
 }
