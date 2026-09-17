@@ -3978,6 +3978,7 @@ body { font-size: 13px; }
 .api-key-setting__copy b { color: #dffbf2; font-size: .69rem; letter-spacing: .04em; }
 .api-key-setting__copy small { color: #67dcb9; font-size: .61rem; text-align: right; }
 .api-key-setting__row { display: grid; grid-template-columns: minmax(0,1fr) repeat(3, auto); gap: 6px; }
+.api-key-setting__row.azure-speech-key-row { grid-template-columns: minmax(0,1.6fr) minmax(72px,.55fr) repeat(3, auto); }
 .api-key-setting input {
   min-width: 0;
   height: 40px;
@@ -3995,6 +3996,10 @@ body { font-size: 13px; }
 .api-key-setting__copy small.invalid,
 .api-key-setting__copy small.forbidden { color: #ff8298; }
 .api-key-setting__copy small.rate_limited { color: #ffc96b; }
+@media (max-width: 620px) {
+  .api-key-setting__row.azure-speech-key-row { grid-template-columns: minmax(0,1fr) 84px; }
+  .api-key-setting__row.azure-speech-key-row button { min-width: 0; }
+}
 
 /* VIDEOQUEST FLOATING PALETTE V10 — final fullscreen override. */
 #playerSection .video-stage:fullscreen #video,
