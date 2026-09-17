@@ -99,7 +99,6 @@ const state = {
   dubVoiceIds: { female: '', male: '' },
   dubStableSpeakerGenders: new Map(),
   decisionDubHold: false,
-  dubTailHold: false,
   aiUsage: {
     requests: 0,
     inputTokens: 0,
@@ -1519,6 +1518,7 @@ function alignDubAudioToSegment(audio, segment, videoTime) {
       videoTime: Number(videoTime.toFixed(3))
     });
   }
+  audio._vqInitialSync = true;
   // Preserve a natural voice cadence after the initial sync. Repeated hard
   // seeks and large rate changes were audible as tiny cuts and tone shifts.
   audio.playbackRate = Math.min(1.06, Math.max(0.96, correction.playbackRate));
@@ -1534,12 +1534,11 @@ async function syncDubPlayback() {
     : null;
   const tailSegment = tailAudio?._vqSegment;
   const tailRemaining = Number(tailAudio?.duration) - Number(tailAudio?.currentTime);
-  if (tailAudio && tailSegment && !tailAudio.ended && Number.isFinite(tailRemaining) && tailRemaining > 0.06 &&
+  if (tailAudio && tailSegment && !tailAudio.paused && !tailAudio.ended && Number.isFinite(tailRemaining) && tailRemaining > 0.06 &&
       videoTime >= Number(tailSegment.endTime) - 0.04) {
-    if (!els.video.paused) {
-      state.dubTailHold = true;
-      els.video.pause();
-    }
+    // Let the current sentence finish naturally while the video continues.
+    // Never seek or restart the tail; the next line waits in the serial queue.
+    prefetchDubSegmentsAround(videoTime);
     return;
   }
   // One synthetic voice owns the dub channel at a time. Timestamp estimates
@@ -1575,11 +1574,6 @@ async function syncDubPlayback() {
       audio.preservesPitch = true;
       audio.webkitPreservesPitch = true;
       audio._vqSegment = segment;
-      audio.addEventListener('ended', () => {
-        if (!state.dubTailHold) return;
-        state.dubTailHold = false;
-        if (state.dubbingEnabled && els.video?.paused) els.video.play().catch(() => {});
-      });
       audio.load();
       dubChannels.set(segmentId, audio);
     }
@@ -1606,7 +1600,7 @@ setInterval(() => {
   }
 }, 100);
 els.video.addEventListener('pause', () => {
-  if (!state.decisionDubHold && !state.dubTailHold) dubChannels.forEach(audio => audio.pause());
+  if (!state.decisionDubHold) dubChannels.forEach(audio => audio.pause());
 });
 els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
@@ -3089,7 +3083,7 @@ function prepareAdultScenes() {
     });
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 16)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -3188,7 +3182,9 @@ function orderedLockedAdultPositions(scene = state.adultScene) {
 }
 
 function unlockNextAdultPositionFromLust() {
-  const locked = orderedLockedAdultPositions();
+  const locked = orderedLockedAdultPositions().filter(position =>
+    Number(position.startTime) <= Number(state.adultTimelineFloor) + 0.3
+  );
   const coreVisited = (state.adultScene?.positions || []).some(position =>
     !isWarmupPosition(position) && !isBonusPosition(position) &&
     state.adultVisitedPositionIds.has(position.id)
@@ -4066,7 +4062,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   });
 
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
-  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 16);
+  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 3);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
@@ -4456,6 +4452,7 @@ function updateAdultPlayback(now, mediaTime) {
       if (mediaTime >= item.endTime - 0.04) {
         state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(item.endTime) || 0);
         state.activeAdultPreludeId = null;
+        if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
         els.video?.pause();
         renderAdultProgressiveUI(true);
       }
@@ -4489,6 +4486,8 @@ function updateAdultPlayback(now, mediaTime) {
       }
       els.video?.pause();
       state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(movement.loopEndTime) || 0);
+      if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
+      renderAdultProgressiveUI(true);
       logEngineEvent('POSITION_OCCURRENCE_ENDED', {
         positionId: position.id,
         occurrenceId: state.activeAdultOccurrenceId,

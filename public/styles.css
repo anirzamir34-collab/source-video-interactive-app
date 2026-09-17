@@ -4377,3 +4377,45 @@ body { font-size: 13px; }
   flex: 0 0 128px !important;
   min-width: 128px !important;
 }
+
+/* V15 micro HUD: at most three pooled action cards, sized around their text. */
+#playerSection .video-stage:fullscreen #choices,
+#playerSection .video-stage:-webkit-full-screen #choices {
+  width: min(230px, 32vw) !important;
+  max-width: 230px !important;
+  max-height: 42dvh !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded {
+  width: min(260px, 35vw) !important;
+  max-width: 260px !important;
+  max-height: 48dvh !important;
+  padding: 5px !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-wrap,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-wrap {
+  flex: 0 0 104px !important;
+  min-width: 104px !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-card,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-card,
+#playerSection .video-stage:fullscreen #choices .choice-btn,
+#playerSection .video-stage:-webkit-full-screen #choices .choice-btn {
+  min-height: 27px !important;
+  padding: 4px 6px !important;
+  border-radius: 7px !important;
+  font-size: .50rem !important;
+  line-height: 1.08 !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .adult-compact-dock,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .adult-compact-dock {
+  min-height: 36px !important;
+  margin-bottom: 4px !important;
+  padding: 4px 5px !important;
+}
