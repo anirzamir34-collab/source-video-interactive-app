@@ -490,9 +490,13 @@ function renderGeminiApiKeyState() {
 }
 
 function saveGeminiApiKey() {
-  const key = String(els.geminiApiKeyInput?.value || '').trim();
-  if (!/^AIza[\w-]{20,}$/.test(key)) {
-    if (els.apiKeyStatus) els.apiKeyStatus.textContent = 'Geçerli bir AIza… anahtarı gir';
+  const key = String(els.geminiApiKeyInput?.value || '')
+    .trim()
+    .replace(/^GEMINI_API_KEY\s*=\s*/i, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
+  if (key.length < 20 || key.length > 256 || /\s/.test(key)) {
+    if (els.apiKeyStatus) els.apiKeyStatus.textContent = 'Anahtar eksik veya boşluk içeriyor';
     return;
   }
   try { sessionStorage.setItem(GEMINI_SESSION_KEY, key); } catch {}
