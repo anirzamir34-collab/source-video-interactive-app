@@ -94,6 +94,9 @@ const state = {
   dubSyncGeneration: 0,
   dubUnavailableUntil: 0,
   dubFailureReason: '',
+  dubProviderLock: '',
+  dubStableSpeakerGenders: new Map(),
+  decisionDubHold: false,
   aiUsage: {
     requests: 0,
     inputTokens: 0,
@@ -1287,6 +1290,19 @@ function getDubSegmentId(segment) {
   return dubSegmentKey(segment, index);
 }
 
+function stableDubGender(segment) {
+  const speakerId = String(segment?.speakerId || '').trim() || 'speaker-unknown';
+  const profile = (state.dialogue?.speakers || []).find(item =>
+    String(item?.speakerId || '') === speakerId
+  );
+  const candidate = String(profile?.gender || segment?.gender || 'uncertain').toLowerCase();
+  const normalized = candidate === 'male' || candidate === 'female' ? candidate : 'uncertain';
+  if (!state.dubStableSpeakerGenders.has(speakerId)) {
+    state.dubStableSpeakerGenders.set(speakerId, normalized);
+  }
+  return state.dubStableSpeakerGenders.get(speakerId) || normalized;
+}
+
 async function ensureDubSegment(segment) {
   if (!segment?.turkishText) return null;
   if (state.dubUnavailableUntil > Date.now()) return null;
@@ -1297,11 +1313,11 @@ async function ensureDubSegment(segment) {
 
   const payload = JSON.stringify({
     text: segment.turkishText,
-    gender: segment.gender,
+    gender: stableDubGender(segment),
     emotion: segment.emotion,
     speakerId: segment.speakerId || segmentId
   });
-  const providers = [
+  const availableProviders = [
     activeElevenLabsApiKey() && {
       id: 'elevenlabs',
       url: '/api/elevenlabs-dub-segment',
@@ -1318,6 +1334,8 @@ async function ensureDubSegment(segment) {
       headers: geminiRequestHeaders({ 'Content-Type': 'application/json' })
     }
   ].filter(Boolean);
+  if (!state.dubProviderLock) state.dubProviderLock = availableProviders[0]?.id || '';
+  const providers = availableProviders.filter(provider => provider.id === state.dubProviderLock);
 
   const request = (async () => {
     let lastFailure = null;
@@ -1326,6 +1344,7 @@ async function ensureDubSegment(segment) {
         const response = await fetch(provider.url, { method: 'POST', headers: provider.headers, body: payload });
         const body = await response.json().catch(() => ({}));
         if (response.ok && body?.available && body?.audioBase64) {
+          if (!state.dubProviderLock) state.dubProviderLock = provider.id;
           recordAiUsage(body.aiUsage);
           const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
           state.dubCache.set(segmentId, source);
@@ -1382,6 +1401,9 @@ function resetDubState() {
   state.dubSyncGeneration += 1;
   state.activeDubSegmentId = null;
   state.dubFailureReason = '';
+  state.dubProviderLock = '';
+  state.dubStableSpeakerGenders.clear();
+  state.decisionDubHold = false;
   state.dubUnavailableUntil = 0;
   state.aiUsage = {
     requests: 0,
@@ -1518,6 +1540,8 @@ async function syncDubPlayback() {
       audio = new Audio();
       audio.preload = 'auto';
       audio.src = source;
+      audio.preservesPitch = true;
+      audio.webkitPreservesPitch = true;
       audio.load();
       dubChannels.set(segmentId, audio);
     }
@@ -1543,7 +1567,9 @@ setInterval(() => {
     void syncDubPlayback();
   }
 }, 100);
-els.video.addEventListener('pause', () => dubChannels.forEach(audio => audio.pause()));
+els.video.addEventListener('pause', () => {
+  if (!state.decisionDubHold) dubChannels.forEach(audio => audio.pause());
+});
 els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
   stopDubPlayback();
@@ -2492,11 +2518,13 @@ function adultCategoryFor(action, positionId) {
 }
 
 function isWarmupPosition(position) {
+  if (position?.progressionRole) return position.progressionRole === 'foreplay';
   return ['oral', 'manual'].includes(String(position?.categoryId || '')) ||
     ['oral', 'manual'].includes(String(position?.familyId || ''));
 }
 
 function isBonusPosition(position) {
+  if (position?.progressionRole) return position.progressionRole === 'bonus';
   const category = String(position?.categoryId || '');
   return category === 'anal' || category === 'other';
 }
@@ -2972,11 +3000,27 @@ function prepareAdultScenes() {
     .filter(scene => scene.positions.length)
     .sort((a, b) => a.startTime - b.startTime);
 
-  // Scene occurrence IDs already preserve the model's chronological scene
-  // switches. Never merge distinct runs merely because their time gap is
-  // small; doing so mixes characters and later returns into one panel.
+  // Providers frequently split one continuous encounter into several scene
+  // ids. Merge nearby fragments unless a verified narrative barrier exists;
+  // otherwise early oral/manual clips become isolated panels and skipping one
+  // incorrectly reveals every later position.
+  state.adultScenes = mergeAdultSceneFragments(
+    state.adultScenes,
+    actions.filter(action => !action?.adultScene && !String(action?.adultSceneId || '').trim())
+  );
 
   state.adultScenes.forEach(scene => {
+    const firstCoreStart = scene.positions
+      .filter(position => !['oral', 'manual'].includes(String(position.familyId || '')))
+      .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
+    scene.positions = scene.positions.map(position => {
+      const stimulation = ['oral', 'manual'].includes(String(position.familyId || ''));
+      const beforeFirstCore = stimulation && Number(position.endTime) <= firstCoreStart + 0.05;
+      return {
+        ...position,
+        progressionRole: beforeFirstCore ? 'foreplay' : stimulation ? 'bonus' : 'core'
+      };
+    });
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
       movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 6)
@@ -3063,20 +3107,18 @@ function adultTimeLabel(seconds) {
   return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
 }
 
-function currentAdultFlow() {
-  return Math.min(100, Math.max(0, Number(state.femaleSceneProgress) || 0));
-}
+const ADULT_LUST_UNLOCK_THRESHOLD = 35;
 
-const ADULT_LUST_UNLOCK_THRESHOLD = 100;
+function currentAdultFlow() {
+  const raw = Math.min(ADULT_LUST_UNLOCK_THRESHOLD, Math.max(0, Number(state.femaleSceneProgress) || 0));
+  return (raw / ADULT_LUST_UNLOCK_THRESHOLD) * 100;
+}
 
 function orderedLockedAdultPositions(scene = state.adultScene) {
   return (scene?.positions || [])
     .filter(position => !isWarmupPosition(position))
     .filter(position => !state.adultUnlockedPositionIds.has(position.id))
-    .sort((a, b) =>
-      Number(isBonusPosition(a)) - Number(isBonusPosition(b)) ||
-      Number(a.startTime) - Number(b.startTime)
-    );
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
 function unlockNextAdultPositionFromLust() {
@@ -3243,10 +3285,11 @@ function renderAdultFlowStatus() {
 }
 
 function renderAdultProgress() {
-  const lust = Math.min(100, Math.max(0, state.femaleSceneProgress || 0));
+  const rawLust = Math.min(ADULT_LUST_UNLOCK_THRESHOLD, Math.max(0, state.femaleSceneProgress || 0));
+  const lust = currentAdultFlow();
   const maleOrgasm = Math.min(100, Math.max(0, state.adultMaleOrgasmProgress || 0));
   const femaleOrgasm = Math.min(100, Math.max(0, state.adultFemaleOrgasmProgress || 0));
-  state.femaleSceneProgress = lust;
+  state.femaleSceneProgress = rawLust;
   state.adultMaleOrgasmProgress = maleOrgasm;
   state.adultFemaleOrgasmProgress = femaleOrgasm;
   if (els.maleProgressText) els.maleProgressText.textContent = `${Math.round(maleOrgasm)}%`;
@@ -3434,33 +3477,49 @@ function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel) return;
 
-  // The analysis has already verified these clips. Do not hide correct
-  // positions behind a second Lust/warm-up gate: that made oral/manual clips
-  // trap the player while missionary, cowgirl and prone-bone stayed invisible.
-  const verifiedPositions = (scene.positions || [])
+  const availablePositions = unlockedAdultPositions(scene)
+    .filter(position => !isWarmupPosition(position))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
-  const phase = setAdultMachinePhase('positions');
+  const hasCoreUnlocked = availablePositions.some(position => !isBonusPosition(position));
+  const hasBonusUnlocked = availablePositions.some(isBonusPosition);
+  const phase = setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
 
   const signature = [
     phase,
-    verifiedPositions.map(item => item.id).join(','),
+    availablePositions.map(item => item.id).join(','),
     state.activePositionId || '',
-    state.activeAdultCategory || ''
+    state.activeAdultCategory || '',
+    Math.round(currentAdultFlow())
   ].join('|');
 
-  if (els.adultPhaseBadge) els.adultPhaseBadge.textContent = 'POZİSYONLAR';
-  if (els.adultPhaseTitle) els.adultPhaseTitle.textContent = 'Sahnedeki doğrulanmış pozisyonlar';
-  if (els.adultPhaseHint) els.adultPhaseHint.textContent = 'Bir pozisyon ve ardından gerçek video hareketini seç.';
+  if (els.adultPhaseBadge) els.adultPhaseBadge.textContent = phase === 'foreplay' ? 'YAKINLAŞMA' : phase === 'reward' ? 'BONUS' : 'POZİSYONLAR';
+  if (els.adultPhaseTitle) els.adultPhaseTitle.textContent = phase === 'foreplay' ? 'Yakınlaşma' : 'Sahnedeki doğrulanmış pozisyonlar';
+  if (els.adultPhaseHint) els.adultPhaseHint.textContent = phase === 'foreplay'
+    ? 'Yakınlaşma seçenekleri Lust göstergesini doldurur; ilk gerçek pozisyon sonra açılır.'
+    : 'Bir pozisyon ve ardından gerçek video hareketini seç.';
   els.adultInteractionPanel.dataset.phase = phase;
-  els.discoveryGate?.classList.add('hidden');
-  els.foreplaySection?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
 
   if (!force && signature === state.adultUiSignature) return;
   state.adultUiSignature = signature;
   state.adultLastUiPhase = phase;
 
-  if (!verifiedPositions.length) {
+  if (phase === 'foreplay') {
+    if (els.discoveryGateText) els.discoveryGateText.textContent = `İlk seks pozisyonu için Lust ${Math.round(currentAdultFlow())}/100`;
+    if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = 'Önce kaynak videodaki yakınlaşma, oral ve manuel seçenekleri oynatılır.';
+    els.discoveryGate?.classList.remove('hidden');
+    renderAdultWarmupChoices(scene);
+    els.categorySection?.classList.add('hidden');
+    els.positionSection?.classList.add('hidden');
+    els.movementSection?.classList.add('hidden');
+    refreshAdultCompactDock();
+    return;
+  }
+
+  els.discoveryGate?.classList.add('hidden');
+  els.foreplaySection?.classList.add('hidden');
+
+  if (!availablePositions.length) {
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');
@@ -3468,7 +3527,7 @@ function renderAdultProgressiveUI(force = false) {
   }
 
   const verifiedRoutes = new Set(
-    verifiedPositions
+    availablePositions
       .filter(position =>
         ['vaginal', 'anal'].includes(String(position.activityType || '')) &&
         Number(position.activityTypeConfidence || 0) >= 0.78
@@ -3529,7 +3588,14 @@ function renderAdultPanel(scene) {
 
   state.adultScene = scene;
   state.adultMode = true;
-  (scene.positions || []).forEach(position => state.adultUnlockedPositionIds.add(position.id));
+  const warmupPositions = (scene.positions || []).filter(isWarmupPosition);
+  warmupPositions.forEach(position => state.adultUnlockedPositionIds.add(position.id));
+  if (!warmupPositions.length) {
+    const firstCore = (scene.positions || [])
+      .filter(position => !isWarmupPosition(position) && !isBonusPosition(position))
+      .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
+    if (firstCore) state.adultUnlockedPositionIds.add(firstCore.id);
+  }
   els.adultInteractionPanel.classList.remove('hidden');
   setAdultPanelExpanded(true);
   els.adultPanelToggleBtn?.classList.remove('hidden');
@@ -3592,6 +3658,7 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
   const positions = (scene?.positions || [])
+    .filter(item => !isWarmupPosition(item) && state.adultUnlockedPositionIds.has(item.id))
     .filter(item => {
       if (categoryId === 'all') return true;
       return String(item.activityType || '') === categoryId &&
@@ -4038,6 +4105,7 @@ function finishAdultScene(options = {}) {
   const remainingPosition = (scene.positions || [])
     .filter(position =>
       !isWarmupPosition(position) &&
+      state.adultUnlockedPositionIds.has(position.id) &&
       !state.adultVisitedPositionIds.has(position.id)
     )
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
@@ -4546,11 +4614,40 @@ async function playAction(action) {
 
   state.stopListener = () => {
     if (els.video.currentTime >= decisionEndTime - 0.03) {
-      finishAction(action, decisionEndTime);
+      finishActionAfterDub(action, decisionEndTime);
     }
   };
   els.video.addEventListener('timeupdate', state.stopListener);
   await els.video.play().catch(() => {});
+}
+
+async function finishActionAfterDub(action, decisionEndTime) {
+  if (state.decisionDubHold) return;
+  const playing = [...dubChannels.values()].filter(audio =>
+    audio && !audio.paused && !audio.ended && Number(audio.currentTime) < Number(audio.duration || Infinity) - 0.03
+  );
+  if (!state.dubbingEnabled || !playing.length) {
+    finishAction(action, decisionEndTime);
+    return;
+  }
+
+  state.decisionDubHold = true;
+  if (state.stopListener) {
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+  }
+  els.video.pause();
+  await Promise.race([
+    Promise.all(playing.map(audio => new Promise(resolve => {
+      if (audio.ended) return resolve();
+      audio.addEventListener('ended', resolve, { once: true });
+      audio.addEventListener('error', resolve, { once: true });
+    }))),
+    new Promise(resolve => setTimeout(resolve, 8000))
+  ]);
+  playing.forEach(audio => audio.pause());
+  state.decisionDubHold = false;
+  finishAction(action, decisionEndTime);
 }
 
 function finishAction(action, decisionEndTime = action.endTime) {
