@@ -99,6 +99,7 @@ const state = {
   dubVoiceIds: { female: '', male: '' },
   dubStableSpeakerGenders: new Map(),
   decisionDubHold: false,
+  dubTailHold: false,
   aiUsage: {
     requests: 0,
     inputTokens: 0,
@@ -1510,14 +1511,17 @@ function alignDubAudioToSegment(audio, segment, videoTime) {
     videoPlaybackRate: Number(els.video.playbackRate) || 1
   });
 
-  if (correction.mode === 'seek') {
+  if (correction.mode === 'seek' && audio._vqInitialSync !== true) {
     audio.currentTime = correction.targetTime;
+    audio._vqInitialSync = true;
     logEngineEvent('DUB_HARD_RESYNC', {
       drift: Number(correction.drift.toFixed(3)),
       videoTime: Number(videoTime.toFixed(3))
     });
   }
-  audio.playbackRate = correction.playbackRate;
+  // Preserve a natural voice cadence after the initial sync. Repeated hard
+  // seeks and large rate changes were audible as tiny cuts and tone shifts.
+  audio.playbackRate = Math.min(1.06, Math.max(0.96, correction.playbackRate));
 }
 
 async function syncDubPlayback() {
@@ -1525,6 +1529,19 @@ async function syncDubPlayback() {
 
   const generation = state.dubSyncGeneration;
   const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
+  const tailAudio = state.activeDubSegmentId
+    ? dubChannels.get(state.activeDubSegmentId)
+    : null;
+  const tailSegment = tailAudio?._vqSegment;
+  const tailRemaining = Number(tailAudio?.duration) - Number(tailAudio?.currentTime);
+  if (tailAudio && tailSegment && !tailAudio.ended && Number.isFinite(tailRemaining) && tailRemaining > 0.06 &&
+      videoTime >= Number(tailSegment.endTime) - 0.04) {
+    if (!els.video.paused) {
+      state.dubTailHold = true;
+      els.video.pause();
+    }
+    return;
+  }
   // One synthetic voice owns the dub channel at a time. Timestamp estimates
   // often overlap slightly even when the speakers take turns; playing every
   // overlapping row made the male and female voices talk over each other.
@@ -1557,6 +1574,12 @@ async function syncDubPlayback() {
       audio.src = source;
       audio.preservesPitch = true;
       audio.webkitPreservesPitch = true;
+      audio._vqSegment = segment;
+      audio.addEventListener('ended', () => {
+        if (!state.dubTailHold) return;
+        state.dubTailHold = false;
+        if (state.dubbingEnabled && els.video?.paused) els.video.play().catch(() => {});
+      });
       audio.load();
       dubChannels.set(segmentId, audio);
     }
@@ -1583,7 +1606,7 @@ setInterval(() => {
   }
 }, 100);
 els.video.addEventListener('pause', () => {
-  if (!state.decisionDubHold) dubChannels.forEach(audio => audio.pause());
+  if (!state.decisionDubHold && !state.dubTailHold) dubChannels.forEach(audio => audio.pause());
 });
 els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
@@ -3066,7 +3089,7 @@ function prepareAdultScenes() {
     });
     scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 6)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 16)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -3521,11 +3544,16 @@ function renderAdultApproachChoices(scene) {
   heading.className = 'approach-status';
   heading.innerHTML = `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>İlk gerçek pozisyon Lust dolunca açılır.</small>`;
   els.choices.appendChild(heading);
+  const compactChoiceLabel = value => String(value || '')
+    .replace(/\s+sekansını oynat/giu, '')
+    .replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/giu, '')
+    .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
+    .trim();
   candidates.forEach(choice => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'choice-btn';
-    button.innerHTML = `<span>${escapeHtml(choice.label)}</span><small>Gerçek video sekansı</small>`;
+    button.textContent = compactChoiceLabel(choice.label);
     button.addEventListener('click', () => {
       if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
       else {
@@ -3760,8 +3788,8 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
-  const positions = (scene?.positions || [])
-    .filter(item => !isWarmupPosition(item) && state.adultUnlockedPositionIds.has(item.id))
+  const positions = unlockedAdultPositions(scene)
+    .filter(item => !isWarmupPosition(item))
     .filter(item => {
       if (categoryId === 'all') return true;
       return String(item.activityType || '') === categoryId &&
@@ -3790,7 +3818,9 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'position-tab';
-    button.textContent = position.label;
+    button.textContent = String(position.label || '')
+      .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
+      .trim();
     button.dataset.positionId = position.id;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
@@ -4036,7 +4066,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   });
 
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
-  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 6);
+  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 16);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;

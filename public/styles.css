@@ -4305,3 +4305,75 @@ body { font-size: 13px; }
 .approach-status small {
   color: rgba(223, 253, 244, .68);
 }
+
+/* V14: video-first overlays. Both discovery and position controls stay close
+   to their text size instead of covering the source video. */
+#playerSection .video-stage:fullscreen #choices,
+#playerSection .video-stage:-webkit-full-screen #choices {
+  right: max(8px, env(safe-area-inset-right)) !important;
+  bottom: max(8px, env(safe-area-inset-bottom)) !important;
+  left: auto !important;
+  width: min(280px, 38vw) !important;
+  max-width: 280px !important;
+  max-height: 48dvh !important;
+  padding: 5px !important;
+  gap: 4px !important;
+  overflow-y: auto !important;
+  border: 1px solid rgba(255,255,255,.08) !important;
+  border-radius: 11px !important;
+  background: rgba(2,7,8,.62) !important;
+  backdrop-filter: blur(10px) !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .approach-status,
+#playerSection .video-stage:-webkit-full-screen #choices .approach-status {
+  padding: 5px 7px !important;
+  border-radius: 8px !important;
+  font-size: .55rem !important;
+  line-height: 1.12 !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .approach-status small,
+#playerSection .video-stage:-webkit-full-screen #choices .approach-status small {
+  display: none !important;
+}
+
+#playerSection .video-stage:fullscreen #choices .choice-btn,
+#playerSection .video-stage:-webkit-full-screen #choices .choice-btn {
+  width: 100% !important;
+  min-height: 30px !important;
+  padding: 5px 7px !important;
+  border-radius: 8px !important;
+  font-size: .58rem !important;
+  line-height: 1.15 !important;
+  text-align: left !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded {
+  top: auto !important;
+  right: max(8px, env(safe-area-inset-right)) !important;
+  bottom: max(8px, env(safe-area-inset-bottom)) !important;
+  left: auto !important;
+  width: min(330px, 40vw) !important;
+  max-width: 330px !important;
+  max-height: 54dvh !important;
+  padding: 6px !important;
+  border-radius: 13px !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .position-tab,
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-card,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-card {
+  min-height: 30px !important;
+  padding: 5px 7px !important;
+  font-size: .56rem !important;
+  line-height: 1.12 !important;
+}
+
+#playerSection .video-stage:fullscreen #adultInteractionPanel .movement-choice-wrap,
+#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel .movement-choice-wrap {
+  flex: 0 0 128px !important;
+  min-width: 128px !important;
+}

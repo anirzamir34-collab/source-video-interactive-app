@@ -776,7 +776,7 @@ export function consolidateVerifiedPositions(positions = []) {
 }
 
 export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
-  const limit = Math.max(1, Math.min(6, Math.floor(Number(maxChoices) || 4)));
+  const limit = Math.max(1, Math.min(16, Math.floor(Number(maxChoices) || 4)));
   const clean = value => String(value || '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
     .trim();
@@ -835,11 +835,9 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       .join(' · ')
       .trim();
     const normalizedRaw = normalize(rawLabel);
-    const concreteChange = /(hizli|yavas|ritm|sert|derin|op|okus|oksa|tut|kavra|dokun|temas|kalca|gogus|bel|yon|aci|tempo|hareket)/u.test(normalizedRaw);
     const meaningfulLabel = rawLabel && normalizedRaw !== positionKey &&
       !normalizedRaw.startsWith(positionKey + ' ·') &&
-      !/^(gercek hareket|gercek sekans|seçenek|secenek|option|choice|hareket)\s*\d*$/u.test(normalizedRaw) &&
-      concreteChange;
+      !/^(gercek hareket|gercek sekans|seçenek|secenek|option|choice|hareket)\s*\d*$/u.test(normalizedRaw);
     const actionForVariant = variant => {
       const text = normalize([
         variant?.label,
