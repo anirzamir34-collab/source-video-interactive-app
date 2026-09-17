@@ -498,6 +498,10 @@ Return ONLY valid JSON with this exact shape:
       "postSceneTime": 0,
       "positionId": "",
       "positionOccurrenceId": "",
+      "receiverBodyOrientation": "on_top_facing|on_top_away|face_down_flat|on_back|side_lying|hands_knees|bent_over|standing|seated|unclear",
+      "receiverSupport": "straddling|torso_flat|back_flat|hands_knees|side|seated|standing|unclear",
+      "positionConfigurationConfidence": 0.0,
+      "positionEvidence": "direct visible body-configuration evidence or empty string",
       "groupScene": false,
       "adultParticipantCount": 2,
       "participantTrackIds": [],
@@ -590,6 +594,9 @@ Rules:
 - The Turkish label may say "vajinal" only when activityType is vaginal with activityTypeConfidence >= 0.90 and direct activityEvidence. It may say "anal" only when activityType is anal with the same evidence standard. Otherwise the label must name only the verified position/action without claiming penetration route.
 - If the visible route changes between vaginal and anal while the body position stays the same, end the previous action at the verified transition and create a new action with a new positionOccurrenceId. Never carry the previous activityType across that transition.
 - Verify every position and internal movement against its exact start frame, midpoint frame and end frame from the source video.
+- For every position, independently return receiverBodyOrientation, receiverSupport, positionConfigurationConfidence and positionEvidence from the visible body arrangement at start, midpoint and end. Never copy these fields from positionId or positionLabel.
+- Cowgirl requires the receiving partner to be visibly above MAIN_MALE and straddling him. Prone-bone requires the receiving partner's face-down torso/abdomen to remain visibly supported flat with low hips while MAIN_MALE is behind. These configurations are mutually exclusive.
+- If a clip changes between straddling-on-top and face-down-flat, split it exactly at the visible transition. The transition interval must not be an internal movement of either position.
 - The Turkish label must directly describe what is visibly happening at the midpoint timestamp; if the midpoint does not visibly prove that label, omit the item.
 - A position movement must describe a visible change while the same canonical body configuration is maintained. Do not attach kissing, caressing, breast touching, clothing adjustment, transition, dialogue or generic excitement to a penetrative position; emit it as a separate warm-up action or omit it.
 - Do not use penetration-route words (vaginal/anal/penetration), position-transition words (turning, guiding, changing position) or a different position name as a movement label. Those belong to a separately verified occurrence; otherwise omit the action.
@@ -911,6 +918,12 @@ Rules:
           postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
           positionId: String(action.positionId || ''),
           positionOccurrenceId: String(action.positionOccurrenceId || ''),
+          receiverBodyOrientation: ['on_top_facing', 'on_top_away', 'face_down_flat', 'on_back', 'side_lying', 'hands_knees', 'bent_over', 'standing', 'seated', 'unclear'].includes(String(action.receiverBodyOrientation || '').toLowerCase())
+            ? String(action.receiverBodyOrientation).toLowerCase() : 'unclear',
+          receiverSupport: ['straddling', 'torso_flat', 'back_flat', 'hands_knees', 'side', 'seated', 'standing', 'unclear'].includes(String(action.receiverSupport || '').toLowerCase())
+            ? String(action.receiverSupport).toLowerCase() : 'unclear',
+          positionConfigurationConfidence: Math.max(0, Math.min(1, Number(action.positionConfigurationConfidence) || 0)),
+          positionEvidence: String(action.positionEvidence || '').trim(),
           groupScene: action.groupScene === true,
           adultParticipantCount: Math.max(0, Math.floor(Number(action.adultParticipantCount) || 0)),
           participantTrackIds: Array.isArray(action.participantTrackIds)
