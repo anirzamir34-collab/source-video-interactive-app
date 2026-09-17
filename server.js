@@ -62,7 +62,7 @@ function isAuthenticated(req) {
 
 function clientGeminiApiKey(req) {
   const value = String(req.get('x-gemini-api-key') || '').trim();
-  if (!value || value.length > 256 || !/^AIza[\w-]+$/.test(value)) return '';
+  if (!value || value.length < 20 || value.length > 256 || /\s/.test(value)) return '';
   return value;
 }
 
