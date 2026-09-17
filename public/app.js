@@ -178,6 +178,12 @@ const els = {
   testGeminiApiKeyBtn: $('testGeminiApiKeyBtn'),
   clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
   apiKeyStatus: $('apiKeyStatus'),
+  azureSpeechKeyInput: $('azureSpeechKeyInput'),
+  azureSpeechRegionInput: $('azureSpeechRegionInput'),
+  saveAzureSpeechBtn: $('saveAzureSpeechBtn'),
+  testAzureSpeechBtn: $('testAzureSpeechBtn'),
+  clearAzureSpeechBtn: $('clearAzureSpeechBtn'),
+  azureSpeechStatus: $('azureSpeechStatus'),
   motionMode: $('motionMode'),
   subtitleMode: $('subtitleMode'),
   dubMode: $('dubMode'),
@@ -475,6 +481,8 @@ function renderQuotaBadge(element, status) {
 }
 
 const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
+const AZURE_SPEECH_SESSION_KEY = 'videoquest_azure_speech_key';
+const AZURE_SPEECH_REGION_KEY = 'videoquest_azure_speech_region';
 
 function activeGeminiApiKey() {
   try { return String(sessionStorage.getItem(GEMINI_SESSION_KEY) || '').trim(); }
@@ -553,6 +561,100 @@ function clearGeminiApiKey() {
   checkAiUsageStatus();
 }
 
+function activeAzureSpeechKey() {
+  try { return String(sessionStorage.getItem(AZURE_SPEECH_SESSION_KEY) || '').trim(); }
+  catch { return ''; }
+}
+
+function activeAzureSpeechRegion() {
+  try { return String(sessionStorage.getItem(AZURE_SPEECH_REGION_KEY) || 'eastus').trim().toLowerCase(); }
+  catch { return 'eastus'; }
+}
+
+function azureSpeechHeaders(base = {}) {
+  const key = activeAzureSpeechKey();
+  const region = activeAzureSpeechRegion();
+  return key ? { ...base, 'X-Azure-Speech-Key': key, 'X-Azure-Speech-Region': region } : base;
+}
+
+function renderAzureSpeechState() {
+  const active = Boolean(activeAzureSpeechKey());
+  if (els.azureSpeechStatus) {
+    els.azureSpeechStatus.className = active ? 'available' : '';
+    els.azureSpeechStatus.textContent = active
+      ? `Azure etkin · ${activeAzureSpeechRegion()}`
+      : 'Anahtar girilmedi';
+  }
+  els.testAzureSpeechBtn?.classList.toggle('hidden', !active);
+  els.clearAzureSpeechBtn?.classList.toggle('hidden', !active);
+  if (active && els.azureSpeechKeyInput) els.azureSpeechKeyInput.value = '';
+  if (els.azureSpeechRegionInput) els.azureSpeechRegionInput.value = activeAzureSpeechRegion();
+}
+
+function saveAzureSpeechKey() {
+  const key = String(els.azureSpeechKeyInput?.value || '').trim();
+  const region = String(els.azureSpeechRegionInput?.value || 'eastus').trim().toLowerCase();
+  if (key.length < 20 || key.length > 256 || /\s/.test(key)) {
+    if (els.azureSpeechStatus) els.azureSpeechStatus.textContent = 'Anahtar eksik veya geçersiz';
+    return;
+  }
+  if (!/^[a-z0-9-]{2,40}$/.test(region)) {
+    if (els.azureSpeechStatus) els.azureSpeechStatus.textContent = 'Bölge geçersiz';
+    return;
+  }
+  try {
+    sessionStorage.setItem(AZURE_SPEECH_SESSION_KEY, key);
+    sessionStorage.setItem(AZURE_SPEECH_REGION_KEY, region);
+  } catch {}
+  resetDubState();
+  renderAzureSpeechState();
+  testAzureSpeechKey();
+}
+
+async function testAzureSpeechKey() {
+  if (!activeAzureSpeechKey()) return;
+  if (els.testAzureSpeechBtn) {
+    els.testAzureSpeechBtn.disabled = true;
+    els.testAzureSpeechBtn.textContent = 'Test...';
+  }
+  if (els.azureSpeechStatus) {
+    els.azureSpeechStatus.className = 'checking';
+    els.azureSpeechStatus.textContent = 'Azure bağlantısı kontrol ediliyor';
+  }
+  try {
+    const response = await fetch('/api/azure-speech-status', {
+      method: 'POST',
+      headers: azureSpeechHeaders({ 'Content-Type': 'application/json' }),
+      body: '{}'
+    });
+    const body = await response.json().catch(() => ({}));
+    if (els.azureSpeechStatus) {
+      els.azureSpeechStatus.className = response.ok ? 'available' : 'invalid';
+      els.azureSpeechStatus.textContent = body.message || (response.ok ? 'Azure Speech çalışıyor' : 'Azure kullanılamıyor');
+    }
+  } catch {
+    if (els.azureSpeechStatus) {
+      els.azureSpeechStatus.className = 'invalid';
+      els.azureSpeechStatus.textContent = 'Azure bağlantısı kurulamadı';
+    }
+  } finally {
+    if (els.testAzureSpeechBtn) {
+      els.testAzureSpeechBtn.disabled = false;
+      els.testAzureSpeechBtn.textContent = 'Test et';
+    }
+  }
+}
+
+function clearAzureSpeechKey() {
+  try {
+    sessionStorage.removeItem(AZURE_SPEECH_SESSION_KEY);
+    sessionStorage.removeItem(AZURE_SPEECH_REGION_KEY);
+  } catch {}
+  if (els.azureSpeechKeyInput) els.azureSpeechKeyInput.value = '';
+  resetDubState();
+  renderAzureSpeechState();
+}
+
 async function checkAiUsageStatus() {
   try {
     const response = await fetch('/api/ai-usage-status', {
@@ -561,7 +663,9 @@ async function checkAiUsageStatus() {
     });
     const body = await response.json();
     renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
-    renderQuotaBadge(els.dubQuotaStatus, body.dubbing);
+    renderQuotaBadge(els.dubQuotaStatus, activeAzureSpeechKey()
+      ? { state: 'available', message: `Azure Speech F0 etkin · ${activeAzureSpeechRegion()}` }
+      : body.dubbing);
   } catch {
     renderQuotaBadge(els.subtitleQuotaStatus, { state: 'unknown' });
     renderQuotaBadge(els.dubQuotaStatus, { state: 'unknown' });
@@ -628,7 +732,14 @@ els.clearGeminiApiKeyBtn?.addEventListener('click', clearGeminiApiKey);
 els.geminiApiKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveGeminiApiKey();
 });
+els.saveAzureSpeechBtn?.addEventListener('click', saveAzureSpeechKey);
+els.testAzureSpeechBtn?.addEventListener('click', testAzureSpeechKey);
+els.clearAzureSpeechBtn?.addEventListener('click', clearAzureSpeechKey);
+els.azureSpeechKeyInput?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') saveAzureSpeechKey();
+});
 renderGeminiApiKeyState();
+renderAzureSpeechState();
 
 els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
@@ -1087,9 +1198,12 @@ async function ensureDubSegment(segment) {
   if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
   if (state.dubRequests.has(segmentId)) return state.dubRequests.get(segmentId);
 
-  const request = fetch('/api/gemini-dub-segment', {
+  const useAzure = Boolean(activeAzureSpeechKey());
+  const request = fetch(useAzure ? '/api/azure-dub-segment' : '/api/gemini-dub-segment', {
     method: 'POST',
-    headers: geminiRequestHeaders({ 'Content-Type': 'application/json' }),
+    headers: useAzure
+      ? azureSpeechHeaders({ 'Content-Type': 'application/json' })
+      : geminiRequestHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       text: segment.turkishText,
       gender: segment.gender,
@@ -1099,10 +1213,10 @@ async function ensureDubSegment(segment) {
   }).then(async response => {
     const body = await response.json();
     if (!response.ok || !body?.available || !body?.audioBase64) {
-      if (body?.reason === 'GEMINI_TTS_DAILY_LIMIT') {
+      if (body?.reason === 'GEMINI_TTS_DAILY_LIMIT' || body?.reason === 'AZURE_SPEECH_QUOTA_LIMIT') {
         const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
         state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
-        state.dubFailureReason = 'GEMINI_TTS_DAILY_LIMIT';
+        state.dubFailureReason = body.reason;
         state.dubbingEnabled = false;
         stopDubPlayback();
         if (els.dubToggleBtn) {
