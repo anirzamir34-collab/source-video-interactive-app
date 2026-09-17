@@ -3760,6 +3760,8 @@ body { font-size: 13px; }
 .adult-dock-more-btn b { font-size: .72rem; line-height: .7; }
 .adult-interaction-panel.compact-collapsed > :not(.adult-compact-dock) { display: none !important; }
 .adult-interaction-panel.compact-expanded > .adult-compact-dock { margin-bottom: 10px; }
+.adult-interaction-panel.compact-expanded .adult-quick-choices { display: none; }
+.adult-interaction-panel.compact-expanded .adult-compact-dock { grid-template-columns: minmax(0, 1fr) auto; }
 .adult-interaction-panel.compact-collapsed {
   padding: 0 !important;
   border: 0 !important;
@@ -3774,6 +3776,19 @@ body { font-size: 13px; }
   inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
+}
+/* Fullscreen video always owns the entire stage, including browsers without :has(). */
+#playerSection .video-stage:fullscreen #video,
+#playerSection .video-stage:-webkit-full-screen #video {
+  position: absolute !important;
+  inset: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  max-width: none !important;
+  height: 100dvh !important;
+  max-height: none !important;
+  object-fit: contain !important;
 }
 #playerSection .video-stage:fullscreen #adultInteractionPanel,
 #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel {
