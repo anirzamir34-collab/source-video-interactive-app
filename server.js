@@ -70,6 +70,12 @@ function resolveGeminiApiKey(req) {
   return clientGeminiApiKey(req) || String(process.env.GEMINI_API_KEY || '').trim();
 }
 
+function clientElevenLabsApiKey(req) {
+  const value = String(req.get('x-elevenlabs-key') || '').trim();
+  if (!value || value.length < 20 || value.length > 256 || /\s/.test(value)) return '';
+  return value;
+}
+
 function emptyGeminiUsage() {
   return { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0 };
 }
@@ -2570,6 +2576,173 @@ app.post('/api/azure-dub-segment', async (req, res) => {
       retryAfterSeconds: quota ? 60 : undefined,
       message: quota ? 'Azure Speech F0 kotası veya hız sınırı dolu.' : 'Azure Türkçe dublaj sesi üretilemedi.'
     });
+  }
+});
+
+const elevenLabsVoiceCache = new Map();
+
+async function elevenLabsRequest(apiKey, path, options = {}) {
+  const response = await fetch(`https://api.elevenlabs.io${path}`, {
+    ...options,
+    headers: {
+      'xi-api-key': apiKey,
+      ...(options.headers || {})
+    }
+  });
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    const error = new Error(`ELEVENLABS_${response.status}: ${details.slice(0, 500)}`);
+    error.status = response.status;
+    throw error;
+  }
+  return response;
+}
+
+function elevenVoiceGender(voice) {
+  const labels = voice?.labels || voice?.sharing?.labels || {};
+  const text = [labels.gender, voice?.description, voice?.name].filter(Boolean).join(' ').toLowerCase();
+  if (/female|woman|kadın/.test(text)) return 'female';
+  if (/male|man|erkek/.test(text)) return 'male';
+  return 'uncertain';
+}
+
+function scoreElevenVoice(voice, gender) {
+  const name = String(voice?.name || '').toLowerCase();
+  const description = String(voice?.description || '').toLowerCase();
+  const labels = voice?.labels || voice?.sharing?.labels || {};
+  const detected = elevenVoiceGender(voice);
+  let score = detected === gender ? 100 : detected === 'uncertain' ? 10 : -100;
+  if (/turkish|türk/.test(`${description} ${Object.values(labels).join(' ')}`.toLowerCase())) score += 35;
+  const preferred = gender === 'female'
+    ? ['rachel', 'matilda', 'bella', 'alice', 'sarah']
+    : ['adam', 'antoni', 'josh', 'daniel', 'george'];
+  const preferredIndex = preferred.indexOf(name);
+  if (preferredIndex >= 0) score += 25 - preferredIndex;
+  if (/conversational|natural|warm|soft|calm/.test(description)) score += 8;
+  return score;
+}
+
+async function elevenLabsVoices(apiKey, force = false) {
+  const cacheKey = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
+  const cached = elevenLabsVoiceCache.get(cacheKey);
+  if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
+  const response = await elevenLabsRequest(apiKey, '/v2/voices?page_size=100');
+  const body = await response.json();
+  const voices = Array.isArray(body?.voices) ? body.voices.filter(item => item?.voice_id) : [];
+  const pick = (gender, excludedVoiceId = '') => [...voices]
+    .filter(voice => voice.voice_id !== excludedVoiceId)
+    .sort((a, b) => scoreElevenVoice(b, gender) - scoreElevenVoice(a, gender))[0] || null;
+  const female = pick('female');
+  const male = pick('male', female?.voice_id);
+  const value = { voices, female, male };
+  elevenLabsVoiceCache.set(cacheKey, { value, expiresAt: Date.now() + 10 * 60 * 1000 });
+  return value;
+}
+
+async function elevenLabsSubscription(apiKey) {
+  const response = await elevenLabsRequest(apiKey, '/v1/user/subscription');
+  return response.json();
+}
+
+async function elevenLabsSynthesize({ apiKey, text, gender }) {
+  const voiceSet = await elevenLabsVoices(apiKey);
+  const voice = gender === 'male' ? voiceSet.male : voiceSet.female || voiceSet.male;
+  if (!voice?.voice_id) throw new Error('ELEVENLABS_VOICE_MISSING');
+  const response = await elevenLabsRequest(
+    apiKey,
+    `/v1/text-to-speech/${encodeURIComponent(voice.voice_id)}?output_format=mp3_44100_128`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.78,
+          style: 0.12,
+          use_speaker_boost: true,
+          speed: 1
+        }
+      })
+    }
+  );
+  return {
+    voiceId: voice.voice_id,
+    voiceName: voice.name || (gender === 'male' ? 'Erkek sesi' : 'Kadın sesi'),
+    audioBase64: Buffer.from(await response.arrayBuffer()).toString('base64')
+  };
+}
+
+function elevenLabsErrorResponse(error, fallbackMessage) {
+  const status = Number(error?.status) || 502;
+  const text = String(error?.message || error).toLowerCase();
+  const quota = status === 429 || status === 402 || /quota|credit|character limit/.test(text);
+  const forbidden = status === 401 || status === 403;
+  return {
+    status: quota ? 429 : forbidden ? status : 502,
+    body: {
+      available: false,
+      state: quota ? 'no_credits' : forbidden ? 'forbidden' : 'unavailable',
+      reason: quota ? 'ELEVENLABS_QUOTA_LIMIT' : forbidden ? 'ELEVENLABS_AUTH_ERROR' : 'ELEVENLABS_ERROR',
+      retryAfterSeconds: quota ? 3600 : undefined,
+      message: quota ? 'ElevenLabs kredisi veya kullanım sınırı doldu.' : forbidden ? 'ElevenLabs anahtarı ya da izinleri geçersiz.' : fallbackMessage
+    }
+  };
+}
+
+app.post('/api/elevenlabs-status', async (req, res) => {
+  const apiKey = clientElevenLabsApiKey(req);
+  if (!apiKey) return res.status(400).json({ ok: false, state: 'invalid', message: 'Geçerli ElevenLabs anahtarı gönderilmedi.' });
+  try {
+    const [subscription, voices] = await Promise.all([
+      elevenLabsSubscription(apiKey),
+      elevenLabsVoices(apiKey, true)
+    ]);
+    if (!voices.female || !voices.male) {
+      return res.status(422).json({ ok: false, state: 'unavailable', message: 'Kadın ve erkek için kullanılabilir iki ayrı ses bulunamadı.' });
+    }
+    const used = Math.max(0, Number(subscription?.character_count) || 0);
+    const limit = Math.max(0, Number(subscription?.character_limit) || 0);
+    const remaining = Math.max(0, limit - used);
+    return res.json({
+      ok: true,
+      state: remaining > 0 ? 'available' : 'no_credits',
+      remaining,
+      limit,
+      used,
+      femaleVoice: voices.female.name,
+      maleVoice: voices.male.name,
+      message: `ElevenLabs çalışıyor · ${remaining.toLocaleString('tr-TR')} kredi kaldı · Kadın: ${voices.female.name} · Erkek: ${voices.male.name}`
+    });
+  } catch (error) {
+    const normalized = elevenLabsErrorResponse(error, 'ElevenLabs bağlantısı doğrulanamadı.');
+    return res.status(normalized.status).json({ ok: false, ...normalized.body });
+  }
+});
+
+app.post('/api/elevenlabs-dub-segment', async (req, res) => {
+  const apiKey = clientElevenLabsApiKey(req);
+  if (!apiKey) return res.status(400).json({ available: false, reason: 'ELEVENLABS_NOT_CONFIGURED' });
+  const text = String(req.body?.text || '').trim();
+  const gender = String(req.body?.gender || 'uncertain');
+  const speakerId = String(req.body?.speakerId || 'speaker');
+  if (!text || text.length > 1200) return res.status(400).json({ available: false, reason: 'INVALID_DUB_TEXT' });
+  try {
+    const audio = await elevenLabsSynthesize({ apiKey, text, gender });
+    return res.json({
+      available: true,
+      provider: 'elevenlabs',
+      speakerId,
+      gender,
+      voiceId: audio.voiceId,
+      voiceName: audio.voiceName,
+      mimeType: 'audio/mpeg',
+      audioBase64: audio.audioBase64
+    });
+  } catch (error) {
+    const normalized = elevenLabsErrorResponse(error, 'ElevenLabs Türkçe dublaj sesi üretilemedi.');
+    return res.status(normalized.status).json(normalized.body);
   }
 });
 
