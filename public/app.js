@@ -1011,6 +1011,21 @@ function sendDialogueChunk({
 }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let settled = false;
+    let stallTimer = null;
+    const finish = (handler, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(stallTimer);
+      handler(value);
+    };
+    const armStallTimer = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        xhr.abort();
+        finish(reject, new Error('Yükleme ilerlemesi durdu; parça yeniden deneniyor.'));
+      }, 15000);
+    };
 
     xhr.open(
       'POST',
@@ -1018,10 +1033,12 @@ function sendDialogueChunk({
     );
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
-    xhr.timeout = 120000;
+    xhr.timeout = 45000;
     xhr.responseType = 'json';
+    armStallTimer();
 
     xhr.upload.addEventListener('progress', event => {
+      armStallTimer();
       const loaded = Math.min(
         totalBytes,
         completedBytes + (event.loaded || 0)
@@ -1043,9 +1060,10 @@ function sendDialogueChunk({
       const body = xhr.response || {};
 
       if (xhr.status >= 200 && xhr.status < 300 && body.available) {
-        resolve(body);
+        finish(resolve, body);
       } else {
-        reject(
+        finish(
+          reject,
           new Error(
             body.message ||
             body.reason ||
@@ -1056,11 +1074,15 @@ function sendDialogueChunk({
     });
 
     xhr.addEventListener('error', () => {
-      reject(new Error('Parça yüklenirken bağlantı kesildi.'));
+      finish(reject, new Error('Parça yüklenirken bağlantı kesildi.'));
     });
 
     xhr.addEventListener('timeout', () => {
-      reject(new Error('Parça yüklemesi zaman aşımına uğradı.'));
+      finish(reject, new Error('Parça yüklemesi zaman aşımına uğradı.'));
+    });
+
+    xhr.addEventListener('abort', () => {
+      finish(reject, new Error('Takılan parça iptal edilip yeniden başlatıldı.'));
     });
 
     xhr.send(chunk);
@@ -1103,8 +1125,10 @@ async function uploadDialogueWithProgress(
   }
 
   const uploadId = startBody.uploadId;
-  // Always-on aggressive upload: fewer round trips, larger sustained network writes.
-  const chunkSize = 8 * 1024 * 1024;
+  // Small chunks are substantially more reliable on Android and through
+  // Render's proxy. A stalled request now loses at most one MiB and resumes
+  // from the same chunk instead of appearing frozen for two minutes.
+  const chunkSize = 1 * 1024 * 1024;
   const chunkCount = Math.ceil(file.size / chunkSize);
   const startedAt = performance.now();
 
@@ -1139,7 +1163,7 @@ async function uploadDialogueWithProgress(
           'Yükleme kesildi veya uygulama arka plana alındı.\n' +
           'Sayfaya dönüldüğünde kaldığı parçadan devam edilecek.';
 
-        await new Promise(resolve => setTimeout(resolve, 650));
+        await new Promise(resolve => setTimeout(resolve, Math.min(4000, 700 * retryCount)));
       }
     }
 
