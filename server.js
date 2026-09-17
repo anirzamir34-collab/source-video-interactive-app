@@ -60,6 +60,16 @@ function isAuthenticated(req) {
   return secureEqual(readCookie(req, AUTH_COOKIE), expectedAuthToken());
 }
 
+function clientGeminiApiKey(req) {
+  const value = String(req.get('x-gemini-api-key') || '').trim();
+  if (!value || value.length > 256 || !/^AIza[\w-]+$/.test(value)) return '';
+  return value;
+}
+
+function resolveGeminiApiKey(req) {
+  return clientGeminiApiKey(req) || String(process.env.GEMINI_API_KEY || '').trim();
+}
+
 app.get('/login', (req, res) => {
   if (isAuthenticated(req)) return res.redirect('/');
   const failed = req.query.error === '1';
@@ -306,7 +316,7 @@ async function splitSingleStoryboardSheet(file, timestampValues) {
 
 app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards', 20), async (req, res) => {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = resolveGeminiApiKey(req);
     if (!apiKey) {
       return res.status(503).json({
         available: false,
@@ -1842,7 +1852,7 @@ app.post(
       dialogueUploadSessions.delete(uploadId);
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = resolveGeminiApiKey(req);
     const tempPath = req.file?.path;
     let uploadedFile = null;
 
@@ -2266,7 +2276,7 @@ Rules:
 
       if (uploadedFile?.name && process.env.KEEP_GEMINI_FILES !== 'true') {
         try {
-          const cleanupAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+          const cleanupAi = new GoogleGenAI({ apiKey });
           await cleanupAi.files.delete({ name: uploadedFile.name });
         } catch (cleanupError) {
           console.error('Gemini file cleanup failed:', cleanupError);
@@ -2322,7 +2332,8 @@ function pcmBase64ToWavBase64(pcmBase64, sampleRate = 24000) {
 
 app.post('/api/gemini-dub-segment', async (req, res) => {
   try {
-    if (ttsQuotaBlockedUntil > Date.now()) {
+    const customApiKey = clientGeminiApiKey(req);
+    if (!customApiKey && ttsQuotaBlockedUntil > Date.now()) {
       return res.status(429).json({
         available: false,
         reason: 'GEMINI_TTS_DAILY_LIMIT',
@@ -2331,7 +2342,7 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
         retryable: false
       });
     }
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = customApiKey || String(process.env.GEMINI_API_KEY || '').trim();
     if (!apiKey) {
       return res.status(503).json({
         available: false,
@@ -2426,7 +2437,7 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
     const details = String(error?.message || error);
     if (isTtsDailyQuotaError(details)) {
       const retryAfterSeconds = ttsQuotaRetrySeconds(details) || 3600;
-      ttsQuotaBlockedUntil = Date.now() + retryAfterSeconds * 1000;
+      if (!customApiKey) ttsQuotaBlockedUntil = Date.now() + retryAfterSeconds * 1000;
       return res.status(429).json({
         available: false,
         reason: 'GEMINI_TTS_DAILY_LIMIT',
@@ -2444,9 +2455,10 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
   }
 });
 
-app.get('/api/ai-usage-status', (_req, res) => {
+app.get('/api/ai-usage-status', (req, res) => {
   const now = Date.now();
-  const configured = Boolean(process.env.GEMINI_API_KEY);
+  const customApiKey = clientGeminiApiKey(req);
+  const configured = Boolean(customApiKey || process.env.GEMINI_API_KEY);
   const statusFor = (blockedUntil, lastSuccessAt, label) => {
     if (!configured) {
       return { state: 'unconfigured', available: false, message: `${label} için Gemini API anahtarı yapılandırılmamış.` };
@@ -2475,8 +2487,9 @@ app.get('/api/ai-usage-status', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     checkedAt: now,
-    subtitles: statusFor(dialogueQuotaBlockedUntil, dialogueLastSuccessAt, 'Türkçe altyazı'),
-    dubbing: statusFor(ttsQuotaBlockedUntil, ttsLastSuccessAt, 'Türkçe dublaj')
+    keySource: customApiKey ? 'browser_session' : 'server',
+    subtitles: statusFor(customApiKey ? 0 : dialogueQuotaBlockedUntil, dialogueLastSuccessAt, 'Türkçe altyazı'),
+    dubbing: statusFor(customApiKey ? 0 : ttsQuotaBlockedUntil, ttsLastSuccessAt, 'Türkçe dublaj')
   });
 });
 
