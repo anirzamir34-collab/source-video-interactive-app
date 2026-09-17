@@ -3977,7 +3977,7 @@ body { font-size: 13px; }
 .api-key-setting__copy { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
 .api-key-setting__copy b { color: #dffbf2; font-size: .69rem; letter-spacing: .04em; }
 .api-key-setting__copy small { color: #67dcb9; font-size: .61rem; text-align: right; }
-.api-key-setting__row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 6px; }
+.api-key-setting__row { display: grid; grid-template-columns: minmax(0,1fr) repeat(3, auto); gap: 6px; }
 .api-key-setting input {
   min-width: 0;
   height: 40px;
@@ -3989,6 +3989,12 @@ body { font-size: 13px; }
 }
 .api-key-setting button { min-height: 40px; padding: 0 11px; border-radius: 10px; font-size: .65rem; font-weight: 850; }
 .api-key-setting > small { color: #76877f; font-size: .59rem; }
+.api-key-setting__copy small.available { color: #61edbe; }
+.api-key-setting__copy small.daily_limit,
+.api-key-setting__copy small.no_credits,
+.api-key-setting__copy small.invalid,
+.api-key-setting__copy small.forbidden { color: #ff8298; }
+.api-key-setting__copy small.rate_limited { color: #ffc96b; }
 
 /* VIDEOQUEST FLOATING PALETTE V10 — final fullscreen override. */
 #playerSection .video-stage:fullscreen #video,
