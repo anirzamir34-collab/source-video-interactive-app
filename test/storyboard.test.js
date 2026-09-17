@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSceneBoundaries, sheetsPerAnalysisChunk } from '../public/storyboard.js';
+import {
+  detectSceneBoundaries,
+  selectFocusedTimestamps,
+  sheetsPerAnalysisChunk,
+  storyboardSamplingPlan
+} from '../public/storyboard.js';
 
 test('analysis chunk planning reduces calls without dropping storyboard frames', () => {
   assert.equal(sheetsPerAnalysisChunk('ultra'), 3);
@@ -39,4 +44,28 @@ test('ignores invalid samples and prevents clustered duplicate boundaries', () =
   assert.deepEqual(detectSceneBoundaries(profile, 1), [
     { time: 1, score: 50, kind: 'hard-cut' }
   ]);
+});
+
+test('uses adaptive remote sampling while preserving local analysis density', () => {
+  assert.deepEqual(storyboardSamplingPlan(240, true), { baseCount: 72, focusedCount: 24 });
+  assert.deepEqual(storyboardSamplingPlan(600, true), { baseCount: 96, focusedCount: 36 });
+  assert.deepEqual(storyboardSamplingPlan(1200, true), { baseCount: 120, focusedCount: 48 });
+  assert.deepEqual(storyboardSamplingPlan(240, false), { baseCount: 144, focusedCount: 0 });
+});
+
+test('focuses extra remote samples around motion without duplicating base times', () => {
+  const profile = [
+    { time: 0, score: 0 },
+    { time: 4, score: 8 },
+    { time: 8, score: 70 },
+    { time: 12, score: 12 },
+    { time: 16, score: 10 },
+    { time: 20, score: 55 }
+  ];
+  const focused = selectFocusedTimestamps(profile, 20, 4);
+
+  assert.equal(focused.length, 4);
+  assert.deepEqual(focused, focused.slice().sort((a, b) => a - b));
+  assert.ok(focused.some(time => time > 4 && time < 8));
+  assert.ok(focused.every(time => profile.every(item => Math.abs(item.time - time) >= 0.3)));
 });

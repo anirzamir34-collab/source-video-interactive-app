@@ -35,6 +35,89 @@ export function sheetsPerAnalysisChunk(qualityMode = 'ultra') {
   return 3;
 }
 
+export function storyboardSamplingPlan(duration, remote = false) {
+  const seconds = Math.max(0, Number(duration) || 0);
+  if (!remote) {
+    return {
+      baseCount: seconds <= 300 ? 144 : seconds <= 900 ? 192 : 228,
+      focusedCount: 0
+    };
+  }
+
+  // Remote seeks are substantially more expensive than seeks in a local Blob.
+  // Keep broad coverage, then spend the remaining samples only around visual
+  // transitions instead of seeking blindly to hundreds of evenly spaced points.
+  return seconds <= 300
+    ? { baseCount: 72, focusedCount: 24 }
+    : seconds <= 900
+      ? { baseCount: 96, focusedCount: 36 }
+      : { baseCount: 120, focusedCount: 48 };
+}
+
+export function selectFocusedTimestamps(profile = [], duration = 0, limit = 0) {
+  const samples = Array.isArray(profile)
+    ? profile.filter(item => Number.isFinite(Number(item?.time)))
+    : [];
+  const maximum = Math.max(0, Math.floor(Number(limit) || 0));
+  if (samples.length < 2 || !maximum) return [];
+
+  const candidates = [];
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    const start = Number(previous.time);
+    const end = Number(current.time);
+    const gap = end - start;
+    if (!(gap > 0.4)) continue;
+
+    const currentScore = Number(current.score) || 0;
+    const previousScore = Number(previous.score) || 0;
+    const priority = Math.max(currentScore, previousScore) +
+      Math.abs(currentScore - previousScore) * 0.75;
+    candidates.push({ time: start + gap / 2, priority });
+
+    // Very active intervals get two extra probes. This is where a brief
+    // position/action change is most likely to sit between the broad samples.
+    if (priority >= 36) {
+      candidates.push({ time: start + gap / 3, priority: priority - 0.1 });
+      candidates.push({ time: start + gap * 2 / 3, priority: priority - 0.2 });
+    }
+  }
+
+  const selected = [];
+  const safeDuration = Math.max(0, Number(duration) || 0);
+  const rankedCandidates = candidates.sort((a, b) => b.priority - a.priority);
+  const focusedLimit = Math.max(1, Math.floor(maximum * 0.75));
+  for (const candidate of rankedCandidates) {
+    const time = Math.min(Math.max(0, candidate.time), Math.max(0, safeDuration - 0.05));
+    const duplicatesBase = samples.some(item => Math.abs(Number(item.time) - time) < 0.3);
+    const duplicatesSelected = selected.some(value => Math.abs(value - time) < 0.3);
+    if (!duplicatesBase && !duplicatesSelected) selected.push(time);
+    if (selected.length >= focusedLimit) break;
+  }
+
+  // Reserve part of the budget for evenly distributed midpoints. A quiet or
+  // gradually changing short scene should not be missed merely because its
+  // motion score is lower than the busiest section of the video.
+  const chronological = candidates.slice().sort((a, b) => a.time - b.time);
+  const remaining = maximum - selected.length;
+  for (let index = 0; index < remaining && chronological.length; index += 1) {
+    const candidateIndex = Math.min(
+      chronological.length - 1,
+      Math.floor(((index + 0.5) / remaining) * chronological.length)
+    );
+    const time = Math.min(
+      Math.max(0, chronological[candidateIndex].time),
+      Math.max(0, safeDuration - 0.05)
+    );
+    const duplicate = samples.some(item => Math.abs(Number(item.time) - time) < 0.3) ||
+      selected.some(value => Math.abs(value - time) < 0.3);
+    if (!duplicate) selected.push(time);
+  }
+
+  return selected.sort((a, b) => a - b).map(time => Number(time.toFixed(3)));
+}
+
 export async function extractStoryboard(source, onProgress = () => {}, signal) {
   const ownsObjectUrl = source instanceof Blob;
   const url = ownsObjectUrl ? URL.createObjectURL(source) : String(source || '');
@@ -60,14 +143,9 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       throw new Error('Video süresi okunamadı.');
     }
 
-    // Video uzunluğundan bağımsız, en fazla yaklaşık 228 kare üret.
-  // Kısa videolarda daha sık; uzun videolarda daha dengeli örnekleme yapar.
-  const targetFrameCount =
-    duration <= 300 ? 144 :
-    duration <= 900 ? 192 :
-    228;
-
-  const interval = Math.max(0.75, duration / targetFrameCount);
+    const samplingPlan = storyboardSamplingPlan(duration, !ownsObjectUrl);
+    const targetFrameCount = samplingPlan.baseCount;
+    const interval = Math.max(0.75, duration / targetFrameCount);
     const times = [];
     for (let time = 0; time < duration; time += interval) times.push(time);
 
@@ -111,56 +189,90 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
     motionCanvas.width = 64;
     motionCanvas.height = 36;
     const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
-    const motionProfile = [];
-    let previousMotionPixels = null;
+    if (!motionCtx) throw new Error('Hareket analizi başlatılamadı.');
+    const capturedFrames = [];
 
-    for (let index = 0; index < times.length; index += 1) {
+    const captureFrame = async (time, progress) => {
       if (signal?.aborted) throw new DOMException('İşlem iptal edildi', 'AbortError');
 
-      const time = Math.min(times[index], Math.max(0, duration - 0.05));
-      if (Math.abs(video.currentTime - time) > 0.01) {
-        video.currentTime = time;
+      const safeTime = Math.min(time, Math.max(0, duration - 0.05));
+      if (Math.abs(video.currentTime - safeTime) > 0.01) {
+        video.currentTime = safeTime;
         await wait('seeked');
       }
+
+      const snapshot = document.createElement('canvas');
+      snapshot.width = cellWidth;
+      snapshot.height = cellHeight;
+      const snapshotCtx = snapshot.getContext('2d', { alpha: false });
+      if (!snapshotCtx) throw new Error('Video karesi hazırlanamadı.');
+      snapshotCtx.drawImage(video, 0, 0, cellWidth, cellHeight);
+
+      motionCtx.drawImage(snapshot, 0, 0, 64, 36);
+      capturedFrames.push({
+        time: Number(safeTime.toFixed(3)),
+        snapshot,
+        motionPixels: new Uint8ClampedArray(
+          motionCtx.getImageData(0, 0, 64, 36).data
+        )
+      });
+      onProgress(Math.min(84, Math.max(1, Math.round(progress))));
+    };
+
+    for (let index = 0; index < times.length; index += 1) {
+      await captureFrame(times[index], ((index + 1) / times.length) * 58);
+    }
+
+    const buildMotionProfile = frames => {
+      let previousMotionPixels = null;
+      return frames.map(frame => {
+        let score = 0;
+        if (previousMotionPixels) {
+          let difference = 0;
+          let comparisons = 0;
+          for (let pixel = 0; pixel < frame.motionPixels.length; pixel += 16) {
+            difference +=
+              Math.abs(frame.motionPixels[pixel] - previousMotionPixels[pixel]) +
+              Math.abs(frame.motionPixels[pixel + 1] - previousMotionPixels[pixel + 1]) +
+              Math.abs(frame.motionPixels[pixel + 2] - previousMotionPixels[pixel + 2]);
+            comparisons += 1;
+          }
+          score = Math.min(100, Math.round(difference / Math.max(1, comparisons) / 7.65));
+        }
+        previousMotionPixels = frame.motionPixels;
+        return {
+          time: Number(frame.time.toFixed(2)),
+          score,
+          level: score >= 45 ? 'high' : score >= 20 ? 'medium' : 'low'
+        };
+      });
+    };
+
+    let motionProfile = buildMotionProfile(capturedFrames);
+    const focusedTimes = selectFocusedTimestamps(
+      motionProfile,
+      duration,
+      samplingPlan.focusedCount
+    );
+    for (let index = 0; index < focusedTimes.length; index += 1) {
+      await captureFrame(
+        focusedTimes[index],
+        58 + ((index + 1) / Math.max(1, focusedTimes.length)) * 26
+      );
+    }
+
+    capturedFrames.sort((a, b) => a.time - b.time);
+    motionProfile = buildMotionProfile(capturedFrames);
+
+    for (let index = 0; index < capturedFrames.length; index += 1) {
+      const { time, snapshot } = capturedFrames[index];
 
       const column = sheetFrame % columns;
       const row = Math.floor(sheetFrame / columns);
       const x = column * cellWidth;
       const y = row * cellHeight;
 
-      ctx.drawImage(video, x, y, cellWidth, cellHeight);
-
-      motionCtx.drawImage(video, 0, 0, 64, 36);
-      const currentMotionPixels =
-        motionCtx.getImageData(0, 0, 64, 36).data;
-
-      let score = 0;
-
-      if (previousMotionPixels) {
-        let difference = 0;
-        let comparisons = 0;
-
-        for (let pixel = 0; pixel < currentMotionPixels.length; pixel += 16) {
-          difference +=
-            Math.abs(currentMotionPixels[pixel] - previousMotionPixels[pixel]) +
-            Math.abs(currentMotionPixels[pixel + 1] - previousMotionPixels[pixel + 1]) +
-            Math.abs(currentMotionPixels[pixel + 2] - previousMotionPixels[pixel + 2]);
-          comparisons += 1;
-        }
-
-        score = Math.min(
-          100,
-          Math.round(difference / Math.max(1, comparisons) / 7.65)
-        );
-      }
-
-      motionProfile.push({
-        time: Number(time.toFixed(2)),
-        score,
-        level: score >= 45 ? 'high' : score >= 20 ? 'medium' : 'low'
-      });
-
-      previousMotionPixels = new Uint8ClampedArray(currentMotionPixels);
+      ctx.drawImage(snapshot, x, y, cellWidth, cellHeight);
       ctx.fillStyle = 'rgba(0,0,0,.75)';
       ctx.fillRect(x + 6, y + 6, 92, 28);
       ctx.fillStyle = '#fff';
@@ -171,18 +283,23 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       sheetFrame += 1;
 
       if (sheetFrame === framesPerSheet) await finishSheet();
-      onProgress(Math.round(((index + 1) / times.length) * 100));
+      onProgress(84 + Math.round(((index + 1) / capturedFrames.length) * 16));
     }
 
     await finishSheet();
 
+    const effectiveInterval = Math.max(0.75, duration / Math.max(1, capturedFrames.length));
     const totalBytes = sheets.reduce((sum, blob) => sum + blob.size, 0);
-    const sceneBoundaries = detectSceneBoundaries(motionProfile, interval);
+    const sceneBoundaries = detectSceneBoundaries(motionProfile, effectiveInterval);
+    for (const frame of capturedFrames) {
+      frame.snapshot.width = 0;
+      frame.snapshot.height = 0;
+    }
     return {
       sheets,
       timestamps,
       duration,
-      interval,
+      interval: effectiveInterval,
       totalBytes,
       motionProfile,
       sceneBoundaries
