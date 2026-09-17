@@ -43,6 +43,40 @@ export function dialogueSegmentsAt(segments, videoTime, tolerance = 0.04) {
     );
 }
 
+export function buildDubBlocks(segments, { maxGap = 0.28, maxDuration = 14 } = {}) {
+  const rows = (Array.isArray(segments) ? segments : [])
+    .filter(segment => String(segment?.turkishText || '').trim())
+    .map(segment => ({ ...segment }))
+    .sort((left, right) => Number(left.startTime) - Number(right.startTime));
+  const blocks = [];
+
+  for (const row of rows) {
+    const start = Number(row.startTime);
+    const end = Number(row.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const previous = blocks[blocks.length - 1];
+    const sameSpeaker = previous && String(previous.speakerId || '') === String(row.speakerId || '');
+    const gap = previous ? start - Number(previous.endTime) : Number.POSITIVE_INFINITY;
+    const combinedDuration = previous ? end - Number(previous.startTime) : end - start;
+
+    if (sameSpeaker && gap >= -0.04 && gap <= maxGap && combinedDuration <= maxDuration) {
+      previous.endTime = end;
+      previous.turkishText = `${previous.turkishText} ${String(row.turkishText).trim()}`.trim();
+      previous.originalText = `${previous.originalText || ''} ${String(row.originalText || '').trim()}`.trim();
+      previous.sourceSegmentIds.push(String(row.segmentId || ''));
+      previous.segmentId = `dub-block:${previous.sourceSegmentIds.filter(Boolean).join('+')}`;
+      continue;
+    }
+
+    blocks.push({
+      ...row,
+      segmentId: `dub-block:${String(row.segmentId || blocks.length + 1)}`,
+      sourceSegmentIds: [String(row.segmentId || '')]
+    });
+  }
+  return blocks;
+}
+
 export function decisionBoundaryAfterDialogue(
   segments,
   actionEndTime,

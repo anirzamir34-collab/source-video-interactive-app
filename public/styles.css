@@ -3707,20 +3707,25 @@ body { font-size: 13px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.adult-dock-meters { display: flex; gap: 3px; margin-top: 5px; }
+.adult-dock-meters { display: flex; gap: 4px; margin-top: 5px; }
 .adult-dock-meters > span {
-  position: relative;
-  display: block;
-  width: 25px;
-  height: 3px;
-  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 34px;
+  height: 17px;
+  padding: 0 5px;
   border-radius: 99px;
-  background: rgba(255,255,255,.10);
+  color: rgba(255,255,255,.72);
+  background: rgba(255,255,255,.07);
+  font-size: .48rem;
+  font-weight: 850;
+  line-height: 1;
 }
-.adult-dock-meters i { display: block; width: 0; height: 100%; border-radius: inherit; transition: width .25s ease; }
-.adult-dock-meters .lust i { background: #36e1b2; }
-.adult-dock-meters .female i { background: #ff6fa4; }
-.adult-dock-meters .male i { background: #73a8ff; }
+.adult-dock-meters b { color: #fff; font-size: .56rem; font-variant-numeric: tabular-nums; }
+.adult-dock-meters .lust { border: 1px solid rgba(54,225,178,.25); color: #55e8bd; }
+.adult-dock-meters .female { border: 1px solid rgba(255,111,164,.25); color: #ff8bb5; }
+.adult-dock-meters .male { border: 1px solid rgba(115,168,255,.25); color: #8db8ff; }
 .adult-quick-choices {
   display: flex;
   min-width: 0;

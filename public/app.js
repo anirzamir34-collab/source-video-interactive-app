@@ -39,6 +39,7 @@ import {
   verifiedPartnerTransition
 } from './adult-gameplay.js';
 import {
+  buildDubBlocks,
   dialogueSegmentAt,
   dialogueSegmentsAt,
   dialogueSegmentsForTarget,
@@ -219,9 +220,9 @@ const els = {
   adultPanelToggleBtn: $('adultPanelToggleBtn'),
   adultDockPhase: $('adultDockPhase'),
   adultDockTitle: $('adultDockTitle'),
-  adultDockLustBar: $('adultDockLustBar'),
-  adultDockFemaleBar: $('adultDockFemaleBar'),
-  adultDockMaleBar: $('adultDockMaleBar'),
+  adultDockLustValue: $('adultDockLustValue'),
+  adultDockFemaleValue: $('adultDockFemaleValue'),
+  adultDockMaleValue: $('adultDockMaleValue'),
   adultQuickChoices: $('adultQuickChoices'),
   adultDockMoreBtn: $('adultDockMoreBtn'),
   adultSceneTitle: $('adultSceneTitle'),
@@ -1125,7 +1126,8 @@ async function analyzeSelectedDialogue(file) {
 
   state.dialogue = {
     ...body,
-    segments: Array.isArray(body.segments) ? body.segments : []
+    segments: Array.isArray(body.segments) ? body.segments : [],
+    dubSegments: buildDubBlocks(Array.isArray(body.segments) ? body.segments : [])
   };
 
   try {
@@ -1180,12 +1182,16 @@ function recordAiUsage(usage) {
 }
 
 function getDubSegmentAt(videoTime) {
-  return dialogueSegmentAt(state.dialogue?.segments || [], videoTime);
+  return dialogueSegmentAt(dubTimeline(), videoTime, 0.12);
+}
+
+function dubTimeline() {
+  return state.dialogue?.dubSegments || state.dialogue?.segments || [];
 }
 
 function getDubSegmentId(segment) {
   if (!segment) return '';
-  const segments = state.dialogue?.segments || [];
+  const segments = dubTimeline();
   const index = Math.max(0, segments.indexOf(segment));
   return dubSegmentKey(segment, index);
 }
@@ -1268,7 +1274,7 @@ function resetDubState() {
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  nextDialogueSegments(state.dialogue?.segments || [], videoTime, 6)
+  nextDialogueSegments(dubTimeline(), videoTime, 6)
     .forEach(segment => void ensureDubSegment(segment));
 }
 
@@ -1298,7 +1304,7 @@ async function prepareCompleteDubTimeline(segments = [], concurrency = 3) {
 
 function primeLanguageTracksAt(videoTime, count = 2) {
   if (!state.dubbingEnabled) return;
-  dialogueSegmentsForTarget(state.dialogue?.segments || [], videoTime, count)
+  dialogueSegmentsForTarget(dubTimeline(), videoTime, count)
     .forEach(segment => void ensureDubSegment(segment));
 }
 
@@ -1309,7 +1315,7 @@ function primeAdultPositionLanguage(position) {
     ...(position.movements || []).map(item => item.loopStartTime)
   ];
   const segments = dialogueSegmentsForTargets(
-    state.dialogue?.segments || [],
+    dubTimeline(),
     targetTimes,
     12
   );
@@ -1362,7 +1368,11 @@ async function syncDubPlayback() {
 
   const generation = state.dubSyncGeneration;
   const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
-  const segments = dialogueSegmentsAt(state.dialogue?.segments || [], videoTime);
+  // One synthetic voice owns the dub channel at a time. Timestamp estimates
+  // often overlap slightly even when the speakers take turns; playing every
+  // overlapping row made the male and female voices talk over each other.
+  const primarySegment = dialogueSegmentAt(dubTimeline(), videoTime, 0.12);
+  const segments = primarySegment?.turkishText ? [primarySegment] : [];
 
   if (!segments.length) {
     stopDubPlayback();
@@ -1391,12 +1401,12 @@ async function syncDubPlayback() {
       audio.load();
       dubChannels.set(segmentId, audio);
     }
-    audio.volume = Math.min(1, 0.92 / Math.sqrt(Math.max(1, segments.length)));
+    audio.volume = 0.92;
     const start = () => {
       if (!state.dubbingEnabled || generation !== state.dubSyncGeneration || !dubChannels.has(segmentId)) return;
       const now = Math.max(0, Number(els.video.currentTime) || 0);
-      if (!dialogueSegmentsAt(state.dialogue?.segments || [], now)
-        .some(item => getDubSegmentId(item) === segmentId)) return;
+      const current = dialogueSegmentAt(dubTimeline(), now, 0.12);
+      if (getDubSegmentId(current) !== segmentId) return;
       alignDubAudioToSegment(audio, segment, now);
       if (!els.video.paused && audio.paused) audio.play().catch(() => {});
     };
@@ -1502,7 +1512,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         // rolling window; the existing playback prefetch keeps filling it.
         els.analysisTitle.textContent = 'Türkçe dublaj başlangıcı hazırlanıyor';
         els.analysisOutput.textContent = 'İlk konuşmalar hazırlanıyor; devamı oynatma sırasında önden yüklenecek…';
-        const initialSegments = nextDialogueSegments(dialogue.segments, 0, 8);
+        const initialSegments = nextDialogueSegments(dialogue.dubSegments || dialogue.segments, 0, 8);
         await Promise.all(initialSegments.map(segment => ensureDubSegment(segment)));
         prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
       }
@@ -3109,7 +3119,7 @@ function renderAdultFlowStatus() {
   if (!els.adultFlowStatus) return;
   const flow = currentAdultFlow();
   els.adultFlowStatus.textContent =
-    `Kadın Lust %${Math.round(flow)} · Açılan ${state.adultUnlockedPositionIds.size} · combo ${state.adultComboCount}`;
+    `Açılan ${state.adultUnlockedPositionIds.size} · combo ${state.adultComboCount}`;
 }
 
 function renderAdultProgress() {
@@ -3125,9 +3135,9 @@ function renderAdultProgress() {
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${lust}%`;
   if (els.climaxProgressText) els.climaxProgressText.textContent = `${Math.round(femaleOrgasm)}%`;
   if (els.climaxProgressBar) els.climaxProgressBar.style.width = `${femaleOrgasm}%`;
-  if (els.adultDockLustBar) els.adultDockLustBar.style.width = `${lust}%`;
-  if (els.adultDockFemaleBar) els.adultDockFemaleBar.style.width = `${femaleOrgasm}%`;
-  if (els.adultDockMaleBar) els.adultDockMaleBar.style.width = `${maleOrgasm}%`;
+  if (els.adultDockLustValue) els.adultDockLustValue.textContent = String(Math.round(lust));
+  if (els.adultDockFemaleValue) els.adultDockFemaleValue.textContent = String(Math.round(femaleOrgasm));
+  if (els.adultDockMaleValue) els.adultDockMaleValue.textContent = String(Math.round(maleOrgasm));
   renderAdultFlowStatus();
   persistRuntimeSnapshot('adult-progress');
   renderAdultProgressiveUI(false);
