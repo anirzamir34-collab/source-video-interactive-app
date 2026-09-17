@@ -687,13 +687,15 @@ export function consolidateVerifiedPositions(positions = []) {
   for (const position of Array.isArray(positions) ? positions : []) {
     if (!position?.familyId) continue;
     const partnerKey = String(position.partnerTrackId || '').trim() || 'partner-unknown';
+    const role = String(position.progressionRole || '').trim();
+    const roleSuffix = role ? `:${role}` : '';
     const positionId = partnerKey === 'partner-unknown'
-      ? `position:${position.familyId}`
-      : `position:${position.familyId}:${partnerKey}`;
+      ? `position:${position.familyId}${roleSuffix}`
+      : `position:${position.familyId}:${partnerKey}${roleSuffix}`;
     const occurrenceId = partnerKey === 'partner-unknown'
-      ? String(position.familyId)
-      : `${position.familyId}:${partnerKey}`;
-    const key = `${String(position.familyId)}::${partnerKey}`;
+      ? `${String(position.familyId)}${roleSuffix}`
+      : `${position.familyId}:${partnerKey}${roleSuffix}`;
+    const key = `${String(position.familyId)}::${partnerKey}::${role}`;
     const sourceId = String(position.id || key);
     const movements = (Array.isArray(position.movements) ? position.movements : [])
       .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
@@ -757,11 +759,11 @@ export function consolidateVerifiedPositions(positions = []) {
     consolidated.push({
       ...position,
       id: position.partnerTrackId
-        ? `position:${position.familyId}:${position.partnerTrackId}`
-        : `position:${position.familyId}`,
+        ? `position:${position.familyId}:${position.partnerTrackId}${position.progressionRole ? `:${position.progressionRole}` : ''}`
+        : `position:${position.familyId}${position.progressionRole ? `:${position.progressionRole}` : ''}`,
       occurrenceId: position.partnerTrackId
-        ? `${position.familyId}:${position.partnerTrackId}:all-occurrences`
-        : `${position.familyId}:all-occurrences`,
+        ? `${position.familyId}:${position.partnerTrackId}:${position.progressionRole || 'all'}-occurrences`
+        : `${position.familyId}:${position.progressionRole || 'all'}-occurrences`,
       startTime: Math.min(...ranges.map(range => range.startTime)),
       endTime: Math.max(...ranges.map(range => range.endTime)),
       sourcePositionIds: ranges.map(range => String(range.id)),

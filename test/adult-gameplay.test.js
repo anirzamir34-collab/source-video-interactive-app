@@ -707,6 +707,23 @@ test('joins overlapping and later returns under one canonical position tab', () 
   );
 });
 
+test('keeps early warmup oral separate from later bonus oral', () => {
+  const positions = consolidateVerifiedPositions([
+    {
+      id: 'oral-early', familyId: 'oral', label: 'Oral Seks', progressionRole: 'foreplay',
+      startTime: 100, endTime: 140, movements: []
+    },
+    {
+      id: 'oral-late', familyId: 'oral', label: 'Oral Seks', progressionRole: 'bonus',
+      startTime: 220, endTime: 235, movements: []
+    }
+  ]);
+
+  assert.equal(positions.length, 2);
+  assert.deepEqual(positions.map(item => item.progressionRole).sort(), ['bonus', 'foreplay']);
+  assert.notEqual(positions[0].id, positions[1].id);
+});
+
 test('splits each verified movement into repeatable real subclips', () => {
   const variants = expandVerifiedMovementVariants([{
     id: 'fast-action',
