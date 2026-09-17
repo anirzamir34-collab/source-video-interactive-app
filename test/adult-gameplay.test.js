@@ -571,6 +571,22 @@ test('direct body configuration corrects confused cowgirl and prone-bone metadat
   }), { family: 'cowgirl', correctedFromAction: true });
 });
 
+test('verified oral activity cannot be overwritten by missionary-like body support', () => {
+  assert.deepEqual(resolveVerifiedAdultPosition({
+    sourceVerified: true,
+    actionType: 'position',
+    positionId: 'missionary',
+    positionLabel: 'Misyoner Pozisyonu',
+    activityType: 'oral',
+    activityTypeConfidence: 0.94,
+    activityEvidence: 'direct visible oral contact',
+    receiverBodyOrientation: 'on_back',
+    receiverSupport: 'back_flat',
+    positionConfigurationConfidence: 0.91,
+    positionEvidence: 'one participant is visibly lying on their back'
+  }), { family: 'oral', correctedFromAction: true });
+});
+
 test('movement choice grouping retains every verified clip', () => {
   const movements = Array.from({ length: 11 }, (_, index) => ({
     id: `reverse-${index}`,
