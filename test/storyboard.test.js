@@ -47,10 +47,23 @@ test('ignores invalid samples and prevents clustered duplicate boundaries', () =
 });
 
 test('uses adaptive remote sampling while preserving local analysis density', () => {
-  assert.deepEqual(storyboardSamplingPlan(240, true), { baseCount: 72, focusedCount: 24 });
-  assert.deepEqual(storyboardSamplingPlan(600, true), { baseCount: 96, focusedCount: 36 });
-  assert.deepEqual(storyboardSamplingPlan(1200, true), { baseCount: 120, focusedCount: 48 });
+  assert.deepEqual(storyboardSamplingPlan(120, true), { baseCount: 36, focusedCount: 13 });
+  assert.deepEqual(storyboardSamplingPlan(300, true), { baseCount: 50, focusedCount: 18 });
+  assert.deepEqual(storyboardSamplingPlan(600, true), { baseCount: 100, focusedCount: 35 });
+  assert.deepEqual(storyboardSamplingPlan(1200, true), { baseCount: 160, focusedCount: 56 });
   assert.deepEqual(storyboardSamplingPlan(240, false), { baseCount: 144, focusedCount: 0 });
+});
+
+test('remote frame preparation grows with video duration instead of using broad buckets', () => {
+  const fiveMinutes = storyboardSamplingPlan(300, true);
+  const tenMinutes = storyboardSamplingPlan(600, true);
+
+  assert.equal(fiveMinutes.baseCount + fiveMinutes.focusedCount, 68);
+  assert.equal(tenMinutes.baseCount + tenMinutes.focusedCount, 135);
+  assert.ok(
+    tenMinutes.baseCount + tenMinutes.focusedCount >=
+      (fiveMinutes.baseCount + fiveMinutes.focusedCount) * 1.9
+  );
 });
 
 test('focuses extra remote samples around motion without duplicating base times', () => {

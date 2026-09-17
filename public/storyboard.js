@@ -44,14 +44,16 @@ export function storyboardSamplingPlan(duration, remote = false) {
     };
   }
 
-  // Remote seeks are substantially more expensive than seeks in a local Blob.
-  // Keep broad coverage, then spend the remaining samples only around visual
-  // transitions instead of seeking blindly to hundreds of evenly spaced points.
-  return seconds <= 300
-    ? { baseCount: 72, focusedCount: 24 }
-    : seconds <= 900
-      ? { baseCount: 96, focusedCount: 36 }
-      : { baseCount: 120, focusedCount: 48 };
+  // A remote seek can require a separate range request and keyframe decode.
+  // Scale the work continuously with duration so a five-minute source no
+  // longer costs almost the same as a ten-minute source. Broad probes are
+  // approximately six seconds apart; a smaller adaptive budget is then spent
+  // only around motion and scene changes.
+  const baseCount = Math.min(160, Math.max(36, Math.ceil(seconds / 6)));
+  return {
+    baseCount,
+    focusedCount: Math.max(12, Math.round(baseCount * 0.35))
+  };
 }
 
 export function selectFocusedTimestamps(profile = [], duration = 0, limit = 0) {
