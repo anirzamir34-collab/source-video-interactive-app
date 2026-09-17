@@ -2478,6 +2478,101 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
   }
 });
 
+function azureSpeechCredentials(req) {
+  const key = String(req.get('X-Azure-Speech-Key') || '').trim();
+  const region = String(req.get('X-Azure-Speech-Region') || '').trim().toLowerCase();
+  if (key.length < 20 || key.length > 256 || /\s/.test(key)) return null;
+  if (!/^[a-z0-9-]{2,40}$/.test(region)) return null;
+  return { key, region };
+}
+
+function xmlEscape(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+async function azureSpeechSynthesize({ key, region, text, gender }) {
+  const voiceName = gender === 'male' ? 'tr-TR-AhmetNeural' : 'tr-TR-EmelNeural';
+  const ssml =
+    `<speak version="1.0" xml:lang="tr-TR">` +
+    `<voice name="${voiceName}">${xmlEscape(text)}</voice>` +
+    `</speak>`;
+  const response = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+    method: 'POST',
+    headers: {
+      'Ocp-Apim-Subscription-Key': key,
+      'Content-Type': 'application/ssml+xml',
+      'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+      'User-Agent': 'VIDEOQUEST-AI'
+    },
+    body: ssml
+  });
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    const error = new Error(`AZURE_SPEECH_${response.status}: ${details.slice(0, 300)}`);
+    error.status = response.status;
+    throw error;
+  }
+  return {
+    voiceName,
+    audioBase64: Buffer.from(await response.arrayBuffer()).toString('base64')
+  };
+}
+
+app.post('/api/azure-speech-status', async (req, res) => {
+  const credentials = azureSpeechCredentials(req);
+  if (!credentials) {
+    return res.status(400).json({ ok: false, state: 'invalid', message: 'Geçerli Azure Speech anahtarı ve bölgesi gönderilmedi.' });
+  }
+  try {
+    await azureSpeechSynthesize({ ...credentials, text: 'Merhaba', gender: 'female' });
+    return res.json({ ok: true, state: 'available', message: `Azure Speech çalışıyor · ${credentials.region}` });
+  } catch (error) {
+    const status = Number(error?.status) || 502;
+    const quota = status === 429;
+    return res.status(status === 401 || status === 403 || quota ? status : 502).json({
+      ok: false,
+      state: quota ? 'rate_limited' : 'invalid',
+      reason: quota ? 'AZURE_SPEECH_QUOTA_LIMIT' : 'AZURE_SPEECH_AUTH_ERROR',
+      message: quota ? 'Azure Speech F0 kotası veya hız sınırı dolu.' : 'Azure Speech anahtarı ya da bölgesi doğrulanamadı.'
+    });
+  }
+});
+
+app.post('/api/azure-dub-segment', async (req, res) => {
+  const credentials = azureSpeechCredentials(req);
+  if (!credentials) return res.status(400).json({ available: false, reason: 'AZURE_SPEECH_NOT_CONFIGURED' });
+  const text = String(req.body?.text || '').trim();
+  const gender = String(req.body?.gender || 'uncertain');
+  const speakerId = String(req.body?.speakerId || 'speaker');
+  if (!text || text.length > 1200) return res.status(400).json({ available: false, reason: 'INVALID_DUB_TEXT' });
+  try {
+    const audio = await azureSpeechSynthesize({ ...credentials, text, gender });
+    return res.json({
+      available: true,
+      provider: 'azure',
+      speakerId,
+      gender,
+      voiceName: audio.voiceName,
+      mimeType: 'audio/mpeg',
+      audioBase64: audio.audioBase64
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 502;
+    const quota = status === 429;
+    return res.status(quota ? 429 : (status === 401 || status === 403 ? status : 502)).json({
+      available: false,
+      reason: quota ? 'AZURE_SPEECH_QUOTA_LIMIT' : 'AZURE_DUB_ERROR',
+      retryAfterSeconds: quota ? 60 : undefined,
+      message: quota ? 'Azure Speech F0 kotası veya hız sınırı dolu.' : 'Azure Türkçe dublaj sesi üretilemedi.'
+    });
+  }
+});
+
 app.post('/api/gemini-key-status', async (req, res) => {
   const apiKey = clientGeminiApiKey(req);
   if (!apiKey) {
