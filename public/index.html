@@ -81,6 +81,20 @@
           </select>
         </div>
 
+        <div class="api-key-setting">
+          <div class="api-key-setting__copy">
+            <b>KENDİ GEMINI API ANAHTARIN</b>
+            <small id="apiKeyStatus">Sunucu anahtarı kullanılıyor</small>
+          </div>
+          <div class="api-key-setting__row">
+            <input id="geminiApiKeyInput" type="password" inputmode="text"
+              placeholder="AIza..." autocomplete="off" spellcheck="false" maxlength="256" />
+            <button id="saveGeminiApiKeyBtn" type="button">Kullan</button>
+            <button id="clearGeminiApiKeyBtn" class="hidden" type="button">Sil</button>
+          </div>
+          <small>Anahtar yalnız bu tarayıcı oturumunda tutulur; sunucuda kaydedilmez.</small>
+        </div>
+
         <label class="mode-switch">
           <span>
             <b>Hareket ve seçim analizi</b>
