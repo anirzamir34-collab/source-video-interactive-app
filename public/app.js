@@ -3314,108 +3314,33 @@ function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel) return;
 
-  const flow = currentAdultFlow();
-  const unlockedPositions = unlockedAdultPositions(scene);
-  const unlockedCore = unlockedPositions.filter(position => !isWarmupPosition(position));
-  const unlockedBonus = unlockedCore.filter(isBonusPosition);
-  const outcomes = unlockedAdultOutcomes(scene);
-  const proposedPhase = adultDiscoveryPhase({
-    flow,
-    hasCoreUnlocked: unlockedCore.some(position => !isBonusPosition(position)),
-    hasBonusUnlocked: unlockedBonus.length > 0,
-    hasOutcomeUnlocked: false
-  });
-  const monotonicPhase = monotonicAdultPhase(proposedPhase, state.adultLastUiPhase);
-  const phase = setAdultMachinePhase(monotonicPhase);
+  // The analysis has already verified these clips. Do not hide correct
+  // positions behind a second Lust/warm-up gate: that made oral/manual clips
+  // trap the player while missionary, cowgirl and prone-bone stayed invisible.
+  const verifiedPositions = (scene.positions || [])
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const phase = setAdultMachinePhase('positions');
 
   const signature = [
     phase,
-    Math.floor(flow),
-    Math.floor(state.adultClimaxProgress),
-    Math.floor(state.adultMaleOrgasmProgress),
-    Math.floor(state.adultFemaleOrgasmProgress),
-    Math.floor(state.adultCorePlaySeconds),
-    unlockedCore.map(item => item.id).join(','),
-    outcomes.map(item => item.id).join(','),
-    state.adultVisitedPositionIds.size,
-    [...state.adultPreludePlayCounts.values()].reduce((sum, value) => sum + Number(value || 0), 0)
+    verifiedPositions.map(item => item.id).join(','),
+    state.activePositionId || '',
+    state.activeAdultCategory || ''
   ].join('|');
 
-  const phaseCopy = {
-    foreplay: {
-      badge: 'YAKINLAŞMA',
-      title: 'Önce yakınlaş',
-      hint: 'Basit seçimlerle Lust yükselt. Sahnedeki asıl seçenekler henüz gizli.'
-    },
-    positions: {
-      badge: 'YENİ AŞAMA',
-      title: 'Pozisyonlar açılıyor',
-      hint: 'Yalnızca kazandığın ve kaynak videoda gerçekten bulunan seçenekler gösteriliyor.'
-    },
-    reward: {
-      badge: 'ÖDÜL AŞAMASI',
-      title: 'Yeni bir şey keşfettin',
-      hint: 'Yüksek Lust sahnedeki daha özel gerçek seçenekleri açıyor.'
-    },
-    final: {
-      badge: 'FİNAL HAZIR',
-      title: 'Sahnenin son aşaması açıldı',
-      hint: 'Final seçeneği artık görünür. Önceden adı gösterilmedi.'
-    }
-  }[phase];
-
-  if (els.adultPhaseBadge) els.adultPhaseBadge.textContent = phaseCopy.badge;
-  if (els.adultPhaseTitle) els.adultPhaseTitle.textContent = phaseCopy.title;
-  if (els.adultPhaseHint) els.adultPhaseHint.textContent = phaseCopy.hint;
+  if (els.adultPhaseBadge) els.adultPhaseBadge.textContent = 'POZİSYONLAR';
+  if (els.adultPhaseTitle) els.adultPhaseTitle.textContent = 'Sahnedeki doğrulanmış pozisyonlar';
+  if (els.adultPhaseHint) els.adultPhaseHint.textContent = 'Bir pozisyon ve ardından gerçek video hareketini seç.';
   els.adultInteractionPanel.dataset.phase = phase;
-
-  const next = nextAdultDiscovery(scene);
-  const warmupStats = adultWarmupStats(scene);
-  const warmupRequired = requiredWarmupDiscoveries(warmupStats.warmupTotal);
-  const warmupRemaining = Math.max(0, warmupRequired - warmupStats.warmupUniquePlayed);
-  if (els.discoveryGate) {
-    const hideGate = phase === 'final' || (!next && warmupRemaining === 0);
-    els.discoveryGate.classList.toggle('hidden', hideGate);
-    if (!hideGate) {
-      if (els.discoveryGateText) {
-        els.discoveryGateText.textContent = warmupRemaining > 0
-          ? 'Yakınlaşmayı biraz daha keşfet'
-          : next?.type === 'reward'
-            ? 'Ödül pozisyonu yaklaşıyor'
-            : 'Yeni seks pozisyonu yaklaşıyor';
-      }
-      if (els.discoveryGateMeta) {
-        if (warmupRemaining > 0) {
-          els.discoveryGateMeta.textContent = `${warmupRemaining} yeni yakınlaşma seçimi daha keşfet`;
-        } else if (next) {
-          const remaining = Math.max(0, Math.ceil(100 - flow));
-          els.discoveryGateMeta.textContent =
-            `Kadın Lust %100 olduğunda açılır · ${remaining} puan kaldı`;
-        }
-      }
-    }
-  }
+  els.discoveryGate?.classList.add('hidden');
+  els.foreplaySection?.classList.add('hidden');
+  els.outcomeSection?.classList.add('hidden');
 
   if (!force && signature === state.adultUiSignature) return;
   state.adultUiSignature = signature;
   state.adultLastUiPhase = phase;
 
-  const showWarmup = phase === 'foreplay';
-  if (showWarmup) {
-    renderAdultWarmupChoices(scene);
-  } else {
-    els.foreplaySection?.classList.add('hidden');
-  }
-
-  const showFinalOutcomes = false;
-  if (showFinalOutcomes) {
-    renderAdultOutcomes(scene);
-  } else {
-    els.outcomeSection?.classList.add('hidden');
-    els.outcomeChoices && (els.outcomeChoices.innerHTML = '');
-  }
-
-  if (showWarmup || !unlockedCore.length) {
+  if (!verifiedPositions.length) {
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');
@@ -3423,7 +3348,7 @@ function renderAdultProgressiveUI(force = false) {
   }
 
   const verifiedRoutes = new Set(
-    unlockedCore
+    verifiedPositions
       .filter(position =>
         ['vaginal', 'anal'].includes(String(position.activityType || '')) &&
         Number(position.activityTypeConfidence || 0) >= 0.78
@@ -3484,13 +3409,9 @@ function renderAdultPanel(scene) {
 
   state.adultScene = scene;
   state.adultMode = true;
-  const hasWarmup = (scene.foreplay || []).length > 0 ||
-    (scene.positions || []).some(isWarmupPosition);
-  if (!hasWarmup && !state.adultUnlockedPositionIds.size) {
-    unlockNextAdultPositionFromLust();
-  }
+  (scene.positions || []).forEach(position => state.adultUnlockedPositionIds.add(position.id));
   els.adultInteractionPanel.classList.remove('hidden');
-  setAdultPanelExpanded(false);
+  setAdultPanelExpanded(true);
   els.adultPanelToggleBtn?.classList.remove('hidden');
   document.querySelector('.choice-navigation')?.classList.add('hidden');
 
@@ -3550,9 +3471,8 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
-  const positions = unlockedAdultPositions(scene)
+  const positions = (scene?.positions || [])
     .filter(item => {
-      if (isWarmupPosition(item)) return false;
       if (categoryId === 'all') return true;
       return String(item.activityType || '') === categoryId &&
         Number(item.activityTypeConfidence || 0) >= 0.78;
@@ -3806,11 +3726,10 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
   primeAdultPositionLanguage(position);
-  const positionUnlocked = unlockedAdultPositions(scene).some(item => item.id === position.id);
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
     position,
-    { scene, unlocked: positionUnlocked }
+    { scene, unlocked: true }
   );
   if (!positionGuard.allowed) return;
   if (shouldSeek) logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
@@ -3996,7 +3915,7 @@ function finishAdultScene(options = {}) {
   // "Skip scene" doubles as a safe next-step control. Never terminate the
   // encounter while another verified, currently unlocked position has not
   // been played yet.
-  const remainingPosition = unlockedAdultPositions(scene)
+  const remainingPosition = (scene.positions || [])
     .filter(position =>
       !isWarmupPosition(position) &&
       !state.adultVisitedPositionIds.has(position.id)
