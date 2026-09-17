@@ -98,6 +98,21 @@
 
         <div class="api-key-setting">
           <div class="api-key-setting__copy">
+            <b>ELEVENLABS DOĞAL DUBLAJ</b>
+            <small id="elevenLabsStatus">Anahtar girilmedi</small>
+          </div>
+          <div class="api-key-setting__row">
+            <input id="elevenLabsApiKeyInput" type="password" inputmode="text"
+              placeholder="sk_..." autocomplete="off" spellcheck="false" maxlength="256" />
+            <button id="saveElevenLabsBtn" type="button">Kullan</button>
+            <button id="testElevenLabsBtn" class="hidden" type="button">Test et</button>
+            <button id="clearElevenLabsBtn" class="hidden" type="button">Sil</button>
+          </div>
+          <small>Anahtar yalnız bu tarayıcı oturumunda tutulur. ElevenLabs varsa dublajda ilk tercih edilir; Azure ve Gemini yedek kalır.</small>
+        </div>
+
+        <div class="api-key-setting">
+          <div class="api-key-setting__copy">
             <b>AZURE SPEECH DUBLAJ</b>
             <small id="azureSpeechStatus">Anahtar girilmedi</small>
           </div>
