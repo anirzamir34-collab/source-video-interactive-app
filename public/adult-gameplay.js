@@ -685,8 +685,11 @@ export function findAdultSceneForTimeline(
 }
 
 export function consolidateVerifiedPositions(positions = []) {
-  const groups = new Map();
-  for (const position of Array.isArray(positions) ? positions : []) {
+  const clusters = [];
+  const sorted = [...(Array.isArray(positions) ? positions : [])]
+    .filter(position => position?.familyId)
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  for (const position of sorted) {
     if (!position?.familyId) continue;
     const partnerKey = String(position.partnerTrackId || '').trim() || 'partner-unknown';
     const role = String(position.progressionRole || '').trim();
@@ -701,12 +704,16 @@ export function consolidateVerifiedPositions(positions = []) {
     const sourceId = String(position.id || key);
     const movements = (Array.isArray(position.movements) ? position.movements : [])
       .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
-    const existing = groups.get(key);
+    const existing = [...clusters].reverse().find(item =>
+      item.clusterKey === key && Number(position.startTime) <= Number(item.endTime) + 1.5
+    );
     if (!existing) {
-      groups.set(key, {
+      const occurrenceNumber = clusters.filter(item => item.clusterKey === key).length + 1;
+      clusters.push({
         ...position,
-        id: positionId,
-        occurrenceId,
+        id: occurrenceNumber === 1 ? positionId : `${positionId}:occ-${occurrenceNumber}`,
+        occurrenceId: occurrenceNumber === 1 ? occurrenceId : `${occurrenceId}:occ-${occurrenceNumber}`,
+        clusterKey: key,
         partnerTrackId: partnerKey === 'partner-unknown' ? '' : partnerKey,
         startTime: Number(position.startTime),
         endTime: Number(position.endTime),
@@ -738,7 +745,7 @@ export function consolidateVerifiedPositions(positions = []) {
   }
 
   const consolidated = [];
-  for (const position of groups.values()) {
+  for (const position of clusters) {
     const seen = new Set();
     position.movements = position.movements
       .filter(movement => {
@@ -755,22 +762,14 @@ export function consolidateVerifiedPositions(positions = []) {
     const ranges = [...position.sourceRanges]
       .filter(range => Number.isFinite(range.startTime) && Number.isFinite(range.endTime))
       .sort((a, b) => a.startTime - b.startTime);
-    // The UI represents a canonical position once. Separate returns to that
-    // position remain real source ranges and playable movement variants under
-    // the same tab instead of becoming duplicate tabs.
     consolidated.push({
       ...position,
-      id: position.partnerTrackId
-        ? `position:${position.familyId}:${position.partnerTrackId}${position.progressionRole ? `:${position.progressionRole}` : ''}`
-        : `position:${position.familyId}${position.progressionRole ? `:${position.progressionRole}` : ''}`,
-      occurrenceId: position.partnerTrackId
-        ? `${position.familyId}:${position.partnerTrackId}:${position.progressionRole || 'all'}-occurrences`
-        : `${position.familyId}:${position.progressionRole || 'all'}-occurrences`,
       startTime: Math.min(...ranges.map(range => range.startTime)),
       endTime: Math.max(...ranges.map(range => range.endTime)),
       sourcePositionIds: ranges.map(range => String(range.id)),
       sourceRanges: ranges,
-      movements: position.movements
+      movements: position.movements,
+      clusterKey: undefined
     });
   }
   return consolidated.sort((a, b) => Number(a.startTime) - Number(b.startTime));

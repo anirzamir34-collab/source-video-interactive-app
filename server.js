@@ -2644,9 +2644,11 @@ async function elevenLabsSubscription(apiKey) {
   return response.json();
 }
 
-async function elevenLabsSynthesize({ apiKey, text, gender }) {
+async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', seed, previousText = '', nextText = '' }) {
   const voiceSet = await elevenLabsVoices(apiKey);
-  const voice = gender === 'male' ? voiceSet.male : voiceSet.female || voiceSet.male;
+  const requested = String(voiceId || '').trim();
+  const voice = voiceSet.voices.find(item => item.voice_id === requested) ||
+    (gender === 'male' ? voiceSet.male : voiceSet.female || voiceSet.male);
   if (!voice?.voice_id) throw new Error('ELEVENLABS_VOICE_MISSING');
   const response = await elevenLabsRequest(
     apiKey,
@@ -2657,10 +2659,13 @@ async function elevenLabsSynthesize({ apiKey, text, gender }) {
       body: JSON.stringify({
         text,
         model_id: 'eleven_multilingual_v2',
+        seed: Number.isInteger(Number(seed)) ? Number(seed) : undefined,
+        previous_text: String(previousText || '').slice(-600) || undefined,
+        next_text: String(nextText || '').slice(0, 600) || undefined,
         voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.78,
-          style: 0.12,
+          stability: 0.82,
+          similarity_boost: 0.84,
+          style: 0,
           use_speaker_boost: true,
           speed: 1
         }
@@ -2677,16 +2682,17 @@ async function elevenLabsSynthesize({ apiKey, text, gender }) {
 function elevenLabsErrorResponse(error, fallbackMessage) {
   const status = Number(error?.status) || 502;
   const text = String(error?.message || error).toLowerCase();
-  const quota = status === 429 || status === 402 || /quota|credit|character limit/.test(text);
+  const quota = status === 402 || /insufficient credits|credits? (?:are )?(?:depleted|exhausted)|character limit (?:reached|exceeded)/.test(text);
+  const rateLimited = status === 429 && !quota;
   const forbidden = status === 401 || status === 403;
   return {
-    status: quota ? 429 : forbidden ? status : 502,
+    status: quota ? 402 : rateLimited ? 429 : forbidden ? status : 502,
     body: {
       available: false,
-      state: quota ? 'no_credits' : forbidden ? 'forbidden' : 'unavailable',
-      reason: quota ? 'ELEVENLABS_QUOTA_LIMIT' : forbidden ? 'ELEVENLABS_AUTH_ERROR' : 'ELEVENLABS_ERROR',
-      retryAfterSeconds: quota ? 3600 : undefined,
-      message: quota ? 'ElevenLabs kredisi veya kullanım sınırı doldu.' : forbidden ? 'ElevenLabs anahtarı ya da izinleri geçersiz.' : fallbackMessage
+      state: quota ? 'no_credits' : rateLimited ? 'rate_limited' : forbidden ? 'forbidden' : 'unavailable',
+      reason: quota ? 'ELEVENLABS_QUOTA_LIMIT' : rateLimited ? 'ELEVENLABS_RATE_LIMIT' : forbidden ? 'ELEVENLABS_AUTH_ERROR' : 'ELEVENLABS_ERROR',
+      retryAfterSeconds: rateLimited ? 3 : undefined,
+      message: quota ? 'ElevenLabs kredisi tükendi.' : rateLimited ? 'ElevenLabs hız sınırı; kısa süre sonra yeniden denenecek.' : forbidden ? 'ElevenLabs anahtarı ya da izinleri geçersiz.' : fallbackMessage
     }
   };
 }
@@ -2713,6 +2719,8 @@ app.post('/api/elevenlabs-status', async (req, res) => {
       used,
       femaleVoice: voices.female.name,
       maleVoice: voices.male.name,
+      femaleVoiceId: voices.female.voice_id,
+      maleVoiceId: voices.male.voice_id,
       message: `ElevenLabs çalışıyor · ${remaining.toLocaleString('tr-TR')} kredi kaldı · Kadın: ${voices.female.name} · Erkek: ${voices.male.name}`
     });
   } catch (error) {
@@ -2727,9 +2735,15 @@ app.post('/api/elevenlabs-dub-segment', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   const gender = String(req.body?.gender || 'uncertain');
   const speakerId = String(req.body?.speakerId || 'speaker');
+  const voiceId = String(req.body?.voiceId || '').trim();
   if (!text || text.length > 1200) return res.status(400).json({ available: false, reason: 'INVALID_DUB_TEXT' });
   try {
-    const audio = await elevenLabsSynthesize({ apiKey, text, gender });
+    const audio = await elevenLabsSynthesize({
+      apiKey, text, gender, voiceId,
+      seed: req.body?.seed,
+      previousText: req.body?.previousText,
+      nextText: req.body?.nextText
+    });
     return res.json({
       available: true,
       provider: 'elevenlabs',

@@ -32,7 +32,6 @@ import {
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
   resolveVerifiedAdultPosition,
-  shouldAdvanceMaleOrgasm,
   summarizeAdultSceneGraph,
   tapRhythm,
   verifiedAdultPositionFamily,
@@ -83,6 +82,7 @@ const state = {
   serviceCapabilities: null,
   selectedFile: null,
   selectedRemoteVideo: null,
+  analysisSession: null,
   analysis: null,
   dialogue: null,
   subtitlesEnabled: true,
@@ -95,6 +95,8 @@ const state = {
   dubUnavailableUntil: 0,
   dubFailureReason: '',
   dubProviderLock: '',
+  dubQueue: Promise.resolve(),
+  dubVoiceIds: { female: '', male: '' },
   dubStableSpeakerGenders: new Map(),
   decisionDubHold: false,
   aiUsage: {
@@ -142,6 +144,7 @@ const state = {
   adultComboCount: 0,
   adultClimaxProgress: 0,
   adultCorePlaySeconds: 0,
+  adultTimelineFloor: 0,
   adultOutcomePhase: 'idle',
   activeAdultOutcomeId: null,
   activeAdultPreludeId: null,
@@ -547,6 +550,12 @@ async function testGeminiApiKey() {
       body: '{}'
     });
     const body = await response.json().catch(() => ({}));
+    if (response.ok) {
+      state.dubVoiceIds = {
+        female: String(body.femaleVoiceId || ''),
+        male: String(body.maleVoiceId || '')
+      };
+    }
     if (els.apiKeyStatus) {
       els.apiKeyStatus.className = String(body.state || 'unavailable');
       els.apiKeyStatus.textContent = body.message || (response.ok ? 'Anahtar çalışıyor' : 'Anahtar kullanılamıyor');
@@ -840,6 +849,7 @@ els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
   state.selectedFile = file;
   state.selectedRemoteVideo = null;
+  state.analysisSession = null;
   resetDubState();
   if (file) {
     els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • ${file.type || 'video'}`;
@@ -1311,60 +1321,53 @@ async function ensureDubSegment(segment) {
   if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
   if (state.dubRequests.has(segmentId)) return state.dubRequests.get(segmentId);
 
+  const segments = dubTimeline();
+  const segmentIndex = Math.max(0, segments.indexOf(segment));
+  const gender = stableDubGender(segment);
   const payload = JSON.stringify({
     text: segment.turkishText,
-    gender: stableDubGender(segment),
-    emotion: segment.emotion,
-    speakerId: segment.speakerId || segmentId
+    gender,
+    speakerId: segment.speakerId || segmentId,
+    voiceId: state.dubVoiceIds[gender] || '',
+    seed: gender === 'male' ? 417231 : 829117,
+    previousText: segments[segmentIndex - 1]?.turkishText || '',
+    nextText: segments[segmentIndex + 1]?.turkishText || ''
   });
-  const availableProviders = [
-    activeElevenLabsApiKey() && {
-      id: 'elevenlabs',
-      url: '/api/elevenlabs-dub-segment',
-      headers: elevenLabsHeaders({ 'Content-Type': 'application/json' })
-    },
-    activeAzureSpeechKey() && {
-      id: 'azure',
-      url: '/api/azure-dub-segment',
-      headers: azureSpeechHeaders({ 'Content-Type': 'application/json' })
-    },
-    {
-      id: 'gemini',
-      url: '/api/gemini-dub-segment',
-      headers: geminiRequestHeaders({ 'Content-Type': 'application/json' })
-    }
-  ].filter(Boolean);
-  const providers = state.dubProviderLock
-    ? availableProviders.filter(provider => provider.id === state.dubProviderLock)
-    : availableProviders;
 
-  const request = (async () => {
+  const runRequest = async () => {
+    if (!activeElevenLabsApiKey()) throw new Error('ElevenLabs anahtarı gerekli');
     let lastFailure = null;
-    for (const provider of providers) {
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
       try {
-        const response = await fetch(provider.url, { method: 'POST', headers: provider.headers, body: payload });
+        const response = await fetch('/api/elevenlabs-dub-segment', {
+          method: 'POST', headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }), body: payload
+        });
         const body = await response.json().catch(() => ({}));
         if (response.ok && body?.available && body?.audioBase64) {
-          if (!state.dubProviderLock) state.dubProviderLock = provider.id;
-          recordAiUsage(body.aiUsage);
+          state.dubProviderLock = 'elevenlabs';
+          if (body.voiceId && (gender === 'female' || gender === 'male')) state.dubVoiceIds[gender] = body.voiceId;
           const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
           state.dubCache.set(segmentId, source);
-          logEngineEvent('DUB_PROVIDER_USED', { provider: body.provider || provider.id, segmentId });
+          logEngineEvent('DUB_PROVIDER_USED', { provider: 'elevenlabs', segmentId, voiceId: body.voiceId });
           return source;
         }
-        lastFailure = { provider: provider.id, response, body };
-        logEngineEvent('DUB_PROVIDER_FALLBACK', {
-          provider: provider.id,
-          reason: body?.reason || `HTTP_${response.status}`
-        });
+        lastFailure = { response, body };
+        if (body?.reason === 'ELEVENLABS_RATE_LIMIT' && attempt < 4) {
+          await new Promise(resolve => setTimeout(resolve, Math.max(1, Number(body.retryAfterSeconds) || attempt * 2) * 1000));
+          continue;
+        }
+        break;
       } catch (error) {
-        lastFailure = { provider: provider.id, error };
-        logEngineEvent('DUB_PROVIDER_FALLBACK', { provider: provider.id, reason: 'NETWORK_ERROR' });
+        lastFailure = { error };
+        if (attempt < 4) {
+          await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+          continue;
+        }
       }
     }
 
     const body = lastFailure?.body || {};
-    if (['GEMINI_TTS_DAILY_LIMIT', 'AZURE_SPEECH_QUOTA_LIMIT', 'ELEVENLABS_QUOTA_LIMIT'].includes(body.reason)) {
+    if (body.reason === 'ELEVENLABS_QUOTA_LIMIT') {
       const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
       state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
       state.dubFailureReason = body.reason;
@@ -1379,7 +1382,7 @@ async function ensureDubSegment(segment) {
       checkAiUsageStatus();
       return null;
     }
-    const message = body?.message || body?.error || 'Dublaj sağlayıcıları kullanılamadı';
+    const message = body?.message || body?.error || 'ElevenLabs dublaj üretilemedi';
     state.dubFailureReason = body?.reason || 'DUB_PROVIDER_ERROR';
     if (els.dubToggleBtn) {
       els.dubToggleBtn.textContent = `DUBLAJ HATASI: ${message}`;
@@ -1388,7 +1391,9 @@ async function ensureDubSegment(segment) {
       els.dubToggleBtn.dataset.unavailable = 'true';
     }
     throw lastFailure?.error || new Error(message);
-  })().catch(error => {
+  };
+
+  const request = (state.dubQueue = state.dubQueue.catch(() => {}).then(runRequest)).catch(error => {
     console.error('Dub segment failed:', segmentId, error);
     return null;
   }).finally(() => state.dubRequests.delete(segmentId));
@@ -1411,6 +1416,7 @@ function resetDubState() {
   state.activeDubSegmentId = null;
   state.dubFailureReason = '';
   state.dubProviderLock = '';
+  state.dubQueue = Promise.resolve();
   state.dubStableSpeakerGenders.clear();
   state.decisionDubHold = false;
   state.dubUnavailableUntil = 0;
@@ -1425,7 +1431,7 @@ function resetDubState() {
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  nextDialogueSegments(dubTimeline(), videoTime, 6)
+  nextDialogueSegments(dubTimeline(), videoTime, 2)
     .forEach(segment => void ensureDubSegment(segment));
 }
 
@@ -1614,11 +1620,21 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   let file = state.selectedFile;
   const modes = selectedAnalysisModes();
+  const sourceKey = file
+    ? `file:${file.name}:${file.size}:${file.lastModified}`
+    : `remote:${state.selectedRemoteVideo?.sourceUrl || state.selectedRemoteVideo?.proxyUrl || ''}`;
+  const analysisModeKey = JSON.stringify({ motion: modes.motion, quality: modes.quality });
+  const reusableSession = state.analysisSession?.sourceKey === sourceKey;
+  const session = reusableSession ? state.analysisSession : {
+    sourceKey, file: file || null, dialogue: null, storyboard: null,
+    analysisModeKey: '', chunkResults: [], protagonistProfile: '', storyContextMemory: null
+  };
+  state.analysisSession = session;
 
   // Every analysis run must start from a clean dialogue/dub timeline.
   // Reusing old segment ids or old translated dialogue can attach stale audio
   // to new source-video timestamps after a re-analysis.
-  state.dialogue = null;
+  state.dialogue = session.dialogue || null;
   localStorage.removeItem(RUNTIME_SAVE_KEY);
   state.analysisFingerprint = '';
   state.engineEvents = [];
@@ -1631,7 +1647,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   renderAdultAnalysisTrace();
   state.dubbingEnabled = false;
   state.subtitlesEnabled = false;
-  resetDubState();
+  if (!reusableSession) resetDubState();
   els.video.muted = false;
   els.subtitleOverlay?.classList.add('hidden');
 
@@ -1643,8 +1659,11 @@ els.analyzeBtn.addEventListener('click', async () => {
       if (!file) {
         els.analysisTitle.textContent = 'Ses analizi için video indiriliyor';
         file = await ensureSelectedRemoteFile();
+        session.file = file;
       }
-      const dialogue = await analyzeSelectedDialogue(file);
+      const dialogue = session.dialogue || await analyzeSelectedDialogue(file);
+      session.dialogue = dialogue;
+      state.dialogue = dialogue;
 
       state.subtitlesEnabled = Boolean(modes.subtitles && dialogue.segments.length);
       els.subtitleToggleBtn.classList.toggle('hidden', !state.subtitlesEnabled);
@@ -1667,8 +1686,9 @@ els.analyzeBtn.addEventListener('click', async () => {
         // rolling window; the existing playback prefetch keeps filling it.
         els.analysisTitle.textContent = 'Türkçe dublaj başlangıcı hazırlanıyor';
         els.analysisOutput.textContent = 'İlk konuşmalar hazırlanıyor; devamı oynatma sırasında önden yüklenecek…';
-        const initialSegments = nextDialogueSegments(dialogue.dubSegments || dialogue.segments, 0, 8);
-        await Promise.all(initialSegments.map(segment => ensureDubSegment(segment)));
+        if (!state.dubVoiceIds.female || !state.dubVoiceIds.male) await testElevenLabsKey();
+        const initialSegments = nextDialogueSegments(dialogue.dubSegments || dialogue.segments, 0, 2);
+        for (const segment of initialSegments) await ensureDubSegment(segment);
         prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
       }
 
@@ -1706,11 +1726,12 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   const { extractStoryboard, adaptiveAnalysisChunkPlan } = await import('./storyboard.js');
   const storyboardSource = file || state.selectedRemoteVideo?.proxyUrl;
-  const storyboard = await extractStoryboard(storyboardSource, (progress) => {
+  const storyboard = session.storyboard || await extractStoryboard(storyboardSource, (progress) => {
     els.analysisTitle.textContent = state.selectedRemoteVideo && !file
       ? `Video akışından kareler hazırlanıyor: %${progress}`
       : `Video telefonda hazırlanıyor: %${progress}`;
   });
+  session.storyboard = storyboard;
 
   const storyboardMB = (storyboard.totalBytes / 1024 / 1024).toFixed(1);
   const sourceSize = file?.size || state.selectedRemoteVideo?.size || 0;
@@ -1728,16 +1749,22 @@ els.analyzeBtn.addEventListener('click', async () => {
       storyboard.sheets.length / sheetsPerChunk
     );
 
-    const chunkResults = [];
+    if (session.analysisModeKey !== analysisModeKey || session.chunkCount !== chunkCount) {
+      session.analysisModeKey = analysisModeKey;
+      session.chunkCount = chunkCount;
+      session.chunkResults = [];
+      session.protagonistProfile = '';
+      session.storyContextMemory = null;
+    }
+    const chunkResults = session.chunkResults;
     let failureBody = null;
     let response = null;
     let body = null;
 
-    let protagonistProfile =
-    String(els.protagonistInput?.value || '').trim();
-    let storyContextMemory = normalizeStoryContext({});
+    let protagonistProfile = session.protagonistProfile || String(els.protagonistInput?.value || '').trim();
+    let storyContextMemory = session.storyContextMemory || normalizeStoryContext({});
 
-  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+  for (let chunkIndex = chunkResults.length; chunkIndex < chunkCount; chunkIndex += 1) {
       const firstSheet = chunkIndex * sheetsPerChunk;
       const chunkSheets = storyboard.sheets.slice(
         firstSheet,
@@ -1919,6 +1946,9 @@ els.analyzeBtn.addEventListener('click', async () => {
             if (body.protagonistProfile) {
               protagonistProfile = String(body.protagonistProfile).trim();
             }
+            session.chunkResults = chunkResults;
+            session.storyContextMemory = storyContextMemory;
+            session.protagonistProfile = protagonistProfile;
             chunkSucceeded = true;
             failureBody = null;
             break;
@@ -3173,10 +3203,9 @@ function addFemaleLust(amount) {
 
 function triggerAdultOrgasmDecision() {
   if (state.adultOrgasmDecision || state.adultOutcomePhase !== 'idle') return false;
-  const femaleReady = state.adultFemaleOrgasmProgress >= 100;
   const maleReady = state.adultMaleOrgasmProgress >= 100;
-  if (!femaleReady && !maleReady) return false;
-  const actor = femaleReady && maleReady ? 'both' : femaleReady ? 'female' : 'male';
+  if (!maleReady) return false;
+  const actor = 'male';
   state.adultOrgasmDecision = {
     actor,
     mediaTime: Number(els.video?.currentTime || 0),
@@ -3266,12 +3295,12 @@ function adultWarmupStats(scene = state.adultScene) {
 }
 
 function unlockedAdultPositions(scene = state.adultScene) {
-  const flow = currentAdultFlow();
   const positions = scene?.positions || [];
-  return positions.filter(position => {
-    if (isWarmupPosition(position)) return true;
-    return state.adultUnlockedPositionIds.has(position.id);
-  });
+  if (!state.adultSexUnlocked) return positions.filter(isWarmupPosition);
+  const unlocked = positions
+    .filter(position => !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  return unlocked.length ? [unlocked[unlocked.length - 1]] : [];
 }
 
 function unlockedAdultOutcomes(scene = state.adultScene) {
@@ -3313,7 +3342,7 @@ function renderAdultProgress() {
   const rawLust = Math.min(ADULT_LUST_UNLOCK_THRESHOLD, Math.max(0, state.femaleSceneProgress || 0));
   const lust = currentAdultFlow();
   const maleOrgasm = Math.min(100, Math.max(0, state.adultMaleOrgasmProgress || 0));
-  const femaleOrgasm = Math.min(100, Math.max(0, state.adultFemaleOrgasmProgress || 0));
+  const femaleOrgasm = 0;
   state.femaleSceneProgress = rawLust;
   state.adultMaleOrgasmProgress = maleOrgasm;
   state.adultFemaleOrgasmProgress = femaleOrgasm;
@@ -3402,6 +3431,7 @@ function resetAdultSceneGameplay() {
   state.adultComboCount = 0;
   state.adultClimaxProgress = 0;
   state.adultCorePlaySeconds = 0;
+  state.adultTimelineFloor = Math.max(0, Number(state.adultScene?.startTime) || 0);
   state.adultOutcomePhase = 'idle';
   state.activeAdultOutcomeId = null;
   state.activeAdultPreludeId = null;
@@ -3469,6 +3499,44 @@ function renderAdultWarmupChoices(scene) {
   refreshAdultCompactDock();
 }
 
+function renderAdultApproachChoices(scene) {
+  const flow = currentAdultFlow();
+  const candidates = [
+    ...(scene?.foreplay || []).map(item => ({ kind: 'foreplay', id: item.id, label: item.label, startTime: item.startTime })),
+    ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
+      const movements = (position.movements || []).filter(item => Number(item.loopStartTime) >= state.adultTimelineFloor - 0.1);
+      return (movements.length ? movements : [null]).map((movement, index) => ({
+        kind: 'position', id: position.id, movementId: movement?.id || '',
+        label: movement?.label || position.label || `Yakınlaşma ${index + 1}`,
+        startTime: movement?.loopStartTime ?? position.startTime
+      }));
+    })
+  ].filter(item => Number(item.startTime) >= state.adultTimelineFloor - 0.1)
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime))
+    .slice(0, 3);
+
+  els.choices.innerHTML = '';
+  els.choices.classList.remove('hidden');
+  const heading = document.createElement('div');
+  heading.className = 'approach-status';
+  heading.innerHTML = `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>İlk gerçek pozisyon Lust dolunca açılır.</small>`;
+  els.choices.appendChild(heading);
+  candidates.forEach(choice => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'choice-btn';
+    button.innerHTML = `<span>${escapeHtml(choice.label)}</span><small>Gerçek video sekansı</small>`;
+    button.addEventListener('click', () => {
+      if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
+      else {
+        selectAdultPosition(choice.id, false);
+        if (choice.movementId) selectAdultMovement(choice.movementId, true);
+      }
+    });
+    els.choices.appendChild(button);
+  });
+}
+
 function renderAdultOutcomes(scene) {
   if (!els.outcomeSection || !els.outcomeChoices) return;
   const outcomes = unlockedAdultOutcomes(scene);
@@ -3533,13 +3601,20 @@ function renderAdultProgressiveUI(force = false) {
     if (els.discoveryGateText) els.discoveryGateText.textContent = `İlk seks pozisyonu için Lust ${Math.round(currentAdultFlow())}/100`;
     if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = 'Önce kaynak videodaki yakınlaşma, oral ve manuel seçenekleri oynatılır.';
     els.discoveryGate?.classList.remove('hidden');
-    renderAdultWarmupChoices(scene);
+    els.adultInteractionPanel.classList.add('hidden');
+    els.adultPanelToggleBtn?.classList.add('hidden');
+    renderAdultApproachChoices(scene);
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');
     refreshAdultCompactDock();
     return;
   }
+
+  els.choices.classList.add('hidden');
+  els.choices.innerHTML = '';
+  els.adultInteractionPanel.classList.remove('hidden');
+  els.adultPanelToggleBtn?.classList.remove('hidden');
 
   els.discoveryGate?.classList.add('hidden');
   els.foreplaySection?.classList.add('hidden');
@@ -3612,6 +3687,9 @@ function renderAdultPanel(scene) {
   }
 
   state.adultScene = scene;
+  if (previousSceneId !== scene.id && !restoringSameScene) {
+    state.adultTimelineFloor = Math.max(0, Number(scene.startTime) || 0);
+  }
   state.adultMode = true;
   const warmupPositions = (scene.positions || []).filter(isWarmupPosition);
   warmupPositions.forEach(position => state.adultUnlockedPositionIds.add(position.id));
@@ -3774,6 +3852,7 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scene?.foreplay?.find(entry => entry.id === preludeId);
   if (!item || !els.video || state.adultOutcomePhase !== 'idle') return;
+  if (Number(item.startTime) < state.adultTimelineFloor - 0.1) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
   logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
@@ -3820,17 +3899,10 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   }
   addFemaleLust(delta.female);
   if (!isWarmupPosition(position)) {
-    // A selection unlocks discovery, but cannot rush the final meter.
+    // Tapping a card never advances orgasm. Only verified core playback does.
     const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
     state.adultClimaxProgress = Math.min(100, state.adultClimaxProgress + climaxDelta);
-    const maleOrgasmActive = shouldAdvanceMaleOrgasm(
-      state.adultFemaleOrgasmProgress,
-      state.adultFemaleOrgasmCount
-    );
-    if (maleOrgasmActive) {
-      state.adultMaleOrgasmProgress = Math.min(100, state.adultMaleOrgasmProgress + delta.male * 0.06);
-    }
-    state.adultFemaleOrgasmProgress = Math.min(100, state.adultFemaleOrgasmProgress + delta.female * 0.12);
+    state.adultFemaleOrgasmProgress = 0;
   }
   renderAdultProgress();
 }
@@ -3937,6 +4009,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
+  if (shouldSeek && Number(position.startTime) < state.adultTimelineFloor - 0.1) return;
   primeAdultPositionLanguage(position);
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
@@ -4048,6 +4121,7 @@ function selectAdultMovement(
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || state.adultOutcomePhase !== 'idle') return;
+  if (shouldSeek && Number(movement.loopStartTime) < state.adultTimelineFloor - 0.1) return;
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
   if (!occurrenceMovements.some(item => item.id === movement.id)) {
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
@@ -4349,7 +4423,12 @@ function updateAdultPlayback(now, mediaTime) {
       return;
     }
     if (mediaTime >= item.endTime - 0.04 || mediaTime < item.startTime - 0.15) {
-      seekAdultLoop(item.startTime, state.adultSelectionToken);
+      if (mediaTime >= item.endTime - 0.04) {
+        state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(item.endTime) || 0);
+        state.activeAdultPreludeId = null;
+        els.video?.pause();
+        renderAdultProgressiveUI(true);
+      }
       return;
     }
     const progress = adultPlaybackProgressDelta({
@@ -4379,6 +4458,7 @@ function updateAdultPlayback(now, mediaTime) {
         return;
       }
       els.video?.pause();
+      state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(movement.loopEndTime) || 0);
       logEngineEvent('POSITION_OCCURRENCE_ENDED', {
         positionId: position.id,
         occurrenceId: state.activeAdultOccurrenceId,
@@ -4410,18 +4490,16 @@ function updateAdultPlayback(now, mediaTime) {
     state.adultClimaxProgress = Math.min(100,
       state.adultClimaxProgress + elapsed * ratePerSecond * movementRate
     );
-    const maleOrgasmActive = shouldAdvanceMaleOrgasm(
-      state.adultFemaleOrgasmProgress,
-      state.adultFemaleOrgasmCount
-    );
+    const corePositions = (state.adultScene?.positions || []).filter(item => !isWarmupPosition(item) && !isBonusPosition(item));
+    const requiredPositions = Math.min(2, Math.max(1, corePositions.length));
+    const visitedCore = corePositions.filter(item => state.adultVisitedPositionIds.has(item.id)).length;
+    const maleOrgasmActive = state.adultCorePlaySeconds >= requiredSeconds * 0.65 && visitedCore >= requiredPositions;
     if (maleOrgasmActive) {
       state.adultMaleOrgasmProgress = Math.min(100,
         state.adultMaleOrgasmProgress + progress.maleOrgasm
       );
     }
-    state.adultFemaleOrgasmProgress = Math.min(100,
-      state.adultFemaleOrgasmProgress + progress.femaleOrgasm
-    );
+    state.adultFemaleOrgasmProgress = 0;
   }
   renderAdultProgress();
   if (triggerAdultOrgasmDecision()) return;
@@ -5083,6 +5161,7 @@ async function resolveVideoUrl() {
           size: probe.size,
           contentType: probe.contentType
         };
+        state.analysisSession = null;
         resetDubState();
         els.video.src = result.proxyUrl;
         const sizeText = probe.size ? ` • ${(probe.size / 1024 / 1024).toFixed(1)} MB` : '';
@@ -5105,6 +5184,7 @@ async function resolveVideoUrl() {
 
     state.selectedFile = file;
     state.selectedRemoteVideo = null;
+    state.analysisSession = null;
     resetDubState();
     els.video.src = URL.createObjectURL(file);
     els.fileMeta.textContent =
@@ -5116,6 +5196,7 @@ async function resolveVideoUrl() {
   } catch (error) {
     state.selectedFile = null;
     state.selectedRemoteVideo = null;
+    state.analysisSession = null;
     updateAnalyzeAvailability();
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
   } finally {
