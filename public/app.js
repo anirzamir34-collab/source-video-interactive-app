@@ -198,6 +198,13 @@ const els = {
   debugOutput: $('debugOutput'),
   adultInteractionPanel: $('adultInteractionPanel'),
   adultPanelToggleBtn: $('adultPanelToggleBtn'),
+  adultDockPhase: $('adultDockPhase'),
+  adultDockTitle: $('adultDockTitle'),
+  adultDockLustBar: $('adultDockLustBar'),
+  adultDockFemaleBar: $('adultDockFemaleBar'),
+  adultDockMaleBar: $('adultDockMaleBar'),
+  adultQuickChoices: $('adultQuickChoices'),
+  adultDockMoreBtn: $('adultDockMoreBtn'),
   adultSceneTitle: $('adultSceneTitle'),
   adultSceneTime: $('adultSceneTime'),
   adultPhaseBadge: $('adultPhaseBadge'),
@@ -2850,9 +2857,49 @@ function renderAdultProgress() {
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${lust}%`;
   if (els.climaxProgressText) els.climaxProgressText.textContent = `${Math.round(femaleOrgasm)}%`;
   if (els.climaxProgressBar) els.climaxProgressBar.style.width = `${femaleOrgasm}%`;
+  if (els.adultDockLustBar) els.adultDockLustBar.style.width = `${lust}%`;
+  if (els.adultDockFemaleBar) els.adultDockFemaleBar.style.width = `${femaleOrgasm}%`;
+  if (els.adultDockMaleBar) els.adultDockMaleBar.style.width = `${maleOrgasm}%`;
   renderAdultFlowStatus();
   persistRuntimeSnapshot('adult-progress');
   renderAdultProgressiveUI(false);
+}
+
+function setAdultPanelExpanded(expanded) {
+  if (!els.adultInteractionPanel) return;
+  els.adultInteractionPanel.classList.toggle('compact-expanded', expanded);
+  els.adultInteractionPanel.classList.toggle('compact-collapsed', !expanded);
+  els.adultInteractionPanel.classList.remove('fullscreen-collapsed');
+  els.adultDockMoreBtn?.setAttribute('aria-expanded', String(expanded));
+  if (els.adultDockMoreBtn) {
+    els.adultDockMoreBtn.querySelector('span').textContent = expanded ? 'Kapat' : 'Tümü';
+    els.adultDockMoreBtn.querySelector('b').textContent = expanded ? '⌄' : '⌃';
+  }
+  if (els.adultPanelToggleBtn) els.adultPanelToggleBtn.textContent = expanded ? 'SEÇİMLERİ GİZLE' : 'SEÇİMLER';
+}
+
+function refreshAdultCompactDock() {
+  if (!els.adultInteractionPanel || !els.adultQuickChoices) return;
+  const activePosition = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
+  if (els.adultDockTitle) {
+    els.adultDockTitle.textContent = activePosition?.label || els.adultPhaseTitle?.textContent || 'Seçimler hazır';
+  }
+  if (els.adultDockPhase) {
+    els.adultDockPhase.textContent = els.adultPhaseBadge?.textContent || 'SAHNE';
+  }
+  const sourceButtons = [
+    ...els.foreplayChoices?.querySelectorAll('button') || [],
+    ...els.movementChoices?.querySelectorAll('.movement-choice-card') || []
+  ].filter(button => !button.disabled).slice(0, 2);
+  els.adultQuickChoices.innerHTML = '';
+  sourceButtons.forEach(source => {
+    const quick = document.createElement('button');
+    quick.type = 'button';
+    quick.className = 'adult-quick-choice';
+    quick.textContent = source.querySelector('span, strong')?.textContent || source.textContent.trim();
+    quick.addEventListener('click', () => source.click());
+    els.adultQuickChoices.appendChild(quick);
+  });
 }
 
 function resetAdultSceneGameplay() {
@@ -2934,6 +2981,7 @@ function renderAdultWarmupChoices(scene) {
   });
 
   els.foreplaySection.classList.toggle('hidden', !choices.length);
+  refreshAdultCompactDock();
 }
 
 function renderAdultOutcomes(scene) {
@@ -3145,6 +3193,7 @@ function renderAdultPanel(scene) {
     unlockNextAdultPositionFromLust();
   }
   els.adultInteractionPanel.classList.remove('hidden');
+  setAdultPanelExpanded(false);
   els.adultPanelToggleBtn?.classList.remove('hidden');
   document.querySelector('.choice-navigation')?.classList.add('hidden');
 
@@ -3159,6 +3208,7 @@ function renderAdultPanel(scene) {
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   renderAdultProgress();
   renderAdultProgressiveUI(true);
+  refreshAdultCompactDock();
 }
 
 function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}) {
@@ -3527,6 +3577,8 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     }
     els.movementChoices?.appendChild(wrapper);
   });
+
+  refreshAdultCompactDock();
 
   updateVariantButton(position);
   updateRhythmControl(position);
@@ -3972,8 +4024,11 @@ els.rhythmTapBtn?.addEventListener('keydown', event => {
 });
 
 els.adultPanelToggleBtn?.addEventListener('click', () => {
-  const collapsed = els.adultInteractionPanel?.classList.toggle('fullscreen-collapsed');
-  els.adultPanelToggleBtn.textContent = collapsed ? 'SEÇİMLERİ AÇ' : 'SEÇİMLERİ GİZLE';
+  setAdultPanelExpanded(!els.adultInteractionPanel?.classList.contains('compact-expanded'));
+});
+
+els.adultDockMoreBtn?.addEventListener('click', () => {
+  setAdultPanelExpanded(!els.adultInteractionPanel?.classList.contains('compact-expanded'));
 });
 
 if (els.video?.requestVideoFrameCallback) {
