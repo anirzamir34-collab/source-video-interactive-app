@@ -2455,6 +2455,63 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
   }
 });
 
+app.post('/api/gemini-key-status', async (req, res) => {
+  const apiKey = clientGeminiApiKey(req);
+  if (!apiKey) {
+    return res.status(400).json({
+      ok: false,
+      state: 'invalid',
+      message: 'Geçerli bir Gemini API anahtarı gönderilmedi.'
+    });
+  }
+
+  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    await ai.models.generateContent({
+      model,
+      contents: 'Reply OK.',
+      config: { maxOutputTokens: 1, temperature: 0 }
+    });
+    return res.json({
+      ok: true,
+      state: 'available',
+      model,
+      checkedAt: Date.now(),
+      message: 'Anahtar çalışıyor ve analiz kotası kullanılabilir.'
+    });
+  } catch (error) {
+    const details = String(error?.message || error);
+    const normalized = details.toLowerCase();
+    const retryAfterSeconds = ttsQuotaRetrySeconds(details) || 0;
+    if (normalized.includes('api_key_invalid') || normalized.includes('api key not valid') || normalized.includes('invalid api key')) {
+      return res.status(401).json({ ok: false, state: 'invalid', message: 'API anahtarı geçersiz.' });
+    }
+    if (normalized.includes('no credits') || normalized.includes('credit balance') || normalized.includes('prepay')) {
+      return res.status(402).json({ ok: false, state: 'no_credits', message: 'Bu anahtara bağlı hesapta kullanılabilir kredi yok.' });
+    }
+    if (normalized.includes('resource_exhausted') || normalized.includes('429') || normalized.includes('quota')) {
+      const daily = normalized.includes('per_day') || normalized.includes('per day') || normalized.includes('daily');
+      return res.status(429).json({
+        ok: false,
+        state: daily ? 'daily_limit' : 'rate_limited',
+        retryAfterSeconds,
+        message: daily
+          ? 'Bu projenin günlük ücretsiz kotası dolmuş.'
+          : 'Anahtar şu anda hız/kota sınırında; biraz sonra tekrar denenebilir.'
+      });
+    }
+    if (normalized.includes('permission_denied') || normalized.includes('403')) {
+      return res.status(403).json({ ok: false, state: 'forbidden', message: 'Anahtarın Gemini modeline erişim izni yok.' });
+    }
+    return res.status(502).json({
+      ok: false,
+      state: 'unavailable',
+      message: 'Anahtar şu anda doğrulanamadı; daha sonra tekrar dene.'
+    });
+  }
+});
+
 app.get('/api/ai-usage-status', (req, res) => {
   const now = Date.now();
   const customApiKey = clientGeminiApiKey(req);
