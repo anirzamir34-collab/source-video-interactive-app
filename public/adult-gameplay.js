@@ -153,7 +153,21 @@ export function verifiedAdultPositionFamily(action = {}) {
   return resolveVerifiedAdultPosition(action).family;
 }
 
+export function adultPositionFamilyFromBodyConfiguration(action = {}) {
+  const orientation = String(action.receiverBodyOrientation || '').trim().toLowerCase();
+  const support = String(action.receiverSupport || '').trim().toLowerCase();
+  const confidence = Number(action.positionConfigurationConfidence);
+  if (!Number.isFinite(confidence) || confidence < 0.78 || !String(action.positionEvidence || '').trim()) return '';
+  if (orientation === 'on_top_facing' && support === 'straddling') return 'cowgirl';
+  if (orientation === 'on_top_away' && support === 'straddling') return 'reverse-cowgirl';
+  if (orientation === 'face_down_flat' && support === 'torso_flat') return 'prone-bone';
+  if (orientation === 'on_back' && support === 'back_flat') return 'missionary';
+  if (orientation === 'hands_knees' && support === 'hands_knees') return 'rear';
+  return '';
+}
+
 export function resolveVerifiedAdultPosition(action = {}) {
+  const structuralFamily = adultPositionFamilyFromBodyConfiguration(action);
   const labelFamily = adultPositionFamily(action.positionLabel);
   const idFamily = adultPositionFamily(action.positionId);
   const actionFamily = action?.sourceVerified === true
@@ -184,14 +198,18 @@ export function resolveVerifiedAdultPosition(action = {}) {
   const correctedFromAction = Boolean(
     declaredFamily && actionFamily && actionFamily !== declaredFamily && explicitNamedActionPosition
   );
-  const family = correctedFromAction ? actionFamily : (declaredFamily || actionFamily || '');
+  const textualFamily = correctedFromAction ? actionFamily : (declaredFamily || actionFamily || '');
+  const correctedFromStructure = Boolean(structuralFamily && structuralFamily !== textualFamily);
+  const family = structuralFamily || textualFamily;
   return {
     family,
-    correctedFromAction: correctedFromAction || Boolean(!declaredFamily && actionFamily)
+    correctedFromAction: correctedFromStructure || correctedFromAction || Boolean(!declaredFamily && actionFamily)
   };
 }
 
 export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '') {
+  const structuralFamily = adultPositionFamilyFromBodyConfiguration(action);
+  if (structuralFamily && structuralFamily !== canonicalId) return false;
   const source = [
     action.label,
     action.movementType,
@@ -216,7 +234,9 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
   // Only an explicit change to another configuration is a transition.
   // Words describing the ongoing verified activity (vaginal, penetration,
   // kissing or touching) are legitimate position-local movement choices.
-  return !/\b(gecis|transition|pozisyon\s+degistir|donerken|yonlendir)\b/.test(text);
+  const actionType = String(action.actionType || '').toLowerCase();
+  if (['body_transition', 'partner_transition', 'camera_transition'].includes(actionType)) return false;
+  return !/\b(gecis|transition|pozisyon(?:una|a)?\s+gec|pozisyon\s+degistir|ustune\s+cik|yuzustu\s+don|donerken|yonlendir)\b/.test(text);
 }
 
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
