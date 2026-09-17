@@ -1334,8 +1334,9 @@ async function ensureDubSegment(segment) {
       headers: geminiRequestHeaders({ 'Content-Type': 'application/json' })
     }
   ].filter(Boolean);
-  if (!state.dubProviderLock) state.dubProviderLock = availableProviders[0]?.id || '';
-  const providers = availableProviders.filter(provider => provider.id === state.dubProviderLock);
+  const providers = state.dubProviderLock
+    ? availableProviders.filter(provider => provider.id === state.dubProviderLock)
+    : availableProviders;
 
   const request = (async () => {
     let lastFailure = null;
@@ -1378,7 +1379,15 @@ async function ensureDubSegment(segment) {
       checkAiUsageStatus();
       return null;
     }
-    throw lastFailure?.error || new Error(body?.error || body?.message || 'Dublaj sağlayıcıları kullanılamadı');
+    const message = body?.message || body?.error || 'Dublaj sağlayıcıları kullanılamadı';
+    state.dubFailureReason = body?.reason || 'DUB_PROVIDER_ERROR';
+    if (els.dubToggleBtn) {
+      els.dubToggleBtn.textContent = `DUBLAJ HATASI: ${message}`;
+      els.dubToggleBtn.title = message;
+      els.dubToggleBtn.classList.remove('hidden');
+      els.dubToggleBtn.dataset.unavailable = 'true';
+    }
+    throw lastFailure?.error || new Error(message);
   })().catch(error => {
     console.error('Dub segment failed:', segmentId, error);
     return null;
@@ -1420,7 +1429,7 @@ function prefetchDubSegmentsAround(videoTime) {
     .forEach(segment => void ensureDubSegment(segment));
 }
 
-async function prepareCompleteDubTimeline(segments = [], concurrency = 3) {
+async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
   const queue = (Array.isArray(segments) ? segments : [])
     .filter(segment => String(segment?.turkishText || '').trim());
   let cursor = 0;
@@ -1695,7 +1704,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
   els.analysisState.textContent = 'LOCAL_PROCESSING';
 
-  const { extractStoryboard, sheetsPerAnalysisChunk } = await import('./storyboard.js');
+  const { extractStoryboard, adaptiveAnalysisChunkPlan } = await import('./storyboard.js');
   const storyboardSource = file || state.selectedRemoteVideo?.proxyUrl;
   const storyboard = await extractStoryboard(storyboardSource, (progress) => {
     els.analysisTitle.textContent = state.selectedRemoteVideo && !file
@@ -1712,8 +1721,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-    const remoteStoryboard = Boolean(state.selectedRemoteVideo && !file);
-    const sheetsPerChunk = sheetsPerAnalysisChunk(modes.quality, remoteStoryboard);
+    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, modes.quality);
+    const sheetsPerChunk = analysisPlan.sheetsPerChunk;
     const framesPerSheet = 12;
     const chunkCount = Math.ceil(
       storyboard.sheets.length / sheetsPerChunk
@@ -2962,9 +2971,13 @@ function prepareAdultScenes() {
                 femaleProgressRate: 1,
                 positionOnlyFallback: true
               };
-              // A verified position without separately verified inner actions
-              // is one honest choice, not three invented "cut" choices.
-              movements = [verifiedBase];
+              movements = expandVerifiedMovementVariants(
+                [verifiedBase],
+                verifiedBase.loopStartTime,
+                verifiedBase.loopEndTime,
+                { minSeconds: 5, maxVariants: 3, baseLabel: position.label, splitEachMovement: true }
+              );
+              if (!movements.length) movements = [verifiedBase];
             }
             return { ...position, movements };
           })
@@ -3122,7 +3135,14 @@ function orderedLockedAdultPositions(scene = state.adultScene) {
 }
 
 function unlockNextAdultPositionFromLust() {
-  const next = orderedLockedAdultPositions()[0];
+  const locked = orderedLockedAdultPositions();
+  const coreVisited = (state.adultScene?.positions || []).some(position =>
+    !isWarmupPosition(position) && !isBonusPosition(position) &&
+    state.adultVisitedPositionIds.has(position.id)
+  );
+  const next = locked.find(position =>
+    !state.adultSexUnlocked ? !isBonusPosition(position) : coreVisited
+  );
   if (!next) return null;
   state.adultUnlockedPositionIds.add(next.id);
   state.adultRevealedPositionIds.add(next.id);
@@ -3143,6 +3163,11 @@ function addFemaleLust(amount) {
     Math.max(0, Number(state.femaleSceneProgress) || 0) + Math.max(0, Number(amount) || 0)
   );
   if (state.femaleSceneProgress + 0.001 < ADULT_LUST_UNLOCK_THRESHOLD) return null;
+  const active = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
+  if (state.adultSexUnlocked && (!active || isWarmupPosition(active))) {
+    state.femaleSceneProgress = 0;
+    return null;
+  }
   return unlockNextAdultPositionFromLust();
 }
 

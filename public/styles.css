@@ -392,8 +392,8 @@ video{width:100%;max-height:58vh;background:black;border-radius:14px}.state-row{
   }
 }
 
-/* Restored adult HUD: fixed right panel, full-size video, no compact dock. */
-#adultInteractionPanel .adult-compact-dock { display: none !important; }
+/* Restored adult HUD with a persistent compact status dock. */
+#adultInteractionPanel .adult-compact-dock { display: grid !important; }
 
 #playerSection .video-stage:fullscreen #video,
 #playerSection .video-stage:-webkit-full-screen #video,
@@ -3351,6 +3351,19 @@ pre {
   background: rgba(62,8,17,.90) !important;
 }
 
+#playerSection .video-stage:fullscreen #dubToggleBtn[data-unavailable="true"],
+#playerSection .video-stage:-webkit-full-screen #dubToggleBtn[data-unavailable="true"] {
+  top: max(58px, calc(env(safe-area-inset-top) + 48px)) !important;
+  right: max(12px, env(safe-area-inset-right)) !important;
+  left: auto !important;
+  width: min(72vw, 520px) !important;
+  max-width: calc(100vw - 24px) !important;
+  white-space: normal !important;
+  text-align: left !important;
+  line-height: 1.25 !important;
+  z-index: 120 !important;
+}
+
 .scene-progress-fill.climax {
   background: linear-gradient(90deg, #8c63ff, #d3b6ff);
   box-shadow: 0 0 12px rgba(157, 112, 255, .35);
@@ -4183,8 +4196,6 @@ body { font-size: 13px; }
 #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded .adult-stage-summary,
 #playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded .adult-lust-bars,
 #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded .adult-lust-bars,
-#playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded .adult-discovery-gate,
-#playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded .adult-discovery-gate,
 #playerSection .video-stage:fullscreen #adultInteractionPanel.compact-expanded .choice-section-heading,
 #playerSection .video-stage:-webkit-full-screen #adultInteractionPanel.compact-expanded .choice-section-heading {
   display: none !important;

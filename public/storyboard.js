@@ -39,6 +39,15 @@ export function sheetsPerAnalysisChunk(qualityMode = 'ultra', remote = false) {
   return 3;
 }
 
+export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityMode = 'ultra') {
+  const sheets = Math.max(1, Math.floor(Number(sheetCount) || 1));
+  const seconds = Math.max(1, Number(duration) || 1);
+  const targetSeconds = String(qualityMode || 'ultra').toLowerCase() === 'fast' ? 85 : 50;
+  const desiredChunks = Math.min(15, Math.max(1, Math.ceil(seconds / targetSeconds)));
+  const sheetsPerChunk = Math.max(1, Math.ceil(sheets / desiredChunks));
+  return { sheetsPerChunk, chunkCount: Math.ceil(sheets / sheetsPerChunk) };
+}
+
 export function storyboardSamplingPlan(duration, remote = false) {
   const seconds = Math.max(0, Number(duration) || 0);
   if (!remote) {

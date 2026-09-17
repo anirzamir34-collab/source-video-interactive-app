@@ -2741,6 +2741,7 @@ app.post('/api/elevenlabs-dub-segment', async (req, res) => {
       audioBase64: audio.audioBase64
     });
   } catch (error) {
+    console.warn('[elevenlabs-dub-error]', Number(error?.status) || 502, String(error?.message || error).slice(0, 700));
     const normalized = elevenLabsErrorResponse(error, 'ElevenLabs Türkçe dublaj sesi üretilemedi.');
     return res.status(normalized.status).json(normalized.body);
   }
