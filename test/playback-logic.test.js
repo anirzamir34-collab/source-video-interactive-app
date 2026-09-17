@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildDubBlocks,
   dialogueSegmentAt,
   dialogueSegmentsAt,
   dialogueSegmentsForTarget,
@@ -39,13 +40,26 @@ test('dialogueSegmentAt immediately switches to the newest overlapping speaker',
   assert.equal(dialogueSegmentAt(segments, 12.5)?.segmentId, 'son');
 });
 
-test('dialogueSegmentsAt preserves every overlapping speaker for multi-channel dubbing', () => {
+test('dialogueSegmentsAt preserves overlap metadata while dialogueSegmentAt selects one dub owner', () => {
   const segments = [
     { segmentId: 'a', speakerId: 'woman-a', startTime: 10, endTime: 14, turkishText: 'Bir' },
     { segmentId: 'b', speakerId: 'man-a', startTime: 12, endTime: 15, turkishText: 'İki' },
     { segmentId: 'c', speakerId: 'woman-b', startTime: 16, endTime: 18, turkishText: 'Üç' }
   ];
   assert.deepEqual(dialogueSegmentsAt(segments, 12.5).map(item => item.segmentId), ['a', 'b']);
+  assert.equal(dialogueSegmentAt(segments, 12.5, 0.12)?.segmentId, 'b');
+});
+
+test('adjacent lines from the same speaker become one continuous dub block', () => {
+  const blocks = buildDubBlocks([
+    { segmentId: 'a', speakerId: 'woman-a', startTime: 10, endTime: 12, turkishText: 'Birinci cümle.' },
+    { segmentId: 'b', speakerId: 'woman-a', startTime: 12.2, endTime: 14, turkishText: 'İkinci cümle.' },
+    { segmentId: 'c', speakerId: 'man-a', startTime: 14.1, endTime: 16, turkishText: 'Yanıt.' }
+  ]);
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].turkishText, 'Birinci cümle. İkinci cümle.');
+  assert.deepEqual(blocks[0].sourceSegmentIds, ['a', 'b']);
+  assert.equal(blocks[1].speakerId, 'man-a');
 });
 
 test('adult choice target primes the active Turkish line and following line once', () => {
