@@ -1,11 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  adaptiveAnalysisChunkPlan,
   detectSceneBoundaries,
   selectFocusedTimestamps,
   sheetsPerAnalysisChunk,
   storyboardSamplingPlan
 } from '../public/storyboard.js';
+
+test('analysis chunks scale with video length and stay capped at fifteen', () => {
+  assert.deepEqual(adaptiveAnalysisChunkPlan(12, 578, 'ultra'), {
+    sheetsPerChunk: 1,
+    chunkCount: 12
+  });
+  assert.deepEqual(adaptiveAnalysisChunkPlan(40, 3600, 'ultra'), {
+    sheetsPerChunk: 3,
+    chunkCount: 14
+  });
+  assert.equal(adaptiveAnalysisChunkPlan(2, 45, 'ultra').chunkCount, 1);
+});
 
 test('analysis chunk planning reduces calls without dropping storyboard frames', () => {
   assert.equal(sheetsPerAnalysisChunk('ultra'), 3);

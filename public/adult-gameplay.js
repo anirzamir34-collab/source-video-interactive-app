@@ -408,7 +408,9 @@ export function expandVerifiedMovementVariants(
         variants.push({
           ...item,
           id: `${item.id}:variant-${index + 1}-${Math.round(partStart * 1000)}`,
-          label: item.label || baseLabel || 'Gerçek pozisyon hareketi',
+          label: partCount > 1
+            ? `${String(item.label || baseLabel || 'Gerçek pozisyon hareketi').replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')} · Sekans ${index + 1}`
+            : item.label || baseLabel || 'Gerçek pozisyon hareketi',
           loopStartTime: partStart,
           loopEndTime: partEnd,
           sourceVerified: true,
@@ -777,7 +779,6 @@ export function consolidateVerifiedPositions(positions = []) {
 export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
   const limit = Math.max(1, Math.min(6, Math.floor(Number(maxChoices) || 4)));
   const clean = value => String(value || '')
-    .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
     .trim();
   const normalize = value => clean(value).toLocaleLowerCase('tr-TR')
@@ -809,7 +810,10 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   const occurrence = 'all-occurrences';
   const grouped = [];
   verified.forEach(item => {
-    const key = normalize(item.label) || `${normalizeMovementTempo(item.movementTempo)}:${normalize(item.movementType)}`;
+    const temporalPart = /\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu.test(String(item.label || ''));
+    const key = temporalPart
+      ? normalize(String(item.label || '').replace(/\s+·\s+/, ' bölüm '))
+      : normalize(item.label) || `${normalizeMovementTempo(item.movementTempo)}:${normalize(item.movementType)}`;
     const existing = grouped.find(group => group.key === key);
     if (existing) existing.items.push(item);
     else grouped.push({ key, items: [item] });
