@@ -170,6 +170,14 @@ export function resolveVerifiedAdultPosition(action = {}) {
   const structuralFamily = adultPositionFamilyFromBodyConfiguration(action);
   const labelFamily = adultPositionFamily(action.positionLabel);
   const idFamily = adultPositionFamily(action.positionId);
+  const activityFamily = ['oral', 'manual'].includes(String(action.activityType || '').toLowerCase())
+    ? String(action.activityType).toLowerCase()
+    : '';
+  const activityIsVerified = Boolean(
+    activityFamily &&
+    Number(action.activityTypeConfidence || 0) >= 0.72 &&
+    String(action.activityEvidence || '').trim()
+  );
   const actionFamily = action?.sourceVerified === true
     ? adultPositionFamily([action.label, action.movementType].filter(Boolean).join(' '))
     : '';
@@ -199,11 +207,21 @@ export function resolveVerifiedAdultPosition(action = {}) {
     declaredFamily && actionFamily && actionFamily !== declaredFamily && explicitNamedActionPosition
   );
   const textualFamily = correctedFromAction ? actionFamily : (declaredFamily || actionFamily || '');
-  const correctedFromStructure = Boolean(structuralFamily && structuralFamily !== textualFamily);
-  const family = structuralFamily || textualFamily;
+  // Oral/manual identify the observed act itself. Body support alone cannot
+  // turn either activity into missionary, prone-bone or another penetrative
+  // position, so protect the verified act before structural inference.
+  const protectedActivityFamily = activityIsVerified || ['oral', 'manual'].includes(labelFamily) ||
+    ['oral', 'manual'].includes(idFamily)
+    ? (activityIsVerified ? activityFamily : (labelFamily || idFamily))
+    : '';
+  const correctedFromStructure = Boolean(
+    !protectedActivityFamily && structuralFamily && structuralFamily !== textualFamily
+  );
+  const family = protectedActivityFamily || structuralFamily || textualFamily;
   return {
     family,
-    correctedFromAction: correctedFromStructure || correctedFromAction || Boolean(!declaredFamily && actionFamily)
+    correctedFromAction: Boolean(protectedActivityFamily && protectedActivityFamily !== declaredFamily) ||
+      correctedFromStructure || correctedFromAction || Boolean(!declaredFamily && actionFamily)
   };
 }
 
