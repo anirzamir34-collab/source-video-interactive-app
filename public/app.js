@@ -166,6 +166,10 @@ const els = {
   fileMeta: $('fileMeta'),
   analyzeBtn: $('analyzeBtn'),
   qualityMode: $('qualityMode'),
+  geminiApiKeyInput: $('geminiApiKeyInput'),
+  saveGeminiApiKeyBtn: $('saveGeminiApiKeyBtn'),
+  clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
+  apiKeyStatus: $('apiKeyStatus'),
   motionMode: $('motionMode'),
   subtitleMode: $('subtitleMode'),
   dubMode: $('dubMode'),
@@ -462,9 +466,51 @@ function renderQuotaBadge(element, status) {
   element.title = status?.message || '';
 }
 
+const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
+
+function activeGeminiApiKey() {
+  try { return String(sessionStorage.getItem(GEMINI_SESSION_KEY) || '').trim(); }
+  catch { return ''; }
+}
+
+function geminiRequestHeaders(base = {}) {
+  const key = activeGeminiApiKey();
+  return key ? { ...base, 'X-Gemini-Api-Key': key } : { ...base };
+}
+
+function renderGeminiApiKeyState() {
+  const active = Boolean(activeGeminiApiKey());
+  if (els.apiKeyStatus) els.apiKeyStatus.textContent = active
+    ? 'Bu oturumda kendi anahtarın kullanılıyor'
+    : 'Sunucu anahtarı kullanılıyor';
+  els.clearGeminiApiKeyBtn?.classList.toggle('hidden', !active);
+  if (active && els.geminiApiKeyInput) els.geminiApiKeyInput.value = '';
+}
+
+function saveGeminiApiKey() {
+  const key = String(els.geminiApiKeyInput?.value || '').trim();
+  if (!/^AIza[\w-]{20,}$/.test(key)) {
+    if (els.apiKeyStatus) els.apiKeyStatus.textContent = 'Geçerli bir AIza… anahtarı gir';
+    return;
+  }
+  try { sessionStorage.setItem(GEMINI_SESSION_KEY, key); } catch {}
+  renderGeminiApiKeyState();
+  checkAiUsageStatus();
+}
+
+function clearGeminiApiKey() {
+  try { sessionStorage.removeItem(GEMINI_SESSION_KEY); } catch {}
+  if (els.geminiApiKeyInput) els.geminiApiKeyInput.value = '';
+  renderGeminiApiKeyState();
+  checkAiUsageStatus();
+}
+
 async function checkAiUsageStatus() {
   try {
-    const response = await fetch('/api/ai-usage-status', { cache: 'no-store' });
+    const response = await fetch('/api/ai-usage-status', {
+      cache: 'no-store',
+      headers: geminiRequestHeaders()
+    });
     const body = await response.json();
     renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
     renderQuotaBadge(els.dubQuotaStatus, body.dubbing);
@@ -528,6 +574,12 @@ function updateAnalyzeAvailability() {
 });
 
 els.healthBtn.addEventListener('click', checkHealth);
+els.saveGeminiApiKeyBtn?.addEventListener('click', saveGeminiApiKey);
+els.clearGeminiApiKeyBtn?.addEventListener('click', clearGeminiApiKey);
+els.geminiApiKeyInput?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') saveGeminiApiKey();
+});
+renderGeminiApiKeyState();
 
 els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
@@ -847,6 +899,7 @@ async function uploadDialogueWithProgress(
 
   const response = await fetch('/api/gemini-dialogue-analyze', {
     method: 'POST',
+    headers: geminiRequestHeaders(),
     body: finishForm
   });
 
@@ -977,7 +1030,7 @@ async function ensureDubSegment(segment) {
 
   const request = fetch('/api/gemini-dub-segment', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: geminiRequestHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       text: segment.turkishText,
       gender: segment.gender,
@@ -1442,6 +1495,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         try {
           response = await fetch('/api/gemini-storyboard-analyze', {
             method: 'POST',
+            headers: geminiRequestHeaders(),
             body: freshChunkForm(),
             signal: AbortSignal.timeout(240000)
           });
@@ -1481,6 +1535,7 @@ els.analyzeBtn.addEventListener('click', async () => {
                 `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} kritik aday ikinci kez doğrulanıyor...`;
               const reviewResponse = await fetch('/api/gemini-storyboard-analyze', {
                 method: 'POST',
+                headers: geminiRequestHeaders(),
                 body: freshChunkForm(),
                 signal: AbortSignal.timeout(240000)
               });
