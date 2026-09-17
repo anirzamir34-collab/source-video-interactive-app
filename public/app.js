@@ -168,6 +168,7 @@ const els = {
   qualityMode: $('qualityMode'),
   geminiApiKeyInput: $('geminiApiKeyInput'),
   saveGeminiApiKeyBtn: $('saveGeminiApiKeyBtn'),
+  testGeminiApiKeyBtn: $('testGeminiApiKeyBtn'),
   clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
   apiKeyStatus: $('apiKeyStatus'),
   motionMode: $('motionMode'),
@@ -484,6 +485,7 @@ function renderGeminiApiKeyState() {
     ? 'Bu oturumda kendi anahtarın kullanılıyor'
     : 'Sunucu anahtarı kullanılıyor';
   els.clearGeminiApiKeyBtn?.classList.toggle('hidden', !active);
+  els.testGeminiApiKeyBtn?.classList.toggle('hidden', !active);
   if (active && els.geminiApiKeyInput) els.geminiApiKeyInput.value = '';
 }
 
@@ -496,6 +498,41 @@ function saveGeminiApiKey() {
   try { sessionStorage.setItem(GEMINI_SESSION_KEY, key); } catch {}
   renderGeminiApiKeyState();
   checkAiUsageStatus();
+  testGeminiApiKey();
+}
+
+async function testGeminiApiKey() {
+  if (!activeGeminiApiKey()) return;
+  if (els.testGeminiApiKeyBtn) {
+    els.testGeminiApiKeyBtn.disabled = true;
+    els.testGeminiApiKeyBtn.textContent = 'Test...';
+  }
+  if (els.apiKeyStatus) {
+    els.apiKeyStatus.className = 'checking';
+    els.apiKeyStatus.textContent = 'Anahtar ve kota kontrol ediliyor';
+  }
+  try {
+    const response = await fetch('/api/gemini-key-status', {
+      method: 'POST',
+      headers: geminiRequestHeaders({ 'Content-Type': 'application/json' }),
+      body: '{}'
+    });
+    const body = await response.json().catch(() => ({}));
+    if (els.apiKeyStatus) {
+      els.apiKeyStatus.className = String(body.state || 'unavailable');
+      els.apiKeyStatus.textContent = body.message || (response.ok ? 'Anahtar çalışıyor' : 'Anahtar kullanılamıyor');
+    }
+  } catch {
+    if (els.apiKeyStatus) {
+      els.apiKeyStatus.className = 'unavailable';
+      els.apiKeyStatus.textContent = 'Bağlantı kurulamadı; tekrar dene';
+    }
+  } finally {
+    if (els.testGeminiApiKeyBtn) {
+      els.testGeminiApiKeyBtn.disabled = false;
+      els.testGeminiApiKeyBtn.textContent = 'Test et';
+    }
+  }
 }
 
 function clearGeminiApiKey() {
@@ -575,6 +612,7 @@ function updateAnalyzeAvailability() {
 
 els.healthBtn.addEventListener('click', checkHealth);
 els.saveGeminiApiKeyBtn?.addEventListener('click', saveGeminiApiKey);
+els.testGeminiApiKeyBtn?.addEventListener('click', testGeminiApiKey);
 els.clearGeminiApiKeyBtn?.addEventListener('click', clearGeminiApiKey);
 els.geminiApiKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveGeminiApiKey();
