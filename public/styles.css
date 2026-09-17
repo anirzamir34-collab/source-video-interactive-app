@@ -3965,6 +3965,31 @@ body { font-size: 13px; }
   font-size: .72rem;
 }
 
+.api-key-setting {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 12px;
+  padding: 11px;
+  border: 1px solid rgba(56,227,176,.18);
+  border-radius: 14px;
+  background: rgba(56,227,176,.035);
+}
+.api-key-setting__copy { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.api-key-setting__copy b { color: #dffbf2; font-size: .69rem; letter-spacing: .04em; }
+.api-key-setting__copy small { color: #67dcb9; font-size: .61rem; text-align: right; }
+.api-key-setting__row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 6px; }
+.api-key-setting input {
+  min-width: 0;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px;
+  color: #f3fffb;
+  background: rgba(0,0,0,.35);
+}
+.api-key-setting button { min-height: 40px; padding: 0 11px; border-radius: 10px; font-size: .65rem; font-weight: 850; }
+.api-key-setting > small { color: #76877f; font-size: .59rem; }
+
 /* VIDEOQUEST FLOATING PALETTE V10 — final fullscreen override. */
 #playerSection .video-stage:fullscreen #video,
 #playerSection .video-stage:-webkit-full-screen #video,
