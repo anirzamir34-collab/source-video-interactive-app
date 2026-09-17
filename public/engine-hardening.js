@@ -156,7 +156,20 @@ export function validateActionInterval(action = {}, videoDuration = 0) {
   return { valid: reasons.length === 0, reasons, start, end };
 }
 
-function semanticPositionFamily(action = {}) {
+function structuralPositionFamily(action = {}) {
+  const orientation = String(action.receiverBodyOrientation || '').trim().toLowerCase();
+  const support = String(action.receiverSupport || '').trim().toLowerCase();
+  const confidence = numberOr(action.positionConfigurationConfidence);
+  if (confidence < 0.78 || !String(action.positionEvidence || '').trim()) return '';
+  if (orientation === 'on_top_facing' && support === 'straddling') return 'cowgirl';
+  if (orientation === 'on_top_away' && support === 'straddling') return 'reverse-cowgirl';
+  if (orientation === 'face_down_flat' && support === 'torso_flat') return 'prone-bone';
+  if (orientation === 'on_back' && support === 'back_flat') return 'missionary';
+  if (orientation === 'hands_knees' && support === 'hands_knees') return 'rear';
+  return '';
+}
+
+function textualPositionFamily(action = {}) {
   const text = normalizedText(`${action.positionId || ''} ${action.positionLabel || ''} ${action.label || ''}`);
   if (/\b(reverse cowgirl|reverse rider|ters kovboy|ters cowgirl|ters rider|ters kucak(?:ta)?|arkasi donuk kovboy|sirtini donerek ustte)\b/.test(text)) return 'reverse-cowgirl';
   if (/\b(lap dance|kucakta|kucaginda|lotus|yuz yuze oturarak|seated face to face)\b/.test(text)) return 'seated-facing';
@@ -173,6 +186,10 @@ function semanticPositionFamily(action = {}) {
   if (/\b(oturarak|seated|chair|sandalye|koltukta)\b/.test(text)) return 'seated';
   if (/\b(ayakta|standing)\b/.test(text)) return 'standing';
   return String(action.positionId || '').trim().toLowerCase();
+}
+
+function semanticPositionFamily(action = {}) {
+  return structuralPositionFamily(action) || textualPositionFamily(action);
 }
 
 function overlapSeconds(a, b) {
@@ -254,20 +271,29 @@ export function secondPassReviewCandidates(result = {}) {
   // Final/outcome mistakes are expensive in gameplay, so they always receive
   // one visual verification pass. Ordinary foreplay and generic actions do not.
   actions.forEach(action => {
-    if (action?.groupScene === true || action?.partnerSwitch === true ||
-      String(action?.actionType || '').toLowerCase() === 'partner_transition') {
+    if (action?.partnerSwitch === true || String(action?.actionType || '').toLowerCase() === 'partner_transition') {
       selected.add(action);
       return;
+    }
+    if (action?.groupScene === true) {
+      const participants = Array.isArray(action.participantTrackIds) ? action.participantTrackIds.filter(Boolean) : [];
+      const identityIncomplete = !String(action.partnerTrackId || '').trim() ||
+        !String(action.partnerEvidence || '').trim() || participants.length < 3 ||
+        actionConfidence(action) < SECOND_PASS_POSITION_CONFIDENCE;
+      if (identityIncomplete) selected.add(action);
     }
     if (isOutcomeCritical(action)) {
       selected.add(action);
       return;
     }
-    if (isCorePositionCritical(action) && isPenetrativeActivity(action)) {
-      // Route classification is gameplay-critical. Re-check every explicit
-      // vaginal/anal claim once, even when first-pass confidence is high.
-      // Candidates are batched per storyboard chunk, so this does not double
-      // every adult-analysis request.
+    const structuralFamily = structuralPositionFamily(action);
+    const textualFamily = textualPositionFamily(action);
+    if (isCorePositionCritical(action) && structuralFamily && textualFamily && structuralFamily !== textualFamily) {
+      selected.add(action);
+      return;
+    }
+    if (isCorePositionCritical(action) && isPenetrativeActivity(action) &&
+      (activityTypeConfidence(action) < SECOND_PASS_ACTIVITY_CONFIDENCE || !activityTypeEvidence(action))) {
       selected.add(action);
       return;
     }
