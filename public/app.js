@@ -1590,7 +1590,8 @@ async function syncDubPlayback() {
 
   const audio = new Audio(source);
   audio.preload = 'auto';
-  audio.volume = 0.92;
+  // Dubbing should sit above the lowered source track without overpowering it.
+  audio.volume = 0.62;
   audio.playbackRate = 1;
   audio.preservesPitch = true;
   audio.webkitPreservesPitch = true;

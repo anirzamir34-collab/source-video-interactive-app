@@ -2619,10 +2619,31 @@ function scoreElevenVoice(voice, gender) {
   const name = String(voice?.name || '').toLowerCase();
   const description = String(voice?.description || '').toLowerCase();
   const labels = voice?.labels || voice?.sharing?.labels || {};
+  const verifiedLanguages = Array.isArray(voice?.verified_languages)
+    ? voice.verified_languages
+    : [];
+  const languageEvidence = [
+    description,
+    name,
+    ...Object.values(labels),
+    voice?.fine_tuning?.language,
+    voice?.fine_tuning?.locale,
+    ...verifiedLanguages.flatMap(item => [
+      item?.language,
+      item?.locale,
+      item?.accent
+    ])
+  ].filter(Boolean).join(' ').toLowerCase();
   const detected = elevenVoiceGender(voice);
   let score = detected === gender ? 100 : detected === 'uncertain' ? 10 : -100;
-  if (/turkish|türk|tr-tr/.test(`${description} ${Object.values(labels).join(' ')}`.toLowerCase())) score += 500;
-  if (/conversational|natural|warm|soft|calm/.test(description)) score += 8;
+  // Prefer a voice explicitly verified for Turkish. The old selector ignored
+  // verified_languages/fine_tuning metadata and fell back to Bella/George.
+  if (/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score += 1200;
+  if (verifiedLanguages.some(item => /^(?:tr|tr-tr)$/i.test(String(item?.language || item?.locale || '')))) score += 500;
+  if (/conversational|natural|warm|soft|calm|professional/.test(description)) score += 18;
+  if (/narration|news|storyteller/.test(description)) score -= 8;
+  if (/^(?:bella|george)$/.test(name)) score -= 250;
+  if (voice?.is_owner === true) score += 20;
   return score;
 }
 
@@ -2633,9 +2654,14 @@ async function elevenLabsVoices(apiKey, force = false) {
   const response = await elevenLabsRequest(apiKey, '/v2/voices?page_size=100');
   const body = await response.json();
   const voices = Array.isArray(body?.voices) ? body.voices.filter(item => item?.voice_id) : [];
-  const pick = (gender, excludedVoiceId = '') => [...voices]
-    .filter(voice => voice.voice_id !== excludedVoiceId)
-    .sort((a, b) => scoreElevenVoice(b, gender) - scoreElevenVoice(a, gender))[0] || null;
+  const pick = (gender, excludedVoiceId = '') => {
+    const candidates = [...voices]
+      .filter(voice => voice.voice_id !== excludedVoiceId)
+      .filter(voice => elevenVoiceGender(voice) !== (gender === 'male' ? 'female' : 'male'));
+    const withoutLegacy = candidates.filter(voice => !/^(?:bella|george)$/i.test(String(voice?.name || '')));
+    return (withoutLegacy.length ? withoutLegacy : candidates)
+      .sort((a, b) => scoreElevenVoice(b, gender) - scoreElevenVoice(a, gender))[0] || null;
+  };
   const female = pick('female');
   const male = pick('male', female?.voice_id);
   const value = { voices, female, male };
