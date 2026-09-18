@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#090b0c" />
   <title>Source Video Interactive</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/player-controls.css" />
 </head>
 <body>
   <main class="shell">
@@ -193,7 +194,7 @@
       </div>
 
       <div id="interactivePanel" class="tab-panel active">
-        <div class="video-stage">
+        <div class="video-stage scene-player">
           <video id="video" playsinline disablepictureinpicture controlslist="nofullscreen noplaybackrate nodownload"></video>
           <div id="subtitleOverlay" class="subtitle-overlay hidden" aria-live="polite">
             <span id="subtitleSpeaker" class="subtitle-speaker"></span>
@@ -214,7 +215,7 @@
             <button id="nextChoiceBtn" type="button">Sonraki seçim ⏭</button>
           </div>
 
-          <section id="adultInteractionPanel" class="adult-interaction-panel hidden" aria-label="Kademeli sahne seçimleri">
+          <section id="adultInteractionPanel" class="adult-interaction-panel scene-controls hidden" aria-label="Kademeli sahne seçimleri">
             <div class="adult-compact-dock" aria-label="Hızlı sahne kontrolleri">
               <div class="adult-dock-state">
                 <span id="adultDockPhase" class="adult-dock-phase">YAKINLAŞMA</span>

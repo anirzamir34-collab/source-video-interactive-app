@@ -11,12 +11,69 @@ import {
   dubMasterClockCorrection,
   dubSegmentKey,
   fittedDubPlaybackRate,
+  hasRemainingVideo,
   isCompleteChunkAnalysis,
   isDubStartTimely,
   mapVideoTimeToDubTime,
   nextDialogueSegments,
-  resolveDubGender
+  resolveDubGender,
+  sceneExitTime,
+  seekMediaTo
 } from '../public/playback-logic.js';
+
+test('scene exit preserves adjacent footage and only actual video end is terminal', () => {
+  assert.equal(sceneExitTime(24, 100), 24);
+  assert.equal(sceneExitTime(120, 100), 100);
+  assert.equal(sceneExitTime(24, NaN), 24);
+  assert.equal(hasRemainingVideo(24, 100), true);
+  assert.equal(hasRemainingVideo(100, 100), false);
+});
+
+class TestMedia extends EventTarget {
+  duration = 100;
+  readyState = 4;
+  seeking = false;
+  time = 0;
+  mode = 'sync';
+  get currentTime() { return this.time; }
+  set currentTime(value) {
+    this.time = value;
+    this.seeking = this.mode === 'stalled';
+    if (this.mode === 'sync') this.dispatchEvent(new Event('seeked'));
+    if (this.mode === 'error') this.dispatchEvent(new Event('error'));
+  }
+}
+
+test('seek listener catches immediate events and repeated same-time navigation', async () => {
+  const video = new TestMedia();
+  assert.equal(await seekMediaTo(video, 25, { timeoutMs: 20 }), 25);
+  assert.equal(await seekMediaTo(video, 25, { timeoutMs: 20 }), 25);
+});
+
+test('missing seek event succeeds only if a decoded frame actually reached the target', async () => {
+  const video = new TestMedia();
+  video.mode = 'silent';
+  assert.equal(await seekMediaTo(video, 20, { timeoutMs: 5 }), 20);
+  video.mode = 'stalled';
+  await assert.rejects(seekMediaTo(video, 30, { timeoutMs: 5 }), /beklenen sürede/);
+});
+
+test('failed media seek rejects instead of leaving navigation locked', async () => {
+  const video = new TestMedia();
+  video.mode = 'error';
+  await assert.rejects(seekMediaTo(video, 40, { timeoutMs: 10 }), /yüklenemedi/);
+});
+
+test('superseded seek is cancelled and cannot settle the new navigation', async () => {
+  const video = new TestMedia();
+  video.mode = 'stalled';
+  const controller = new AbortController();
+  const oldSeek = seekMediaTo(video, 10, { signal: controller.signal, timeoutMs: 20 });
+  controller.abort();
+  await assert.rejects(oldSeek, { name: 'AbortError' });
+  video.mode = 'sync';
+  assert.equal(await seekMediaTo(video, 50, { timeoutMs: 20 }), 50);
+});
 
 test('partial chunk analysis is never considered complete', () => {
   assert.equal(isCompleteChunkAnalysis({ completedChunkCount: 2, expectedChunkCount: 10 }), false);

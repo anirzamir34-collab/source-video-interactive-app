@@ -47,11 +47,14 @@ import {
   dubMasterClockCorrection,
   dubSegmentKey,
   fittedDubPlaybackRate,
+  hasRemainingVideo,
   isCompleteChunkAnalysis,
   isDubStartTimely,
   mapVideoTimeToDubTime,
   nextDialogueSegments,
-  resolveDubGender
+  resolveDubGender,
+  sceneExitTime,
+  seekMediaTo
 } from './playback-logic.js';
 import {
   ANALYSIS_SCHEMA_VERSION,
@@ -164,6 +167,7 @@ const state = {
   lastAdultFrameNow: null,
   adultFrameRequest: null,
   navigationSeeking: false,
+  navigationSeekController: null,
   manualSeeking: false,
   adultPhaseMachine: 'foreplay',
   engineEvents: [],
@@ -2468,6 +2472,7 @@ function normalizeAnalysis(body) {
 }
 
 function initializeInteractive(analysis) {
+  cancelTimelineNavigation();
   const requestedStart = Number(
     analysis.playStartTime ??
     analysis.introEndTime ??
@@ -3877,14 +3882,7 @@ function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}
 
 function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
   if (!stage || !els.adultInteractionPanel) return;
-  const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
-  if (fullscreenElement === stage) {
-    if (els.adultInteractionPanel.parentElement !== stage) {
-      stage.appendChild(els.adultInteractionPanel);
-    }
-  } else if (els.adultInteractionPanel.previousElementSibling !== stage) {
-    stage.insertAdjacentElement('afterend', els.adultInteractionPanel);
-  }
+  if (els.adultInteractionPanel.parentElement !== stage) stage.appendChild(els.adultInteractionPanel);
 }
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
@@ -4405,19 +4403,7 @@ function finishAdultScene(options = {}) {
   els.adultPanelToggleBtn?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
-  const nextScene = state.adultScenes
-    .filter(item => item.id !== scene.id && !state.completedAdultSceneIds.has(item.id))
-    .sort((a, b) => Number(a.startTime) - Number(b.startTime))
-    .find(item => Number(item.startTime) > Number(scene.startTime) + 0.05);
-  const requestedExit = Math.max(
-    Number(scene.postSceneTime) || 0,
-    Number(scene.endTime) + 0.05
-  );
-  const nextSceneStart = nextScene ? Number(nextScene.startTime) : Number.POSITIVE_INFINITY;
-  state.gameCursorTime = Math.max(
-    Number(scene.endTime) + 0.05,
-    Math.min(requestedExit, nextSceneStart - 0.05)
-  );
+  state.gameCursorTime = sceneExitTime(scene.endTime, els.video?.duration || state.analysis?.videoDuration);
   persistRuntimeSnapshot('adult-scene-complete', true);
 
   if (!els.video) {
@@ -4425,29 +4411,7 @@ function finishAdultScene(options = {}) {
     return;
   }
 
-  const target = Math.min(state.gameCursorTime, els.video.duration || state.gameCursorTime);
-  state.navigationSeeking = true;
-  els.video.pause();
-  els.video.currentTime = target;
-  let exitSettled = false;
-  const finishExit = () => {
-    if (exitSettled) return;
-    exitSettled = true;
-    state.navigationSeeking = false;
-    els.video.removeEventListener('seeked', finishExit);
-    setGameState('DECISION_PENDING');
-    const nextAdultScene = findAdultSceneAt(state.gameCursorTime);
-    if (nextAdultScene) {
-      enterAdultScene(nextAdultScene, {
-        forceStart: true,
-        reason: 'adult-scene-complete-next-occurrence'
-      });
-    } else {
-      renderChoices();
-    }
-  };
-  els.video.addEventListener('seeked', finishExit);
-  setTimeout(finishExit, 1200);
+  void navigateTimelineTo(state.gameCursorTime, { resumeWhenEmpty: true });
 }
 
 function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
@@ -4503,6 +4467,7 @@ function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
 }
 
 function updateAdultPlayback(now, mediaTime) {
+  if (state.navigationSeeking) return;
   if (!state.adultMode) {
     const scene = findAdultSceneAt(mediaTime);
     if (scene) {
@@ -4802,7 +4767,8 @@ function renderChoices() {
     action: firstCandidate,
     completedSceneIds: state.completedAdultSceneIds
   });
-  if (candidateScene && enterAdultScene(candidateScene, { forceStart: true, reason: 'next-timeline-action' })) {
+  if (candidateScene && Number(candidateScene.startTime) <= state.gameCursorTime + 0.15 &&
+      enterAdultScene(candidateScene, { forceStart: true, reason: 'next-timeline-action' })) {
     return;
   }
 
@@ -4830,8 +4796,15 @@ function renderChoices() {
   }
 
   if (!candidates.length) {
-    setGameState('ENDED');
-    els.choices.innerHTML = '<div class="meta">İleri yönde kullanılabilir doğrulanmış action kalmadı.</div>';
+    const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration);
+    const cursor = Math.max(state.gameCursorTime, Number(els.video.currentTime) || 0);
+    if (hasRemainingVideo(cursor, duration)) {
+      setGameState('DECISION_PENDING');
+      showPlaybackRecovery('Bu noktadan sonra seçim yok; video devam ediyor.', resumeSourceVideo, 'Videoya devam et');
+    } else {
+      setGameState('ENDED');
+      els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
+    }
     return;
   }
 
@@ -4848,7 +4821,77 @@ function renderChoices() {
   renderDebug({ nextCandidateActions: candidates.map(a => a.actionId) });
 }
 
+function showPlaybackRecovery(message, retry, label = 'Geçişi tekrar dene') {
+  els.choices.replaceChildren();
+  els.choices.classList.remove('hidden');
+  const copy = document.createElement('div');
+  copy.className = 'meta';
+  copy.textContent = message;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'choice';
+  button.dataset.playbackRecovery = label === 'Videoya devam et' ? 'continue' : 'retry';
+  button.textContent = label;
+  button.addEventListener('click', retry);
+  els.choices.append(copy, button);
+  document.querySelector('.choice-navigation')?.classList.remove('hidden');
+}
+
+async function resumeSourceVideo() {
+  if (state.navigationSeeking || state.adultMode) return;
+  state.activeAction = null;
+  els.choices.classList.add('hidden');
+  setGameState('SEGMENT_PLAYING');
+  try { await els.video.play(); }
+  catch {
+    setGameState('DECISION_PENDING');
+    showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.', resumeSourceVideo, 'Videoya devam et');
+  }
+}
+
+async function navigateTimelineTo(target, { resumeWhenEmpty = false } = {}) {
+  cancelTimelineNavigation();
+  const controller = new AbortController();
+  state.navigationSeekController = controller;
+  state.navigationSeeking = true;
+  state.manualSeeking = false;
+  state.activeAction = null;
+  if (state.stopListener) {
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+  }
+  els.video.pause();
+  setGameState('SEGMENT_SEEKING');
+  try {
+    const reached = await seekMediaTo(els.video, target, { signal: controller.signal });
+    if (controller.signal.aborted) return;
+    state.gameCursorTime = reached;
+    state.navigationSeeking = false;
+    setGameState('DECISION_PENDING');
+    renderChoices();
+    if (resumeWhenEmpty && !state.adultMode &&
+        els.choices.querySelector('[data-playback-recovery="continue"]')) {
+      await resumeSourceVideo();
+    }
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    state.navigationSeeking = false;
+    setGameState('DECISION_PENDING');
+    showPlaybackRecovery(error.message, () => void navigateTimelineTo(target, { resumeWhenEmpty }));
+  } finally {
+    if (state.navigationSeekController === controller) state.navigationSeekController = null;
+  }
+}
+
+function cancelTimelineNavigation() {
+  state.navigationSeekController?.abort();
+  state.navigationSeekController = null;
+  state.navigationSeeking = false;
+  state.manualSeeking = false;
+}
+
 async function playAction(action) {
+  cancelTimelineNavigation();
   const adultScene = findAdultSceneForTimeline(state.adultScenes, {
     action,
     completedSceneIds: state.completedAdultSceneIds
@@ -4956,6 +4999,7 @@ function finishAction(action, decisionEndTime = action.endTime) {
 
 function resetGameAtAction(index) {
   if (state.adultMode) return;
+  cancelTimelineNavigation();
   const actions = state.analysis?.actions || [];
   if (!actions.length) return;
 
@@ -4991,20 +5035,7 @@ function resetGameAtAction(index) {
     return;
   }
 
-  els.video.pause();
-  state.navigationSeeking = true;
-  els.video.currentTime = state.gameCursorTime;
-
-  const finishNavigation = () => {
-    state.navigationSeeking = false;
-    setGameState('DECISION_PENDING');
-    renderChoices();
-  };
-
-  els.video.addEventListener('seeked', finishNavigation, { once: true });
-  setTimeout(() => {
-    if (state.navigationSeeking) finishNavigation();
-  }, 1200);
+  void navigateTimelineTo(state.gameCursorTime);
 }
 
 function jumpChoice(direction) {
@@ -5126,6 +5157,11 @@ els.video.addEventListener('play', () => {
   }
 });
 els.video.addEventListener('timeupdate', renderDebug);
+els.video.addEventListener('ended', () => {
+  if (state.adultMode || state.navigationSeeking || state.activeAction || !state.analysis) return;
+  state.gameCursorTime = Number(els.video.duration) || Number(els.video.currentTime) || 0;
+  renderChoices();
+});
 
 checkHealth();
 checkAiUsageStatus();
@@ -5133,6 +5169,7 @@ setInterval(checkAiUsageStatus, 60 * 1000);
 renderDebug();
 
 function clearPreviousGameResidue() {
+  cancelTimelineNavigation();
   localStorage.removeItem('videoquest:last-analysis');
   localStorage.removeItem('videoquest:last-dialogue');
   localStorage.removeItem(RUNTIME_SAVE_KEY);

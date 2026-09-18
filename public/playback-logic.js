@@ -1,5 +1,53 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
+// Scene metadata can include a distant post-roll time. Leaving a scene must
+// resume at its actual boundary, so intervening source footage is preserved.
+export function sceneExitTime(endTime, duration) {
+  const end = Math.max(0, Number(endTime) || 0);
+  const limit = Number(duration);
+  return Number.isFinite(limit) && limit > 0 ? Math.min(end, limit) : end;
+}
+
+export function hasRemainingVideo(currentTime, duration) {
+  const end = Number(duration);
+  return Number.isFinite(end) && end > 0 && Number(currentTime) < end - 0.05;
+}
+
+export function seekMediaTo(video, requestedTime, { signal, timeoutMs = 8000 } = {}) {
+  const target = sceneExitTime(requestedTime, video.duration);
+  return new Promise((resolve, reject) => {
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (error) => {
+      cleanup();
+      if (error) reject(error);
+      else resolve(target);
+    };
+    const atTarget = () => !video.seeking && video.readyState >= 2 &&
+      Math.abs(Number(video.currentTime) - target) <= 0.08;
+    const onSeeked = () => { if (atTarget()) finish(); };
+    const onError = () => finish(new Error('Video konumu yüklenemedi. Tekrar deneyebilirsin.'));
+    const onAbort = () => finish(new DOMException('Geçiş iptal edildi.', 'AbortError'));
+    if (signal?.aborted) return onAbort();
+    if (atTarget()) return finish();
+    // Listen first, including for synchronous/same-frame seek completion.
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('error', onError);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => {
+      if (atTarget()) finish();
+      else finish(new Error('Video konumu beklenen sürede yüklenemedi. Tekrar deneyebilirsin.'));
+    }, timeoutMs);
+    try { video.currentTime = target; }
+    catch (error) { finish(error); }
+  });
+}
+
 export function isCompleteChunkAnalysis({ completedChunkCount = 0, expectedChunkCount = 0, failed = false } = {}) {
   const completed = Math.max(0, Math.floor(Number(completedChunkCount) || 0));
   const expected = Math.max(0, Math.floor(Number(expectedChunkCount) || 0));
