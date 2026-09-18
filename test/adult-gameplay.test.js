@@ -12,6 +12,7 @@ import {
   canUnlockCorePositions,
   canUnlockOutcome,
   buildVerifiedMovementChoices,
+  summarizeMovementChoiceCoverage,
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
   dedupeVerifiedTimelineActions,
@@ -695,6 +696,23 @@ test('one movement card retains matching clips from every occurrence', () => {
     [...new Set(choices[0].variants.map(item => item.sourcePositionId))],
     ['occurrence-a', 'occurrence-b']
   );
+});
+
+test('movement coverage reports every verified variant under compact cards', () => {
+  const movements = Array.from({ length: 26 }, (_, index) => ({
+    id: `verified-${index + 1}`,
+    label: `Observed action ${index + 1}`,
+    loopStartTime: index * 5,
+    loopEndTime: index * 5 + 4,
+    sourceVerified: true
+  }));
+  const choices = buildVerifiedMovementChoices(movements, 'Observed position', 3);
+
+  assert.deepEqual(summarizeMovementChoiceCoverage(choices), {
+    choiceCount: 3,
+    variantCount: 26,
+    uniqueVariantCount: 26
+  });
 });
 
 

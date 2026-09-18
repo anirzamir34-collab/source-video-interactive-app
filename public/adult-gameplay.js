@@ -921,6 +921,20 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   });
 }
 
+export function summarizeMovementChoiceCoverage(choices = []) {
+  const cards = Array.isArray(choices) ? choices : [];
+  const variantIds = cards.flatMap(card =>
+    (Array.isArray(card?.variants) ? card.variants : [])
+      .map(variant => String(variant?.id || '').trim())
+      .filter(Boolean)
+  );
+  return {
+    choiceCount: cards.length,
+    variantCount: variantIds.length,
+    uniqueVariantCount: new Set(variantIds).size
+  };
+}
+
 export function summarizeAdultSceneGraph(scenes = []) {
   const sceneReports = (Array.isArray(scenes) ? scenes : []).map(scene => {
     const positions = (Array.isArray(scene?.positions) ? scene.positions : []).map(position => ({

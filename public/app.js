@@ -8,6 +8,7 @@ import {
   canUnlockCorePositions,
   canUnlockOutcome,
   buildVerifiedMovementChoices,
+  summarizeMovementChoiceCoverage,
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
@@ -4185,9 +4186,12 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const occurrenceMovements = [...(position.movements || [])]
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 3);
+  const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
-  if (els.movementCount) els.movementCount.textContent = `${movementChoices.length} hareket seçeneği`;
+  if (els.movementCount) {
+    els.movementCount.textContent = `${movementCoverage.variantCount} doğrulanmış kesit · ${movementCoverage.choiceCount} seçenek`;
+  }
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   els.movementSection?.classList.remove('hidden');
 
@@ -4199,10 +4203,13 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.className = 'movement-choice-card';
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
+    const variantStatus = choice.variants.length > 1
+      ? `<small class="movement-variant-status" data-variant-status>${choice.variants.length} kesit · dönüşümlü oynatılır</small>`
+      : '<small class="movement-variant-status" data-variant-status>1 kesit</small>';
     const tempoSummary = choice.hasTempoShift && choice.tempoVariants?.length
       ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
       : '';
-    button.innerHTML = `<span>${escapeHtml(choice.label)}</span>${tempoSummary}`;
+    button.innerHTML = `<span>${escapeHtml(choice.label)}</span>${variantStatus}${tempoSummary}`;
     button.addEventListener('click', () => {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
@@ -4210,6 +4217,9 @@ function selectAdultPosition(positionId, shouldSeek = true) {
       const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
       if (!movement) return;
       state.activeMovementChoiceId = choice.id;
+      const selectedIndex = choice.variants.findIndex(item => item.id === movement.id);
+      const status = button.querySelector('[data-variant-status]');
+      if (status) status.textContent = `${selectedIndex + 1}/${choice.variants.length} kesit oynatılıyor`;
       selectAdultMovement(movement.id, true);
     });
     wrapper.appendChild(button);
