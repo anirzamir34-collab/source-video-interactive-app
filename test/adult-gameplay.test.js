@@ -579,22 +579,25 @@ test('sex control requires verified fast, hard or deep evidence', () => {
   assert.equal(isEnergeticSexMoment({ sourceVerified: false, movementTempo: 'fast' }), false);
 });
 
-test('builds at most four subchoices and keeps multiple clips in each choice pool', () => {
+test('builds tempo-consistent subchoices and keeps every clip in its energy pool', () => {
   const movements = [
-    { id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 0, sourceVerified: true },
-    { id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 12, sourceVerified: true },
-    { id: 'c', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 24, sourceVerified: true },
-    { id: 'd', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 36, sourceVerified: true },
-    { id: 'e', label: 'Temas değişimi', movementTempo: 'fast', loopStartTime: 48, sourceVerified: true }
+    { id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 0, loopEndTime: 10, sourceVerified: true },
+    { id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 12, loopEndTime: 22, sourceVerified: true },
+    { id: 'c', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 24, loopEndTime: 34, sourceVerified: true },
+    { id: 'd', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 36, loopEndTime: 46, sourceVerified: true },
+    { id: 'e', label: 'Temas değişimi', movementTempo: 'fast', loopStartTime: 48, loopEndTime: 58, sourceVerified: true }
   ];
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
   assert.ok(choices.length <= 4);
-  const slow = choices.find(choice => choice.tempo === 'slow');
-  const kiss = choices.find(choice => choice.label === 'Öpüşerek devam');
-  assert.equal(slow.label, 'Yavaş hareket');
+  const slow = choices.find(choice => choice.intensityBand === 'slow');
+  const steady = choices.find(choice => choice.intensityBand === 'steady');
+  const intense = choices.find(choice => choice.intensityBand === 'intense');
+  assert.equal(slow.label, 'Yavaş ve kontrollü hareketler');
   assert.deepEqual(slow.variants.map(item => item.id), ['a', 'b']);
-  assert.deepEqual(kiss.variants.map(item => item.id), ['c', 'd']);
+  assert.deepEqual(steady.variants.map(item => item.id), ['c', 'd']);
+  assert.deepEqual(intense.variants.map(item => item.id), ['e']);
+  assert.ok(choices.every(choice => choice.hasTempoShift === false));
 });
 
 test('position family ignores furniture, kissing and ordinary hand-contact wording', () => {
@@ -696,6 +699,38 @@ test('movement choice grouping retains every verified clip', () => {
   );
 });
 
+test('tempo cards prioritize intensity evidence without mixing energy levels', () => {
+  const movements = [
+    { id: 'slow', label: 'Yavaşça devam et', movementType: 'ritmik hareket', movementTempo: 'slow',
+      loopStartTime: 10, loopEndTime: 20, sourceVerified: true },
+    { id: 'steady', label: 'Ritmik şekilde devam et', movementType: 'ritmik hareket', movementTempo: 'moderate',
+      loopStartTime: 20, loopEndTime: 30, sourceVerified: true },
+    { id: 'provider-moderate-fast', label: 'Ritmi hızlandır', movementType: 'hızlı hareket', movementTempo: 'moderate',
+      loopStartTime: 30, loopEndTime: 40, sourceVerified: true },
+    { id: 'provider-moderate-deep', label: 'Derin hareketi sürdür', movementType: 'hareket', movementTempo: 'moderate',
+      loopStartTime: 35, loopEndTime: 45, sourceVerified: true },
+    { id: 'fast', label: 'Yoğun şekilde sürdür', movementType: 'hareket', movementTempo: 'fast',
+      loopStartTime: 40, loopEndTime: 50, sourceVerified: true }
+  ];
+  const choices = buildVerifiedMovementChoices(movements, 'Aynı Pozisyon', 5);
+  assert.deepEqual(choices.map(choice => choice.intensityBand), ['slow', 'steady', 'intense']);
+  assert.deepEqual(choices[0].variants.map(item => item.id), ['slow']);
+  assert.deepEqual(choices[1].variants.map(item => item.id), ['steady']);
+  assert.deepEqual(choices[2].variants.map(item => item.id), ['provider-moderate-fast', 'provider-moderate-deep', 'fast']);
+  assert.equal(new Set(choices.flatMap(choice => choice.variants).map(item => item.id)).size, movements.length);
+});
+
+test('a transition label cannot be hidden inside a tempo card', () => {
+  const movements = [
+    { id: 'local', label: 'Ritmi sürdür', movementType: 'ritmik hareket', movementTempo: 'moderate',
+      loopStartTime: 10, loopEndTime: 20, sourceVerified: true },
+    { id: 'transition', label: 'Başka pozisyona geçiş', movementType: 'transition', movementTempo: 'fast',
+      loopStartTime: 20, loopEndTime: 30, sourceVerified: true }
+  ].filter(item => movementBelongsToVerifiedPosition(item, 'cowgirl'));
+  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 5);
+  assert.deepEqual(choices.flatMap(choice => choice.variants).map(item => item.id), ['local']);
+});
+
 test('keeps verified activity and contact actions inside their position panel', () => {
   assert.equal(movementBelongsToVerifiedPosition({
     label: 'Ters cowgirl pozisyonunda vajinal tempoyu koru',
@@ -768,7 +803,7 @@ test('one movement card retains matching clips from every occurrence', () => {
   );
 });
 
-test('movement coverage reports every verified variant under compact cards', () => {
+test('movement coverage reports every verified variant under tempo cards', () => {
   const movements = Array.from({ length: 26 }, (_, index) => ({
     id: `verified-${index + 1}`,
     label: `Observed action ${index + 1}`,
@@ -779,7 +814,7 @@ test('movement coverage reports every verified variant under compact cards', () 
   const choices = buildVerifiedMovementChoices(movements, 'Observed position', 3);
 
   assert.deepEqual(summarizeMovementChoiceCoverage(choices), {
-    choiceCount: 3,
+    choiceCount: 1,
     variantCount: 26,
     uniqueVariantCount: 26
   });

@@ -819,131 +819,63 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     .replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g')
     .replace(/ü/g, 'u').replace(/ö/g, 'o')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const positionKey = normalize(positionLabel);
-  const tempoLabels = { slow: 'Yavaş hareket', moderate: 'Ritmik hareket', fast: 'Hızlı hareket' };
-  const actionLabels = [
-    [/(\bop|\bopus|\bdudak|kiss)/u, 'Öpüşmeyi sürdür'],
-    [/(gogus|breast).*(oksa|okus|dokun|touch|caress)|(oksa|okus|dokun|touch|caress).*(gogus|breast)/u, 'Göğüslerine dokun'],
-    [/(okus|oksa|sivaz|touch|caress)/u, 'Okşamayı sürdür'],
-    [/(tut|kavra|bel|kalca|gogus|hold|grip)/u, 'Tutuşu değiştir'],
-    [/(derin|deep)/u, 'Derin hareketi sürdür'],
-    [/(sert|guclu|hard|thrust)/u, 'Sert hareketi sürdür'],
-    [/(hizli|fast)/u, 'Hızlı hareketi sürdür'],
-    [/(ritm|tempo|cadence)/u, 'Ritmi sürdür'],
-    [/(yavas|slow)/u, 'Yavaş hareketi sürdür']
-  ];
   const verified = (Array.isArray(movements) ? movements : [])
-    .filter(movement => movement?.sourceVerified === true)
+    .filter(movement => movement?.sourceVerified === true && clipRange(movement))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   if (!verified.length) return [];
 
-  // One canonical position can occur several times in the source. Group every
-  // verified clip by its concrete action label so one tab can expose all real
-  // returns to the same movement instead of silently keeping only occurrence 1.
-  const occurrence = 'all-occurrences';
-  const grouped = [];
-  verified.forEach(item => {
-    const key = normalize(item.label) || `${normalizeMovementTempo(item.movementTempo)}:${normalize(item.movementType)}`;
-    const existing = grouped.find(group => group.key === key);
-    if (existing) existing.items.push(item);
-    else grouped.push({ key, items: [item] });
-  });
-  // Never relabel unrelated overflow clips as the first few named actions.
-  // Keep every clip accessible in an explicitly generic overflow choice.
-  const cardGroups = grouped.length <= limit ? grouped : [
-    ...grouped.slice(0, limit - 1),
-    { key: 'overflow', overflow: true, items: grouped.slice(limit - 1).flatMap(group => group.items) }
-  ];
-  const cards = [];
-
-  for (let index = 0; index < cardGroups.length; index += 1) {
-    const variants = [...cardGroups[index].items]
-      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-    const first = variants[0];
-    const tempo = normalizeMovementTempo(first.movementTempo);
-    const rawLabel = clean(first.label)
-      .split('·')
-      .map(part => part.trim())
-      .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
-      .join(' · ')
-      .trim();
-    const normalizedRaw = normalize(rawLabel);
-    const meaningfulLabel = rawLabel && normalizedRaw !== positionKey &&
-      !normalizedRaw.startsWith(positionKey + ' ·') &&
-      !/^(gercek hareket|gercek sekans|seçenek|secenek|option|choice|hareket)\s*\d*$/u.test(normalizedRaw);
-    const actionForVariant = variant => {
-      const text = normalize([
-        variant?.label,
-        variant?.movementType,
-        variant?.activityEvidence,
-        variant?.sensoryEvidence
-      ].filter(Boolean).join(' '));
-      return actionLabels.find(([pattern]) => pattern.test(text))?.[1] || '';
-    };
-    const inferredLabels = variants.map(actionForVariant).filter(Boolean);
-    const inferredAction = inferredLabels.length
-      ? [...new Set(inferredLabels)].sort((a, b) =>
-        inferredLabels.filter(label => label === b).length -
-        inferredLabels.filter(label => label === a).length
-      )[0]
-      : '';
-    const variantsText = normalize(variants.map(item => [
-      item.label,
-      item.movementType,
-      item.activityEvidence,
-      item.sensoryEvidence
-    ].filter(Boolean).join(' ')).join(' '));
-    const label = cardGroups[index].overflow ? 'Diğer doğrulanmış kesitler' : meaningfulLabel
-      ? rawLabel
-      : inferredAction || tempoLabels[tempo] || `${clean(positionLabel) || 'Doğrulanmış pozisyon'} sekansını oynat`;
-    const tempoVariants = ['fast', 'moderate', 'slow'].map(kind =>
-      variants.find(item => normalizeMovementTempo(item.movementTempo) === kind)
-    ).filter(Boolean);
-    const hasTempoShift = new Set(variants.map(item => normalizeMovementTempo(item.movementTempo)).filter(item => item !== 'unclear')).size > 1;
-
-    cards.push({
-      id: `movement-choice:${occurrence}:${index + 1}`,
-      label,
-      tempo,
-      hasTempoShift,
-      tempoVariants,
-      sourcePositionId: occurrence,
-      variants
-    });
-  }
-
-  // Several chronological clips of the same observed action are variants of
-  // one choice, not separate "Cut 1/2/3" choices. Clicking the card cycles its
-  // verified clips through the existing variant picker.
-  const groupedCards = [];
-  cards.forEach(card => {
-    const key = normalize(card.label);
-    const existing = groupedCards.find(item => normalize(item.label) === key);
-    if (!existing) {
-      groupedCards.push({ ...card });
-      return;
+  const bandFor = movement => {
+    const tempo = normalizeMovementTempo(movement.movementTempo);
+    const text = normalize([
+      movement.label, movement.movementType,
+      movement.activityEvidence, movement.sensoryEvidence
+    ].filter(Boolean).join(' '));
+    if (tempo === 'fast' || /\b(hizli|hizlan\w*|sert|derin|guclu|yogun|zirve|deep|hard|fast|intense|thrust)\b/u.test(text)) {
+      return 'intense';
     }
-    existing.variants = [...existing.variants, ...card.variants]
-      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-    existing.tempoVariants = ['fast', 'moderate', 'slow'].map(kind =>
-      existing.variants.find(item => normalizeMovementTempo(item.movementTempo) === kind)
-    ).filter(Boolean);
-    existing.hasTempoShift = new Set(
-      existing.variants
-        .map(item => normalizeMovementTempo(item.movementTempo))
-        .filter(item => item !== 'unclear')
-    ).size > 1;
-  });
+    if (tempo === 'slow' || /\b(yavas|sakin|nazik|kontrollu|soft|gentle|slow)\b/u.test(text)) {
+      return 'slow';
+    }
+    return 'steady';
+  };
+  const definitions = [
+    { id: 'slow', label: 'Yavaş ve kontrollü hareketler', tempo: 'slow' },
+    { id: 'steady', label: 'Ritmik hareketler', tempo: 'moderate' },
+    { id: 'intense', label: 'Hızlı ve yoğun hareketler', tempo: 'fast' }
+  ];
+  const buckets = new Map(definitions.map(item => [item.id, []]));
+  verified.forEach(item => buckets.get(bandFor(item)).push(item));
+  const populated = definitions.filter(item => buckets.get(item.id).length);
 
-  const labelCounts = new Map();
-  return groupedCards.map((card, index) => {
-    const key = normalize(card.label);
-    const seen = (labelCounts.get(key) || 0) + 1;
-    labelCounts.set(key, seen);
-    const total = groupedCards.filter(item => normalize(item.label) === key).length;
+  // maxChoices is retained as an API safety bound. When callers request fewer
+  // than the three energy bands, merge only into an explicit mixed card.
+  const selected = populated.length <= limit ? populated : [
+    ...populated.slice(0, Math.max(0, limit - 1)),
+    { id: 'mixed', label: 'Diğer doğrulanmış hareketler', tempo: 'unclear',
+      merged: populated.slice(Math.max(0, limit - 1)).map(item => item.id) }
+  ];
+  return selected.map((definition, index) => {
+    const variants = (definition.merged
+      ? definition.merged.flatMap(id => buckets.get(id))
+      : buckets.get(definition.id))
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+    const singleLabel = populated.length === 1 && verified.length === 1
+      ? clean(variants[0].label)
+        .split('·')
+        .map(part => part.trim())
+        .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
+        .join(' · ')
+        .trim()
+      : '';
     return {
-      ...card,
-      label: total > 1 ? `${card.label} · Kesit ${seen}` : card.label,
+      id: `movement-choice:energy:${definition.id}`,
+      label: singleLabel || definition.label,
+      tempo: definition.tempo,
+      intensityBand: definition.id,
+      hasTempoShift: false,
+      tempoVariants: [],
+      sourcePositionId: 'verified-position-ranges',
+      variants,
       displayIndex: index + 1
     };
   });
