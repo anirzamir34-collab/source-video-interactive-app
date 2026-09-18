@@ -779,6 +779,8 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   const limit = Math.max(1, Math.min(16, Math.floor(Number(maxChoices) || 4)));
   const clean = value => String(value || '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
+    .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
+    .replace(/\s+sekansını oynat$/iu, ' oynat')
     .trim();
   const normalize = value => clean(value).toLocaleLowerCase('tr-TR')
     .replace(/[ıİ]/g, 'i')
@@ -809,10 +811,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   const occurrence = 'all-occurrences';
   const grouped = [];
   verified.forEach(item => {
-    const temporalPart = /\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu.test(String(item.label || ''));
-    const key = temporalPart
-      ? normalize(String(item.label || '').replace(/\s+·\s+/, ' bölüm '))
-      : normalize(item.label) || `${normalizeMovementTempo(item.movementTempo)}:${normalize(item.movementType)}`;
+    const key = normalize(item.label) || `${normalizeMovementTempo(item.movementTempo)}:${normalize(item.movementType)}`;
     const existing = grouped.find(group => group.key === key);
     if (existing) existing.items.push(item);
     else grouped.push({ key, items: [item] });
