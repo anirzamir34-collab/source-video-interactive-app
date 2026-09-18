@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import { sceneExitTime, seekMediaTo, clipTimeRange, remainingClipsInRange } from '../public/playback-logic.js';
+import { positionOccurrenceGroups, movementsForPositionOccurrence } from '../public/adult-gameplay.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -10,6 +11,8 @@ const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'ut
 const names = ['cancelAdultSeek', 'beginAdultSelection', 'seekAdultLoop',
   'clearPanelPlaybackRecovery', 'showPanelPlaybackRecovery', 'resumePanelPlayback',
   'skipCurrentScene', 'finishAdultScene', 'updateAdultPlayback', 'handleSourceEnded'];
+names.push('playPanelClipContinuously', 'selectAdultMovement', 'panelTimelineCursor', 'currentPanelOccurrence');
+names.push('enterAdultScene');
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, name);
@@ -81,6 +84,7 @@ function fixture() {
   });
   const scope = vm.createContext({ state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
+    clipTimeRange, remainingClipsInRange, positionOccurrenceGroups, movementsForPositionOccurrence,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
     document: { createElement: () => new Element(), querySelector: () => new Element() },
@@ -91,7 +95,8 @@ function fixture() {
     orderedLockedAdultPositions: () => [], isWarmupPosition: () => false,
     selectAdultPosition: () => { throw Error('Exit must not route to another clip'); },
     navigateTimelineTo: async target => { state.navigationTargets.push(target); },
-    currentAdultFlow: () => 0, renderAdultProgressiveUI() {}, findAdultSceneAt: () => null
+    currentAdultFlow: () => 0, renderAdultProgressiveUI() {}, findAdultSceneAt: () => null,
+    renderAdultPanel: scene => { state.adultMode = true; state.adultScene = scene; }
   });
   vm.runInContext(handlers, scope);
   video.addEventListener('play', () => { if (state.gameState !== 'SEGMENT_PLAYING') video.pause(); });
@@ -99,6 +104,88 @@ function fixture() {
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test('automatic scene entry preserves the current frame and cannot jump into a future scene', () => {
+  const f = fixture();
+  f.state.adultMode = false;
+  f.state.adultScene = null;
+  f.els.video.time = 50;
+  assert.equal(f.enterAdultScene({ id: 'later', startTime: 70, endTime: 90 }, { forceStart: true }), false);
+  assert.equal(f.els.video.currentTime, 50);
+  assert.equal(f.enterAdultScene({ id: 'current', startTime: 20, endTime: 70 }, { forceStart: true }), true);
+  assert.equal(f.els.video.currentTime, 50);
+  assert.equal(f.state.gameCursorTime, 50);
+});
+
+test('panel selection plays the intervening frames before a later clip without seeking', async () => {
+  const f = fixture();
+  f.state.activeMovementId = 'later';
+  assert.equal(await f.playPanelClipContinuously({ startTime: 40, endTime: 50 }), true);
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.state.panelPendingClipStart, 40);
+  f.els.video.time = 20;
+  f.updateAdultPlayback(performance.now(), 20);
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.panelPendingClipStart, 40);
+  f.els.video.time = 40;
+  f.updateAdultPlayback(performance.now(), 40);
+  assert.equal(f.state.panelPendingClipStart, null);
+});
+
+test('blocked continuous playback resumes without jumping to its pending clip', async () => {
+  const f = fixture();
+  f.els.video.mode = 'blocked';
+  assert.equal(await f.playPanelClipContinuously({ startTime: 40, endTime: 50 }), false);
+  assert.equal(f.state.panelPendingClipStart, 40);
+  f.els.video.mode = 'ready';
+  f.els.panelPlaybackRecovery.querySelector('button').dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.els.video.paused, false);
+  f.beginAdultSelection();
+  assert.equal(f.state.panelPendingClipStart, null);
+});
+
+test('a finished or out-of-scene clip cannot restart or change media time', async () => {
+  const f = fixture();
+  assert.equal(await f.playPanelClipContinuously({ startTime: 0, endTime: 10 }), false);
+  assert.equal(await f.playPanelClipContinuously({ startTime: 95, endTime: 105 }), false);
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.els.video.currentTime, 10);
+});
+
+test('completion releases the old active clip so continuing cannot pause on it again', () => {
+  const f = fixture();
+  f.state.adultScene.positions = [{ id: 'section', movements: [{ id: 'clip', loopStartTime: 10, loopEndTime: 20 }] }];
+  f.state.activePositionId = 'section';
+  f.state.activeMovementId = 'clip';
+  f.els.video.paused = false;
+  f.els.video.time = 20;
+  f.updateAdultPlayback(performance.now(), 20);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.state.adultTimelineFloor, 20);
+  f.els.video.paused = false;
+  f.els.video.time = 21;
+  f.updateAdultPlayback(performance.now(), 21);
+  assert.equal(f.els.video.paused, false);
+});
+
+test('a click cannot switch to a distant occurrence or replay a completed clip', () => {
+  const f = fixture();
+  const past = { id: 'past', sourcePositionId: 'early', loopStartTime: 0, loopEndTime: 5, sourceVerified: true };
+  const later = { id: 'later', sourcePositionId: 'late', loopStartTime: 75, loopEndTime: 80, sourceVerified: true };
+  f.state.adultScene.positions = [{ id: 'section', startTime: 0, endTime: 90,
+    sourceRanges: [{ id: 'early', startTime: 0, endTime: 20 }, { id: 'late', startTime: 70, endTime: 90 }],
+    movements: [past, later] }];
+  f.state.activePositionId = 'section';
+  f.state.activeAdultOccurrenceId = 'early';
+  f.selectAdultMovement('later');
+  f.selectAdultMovement('past');
+  assert.equal(f.state.activeAdultOccurrenceId, 'early');
+  assert.equal(f.state.activeMovementId, undefined);
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.els.video.currentTime, 10);
+});
 
 test('stalled panel seek never starts playback or reports a successful transition', async () => {
   const f = fixture();

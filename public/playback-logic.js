@@ -1,5 +1,59 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
+export function clipTimeRange(clip) {
+  const start = clip?.loopStartTime ?? clip?.startTime;
+  const end = clip?.loopEndTime ?? clip?.endTime;
+  if (start == null || end == null || start === '' || end === '') return null;
+  const startTime = Number(start);
+  const endTime = Number(end);
+  return Number.isFinite(startTime) && Number.isFinite(endTime) &&
+    startTime >= 0 && endTime > startTime ? { startTime, endTime } : null;
+}
+
+export function remainingClipsInRange(clips, range, cursor) {
+  const bounds = clipTimeRange(range);
+  const now = Number(cursor);
+  if (!bounds || !Number.isFinite(now)) return [];
+  return (Array.isArray(clips) ? clips : []).filter(clip => {
+    const time = clipTimeRange(clip);
+    return clip?.sourceVerified === true && time &&
+      time.startTime >= bounds.startTime - 0.05 &&
+      time.endTime <= bounds.endTime + 0.05 && time.endTime > now + 0.04;
+  }).sort((a, b) => clipTimeRange(a).startTime - clipTimeRange(b).startTime);
+}
+
+// Keep repeated scene labels in separate chronological runs. Missing scene
+// metadata only permits adjacent intervals, never a whole-video fallback.
+export function timelineChoicesAt(actions, cursor, lookAheadSeconds = 45) {
+  const now = Number(cursor);
+  if (!Number.isFinite(now)) return [];
+  const sorted = (Array.isArray(actions) ? actions : [])
+    .filter(action => action?.sourceVerified === true &&
+      clipTimeRange({ startTime: action.startTime, endTime: action.endTime }))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const runs = [];
+  for (const action of sorted) {
+    const key = String(action.sceneId || action.adultSceneId || action.sceneTitle || '').trim();
+    const start = Number(action.startTime);
+    const end = Number(action.endTime);
+    const previous = runs.at(-1);
+    if (previous && previous.key === key && start <= previous.endTime + 1.5) {
+      previous.endTime = Math.max(previous.endTime, end);
+      previous.actions.push(action);
+    } else {
+      // A later scene boundary also closes an overlong earlier annotation.
+      if (previous) previous.endTime = Math.min(previous.endTime, start);
+      runs.push({ key, startTime: start, endTime: end, actions: [action] });
+    }
+  }
+  const current = runs.filter(run => now >= run.startTime - 0.15 && now < run.endTime - 0.04)
+    .sort((a, b) => b.startTime - a.startTime)[0];
+  if (!current) return [];
+  return current.actions.filter(action => Number(action.endTime) > now + 0.04 &&
+    Number(action.endTime) <= current.endTime + 0.05 &&
+    Number(action.startTime) <= now + lookAheadSeconds);
+}
+
 // Scene metadata can include a distant post-roll time. Leaving a scene must
 // resume at its actual boundary, so intervening source footage is preserved.
 export function sceneExitTime(endTime, duration) {

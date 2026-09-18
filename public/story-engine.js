@@ -175,7 +175,7 @@ export function storyChoiceIntentKey(action = {}) {
 }
 
 export function selectDiverseStoryActions(actions = [], limit = 3) {
-  const maximum = Math.max(1, Math.min(4, Math.floor(Number(limit) || 3)));
+  const maximum = Math.max(1, Math.min(5, Math.floor(Number(limit) || 3)));
   const selected = [];
   const intents = new Set();
   for (const action of Array.isArray(actions) ? actions : []) {
