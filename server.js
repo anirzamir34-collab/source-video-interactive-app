@@ -8,6 +8,7 @@ import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
 import youtubedl from 'youtube-dl-exec';
 import { spawn } from 'node:child_process';
+import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 
@@ -21,8 +22,8 @@ const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 250 * 1024 * 1024 }
+  dest: '/tmp/videoquest-external',
+  limits: { fileSize: 250 * 1024 * 1024, files: 1, fields: 5 }
 });
 
 app.disable('x-powered-by');
@@ -51,7 +52,10 @@ function readCookie(req, name) {
   const cookies = String(req.headers.cookie || '').split(';');
   for (const cookie of cookies) {
     const [key, ...value] = cookie.trim().split('=');
-    if (key === name) return decodeURIComponent(value.join('='));
+    if (key === name) {
+      try { return decodeURIComponent(value.join('=')); }
+      catch { return ''; }
+    }
   }
   return '';
 }
@@ -947,39 +951,35 @@ app.post('/api/external-analyze', upload.single('video'), async (req, res) => {
     return res.status(400).json({ available: false, reason: 'VIDEO_REQUIRED' });
   }
 
+  const controller = new AbortController();
+  const onClose = () => controller.abort();
+  res.once('close', onClose);
   try {
     const form = new FormData();
-    form.append('video', new Blob([req.file.buffer], { type: req.file.mimetype || 'application/octet-stream' }), req.file.originalname || 'video.mp4');
+    const videoBlob = await fs.openAsBlob(req.file.path, { type: req.file.mimetype || 'application/octet-stream' });
+    form.append('video', videoBlob, req.file.originalname || 'video.mp4');
 
     const upstream = await fetch(`${EXTERNAL_ANALYSIS_URL}/analyze`, {
       method: 'POST',
       body: form,
-      signal: AbortSignal.timeout(900000)
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(900000)])
     });
 
     const body = await readJsonSafe(upstream);
+    if (res.destroyed) return;
     return res.status(upstream.status).json(body ?? {});
   } catch (error) {
+    if (res.destroyed) return;
     return res.status(503).json({
       available: false,
       reason: 'UPSTREAM_UNAVAILABLE',
       error: error?.message || String(error)
     });
+  } finally {
+    res.removeListener('close', onClose);
+    await fs.promises.unlink(req.file.path).catch(() => {});
   }
 });
-
-app.use((error, _req, res, next) => {
-  if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({
-      available: false,
-      reason: 'VIDEO_TOO_LARGE',
-      message: 'Video 250 MB yükleme sınırını aşıyor.'
-    });
-  }
-
-  return next(error);
-});
-
 
 // PUBLIC VIDEO URL RESOLVER
 function normalizeAmpUrl(rawUrl) {
@@ -1029,13 +1029,18 @@ async function validatePublicUrl(rawUrl) {
 
 async function fetchPublicUrl(rawUrl, options = {}) {
   let current = normalizeAmpUrl(rawUrl);
+  const signals = [options.signal];
+  if (options.timeoutMs !== 0) signals.push(AbortSignal.timeout(options.timeoutMs || 25000));
+  const signal = signals.filter(Boolean).length ? AbortSignal.any(signals.filter(Boolean)) : undefined;
 
   for (let redirect = 0; redirect < 5; redirect++) {
+    signal?.throwIfAborted();
     await validatePublicUrl(current);
+    signal?.throwIfAborted();
     const response = await fetch(current, {
       ...options,
       redirect: 'manual',
-      signal: options.timeoutMs === 0 ? undefined : AbortSignal.timeout(options.timeoutMs || 25000),
+      signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
         'Accept': '*/*',
@@ -1045,6 +1050,7 @@ async function fetchPublicUrl(rawUrl, options = {}) {
 
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
+      await response.body?.cancel();
       if (!location) throw new Error('Yönlendirme adresi bulunamadı.');
       current = new URL(location, current).href;
       continue;
@@ -1397,14 +1403,41 @@ app.post('/api/resolve-video-url', async (req, res) => {
 });
 
 app.get('/api/video-proxy', async (req, res) => {
+  const controller = new AbortController();
+  let upstreamStream;
+  let transcoder;
+  let forceKillTimer;
+  let conversionTimer;
+  const headerTimer = setTimeout(() => controller.abort(new Error('VIDEO_SOURCE_TIMEOUT')), 30000);
+  const stopUpstream = () => {
+    upstreamStream?.destroy();
+    if (transcoder && transcoder.exitCode === null && transcoder.signalCode === null) {
+      transcoder.kill('SIGTERM');
+      forceKillTimer = setTimeout(() => transcoder.kill('SIGKILL'), 5000);
+      forceKillTimer.unref();
+    }
+  };
+  controller.signal.addEventListener('abort', stopUpstream, { once: true });
+  res.once('close', () => {
+    clearTimeout(headerTimer);
+    clearTimeout(conversionTimer);
+    controller.abort();
+  });
   try {
     const token = String(req.query.token || '');
     const session = token ? resolvedVideoSessions.get(token) : null;
+    if (token && (!session || session.expiresAt <= Date.now())) {
+      resolvedVideoSessions.delete(token);
+      return res.status(410).json({ ok: false, reason: 'VIDEO_SESSION_EXPIRED', message: 'Video bağlantısının süresi doldu. Bağlantıyı yeniden aç.' });
+    }
     const sourceUrl = String(session?.sourceUrl || req.query.url || '');
     const referer = String(session?.referer || req.query.referer || '');
     if (!sourceUrl) return res.status(400).json({ ok: false, message: 'Video URL’si gerekli.' });
 
     if (session?.type === 'hls' || /\.m3u8(?:$|\?)/i.test(sourceUrl)) {
+      await validatePublicUrl(sourceUrl);
+      if (referer) await validatePublicUrl(referer);
+      controller.signal.throwIfAborted();
       const headerLines = [
         `User-Agent: ${session?.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36'}`,
         referer ? `Referer: ${referer}` : '',
@@ -1413,29 +1446,43 @@ app.get('/api/video-proxy', async (req, res) => {
       ].filter(Boolean).join('\r\n') + '\r\n';
       const ffmpeg = spawn(ffmpegPath, [
         '-hide_banner', '-loglevel', 'error',
+        '-protocol_whitelist', 'http,https,tcp,tls,crypto',
+        '-rw_timeout', '45000000',
         '-headers', headerLines,
         '-i', sourceUrl,
         '-map', '0:v:0?', '-map', '0:a:0?',
         '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov',
         '-f', 'mp4', 'pipe:1'
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      transcoder = ffmpeg;
+      // The response owns this process. Completing the incoming GET request
+      // does not mean that its video response has finished.
+      ffmpeg.stdout.once('data', () => clearTimeout(headerTimer));
+      ffmpeg.stdout.on('error', error => {
+        if (!res.destroyed) res.destroy(error);
+      });
 
       let stderr = '';
       ffmpeg.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
       ffmpeg.on('error', error => {
         console.error('HLS ffmpeg start error:', error?.message || error);
+        if (res.destroyed) return;
         if (!res.headersSent) res.status(502).json({ ok: false, message: 'HLS dönüştürücü başlatılamadı.' });
         else res.destroy(error);
       });
       ffmpeg.on('close', code => {
-        if (code && !res.writableEnded) {
+        clearTimeout(headerTimer);
+        clearTimeout(conversionTimer);
+        clearTimeout(forceKillTimer);
+        if (code && !res.writableEnded && !controller.signal.aborted) {
           console.error('HLS ffmpeg error:', stderr || `exit ${code}`);
           res.destroy(new Error('HLS_VIDEO_CONVERSION_FAILED'));
         }
       });
-      const deadline = setTimeout(() => ffmpeg.kill('SIGKILL'), 30 * 60 * 1000);
-      ffmpeg.once('close', () => clearTimeout(deadline));
-      req.once('close', () => { if (!ffmpeg.killed) ffmpeg.kill('SIGTERM'); });
+      conversionTimer = setTimeout(() => { controller.abort(); res.destroy(); }, 30 * 60 * 1000);
+      controller.signal.addEventListener('abort', () => {
+        if (!res.destroyed) res.destroy();
+      }, { once: true });
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Cache-Control', 'private, no-store');
       ffmpeg.stdout.pipe(res);
@@ -1453,10 +1500,17 @@ app.get('/api/video-proxy', async (req, res) => {
     }
     if (session?.cookie) headers.Cookie = session.cookie;
 
-    const { response } = await fetchPublicUrl(sourceUrl, { headers, timeoutMs: 0 });
+    const { response } = await fetchPublicUrl(sourceUrl, { headers, timeoutMs: 0, signal: controller.signal });
+    clearTimeout(headerTimer);
+    if (controller.signal.aborted || res.destroyed) {
+      await response.body?.cancel();
+      return;
+    }
     if (!response.ok && response.status !== 206) {
+      await response.body?.cancel();
       return res.status(response.status).json({ ok: false, message: `Video sunucusu ${response.status} yanıtı verdi.` });
     }
+    if (!response.body) throw new Error('Video kaynağı boş yanıt verdi.');
 
     for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
       const value = response.headers.get(name);
@@ -1464,18 +1518,22 @@ app.get('/api/video-proxy', async (req, res) => {
     }
 
     res.status(response.status);
-    const { Readable } = await import('node:stream');
     const stream = Readable.fromWeb(response.body);
+    upstreamStream = stream;
+    // Preserve long video transfers while bounding a source that stops sending.
+    res.setTimeout(45000, () => { controller.abort(); res.destroy(); });
     stream.on('error', error => {
-      console.error('Video proxy stream error:', error?.message || error);
-      if (!res.destroyed) res.destroy(error);
+      if (!controller.signal.aborted) {
+        console.error('Video proxy stream error:', error?.message || error);
+      }
     });
-    res.on('close', () => {
-      if (!res.writableEnded && !stream.destroyed) stream.destroy();
-    });
-    stream.pipe(res);
+    pipeline(stream, res, () => {});
   } catch (error) {
-    res.status(502).json({ ok: false, reason: 'VIDEO_PROXY_ERROR', message: error?.message || 'Video aktarılamadı.' });
+    clearTimeout(headerTimer);
+    if (res.destroyed || res.writableEnded) return;
+    if (res.headersSent) return res.destroy(error);
+    const timedOut = controller.signal.reason?.message === 'VIDEO_SOURCE_TIMEOUT';
+    res.status(timedOut ? 504 : 502).json({ ok: false, reason: timedOut ? 'VIDEO_SOURCE_TIMEOUT' : 'VIDEO_PROXY_ERROR', message: timedOut ? 'Video kaynağı zamanında yanıt vermedi. Tekrar deneyebilirsin.' : error?.message || 'Video aktarılamadı.' });
   }
 });
 
@@ -1507,7 +1565,7 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
     const mimeType = String(req.body?.mimeType || 'audio/wav');
 
     if (
-      !Number.isFinite(totalSize) ||
+      !Number.isSafeInteger(totalSize) ||
       totalSize <= 0 ||
       totalSize > 250 * 1024 * 1024
     ) {
@@ -1574,6 +1632,10 @@ app.post(
       });
     }
 
+    if (session.writing) {
+      return res.status(409).json({ available: false, reason: 'CHUNK_WRITE_IN_PROGRESS', retryable: true });
+    }
+
     if (chunkIndex < session.nextChunk) {
       return res.json({
         available: true,
@@ -1583,7 +1645,7 @@ app.post(
       });
     }
 
-    if (chunkIndex !== session.nextChunk || !Buffer.isBuffer(req.body)) {
+    if (chunkIndex !== session.nextChunk || !Buffer.isBuffer(req.body) || !req.body.length) {
       return res.status(409).json({
         available: false,
         reason: 'CHUNK_ORDER_MISMATCH',
@@ -1599,6 +1661,8 @@ app.post(
       });
     }
 
+    session.writing = true;
+    session.updatedAt = Date.now();
     try {
       await fs.promises.appendFile(session.filePath, req.body);
       session.receivedSize += req.body.length;
@@ -1612,11 +1676,21 @@ app.post(
         complete: session.receivedSize === session.totalSize
       });
     } catch (error) {
+      // appendFile can fail after writing some bytes. Remove that partial tail
+      // before accepting a retry of the same index.
+      try { await fs.promises.truncate(session.filePath, session.receivedSize); }
+      catch {
+        dialogueUploadSessions.delete(uploadId);
+        await fs.promises.unlink(session.filePath).catch(() => {});
+      }
       return res.status(500).json({
         available: false,
         reason: 'CHUNK_WRITE_FAILED',
         message: error.message || String(error)
       });
+    } finally {
+      session.writing = false;
+      session.updatedAt = Date.now();
     }
   }
 );
@@ -1625,7 +1699,7 @@ setInterval(() => {
   const expiry = Date.now() - 60 * 60 * 1000;
 
   for (const [uploadId, session] of dialogueUploadSessions) {
-    if (session.updatedAt >= expiry) continue;
+    if (session.writing || session.updatedAt >= expiry) continue;
 
     dialogueUploadSessions.delete(uploadId);
     fs.promises.unlink(session.filePath).catch(() => {});
@@ -1702,7 +1776,7 @@ app.post(
     const uploadSession = dialogueUploadSessions.get(uploadId);
 
     if (!req.file && uploadSession) {
-      if (uploadSession.receivedSize !== uploadSession.totalSize) {
+      if (uploadSession.writing || uploadSession.receivedSize !== uploadSession.totalSize) {
         return res.status(409).json({
           available: false,
           reason: 'UPLOAD_INCOMPLETE',
@@ -2354,6 +2428,7 @@ async function azureSpeechSynthesize({ key, region, text, gender }) {
     `</speak>`;
   const response = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
     method: 'POST',
+    signal: AbortSignal.timeout(60000),
     headers: {
       'Ocp-Apim-Subscription-Key': key,
       'Content-Type': 'application/ssml+xml',
@@ -2429,6 +2504,7 @@ const elevenLabsVoiceCache = new Map();
 async function elevenLabsRequest(apiKey, path, options = {}) {
   const response = await fetch(`https://api.elevenlabs.io${path}`, {
     ...options,
+    signal: AbortSignal.any([AbortSignal.timeout(60000), options.signal].filter(Boolean)),
     headers: {
       'xi-api-key': apiKey,
       ...(options.headers || {})
@@ -2726,6 +2802,27 @@ app.get('/api/ai-usage-status', (req, res) => {
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'source-video-interactive-app' });
 });
+
+app.use('/api', (_req, res) => {
+  res.status(404).json({ available: false, reason: 'API_NOT_FOUND', message: 'API adresi bulunamadı.' });
+});
+
+function handleRequestError(error, _req, res, next) {
+  if (res.headersSent) return next(error);
+  if (res.destroyed) return;
+  const tooLarge = error.code === 'LIMIT_FILE_SIZE' || error.type === 'entity.too.large';
+  const invalid = error instanceof multer.MulterError || error.type === 'entity.parse.failed';
+  const unsupported = error.message === 'UNSUPPORTED_VIDEO_FORMAT';
+  const status = tooLarge ? 413 : unsupported ? 415 : invalid ? 400 : 500;
+  if (status === 500) console.error('Request failed:', error?.message || error);
+  res.status(status).json({
+    available: false,
+    reason: tooLarge ? 'UPLOAD_TOO_LARGE' : unsupported ? 'UNSUPPORTED_VIDEO_FORMAT' : invalid ? 'INVALID_REQUEST' : 'INTERNAL_ERROR',
+    message: tooLarge ? 'Gönderilen veri bu işlemin boyut sınırını aşıyor.' : unsupported ? 'Video biçimi desteklenmiyor.' : invalid ? 'Gönderilen veri geçersiz.' : 'İşlem tamamlanamadı. Tekrar deneyebilirsin.'
+  });
+}
+
+app.use(handleRequestError);
 
 app.use((_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

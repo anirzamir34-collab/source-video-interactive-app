@@ -95,6 +95,8 @@ const state = {
   selectedRemoteVideo: null,
   videoObjectUrl: '',
   analysisSession: null,
+  analysisInProgress: false,
+  urlResolutionInProgress: false,
   analysis: null,
   dialogue: null,
   subtitlesEnabled: true,
@@ -104,6 +106,7 @@ const state = {
   dubCache: new Map(),
   dubRequests: new Map(),
   dubSyncGeneration: 0,
+  dubRequestController: new AbortController(),
   dubUnavailableUntil: 0,
   dubFailureReason: '',
   dubProviderLock: '',
@@ -320,6 +323,11 @@ function persistRuntimeSnapshot(reason = 'runtime', force = false) {
   }
 }
 
+function removeStoredValue(storageName, key) {
+  // Storage can be disabled even when its global property exists.
+  try { globalThis[storageName]?.removeItem(key); } catch {}
+}
+
 function restoreRuntimeSnapshot(analysis) {
   state.analysisFingerprint = analysisFingerprint(analysis);
   try {
@@ -327,7 +335,7 @@ function restoreRuntimeSnapshot(analysis) {
     if (!raw) return null;
     const snapshot = JSON.parse(raw);
     if (!isCompatibleRuntimeSnapshot(snapshot, state.analysisFingerprint)) {
-      localStorage.removeItem(RUNTIME_SAVE_KEY);
+      removeStoredValue('localStorage', RUNTIME_SAVE_KEY);
       return null;
     }
     applyRuntimeSnapshot(state, snapshot);
@@ -338,7 +346,7 @@ function restoreRuntimeSnapshot(analysis) {
     return snapshot;
   } catch (error) {
     console.warn('Runtime state could not be restored:', error);
-    localStorage.removeItem(RUNTIME_SAVE_KEY);
+    removeStoredValue('localStorage', RUNTIME_SAVE_KEY);
     return null;
   }
 }
@@ -696,7 +704,7 @@ function renderAzureSpeechState() {
   if (els.azureSpeechStatus) {
     els.azureSpeechStatus.className = active ? 'available' : '';
     els.azureSpeechStatus.textContent = active
-      ? `Azure etkin · ${activeAzureSpeechRegion()}`
+      ? `Azure anahtarı tanımlı · ${activeAzureSpeechRegion()}`
       : 'Anahtar girilmedi';
   }
   els.testAzureSpeechBtn?.classList.toggle('hidden', !active);
@@ -778,10 +786,8 @@ async function checkAiUsageStatus() {
     const body = await response.json();
     renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
     renderQuotaBadge(els.dubQuotaStatus, activeElevenLabsApiKey()
-      ? { state: 'available', message: 'ElevenLabs doğal dublaj etkin' }
-      : activeAzureSpeechKey()
-      ? { state: 'available', message: `Azure Speech F0 etkin · ${activeAzureSpeechRegion()}` }
-      : body.dubbing);
+      ? { state: 'available', message: 'ElevenLabs anahtarı tanımlı. Kullanılabilir kota sağlayıcı isteğinde doğrulanır.' }
+      : { state: 'unconfigured', message: 'Oynatıcı dublajı için ElevenLabs anahtarı gerekli.' });
   } catch {
     renderQuotaBadge(els.subtitleQuotaStatus, { state: 'unknown' });
     renderQuotaBadge(els.dubQuotaStatus, { state: 'unknown' });
@@ -828,7 +834,7 @@ function updateAnalysisModesUI() {
 
 function updateAnalyzeAvailability() {
   const hasMode = updateAnalysisModesUI();
-  els.analyzeBtn.disabled = !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
+  els.analyzeBtn.disabled = state.analysisInProgress || state.urlResolutionInProgress || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
 }
 
 [
@@ -871,12 +877,12 @@ function releaseVideoObjectUrl() {
 }
 
 els.videoInput.addEventListener('change', () => {
+  if (state.analysisInProgress || state.urlResolutionInProgress) return;
   const file = els.videoInput.files?.[0] || null;
+  clearPreviousGameResidue();
   state.selectedFile = file;
   state.selectedRemoteVideo = null;
   state.analysisSession = null;
-  resetDubState();
-  releaseVideoObjectUrl();
   if (file) {
     els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • ${file.type || 'video'}`;
     state.videoObjectUrl = URL.createObjectURL(file);
@@ -1373,6 +1379,9 @@ function stableDubGender(segment) {
 
 async function ensureDubSegment(segment) {
   if (!segment?.turkishText) return null;
+  if (!dubTimeline().includes(segment)) return null;
+  const requestController = state.dubRequestController;
+  const isCurrent = () => requestController === state.dubRequestController && !requestController.signal.aborted;
   if (state.dubUnavailableUntil > Date.now()) return null;
   const segmentId = getDubSegmentId(segment);
   if (!segmentId) return null;
@@ -1393,15 +1402,25 @@ async function ensureDubSegment(segment) {
   });
 
   const runRequest = async () => {
+    if (!isCurrent()) return null;
     if (!activeElevenLabsApiKey()) throw new Error('ElevenLabs anahtarı gerekli');
     let lastFailure = null;
     for (let attempt = 1; attempt <= 4; attempt += 1) {
+      if (!isCurrent()) return null;
       try {
         const response = await fetch('/api/elevenlabs-dub-segment', {
-          method: 'POST', headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }), body: payload
+          method: 'POST', headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }), body: payload,
+          signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(70000)])
         });
         const body = await response.json().catch(() => ({}));
+        if (!isCurrent()) return null;
         if (response.ok && body?.available && body?.audioBase64) {
+          if (state.dubFailureReason && els.dubToggleBtn) {
+            delete els.dubToggleBtn.dataset.unavailable;
+            els.dubToggleBtn.title = '';
+            els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
+          }
+          state.dubFailureReason = '';
           state.dubProviderLock = 'elevenlabs';
           if (body.voiceId && (gender === 'female' || gender === 'male')) state.dubVoiceIds[gender] = body.voiceId;
           const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
@@ -1411,11 +1430,16 @@ async function ensureDubSegment(segment) {
         }
         lastFailure = { response, body };
         if (body?.reason === 'ELEVENLABS_RATE_LIMIT' && attempt < 4) {
-          await new Promise(resolve => setTimeout(resolve, Math.max(1, Number(body.retryAfterSeconds) || attempt * 2) * 1000));
+          const retrySeconds = Math.max(1, Number(body.retryAfterSeconds) || attempt * 2);
+          // Do not retry before the provider's deadline or block every queued
+          // line behind a long rate-limit wait. Surface it for a later retry.
+          if (retrySeconds > 30) break;
+          await new Promise(resolve => setTimeout(resolve, retrySeconds * 1000));
           continue;
         }
         break;
       } catch (error) {
+        if (!isCurrent()) return null;
         lastFailure = { error };
         if (attempt < 4) {
           await new Promise(resolve => setTimeout(resolve, attempt * 1200));
@@ -1424,7 +1448,11 @@ async function ensureDubSegment(segment) {
       }
     }
 
+    if (!isCurrent()) return null;
     const body = lastFailure?.body || {};
+    if (body.reason === 'ELEVENLABS_RATE_LIMIT') {
+      state.dubUnavailableUntil = Date.now() + Math.max(1, Number(body.retryAfterSeconds) || 30) * 1000;
+    }
     if (body.reason === 'ELEVENLABS_QUOTA_LIMIT') {
       const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
       state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
@@ -1452,9 +1480,11 @@ async function ensureDubSegment(segment) {
   };
 
   const request = (state.dubQueue = state.dubQueue.catch(() => {}).then(runRequest)).catch(error => {
-    console.error('Dub segment failed:', segmentId, error);
+    if (isCurrent()) console.error('Dub segment failed:', segmentId, error);
     return null;
-  }).finally(() => state.dubRequests.delete(segmentId));
+  }).finally(() => {
+    if (state.dubRequests.get(segmentId) === request) state.dubRequests.delete(segmentId);
+  });
 
   state.dubRequests.set(segmentId, request);
   return request;
@@ -1467,6 +1497,8 @@ function stopDubPlayback() {
 }
 
 function resetDubState() {
+  state.dubRequestController.abort();
+  state.dubRequestController = new AbortController();
   stopDubPlayback();
   state.dubCache.clear();
   state.dubRequests.clear();
@@ -1496,11 +1528,12 @@ function prefetchDubSegmentsAround(videoTime) {
 }
 
 async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
+  const requestController = state.dubRequestController;
   const queue = (Array.isArray(segments) ? segments : [])
     .filter(segment => String(segment?.turkishText || '').trim());
   let cursor = 0;
   const worker = async () => {
-    while (state.dubbingEnabled) {
+    while (state.dubbingEnabled && requestController === state.dubRequestController) {
       const index = cursor;
       cursor += 1;
       if (index >= queue.length) return;
@@ -1511,9 +1544,10 @@ async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
     { length: Math.min(Math.max(1, concurrency), Math.max(1, queue.length)) },
     () => worker()
   ));
+  if (requestController !== state.dubRequestController) return 0;
   const missing = queue.filter(segment => !state.dubCache.has(getDubSegmentId(segment)));
   for (const segment of missing) {
-    if (!state.dubbingEnabled) break;
+    if (!state.dubbingEnabled || requestController !== state.dubRequestController) break;
     await ensureDubSegment(segment);
   }
   return queue.filter(segment => state.dubCache.has(getDubSegmentId(segment))).length;
@@ -1660,7 +1694,10 @@ els.video.addEventListener('timeupdate', renderSubtitle);
 els.video.addEventListener('seeked', renderSubtitle);
 
 els.analyzeBtn.addEventListener('click', async () => {
+  if (state.analysisInProgress || state.urlResolutionInProgress) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
+  state.analysisInProgress = true;
+  try {
   els.analyzeBtn.disabled = true;
   els.videoInput.disabled = true;
   if (videoUrlInput) videoUrlInput.disabled = true;
@@ -1673,6 +1710,9 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   let file = state.selectedFile;
   const modes = selectedAnalysisModes();
+  if (modes.dubbing && !activeElevenLabsApiKey()) {
+    throw new Error('Türkçe dublaj için ElevenLabs anahtarı gerekli. Anahtarı ekle veya yalnız altyazı/hareket analizini seç.');
+  }
   const sourceKey = file
     ? `file:${file.name}:${file.size}:${file.lastModified}`
     : `remote:${state.selectedRemoteVideo?.sourceUrl || state.selectedRemoteVideo?.proxyUrl || ''}`;
@@ -1689,7 +1729,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Reusing old segment ids or old translated dialogue can attach stale audio
   // to new source-video timestamps after a re-analysis.
   state.dialogue = session.dialogue || null;
-  localStorage.removeItem(RUNTIME_SAVE_KEY);
+  removeStoredValue('localStorage', RUNTIME_SAVE_KEY);
   state.analysisFingerprint = '';
   state.engineEvents = [];
   state.integrityReport = null;
@@ -1705,7 +1745,6 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.video.muted = false;
   els.subtitleOverlay?.classList.add('hidden');
 
-  try {
   // Full audio extraction is an explicit subtitle/dubbing operation.
   // Motion-only analysis stays visual and must not spend time or AI quota on audio.
   if (modes.subtitles || modes.dubbing) {
@@ -2300,6 +2339,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     setGameState('ERROR');
     renderDebug({ analysisError: error?.message || String(error) });
   } finally {
+    state.analysisInProgress = false;
     els.videoInput.disabled = false;
     if (videoUrlInput) videoUrlInput.disabled = false;
     if (resolveUrlBtn) resolveUrlBtn.disabled = false;
@@ -5426,14 +5466,19 @@ renderDebug();
 function clearPreviousGameResidue() {
   cancelTimelineNavigation();
   cancelAdultSeek();
-  localStorage.removeItem('videoquest:last-analysis');
-  localStorage.removeItem('videoquest:last-dialogue');
-  localStorage.removeItem(RUNTIME_SAVE_KEY);
-  sessionStorage.removeItem('videoquest:last-analysis');
-  sessionStorage.removeItem('videoquest:last-dialogue');
-  sessionStorage.removeItem(RUNTIME_SAVE_KEY);
+  if (state.stopListener) {
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+  }
+  for (const storageName of ['localStorage', 'sessionStorage']) {
+    for (const key of ['videoquest:last-analysis', 'videoquest:last-dialogue', RUNTIME_SAVE_KEY]) {
+      removeStoredValue(storageName, key);
+    }
+  }
   state.analysis = null;
   state.dialogue = null;
+  state.dubbingEnabled = false;
+  state.subtitlesEnabled = false;
   state.analysisFingerprint = '';
   state.integrityReport = null;
   state.consumedActionIds = new Set();
@@ -5458,6 +5503,8 @@ function clearPreviousGameResidue() {
   els.adultInteractionPanel?.classList.add('hidden');
   els.playerSection?.classList.add('hidden');
   els.analysisCard?.classList.add('hidden');
+  els.subtitleOverlay?.classList.add('hidden');
+  els.dubToggleBtn?.classList.add('hidden');
   if (els.video) {
     releaseVideoObjectUrl();
     els.video.pause();
@@ -5523,7 +5570,17 @@ function setUrlStatus(message, type = '') {
 }
 
 async function downloadUrlVideo(proxyUrl, sourceUrl) {
-  const response = await fetch(proxyUrl);
+  const controller = new AbortController();
+  const maxBytes = 600 * 1024 * 1024;
+  let reader;
+  let idleTimer;
+  const refreshDeadline = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), 45000);
+  };
+  refreshDeadline();
+  try {
+  const response = await fetch(proxyUrl, { signal: controller.signal });
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
     throw new Error(errorBody.message || `Video indirilemedi (${response.status}).`);
@@ -5531,9 +5588,10 @@ async function downloadUrlVideo(proxyUrl, sourceUrl) {
 
   const total = Number(response.headers.get('content-length')) || 0;
   const contentType = response.headers.get('content-type') || 'video/mp4';
-  const reader = response.body?.getReader();
+  if (total > maxBytes) throw new Error('Video 600 MB indirme sınırını aşıyor. Daha küçük bir dosya seç.');
+  reader = response.body?.getReader();
 
-  if (!reader) return response.blob();
+  if (!reader) throw new Error('Tarayıcı video akışını okuyamadı. Güncel bir tarayıcıyla tekrar dene.');
 
   const chunks = [];
   let received = 0;
@@ -5541,8 +5599,10 @@ async function downloadUrlVideo(proxyUrl, sourceUrl) {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
     received += value.length;
+    if (received > maxBytes) throw new Error('Video 600 MB indirme sınırını aşıyor. Daha küçük bir dosya seç.');
+    chunks.push(value);
+    refreshDeadline();
 
     const receivedMB = (received / 1024 / 1024).toFixed(1);
     const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
@@ -5550,12 +5610,22 @@ async function downloadUrlVideo(proxyUrl, sourceUrl) {
   }
 
   return new Blob(chunks, { type: contentType });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('Video aktarımı durdu. Bağlantını kontrol edip tekrar dene.');
+    throw error;
+  } finally {
+    clearTimeout(idleTimer);
+    controller.abort();
+    try { await reader?.cancel(); } catch {}
+    reader?.releaseLock();
+  }
 }
 
 async function probeSeekableVideo(proxyUrl) {
   try {
     const response = await fetch(proxyUrl, {
-      headers: { Range: 'bytes=0-1' }
+      headers: { Range: 'bytes=0-1' },
+      signal: AbortSignal.timeout(20000)
     });
     const contentRange = String(response.headers.get('content-range') || '');
     const size = Number(contentRange.match(/\/(\d+)$/)?.[1]) || 0;
@@ -5573,7 +5643,8 @@ async function probeSeekableVideo(proxyUrl) {
 
 function remoteVideoFileName(sourceUrl, contentType = '') {
   const sourcePath = new URL(sourceUrl).pathname;
-  const sourceName = decodeURIComponent(sourcePath.split('/').pop() || '');
+  let sourceName = sourcePath.split('/').pop() || '';
+  try { sourceName = decodeURIComponent(sourceName); } catch {}
   const extension = sourceName.match(/\.(mp4|webm|m4v|mov)$/i)?.[0] ||
     (contentType.includes('webm') ? '.webm' : '.mp4');
   return sourceName || `url-video${extension}`;
@@ -5585,6 +5656,7 @@ async function ensureSelectedRemoteFile() {
   if (!remote?.proxyUrl) throw new Error('İndirilecek uzak video kaynağı bulunamadı.');
   setUrlStatus('Bu analiz modu için video cihaza geçici olarak indiriliyor...');
   const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl);
+  if (remote !== state.selectedRemoteVideo) throw new Error('Video kaynağı değişti. Yeni kaynağı tekrar analiz et.');
   if (!blob.size) throw new Error('Video boş geldi.');
   const file = new File([blob], remote.fileName, { type: blob.type || remote.contentType || 'video/mp4' });
   state.selectedFile = file;
@@ -5594,13 +5666,18 @@ async function ensureSelectedRemoteFile() {
 }
 
 async function resolveVideoUrl() {
+  if (state.urlResolutionInProgress || state.analysisInProgress) return;
   const pageUrl = videoUrlInput?.value.trim();
   if (!pageUrl) {
     setUrlStatus('Lütfen video sayfasının bağlantısını gir.', 'error');
     return;
   }
 
+  state.urlResolutionInProgress = true;
   resolveUrlBtn.disabled = true;
+  els.videoInput.disabled = true;
+  if (videoUrlInput) videoUrlInput.disabled = true;
+  updateAnalyzeAvailability();
   setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor...');
   const resolveStartedAt = performance.now();
 
@@ -5608,6 +5685,7 @@ async function resolveVideoUrl() {
     const resolveResponse = await fetch('/api/resolve-video-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(120000),
       body: JSON.stringify({ url: pageUrl })
     });
 
@@ -5626,7 +5704,7 @@ async function resolveVideoUrl() {
       setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Akış desteği kontrol ediliyor...`);
       const probe = await probeSeekableVideo(result.proxyUrl);
       if (probe.seekable) {
-        releaseVideoObjectUrl();
+        clearPreviousGameResidue();
         state.selectedFile = null;
         state.selectedRemoteVideo = {
           proxyUrl: result.proxyUrl,
@@ -5636,7 +5714,6 @@ async function resolveVideoUrl() {
           contentType: probe.contentType
         };
         state.analysisSession = null;
-        resetDubState();
         els.video.src = result.proxyUrl;
         const sizeText = probe.size ? ` • ${(probe.size / 1024 / 1024).toFixed(1)} MB` : '';
         els.fileMeta.textContent = `${fileName}${sizeText} • URL akışı`;
@@ -5655,13 +5732,13 @@ async function resolveVideoUrl() {
     if (!blob.size) throw new Error('Video boş geldi.');
 
     const file = new File([blob], fileName, { type: blob.type || 'video/mp4' });
+    const objectUrl = URL.createObjectURL(file);
 
+    clearPreviousGameResidue();
     state.selectedFile = file;
     state.selectedRemoteVideo = null;
     state.analysisSession = null;
-    resetDubState();
-    releaseVideoObjectUrl();
-    state.videoObjectUrl = URL.createObjectURL(file);
+    state.videoObjectUrl = objectUrl;
     els.video.src = state.videoObjectUrl;
     els.fileMeta.textContent =
       `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • URL kaynağı`;
@@ -5670,13 +5747,13 @@ async function resolveVideoUrl() {
 
     setUrlStatus('Video hazır. Şimdi “Videoyu analiz et” düğmesine bas.', 'success');
   } catch (error) {
-    state.selectedFile = null;
-    state.selectedRemoteVideo = null;
-    state.analysisSession = null;
-    updateAnalyzeAvailability();
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
   } finally {
+    state.urlResolutionInProgress = false;
     resolveUrlBtn.disabled = false;
+    els.videoInput.disabled = false;
+    if (videoUrlInput) videoUrlInput.disabled = false;
+    updateAnalyzeAvailability();
   }
 }
 
