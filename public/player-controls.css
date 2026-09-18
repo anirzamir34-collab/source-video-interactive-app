@@ -60,6 +60,10 @@
   padding: 4px !important;
 }
 
+#playerSection .video-stage.scene-player #adultInteractionPanel.scene-controls .adult-dock-meters {
+  flex-wrap: wrap !important;
+}
+
 #playerSection .video-stage.scene-player #adultInteractionPanel.scene-controls :is(.discovery-choice-grid, .movement-choice-grid, .outcome-choice-grid, .position-tabs, .category-tabs) {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) !important;
