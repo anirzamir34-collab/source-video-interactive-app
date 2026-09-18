@@ -1,5 +1,34 @@
 /* One layout for embedded/fullscreen player controls. Scoped specificity is
    intentional: legacy fullscreen rules in styles.css use !important. */
+#playerSection .video-stage.scene-player .player-playback-recovery {
+  position: absolute;
+  z-index: 120;
+  left: max(8px, env(safe-area-inset-left));
+  bottom: max(8px, env(safe-area-inset-bottom));
+  width: min(280px, 55%);
+  max-height: calc(100% - 64px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .9);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+#playerSection .video-stage.scene-player .player-playback-recovery p {
+  margin: 0 0 8px;
+}
+
+#playerSection .video-stage.scene-player .player-playback-recovery button {
+  width: 100%;
+  min-height: 40px;
+  white-space: normal;
+}
+
 #playerSection .video-stage.scene-player #adultInteractionPanel.scene-controls {
   box-sizing: border-box !important;
   position: absolute !important;

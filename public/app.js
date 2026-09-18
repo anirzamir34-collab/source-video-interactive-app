@@ -148,6 +148,7 @@ const state = {
   adultSeekTimer: null,
   adultSeekListener: null,
   adultSeekRequestId: 0,
+  adultSeekController: null,
   adultSelectionToken: 0,
   adultVisitedPositionIds: new Set(),
   adultMovementPlayCounts: new Map(),
@@ -3378,7 +3379,7 @@ function continueAfterAdultOrgasm() {
     state.activeAdultOccurrenceId = resumeMovement.sourcePositionId || resumePosition.occurrenceId || null;
     selectAdultMovement(resumeMovement.id, true, null, { awardProgress: false });
   } else {
-    els.video?.play().catch(() => {});
+    void resumePanelPlayback();
   }
 }
 
@@ -3668,7 +3669,7 @@ function renderAdultApproachChoices(scene) {
       state.adultUiSignature = '';
       queueMicrotask(() => renderAdultProgressiveUI(true));
     } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId) {
-      els.video.play().catch(() => {});
+      void resumePanelPlayback();
     }
   }
 }
@@ -3866,6 +3867,7 @@ function renderAdultPanel(scene) {
 
 function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}) {
   if (!scene || state.completedAdultSceneIds?.has(scene.id) || !els.video) return false;
+  if (state.adultScene?.id !== scene.id) cancelAdultSeek();
 
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
@@ -3952,7 +3954,9 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
 }
 
 function cancelAdultSeek() {
-  state.adultSeekRequestId += 1;
+  state.adultSeekRequestId = (state.adultSeekRequestId || 0) + 1;
+  state.adultSeekController?.abort();
+  state.adultSeekController = null;
   clearTimeout(state.adultSeekTimer);
   state.adultSeekTimer = null;
 
@@ -3962,6 +3966,7 @@ function cancelAdultSeek() {
 
   state.adultSeekListener = null;
   state.adultLoopSeeking = false;
+  clearPanelPlaybackRecovery();
 }
 
 function beginAdultSelection() {
@@ -4006,8 +4011,7 @@ function playAdultPrelude(preludeId) {
   applyAdultPreludeProgress(item);
   renderAdultProgressiveUI(true);
   els.video.pause();
-  seekAdultLoop(item.startTime, token);
-  els.video.play().catch(() => {});
+  void seekAdultLoop(item.startTime, token);
 }
 
 function applyAdultSelectionProgress(position, movement, { positionChanged = false } = {}) {
@@ -4250,8 +4254,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     if (shouldSeek && els.video) {
       applyAdultSelectionProgress(position, null, { positionChanged: changedPosition });
       els.video.pause();
-      seekAdultLoop(position.startTime, selectionToken);
-      els.video.play().catch(() => {});
+      void seekAdultLoop(position.startTime, selectionToken);
     }
   }
 }
@@ -4313,8 +4316,7 @@ function selectAdultMovement(
 
   if (shouldSeek && els.video) {
     els.video.pause();
-    seekAdultLoop(movement.loopStartTime, effectiveToken);
-    els.video.play().catch(() => {});
+    void seekAdultLoop(movement.loopStartTime, effectiveToken);
   }
 }
 
@@ -4338,8 +4340,22 @@ function playAdultOutcome(outcomeId, options = {}) {
   updateVariantButton(null);
   renderAdultFlowStatus();
   els.video.pause();
-  seekAdultLoop(outcome.startTime, selectionToken);
-  els.video.play().catch(() => {});
+  void seekAdultLoop(outcome.startTime, selectionToken);
+}
+
+function handleSourceEnded() {
+  if (state.navigationSeeking || state.adultLoopSeeking || !state.analysis) return;
+  if (state.adultMode) {
+    finishAdultScene({ force: true, resumeAtCurrentTime: true });
+    return;
+  }
+  if (state.activeAction) return;
+  state.gameCursorTime = Number(els.video.duration) || Number(els.video.currentTime) || 0;
+  renderChoices();
+}
+
+function skipCurrentScene() {
+  finishAdultScene({ force: true });
 }
 
 function finishAdultScene(options = {}) {
@@ -4415,7 +4431,10 @@ function finishAdultScene(options = {}) {
   els.adultPanelToggleBtn?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
-  state.gameCursorTime = sceneExitTime(scene.endTime, els.video?.duration || state.analysis?.videoDuration);
+  const exitTime = options.resumeAtCurrentTime
+    ? Math.max(Number(scene.endTime) || 0, Number(els.video?.currentTime) || 0)
+    : scene.endTime;
+  state.gameCursorTime = sceneExitTime(exitTime, els.video?.duration || state.analysis?.videoDuration);
   persistRuntimeSnapshot('adult-scene-complete', true);
 
   if (!els.video) {
@@ -4426,11 +4445,62 @@ function finishAdultScene(options = {}) {
   void navigateTimelineTo(state.gameCursorTime, { resumeWhenEmpty: true });
 }
 
-function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
-  if (!els.video) return false;
+function clearPanelPlaybackRecovery() {
+  els.panelPlaybackRecovery?.remove();
+  els.panelPlaybackRecovery = null;
+}
+
+function showPanelPlaybackRecovery(message, retry, label = 'Geçişi tekrar dene') {
+  clearPanelPlaybackRecovery();
+  const stage = els.video?.closest('.video-stage');
+  if (!stage) return;
+  const recovery = document.createElement('div');
+  recovery.className = 'player-playback-recovery';
+  recovery.setAttribute('role', 'status');
+  const copy = document.createElement('p');
+  copy.textContent = message;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.playbackRecovery = label === 'Videoya devam et' ? 'continue' : 'retry';
+  button.textContent = label;
+  const requestId = state.adultSeekRequestId;
+  button.addEventListener('click', () => {
+    if (state.adultMode && requestId === state.adultSeekRequestId) void retry();
+  });
+  recovery.append(copy, button);
+  stage.appendChild(recovery);
+  els.panelPlaybackRecovery = recovery;
+}
+
+async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
+  if (!els.video || !state.adultMode || state.adultLoopSeeking ||
+      selectionToken !== state.adultSelectionToken) return false;
+  const requestId = state.adultSeekRequestId;
+  clearPanelPlaybackRecovery();
+  setGameState('SEGMENT_PLAYING');
+  try {
+    await els.video.play();
+    return state.adultMode && requestId === state.adultSeekRequestId;
+  } catch (error) {
+    if (!state.adultMode || requestId !== state.adultSeekRequestId ||
+        selectionToken !== state.adultSelectionToken) return false;
+    els.video.pause();
+    setGameState('DECISION_PENDING');
+    showPanelPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.',
+      () => resumePanelPlayback(selectionToken), 'Videoya devam et');
+    logEngineEvent('PANEL_PLAYBACK_BLOCKED', { message: error?.message || String(error) });
+    return false;
+  }
+}
+
+async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
+  if (!els.video || !state.adultMode || selectionToken !== state.adultSelectionToken) return false;
 
   cancelAdultSeek();
   const requestId = state.adultSeekRequestId;
+  const sceneId = state.adultScene?.id;
+  const controller = new AbortController();
+  state.adultSeekController = controller;
   const requestedTarget = Math.max(0, Number(targetTime) || 0);
   const sceneStart = Number(state.adultScene?.startTime);
   const sceneEnd = Number(state.adultScene?.endTime);
@@ -4440,42 +4510,35 @@ function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
   if (Math.abs(target - requestedTarget) > 0.01) {
     logEngineEvent('ADULT_SEEK_CLAMPED', { requestedTarget, target, sceneId: state.adultScene?.id || null });
   }
-  primeLanguageTracksAt(target, 2);
   state.adultLoopSeeking = true;
-
-  const finishSeek = (force = false) => {
-    if (
-      requestId !== state.adultSeekRequestId ||
-      selectionToken !== state.adultSelectionToken
-    ) {
-      return;
-    }
-
-    if (
-      !force &&
-      (els.video.seeking || Math.abs((Number(els.video.currentTime) || 0) - target) > 0.25)
-    ) {
-      return;
-    }
-
-    if (state.adultSeekListener === onSeeked) {
-      els.video.removeEventListener("seeked", onSeeked);
-      state.adultSeekListener = null;
-    }
-
-    clearTimeout(state.adultSeekTimer);
-    state.adultSeekTimer = null;
+  els.video.pause();
+  setGameState('SEGMENT_SEEKING');
+  const isCurrent = () => !controller.signal.aborted && state.adultMode &&
+    sceneId === state.adultScene?.id && requestId === state.adultSeekRequestId &&
+    selectionToken === state.adultSelectionToken;
+  try {
+    primeLanguageTracksAt(target, 2);
+    await seekMediaTo(els.video, target, { signal: controller.signal });
+    if (!isCurrent()) return false;
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
     resyncLanguageTracks();
-  };
-
-  const onSeeked = () => finishSeek(false);
-  state.adultSeekListener = onSeeked;
-  els.video.addEventListener("seeked", onSeeked);
-  els.video.currentTime = target;
-  state.adultSeekTimer = setTimeout(() => finishSeek(true), 1500);
-  return true;
+    return await resumePanelPlayback(selectionToken);
+  } catch (error) {
+    if (!isCurrent()) return false;
+    state.adultLoopSeeking = false;
+    els.video.pause();
+    setGameState('DECISION_PENDING');
+    showPanelPlaybackRecovery(error?.message || 'Video konumu yüklenemedi.',
+      () => seekAdultLoop(target, selectionToken));
+    logEngineEvent('PANEL_SEEK_FAILED', { target, message: error?.message || String(error) });
+    return false;
+  } finally {
+    if (state.adultSeekController === controller) {
+      state.adultSeekController = null;
+      state.adultLoopSeeking = false;
+    }
+  }
 }
 
 function updateAdultPlayback(now, mediaTime) {
@@ -4492,12 +4555,25 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
-  if (!els.video || els.video.paused) {
+  if (!els.video) return;
+
+  if (state.adultLoopSeeking || els.video.seeking) {
     state.lastAdultFrameNow = now;
     return;
   }
 
-  if (state.adultLoopSeeking) {
+  const sceneEnd = Number(state.adultScene?.endTime);
+  const hasActiveClip = state.activeAdultPreludeId || state.activeMovementId ||
+    state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision;
+  // When the source leaves this scene, release its panel. Preserve the actual
+  // source time after a forward seek instead of jumping back to the boundary.
+  if (Number.isFinite(sceneEnd) && (mediaTime > sceneEnd + 0.1 ||
+      (!hasActiveClip && mediaTime >= sceneEnd - 0.04))) {
+    finishAdultScene({ force: true, resumeAtCurrentTime: true });
+    return;
+  }
+
+  if (els.video.paused) {
     state.lastAdultFrameNow = now;
     return;
   }
@@ -4524,10 +4600,9 @@ function updateAdultPlayback(now, mediaTime) {
         setAdultMachinePhase('aftermath');
         logEngineEvent('AFTERMATH_STARTED', { sceneId: state.adultScene?.id || null });
         els.video.pause();
-        seekAdultLoop(aftermath.startTime, token);
-        els.video.play().catch(() => {});
+        void seekAdultLoop(aftermath.startTime, token);
       } else {
-        finishAdultScene();
+        finishAdultScene({ force: true });
       }
     }
     state.lastAdultFrameNow = now;
@@ -4538,7 +4613,7 @@ function updateAdultPlayback(now, mediaTime) {
     const aftermath = state.adultScene?.aftermath;
     if (!aftermath || mediaTime >= aftermath.endTime - 0.04) {
       if (state.adultOrgasmDecision) openAdultOrgasmDecision();
-      else finishAdultScene();
+      else finishAdultScene({ force: true });
     }
     state.lastAdultFrameNow = now;
     return;
@@ -4672,7 +4747,7 @@ function adultFrameLoop(now, metadata) {
 }
 
 if (els.finishAdultSceneBtn) {
-  els.finishAdultSceneBtn.addEventListener('click', finishAdultScene);
+  els.finishAdultSceneBtn.addEventListener('click', skipCurrentScene);
 }
 
 els.orgasmContinueBtn?.addEventListener('click', continueAfterAdultOrgasm);
@@ -5181,8 +5256,11 @@ els.video.addEventListener('seeking', () => {
 });
 
 els.video.addEventListener('seeked', () => {
+  if (state.adultMode) {
+    updateAdultPlayback(performance.now(), Number(els.video.currentTime) || 0);
+    return;
+  }
   if (
-    state.adultMode ||
     state.adultLoopSeeking ||
     !state.manualSeeking ||
     state.activeAction ||
@@ -5217,11 +5295,7 @@ els.video.addEventListener('play', () => {
   }
 });
 els.video.addEventListener('timeupdate', renderDebug);
-els.video.addEventListener('ended', () => {
-  if (state.adultMode || state.navigationSeeking || state.activeAction || !state.analysis) return;
-  state.gameCursorTime = Number(els.video.duration) || Number(els.video.currentTime) || 0;
-  renderChoices();
-});
+els.video.addEventListener('ended', handleSourceEnded);
 
 checkHealth();
 checkAiUsageStatus();
@@ -5230,6 +5304,7 @@ renderDebug();
 
 function clearPreviousGameResidue() {
   cancelTimelineNavigation();
+  cancelAdultSeek();
   localStorage.removeItem('videoquest:last-analysis');
   localStorage.removeItem('videoquest:last-dialogue');
   localStorage.removeItem(RUNTIME_SAVE_KEY);
