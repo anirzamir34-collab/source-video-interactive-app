@@ -22,6 +22,7 @@ import {
   selectSequentialApproachChoices,
   movementsForPositionOccurrence,
   positionOccurrenceGroups,
+  positionOccurrenceForMovement,
   monotonicAdultPhase,
   movementBelongsToVerifiedPosition,
   nearestAvailableTempo,
@@ -3425,10 +3426,14 @@ function prepareAdultScenes() {
       };
     });
     scene.positions = consolidateVerifiedPositions(scene.positions, {
-      mergeDistantReturns: false
+      mergeDistantReturns: true
     }).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 5)
+      movementChoices: buildVerifiedMovementChoices(
+        position.movements.filter(item => item.id !== position.entryMovementId),
+        position.label,
+        5
+      )
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -4240,9 +4245,6 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     button.textContent = String(position.label || '')
       .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
       .trim();
-    if (positions.some(other => other.id !== position.id && other.familyId === position.familyId)) {
-      button.textContent += ` · ${adultTimeLabel(position.startTime)}`;
-    }
     button.dataset.positionId = position.id;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
@@ -4501,10 +4503,13 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.classList.toggle('active', button.dataset.positionId === position.id);
   });
 
-  // Cards, tempo controls and direct handlers all share the same continuous
-  // occurrence. A later return is a separately gated position, never a variant.
-  const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
-  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 5);
+  // The main tab owns only the verified position entry. All later returns and
+  // movements from the same canonical position live under its subchoices.
+  const entryMovement = position.movements.find(item => item.id === position.entryMovementId) ||
+    [...position.movements].sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0] || null;
+  const entryMovementId = entryMovement?.id || '';
+  const movementPool = position.movements.filter(item => item.id !== entryMovementId);
+  const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
@@ -4564,13 +4569,11 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // Rendering must not arm a clip or cancel a pending selection. Only an
   // explicit play request (including the first unlock) may change playback.
   if (!shouldSeek) return;
-  const movement = changedPosition ? occurrenceMovements[0] : pickNextVariant(
-        occurrenceMovements,
-        state.activeMovementId,
-        state.adultMovementPlayCounts
-      );
+  const movement = entryMovement;
 
   if (movement) {
+    state.activeAdultOccurrenceId = positionOccurrenceForMovement(position, movement)?.id ||
+      state.activeAdultOccurrenceId;
     selectAdultMovement(
       movement.id,
       shouldSeek,
@@ -4597,6 +4600,8 @@ function selectAdultMovement(
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || movement.sourceVerified !== true || state.adultOutcomePhase !== 'idle') return;
+  const movementOccurrence = positionOccurrenceForMovement(position, movement);
+  if (movementOccurrence) state.activeAdultOccurrenceId = movementOccurrence.id;
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
   if (!occurrenceMovements.some(item => item.id === movement.id)) {
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {

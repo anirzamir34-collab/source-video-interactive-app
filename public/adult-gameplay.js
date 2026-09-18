@@ -146,6 +146,18 @@ export function movementsForPositionOccurrence(position = {}, occurrenceId = '')
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 }
 
+export function positionOccurrenceForMovement(position = {}, movement = null) {
+  if (!movement) return null;
+  const sourceId = String(movement.sourcePositionId || '');
+  const startTime = Number(movement.loopStartTime ?? movement.startTime);
+  const endTime = Number(movement.loopEndTime ?? movement.endTime);
+  return positionOccurrenceGroups(position).find(group =>
+    group.sourcePositionIds.includes(sourceId) &&
+    Number.isFinite(startTime) && Number.isFinite(endTime) &&
+    startTime >= group.startTime - 0.05 && endTime <= group.endTime + 0.05
+  ) || null;
+}
+
 export function assignAdultSceneOccurrenceIds(actions = [], maxSilentGapSeconds = 45) {
   const input = Array.isArray(actions) ? actions : [];
   const assignments = new Array(input.length).fill('');
@@ -808,6 +820,7 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
       sourcePositionIds: ranges.map(range => String(range.id)),
       sourceRanges: ranges,
       movements: position.movements,
+      entryMovementId: position.movements[0]?.id || '',
       clusterKey: undefined
     });
   }

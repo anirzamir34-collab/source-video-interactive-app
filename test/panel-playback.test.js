@@ -432,7 +432,7 @@ test('obsolete introduction selections cannot earn progress after a newer select
   assert.equal(f.state.adultPreludePlayCounts.size, 0);
 });
 
-test('movement cards and direct handlers stay in the active continuous occurrence', async () => {
+test('one position tab exposes later verified returns and switches occurrence only when selected', async () => {
   const f = runtimeFixture();
   const first = f.state.adultScene.positions[0];
   const later = chapter('return', 120, 'one');
@@ -440,16 +440,14 @@ test('movement cards and direct handlers stay in the active continuous occurrenc
   first.movements.push(...later.movements);
   first.endTime = 150;
   await startFirstChapter(f);
-  assert.deepEqual(Array.from(first.activeMovementChoices.flatMap(item => item.variants), item => item.id),
-    ['one-0', 'one-1', 'one-2']);
-  const token = f.state.adultSelectionToken;
+  assert.deepEqual(
+    new Set(first.activeMovementChoices.flatMap(item => item.variants).map(item => item.id)),
+    new Set(['one-1', 'one-2', 'return-0', 'return-1', 'return-2'])
+  );
   f.selectAdultMovement('return-0', true);
-  assert.equal(f.state.adultSelectionToken, token);
-  assert.equal(f.state.activeAdultOccurrenceId, 'source-one');
-  assert.equal(f.els.video.currentTime, 20);
-  f.els.movementChoices.querySelectorAll('.movement-choice-card')[1].dispatchEvent(new Event('click'));
   await flush();
-  assert.equal(f.els.video.currentTime, 30);
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-return');
+  assert.equal(f.els.video.currentTime, 120);
   assert.equal(f.state.activePositionId, 'one');
 });
 

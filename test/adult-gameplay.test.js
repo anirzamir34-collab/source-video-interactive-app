@@ -44,6 +44,7 @@ import {
   summarizeAdultSceneGraph,
   nearestAvailableTempo,
   positionOccurrenceGroups,
+  positionOccurrenceForMovement,
   tapRhythm,
   verifiedPartnerTransition
 } from '../public/adult-gameplay.js';
@@ -505,6 +506,46 @@ test('distant returns become chronological occurrences instead of one backward-s
   assert.equal(result[1].id, 'position:cowgirl:occ-2');
   assert.deepEqual(result[0].sourcePositionIds, ['cowgirl-1']);
   assert.deepEqual(result[1].sourcePositionIds, ['cowgirl-2']);
+});
+
+test('panel mode collapses distant returns into one canonical position tab', () => {
+  const positions = consolidateVerifiedPositions([
+    {
+      id: 'standing-rear-1', familyId: 'standing-rear', label: 'Ayakta Arkadan Pozisyon',
+      partnerTrackId: 'PARTNER_A', progressionRole: 'core', startTime: 266.5, endTime: 318.9,
+      movements: [{ id: 'entry', label: 'Ayakta arkadan gir', loopStartTime: 266.5,
+        loopEndTime: 272.75, sourceVerified: true }]
+    },
+    {
+      id: 'standing-rear-2', familyId: 'standing-rear', label: 'Ayakta Arkadan Pozisyon',
+      partnerTrackId: 'PARTNER_A', progressionRole: 'core', startTime: 374.5, endTime: 398.7,
+      movements: [{ id: 'later', label: 'Öne eğilmiş şekilde devam et', loopStartTime: 374.5,
+        loopEndTime: 386.5, sourceVerified: true }]
+    },
+    {
+      id: 'standing-rear-3', familyId: 'standing-rear', label: 'Ayakta Arkadan Pozisyon',
+      partnerTrackId: 'PARTNER_A', progressionRole: 'core', startTime: 517, endTime: 583.5,
+      movements: [{ id: 'latest', label: 'Ritmik şekilde devam et', loopStartTime: 532,
+        loopEndTime: 546, sourceVerified: true }]
+    }
+  ], { mergeDistantReturns: true });
+
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].label, 'Ayakta Arkadan Pozisyon');
+  assert.equal(positions[0].entryMovementId, 'entry');
+  assert.equal(positionOccurrenceGroups(positions[0]).length, 3);
+  assert.deepEqual(positions[0].movements.map(item => item.id), ['entry', 'later', 'latest']);
+  assert.equal(positionOccurrenceForMovement(positions[0], positions[0].movements[2]).id, 'standing-rear-3');
+});
+
+test('same family remains separate for different partners even in panel mode', () => {
+  const positions = consolidateVerifiedPositions([
+    { id: 'rear-a', familyId: 'rear', partnerTrackId: 'PARTNER_A', progressionRole: 'core',
+      startTime: 10, endTime: 20, movements: [] },
+    { id: 'rear-b', familyId: 'rear', partnerTrackId: 'PARTNER_B', progressionRole: 'core',
+      startTime: 21, endTime: 31, movements: [] }
+  ], { mergeDistantReturns: true });
+  assert.equal(positions.length, 2);
 });
 
 test('same verified position with different group partners becomes separate playable tabs', () => {
