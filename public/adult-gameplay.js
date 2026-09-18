@@ -99,7 +99,9 @@ export function positionOccurrenceGroups(position = {}) {
 
 export function movementsForPositionOccurrence(position = {}, occurrenceId = '') {
   const groups = positionOccurrenceGroups(position);
-  const group = groups.find(item => item.id === String(occurrenceId || '')) || groups[0];
+  const group = occurrenceId
+    ? groups.find(item => item.id === String(occurrenceId))
+    : groups[0];
   if (!group) return [];
   const sourceIds = new Set(group.sourcePositionIds);
   return (Array.isArray(position?.movements) ? position.movements : [])
@@ -107,9 +109,11 @@ export function movementsForPositionOccurrence(position = {}, occurrenceId = '')
       const startTime = Number(movement?.loopStartTime ?? movement?.startTime);
       const endTime = Number(movement?.loopEndTime ?? movement?.endTime);
       const sourceMatch = sourceIds.has(String(movement?.sourcePositionId || ''));
+      const partnerMatch = !position.partnerTrackId || !movement.partnerTrackId ||
+        String(position.partnerTrackId) === String(movement.partnerTrackId);
       const timeMatch = Number.isFinite(startTime) && Number.isFinite(endTime) &&
         startTime >= group.startTime - 0.05 && endTime <= group.endTime + 0.05;
-      return sourceMatch && timeMatch;
+      return sourceMatch && timeMatch && partnerMatch;
     })
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 }
@@ -693,24 +697,25 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
     if (!position?.familyId) continue;
     const partnerKey = String(position.partnerTrackId || '').trim() || 'partner-unknown';
     const role = String(position.progressionRole || '').trim();
-    const roleSuffix = role ? `:${role}` : '';
+    const route = Number(position.activityTypeConfidence || 0) >= 0.78
+      ? String(position.activityType || '') : '';
+    const routeSuffix = route && route !== 'unclear' ? `:${route}` : '';
+    const roleSuffix = (role ? `:${role}` : '') + routeSuffix;
     const positionId = partnerKey === 'partner-unknown'
       ? `position:${position.familyId}${roleSuffix}`
       : `position:${position.familyId}:${partnerKey}${roleSuffix}`;
     const occurrenceId = partnerKey === 'partner-unknown'
       ? `${String(position.familyId)}${roleSuffix}`
       : `${position.familyId}:${partnerKey}${roleSuffix}`;
-    const key = `${String(position.familyId)}::${partnerKey}::${role}`;
+    const key = `${String(position.familyId)}::${partnerKey}::${role}::${routeSuffix}`;
     const sourceId = String(position.id || key);
     const movements = (Array.isArray(position.movements) ? position.movements : [])
       .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
-    // A position family is one user-facing tab for the whole encounter. The
-    // source can return to the same position much later; keeping those returns
-    // as separate tabs produced duplicate position names and stranded most
-    // verified movements behind hidden occurrences.
+    // Keep separate continuous returns separate unless a caller explicitly
+    // requests an encounter-wide summary. Playback uses the continuous form.
     const existing = [...clusters].reverse().find(item =>
       item.clusterKey === key && (
-        mergeDistantReturns || Number(position.startTime) <= Number(item.endTime) + 1.5
+        mergeDistantReturns || Number(position.startTime) <= Number(item.endTime) + 0.25
       )
     );
     if (!existing) {

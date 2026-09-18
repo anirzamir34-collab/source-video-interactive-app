@@ -152,6 +152,7 @@ const state = {
   adultSeekRequestId: 0,
   adultSeekController: null,
   adultSelectionToken: 0,
+  adultPendingSelectionProgress: null,
   adultVisitedPositionIds: new Set(),
   adultMovementPlayCounts: new Map(),
   adultPreludePlayCounts: new Map(),
@@ -2890,12 +2891,13 @@ function prepareAdultScenes() {
         Number(action.outcomeEndTime ?? action.endTime)
       );
 
-      if (Number.isFinite(startTime) && Number.isFinite(endTime) && endTime - startTime >= 2) {
+      if (action.sourceVerified === true && Number.isFinite(startTime) && Number.isFinite(endTime) && endTime - startTime >= 2) {
         if (isAftermath) {
           if (!scene.aftermath || startTime < scene.aftermath.startTime) {
             scene.aftermath = {
               id: action.actionId || `${sceneId}:aftermath`,
               label: action.outcomeLabel || action.label || 'Sahne sonrası',
+              sourceVerified: true,
               startTime,
               endTime
             };
@@ -2904,6 +2906,8 @@ function prepareAdultScenes() {
           scene.outcomes.push({
             id: action.actionId || `${sceneId}:outcome-${index}`,
             label: action.outcomeLabel || action.label || `Final ${scene.outcomes.length + 1}`,
+            sourceVerified: true,
+            partnerTrackId: String(action.partnerTrackId || '').trim(),
             startTime,
             endTime,
             unlockProgress: normalizeOutcomeUnlockProgress(action.outcomeUnlockProgress)
@@ -2942,6 +2946,7 @@ function prepareAdultScenes() {
       const endTime = Math.min(scene.endTime, Number(action.endTime));
 
       if (
+        action.sourceVerified === true &&
         (explicitWarmup || (actionType === 'other' && labelWarmup)) &&
         action.label &&
         Number.isFinite(startTime) &&
@@ -2953,6 +2958,7 @@ function prepareAdultScenes() {
         scene.foreplay.push({
           id: action.actionId || `${sceneId}:warmup-${index}`,
           label: action.label,
+          sourceVerified: true,
           startTime,
           endTime,
           maleProgressRate: Number(action.maleProgressRate || 1),
@@ -3165,7 +3171,9 @@ function prepareAdultScenes() {
         // Verified approach choices are part of the same playable occurrence;
         // their exact source times must not be clamped to the first position.
         startTime: interactionStart,
-        endTime: interactionEnd,
+        endTime: Math.max(interactionEnd,
+          ...outcomes.map(item => Number(item.endTime)),
+          Number(scene.aftermath?.endTime) || 0),
         postSceneTime: Math.max(Number(scene.postSceneTime) || 0, interactionEnd),
         foreplay: playableForeplay,
         partnerTransitions: (scene.partnerTransitions || [])
@@ -3191,6 +3199,9 @@ function prepareAdultScenes() {
     const firstCoreStart = scene.positions
       .filter(position => !['oral', 'manual'].includes(String(position.familyId || '')))
       .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
+    // Merging source fragments must not move a later introduction into the
+    // first-entry gate of this encounter.
+    scene.foreplay = scene.foreplay.filter(item => Number(item.endTime) <= firstCoreStart + 0.05);
     scene.positions = scene.positions.map(position => {
       const stimulation = ['oral', 'manual'].includes(String(position.familyId || ''));
       const beforeFirstCore = stimulation && Number(position.endTime) <= firstCoreStart + 0.05;
@@ -3200,7 +3211,7 @@ function prepareAdultScenes() {
       };
     });
     scene.positions = consolidateVerifiedPositions(scene.positions, {
-      mergeDistantReturns: true
+      mergeDistantReturns: false
     }).map(position => ({
       ...position,
       movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 5)
@@ -3302,12 +3313,16 @@ function orderedLockedAdultPositions(scene = state.adultScene) {
 }
 
 function unlockNextAdultPositionFromLust() {
-  // Lust opens the next chronological source-verified position. Requiring the
-  // video to have already reached its timestamp created a deadlock: the last
-  // warm-up paused, but the only control able to advance was still locked.
-  const locked = orderedLockedAdultPositions().filter(position =>
-    Number(position.endTime) > Number(state.adultTimelineFloor) - 0.1
-  );
+  if (currentAdultFlow() < 99.9 || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision) return null;
+  const firstUnlock = !state.adultSexUnlocked;
+  const positions = state.adultScene?.positions || [];
+  const latestUnlocked = positions.filter(position =>
+    !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id)
+  ).sort((a, b) => Number(b.startTime) - Number(a.startTime))[0];
+  // Each cycle opens one chronological step. The previous step must actually
+  // have started playback; clicking locked/stalled cards cannot skip it.
+  if (!firstUnlock && (!latestUnlocked || !state.adultVisitedPositionIds.has(latestUnlocked.id))) return null;
+  const locked = orderedLockedAdultPositions();
   const coreVisited = (state.adultScene?.positions || []).some(position =>
     !isWarmupPosition(position) && !isBonusPosition(position) &&
     state.adultVisitedPositionIds.has(position.id)
@@ -3325,6 +3340,18 @@ function unlockNextAdultPositionFromLust() {
     positionId: next.id,
     bonus: isBonusPosition(next)
   });
+  if (firstUnlock) {
+    const scene = state.adultScene;
+    const token = state.adultSelectionToken;
+    // Defer until the current playback/progress handler has finished. A newer
+    // user selection or scene exit supersedes this automatic first entry.
+    queueMicrotask(() => {
+      if (!state.adultMode || state.adultScene !== scene || token !== state.adultSelectionToken ||
+          state.adultOutcomePhase !== 'idle') return;
+      renderAdultProgressiveUI(true);
+      selectAdultPosition(next.id, true);
+    });
+  }
   return next;
 }
 
@@ -3336,10 +3363,7 @@ function addFemaleLust(amount) {
   );
   if (state.femaleSceneProgress + 0.001 < ADULT_LUST_UNLOCK_THRESHOLD) return null;
   const active = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
-  if (state.adultSexUnlocked && (!active || isWarmupPosition(active))) {
-    state.femaleSceneProgress = 0;
-    return null;
-  }
+  if (state.adultSexUnlocked && (!active || isWarmupPosition(active))) return null;
   return unlockNextAdultPositionFromLust();
 }
 
@@ -3352,16 +3376,26 @@ function triggerAdultOrgasmDecision() {
     actor,
     mediaTime: Number(els.video?.currentTime || 0),
     resumePositionId: state.activePositionId,
-    resumeMovementId: state.activeMovementId
+    resumeMovementId: state.activeMovementId,
+    resumeOccurrenceId: state.activeAdultOccurrenceId,
+    resumeCategory: state.activeAdultCategory,
+    resumePhase: state.adultPhaseMachine,
+    resumeTimelineFloor: state.adultTimelineFloor,
+    hasVerifiedOutcome: false
   };
+  const position = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
   const outcomes = [...(state.adultScene?.outcomes || [])]
+    .filter(item => item.sourceVerified === true &&
+      Number(item.startTime) >= state.adultOrgasmDecision.mediaTime - 0.05 &&
+      (position?.groupScene
+        ? Boolean(position.partnerTrackId && item.partnerTrackId === position.partnerTrackId)
+        : (!position?.partnerTrackId || !item.partnerTrackId || item.partnerTrackId === position.partnerTrackId)))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const outcome = outcomes.find(item => !state.adultPlayedOutcomeIds.has(item.id)) || outcomes[0];
   if (outcome) {
-    state.adultPlayedOutcomeIds.add(outcome.id);
-    logEngineEvent('ORGASM_OUTCOME_STARTED', { actor, outcomeId: outcome.id });
-    playAdultOutcome(outcome.id, { orgasmTriggered: true });
-    return true;
+    state.adultOrgasmDecision.hasVerifiedOutcome = true;
+    if (playAdultOutcome(outcome.id, { orgasmTriggered: true })) return true;
+    state.adultOrgasmDecision.hasVerifiedOutcome = false;
   }
   return openAdultOrgasmDecision();
 }
@@ -3373,7 +3407,9 @@ function openAdultOrgasmDecision() {
   els.video?.pause();
   els.orgasmDecision?.classList.remove('hidden');
   if (els.orgasmDecisionTitle) {
-    els.orgasmDecisionTitle.textContent = actor === 'both'
+    els.orgasmDecisionTitle.textContent = !state.adultOrgasmDecision.hasVerifiedOutcome
+      ? 'Doğrulanmış final kesiti bulunamadı'
+      : actor === 'both'
       ? 'Kadın ve erkek orgazm oldu'
       : actor === 'female' ? 'Kadın orgazm oldu' : 'Erkek orgazm oldu';
   }
@@ -3389,7 +3425,20 @@ function openAdultOrgasmDecision() {
 function continueAfterAdultOrgasm() {
   const decision = state.adultOrgasmDecision;
   const actor = decision?.actor;
-  if (!actor) return;
+  if (!actor || state.adultOutcomePhase !== 'orgasm-decision') return;
+  const resumePosition = state.adultScene?.positions?.find(item => item.id === decision.resumePositionId);
+  const occurrenceId = decision.resumeOccurrenceId || positionOccurrenceGroups(resumePosition)[0]?.id;
+  const resumeMovement = resumePosition && movementsForPositionOccurrence(resumePosition, occurrenceId)
+    .find(item => item.id === decision.resumeMovementId);
+  const resumeTime = Number(decision.mediaTime);
+  if (!resumeMovement || !Number.isFinite(resumeTime) ||
+      resumeTime < Number(resumeMovement.loopStartTime) - 0.05 ||
+      resumeTime >= Number(resumeMovement.loopEndTime)) {
+    if (els.orgasmDecisionMeta) els.orgasmDecisionMeta.textContent =
+      'Kayıtlı devam noktası bu kesitte bulunamadı. Sahneyi bitirebilirsin.';
+    return;
+  }
+  const token = beginAdultSelection();
   if (actor === 'female' || actor === 'both') {
     state.adultFemaleOrgasmProgress = 0;
     state.adultFemaleOrgasmCount += 1;
@@ -3400,6 +3449,18 @@ function continueAfterAdultOrgasm() {
   }
   state.adultOrgasmDecision = null;
   state.adultOutcomePhase = 'idle';
+  state.activeAdultOutcomeId = null;
+  state.activePositionId = resumePosition.id;
+  state.activeAdultOccurrenceId = occurrenceId;
+  state.activeMovementId = resumeMovement.id;
+  state.activeAdultCategory = decision.resumeCategory || 'all';
+  state.adultTimelineFloor = Number.isFinite(Number(decision.resumeTimelineFloor))
+    ? Number(decision.resumeTimelineFloor) : Number(resumePosition.startTime);
+  // Returning from an outcome is an intentional branch return, not a new
+  // unlock. Restore the saved phase rather than the monotonic forward phase.
+  state.adultPhaseMachine = decision.resumePhase || 'positions';
+  state.adultLastUiPhase = state.adultPhaseMachine;
+  state.adultUiSignature = '';
   els.orgasmDecision?.classList.add('hidden');
   logEngineEvent('ORGASM_CONTINUED', {
     actor,
@@ -3407,15 +3468,7 @@ function continueAfterAdultOrgasm() {
     maleCount: state.adultMaleOrgasmCount
   });
   renderAdultProgress();
-  const resumePosition = state.adultScene?.positions?.find(item => item.id === decision.resumePositionId);
-  const resumeMovement = resumePosition?.movements?.find(item => item.id === decision.resumeMovementId);
-  if (resumePosition && resumeMovement) {
-    state.activePositionId = resumePosition.id;
-    state.activeAdultOccurrenceId = resumeMovement.sourcePositionId || resumePosition.occurrenceId || null;
-    selectAdultMovement(resumeMovement.id, true, null, { awardProgress: false });
-  } else {
-    void resumePanelPlayback();
-  }
+  void seekAdultLoop(resumeTime, token);
 }
 
 function adultWarmupStats(scene = state.adultScene) {
@@ -3557,6 +3610,7 @@ function refreshAdultCompactDock() {
 }
 
 function resetAdultSceneGameplay() {
+  state.adultPendingSelectionProgress = null;
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
   state.adultMaleOrgasmProgress = 0;
@@ -3645,16 +3699,16 @@ function renderAdultWarmupChoices(scene) {
 function renderAdultApproachChoices(scene) {
   const flow = currentAdultFlow();
   const candidates = [
-    ...(scene?.foreplay || []).map(item => ({
+    ...initialWarmupBeforeFirstPosition(scene?.foreplay || [],
+      (scene?.positions || []).filter(position => !isWarmupPosition(position))).map(item => ({
       kind: 'foreplay', id: item.id, label: item.label,
       startTime: item.startTime, endTime: item.endTime
     })),
     ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
-      const movements = (position.movements || []).filter(item =>
-        Number(item.loopEndTime) > state.adultTimelineFloor - 0.1
-      );
+      const occurrenceId = positionOccurrenceGroups(position)[0]?.id;
+      const movements = movementsForPositionOccurrence(position, occurrenceId);
       const cards = buildVerifiedMovementChoices(movements, position.label, 4);
-      return (cards.length ? cards : [null]).map((card, index) => ({
+      return cards.map((card, index) => ({
         kind: 'position', id: position.id,
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
         label: card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
@@ -3662,10 +3716,9 @@ function renderAdultApproachChoices(scene) {
         endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime))
       }));
     })
-  ].filter(item => Number(item.endTime) > state.adultTimelineFloor - 0.1)
-    .sort((a, b) => Number(a.startTime) - Number(b.startTime))
+  ].sort((a, b) => Number(a.startTime) - Number(b.startTime))
     .filter((item, index, items) => items.findIndex(candidate =>
-      normalizeAdultLabel(candidate.label) === normalizeAdultLabel(item.label)
+      candidate.kind === item.kind && candidate.id === item.id && candidate.movementId === item.movementId
     ) === index)
     .slice(0, 5);
 
@@ -3740,7 +3793,7 @@ function renderAdultOutcomes(scene) {
 
 function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
-  if (!scene || !els.adultInteractionPanel) return;
+  if (!scene || !els.adultInteractionPanel || state.adultOutcomePhase !== 'idle') return;
 
   // Full Lust is the transition condition itself. Waiting for the approach
   // list to become empty left playback paused forever at 100/100.
@@ -3871,7 +3924,7 @@ function renderAdultPanel(scene) {
   state.adultMode = true;
   const warmupPositions = (scene.positions || []).filter(isWarmupPosition);
   warmupPositions.forEach(position => state.adultUnlockedPositionIds.add(position.id));
-  if (!warmupPositions.length) {
+  if (!warmupPositions.length && !scene.foreplay?.length) {
     const firstCore = (scene.positions || [])
       .filter(position => !isWarmupPosition(position) && !isBonusPosition(position))
       .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
@@ -3969,6 +4022,9 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     button.textContent = String(position.label || '')
       .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
       .trim();
+    if (positions.some(other => other.id !== position.id && other.familyId === position.familyId)) {
+      button.textContent += ` · ${adultTimeLabel(position.startTime)}`;
+    }
     button.dataset.positionId = position.id;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
@@ -4006,8 +4062,20 @@ function cancelAdultSeek() {
 
 function beginAdultSelection() {
   state.adultSelectionToken += 1;
+  state.adultPendingSelectionProgress = null;
   cancelAdultSeek();
   return state.adultSelectionToken;
+}
+
+function commitAdultSelectionProgress(selectionToken) {
+  const pending = state.adultPendingSelectionProgress;
+  if (!pending || pending.token !== selectionToken) return;
+  state.adultPendingSelectionProgress = null;
+  if (pending.kind === 'prelude') applyAdultPreludeProgress(pending.item);
+  else if (pending.kind === 'outcome') {
+    state.adultPlayedOutcomeIds.add(pending.item.id);
+    logEngineEvent('ORGASM_OUTCOME_STARTED', { outcomeId: pending.item.id });
+  } else applyAdultSelectionProgress(pending.position, pending.movement, pending.meta);
 }
 
 function applyAdultPreludeProgress(item) {
@@ -4032,8 +4100,8 @@ function applyAdultPreludeProgress(item) {
 function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scene?.foreplay?.find(entry => entry.id === preludeId);
-  if (!item || !els.video || state.adultOutcomePhase !== 'idle') return;
-  if (Number(item.startTime) < state.adultTimelineFloor - 0.1) return;
+  if (!item || item.sourceVerified !== true || !els.video || state.adultOutcomePhase !== 'idle') return;
+  if (state.adultSexUnlocked) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
   logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
@@ -4043,7 +4111,7 @@ function playAdultPrelude(preludeId) {
   state.activePositionId = null;
   state.activeAdultOccurrenceId = null;
   state.activeMovementId = null;
-  applyAdultPreludeProgress(item);
+  state.adultPendingSelectionProgress = { token, kind: 'prelude', item };
   renderAdultProgressiveUI(true);
   els.video.pause();
   void seekAdultLoop(item.startTime, token);
@@ -4193,7 +4261,8 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
     position,
-    { scene, unlocked: true }
+    { scene, unlocked: isWarmupPosition(position)
+      ? !state.adultSexUnlocked : state.adultUnlockedPositionIds.has(position.id) }
   );
   if (!positionGuard.allowed) return;
   if (shouldSeek) logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
@@ -4214,11 +4283,9 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.classList.toggle('active', button.dataset.positionId === position.id);
   });
 
-  // One position tab owns all verified returns to that position. The player
-  // explicitly chooses the movement; the engine never hides later occurrences
-  // merely because the first occurrence has only one detected action.
-  const occurrenceMovements = [...(position.movements || [])]
-    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+  // Cards, tempo controls and direct handlers all share the same continuous
+  // occurrence. A later return is a separately gated position, never a variant.
+  const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
   const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 5);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
@@ -4276,13 +4343,14 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   updateVariantButton(position);
   updateRhythmControl(position);
 
-  const movement = shouldSeek
-    ? pickNextVariant(
+  // Rendering must not arm a clip or cancel a pending selection. Only an
+  // explicit play request (including the first unlock) may change playback.
+  if (!shouldSeek) return;
+  const movement = changedPosition ? occurrenceMovements[0] : pickNextVariant(
         occurrenceMovements,
         state.activeMovementId,
         state.adultMovementPlayCounts
-      )
-    : occurrenceMovements.find(item => item.id === state.activeMovementId) || occurrenceMovements[0];
+      );
 
   if (movement) {
     selectAdultMovement(
@@ -4294,12 +4362,10 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   } else {
     state.activeMovementId = null;
     if (els.movementChoices) els.movementChoices.innerHTML = '';
-    if (els.movementCount) els.movementCount.textContent = '10 saniyelik ek varyasyon yok';
-    if (shouldSeek && els.video) {
-      applyAdultSelectionProgress(position, null, { positionChanged: changedPosition });
-      els.video.pause();
-      void seekAdultLoop(position.startTime, selectionToken);
-    }
+    if (els.movementCount) els.movementCount.textContent = 'Bu bölümde doğrulanmış oynatılabilir kesit yok';
+    els.video?.pause();
+    // No verified local clip means no playable choice; never seek an entire
+    // parent interval as an unverified fallback.
   }
 }
 
@@ -4309,17 +4375,10 @@ function selectAdultMovement(
   selectionToken = null,
   selectionMeta = null
 ) {
+  if (selectionToken !== null && selectionToken !== state.adultSelectionToken) return;
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
-  if (!movement || state.adultOutcomePhase !== 'idle') return;
-  const matchingOccurrence = positionOccurrenceGroups(position).find(group => {
-    const sourceIds = new Set(group.sourcePositionIds || []);
-    const start = Number(movement.loopStartTime ?? movement.startTime);
-    const end = Number(movement.loopEndTime ?? movement.endTime);
-    return sourceIds.has(String(movement.sourcePositionId || '')) &&
-      start >= Number(group.startTime) - 0.05 && end <= Number(group.endTime) + 0.05;
-  });
-  if (matchingOccurrence) state.activeAdultOccurrenceId = matchingOccurrence.id;
+  if (!movement || movement.sourceVerified !== true || state.adultOutcomePhase !== 'idle') return;
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
   if (!occurrenceMovements.some(item => item.id === movement.id)) {
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
@@ -4333,11 +4392,13 @@ function selectAdultMovement(
   const movementGuard = guardPlayable('movement', movement, {
     scene: state.adultScene,
     parentPosition: position,
-    unlocked: true
+    unlocked: isWarmupPosition(position)
+      ? !state.adultSexUnlocked : state.adultUnlockedPositionIds.has(position.id)
   });
   if (!movementGuard.allowed) return;
   if (shouldSeek) logEngineEvent('MOVEMENT_SELECTED', { id: movement.id, positionId: position?.id || null });
 
+  if (!shouldSeek) return;
   const effectiveToken = selectionToken ?? beginAdultSelection();
   state.activeAdultPreludeId = null;
   state.activeMovementId = movement.id;
@@ -4352,7 +4413,9 @@ function selectAdultMovement(
   });
 
   if (shouldSeek && selectionMeta?.awardProgress !== false) {
-    applyAdultSelectionProgress(position, movement, selectionMeta || {});
+    state.adultPendingSelectionProgress = {
+      token: effectiveToken, kind: 'movement', position, movement, meta: selectionMeta || {}
+    };
   }
 
   updateVariantButton(position);
@@ -4367,13 +4430,16 @@ function selectAdultMovement(
 function playAdultOutcome(outcomeId, options = {}) {
   const scene = state.adultScene;
   const outcome = scene?.outcomes?.find(item => item.id === outcomeId);
-  if (!outcome || !els.video) return;
+  if (!outcome || outcome.sourceVerified !== true || !els.video) return false;
   const outcomeReady = options?.orgasmTriggered === true ||
     unlockedAdultOutcomes(scene).some(item => item.id === outcome.id);
-  const outcomeGuard = guardPlayable('outcome', outcome, { scene, unlocked: outcomeReady, outcomeReady });
-  if (!outcomeGuard.allowed) return;
+  const outcomeGuard = guardPlayable('outcome', outcome, {
+    scene, unlocked: outcomeReady, outcomeReady, phase: outcomeReady ? 'final' : state.adultPhaseMachine
+  });
+  if (!outcomeGuard.allowed) return false;
 
   const selectionToken = beginAdultSelection();
+  setAdultMachinePhase('final');
   setAdultMachinePhase('outcome');
   logEngineEvent('OUTCOME_SELECTED', { id: outcome.id });
   state.adultOutcomePhase = 'outcome';
@@ -4381,15 +4447,21 @@ function playAdultOutcome(outcomeId, options = {}) {
   state.activeAdultPreludeId = null;
   els.video.playbackRate = 1;
   state.activeMovementId = null;
+  state.adultPendingSelectionProgress = { token: selectionToken, kind: 'outcome', item: outcome };
   updateVariantButton(null);
   renderAdultFlowStatus();
   els.video.pause();
   void seekAdultLoop(outcome.startTime, selectionToken);
+  return true;
 }
 
 function handleSourceEnded() {
   if (state.navigationSeeking || state.adultLoopSeeking || !state.analysis) return;
   if (state.adultMode) {
+    if (state.adultOrgasmDecision) {
+      openAdultOrgasmDecision();
+      return;
+    }
     finishAdultScene({ force: true, resumeAtCurrentTime: true });
     return;
   }
@@ -4460,6 +4532,7 @@ function finishAdultScene(options = {}) {
   setAdultMachinePhase('complete');
   logEngineEvent('ADULT_SCENE_COMPLETED', { sceneId: scene.id });
   state.adultSelectionToken += 1;
+  state.adultPendingSelectionProgress = null;
   cancelAdultSeek();
   state.adultMode = false;
   state.adultScene = null;
@@ -4524,7 +4597,10 @@ async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
   setGameState('SEGMENT_PLAYING');
   try {
     await els.video.play();
-    return state.adultMode && requestId === state.adultSeekRequestId;
+    if (!state.adultMode || requestId !== state.adultSeekRequestId ||
+        selectionToken !== state.adultSelectionToken) return false;
+    commitAdultSelectionProgress(selectionToken);
+    return true;
   } catch (error) {
     if (!state.adultMode || requestId !== state.adultSeekRequestId ||
         selectionToken !== state.adultSelectionToken) return false;
@@ -4611,7 +4687,7 @@ function updateAdultPlayback(now, mediaTime) {
     state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision;
   // When the source leaves this scene, release its panel. Preserve the actual
   // source time after a forward seek instead of jumping back to the boundary.
-  if (Number.isFinite(sceneEnd) && (mediaTime > sceneEnd + 0.1 ||
+  if (!state.adultOrgasmDecision && Number.isFinite(sceneEnd) && (mediaTime > sceneEnd + 0.1 ||
       (!hasActiveClip && mediaTime >= sceneEnd - 0.04))) {
     finishAdultScene({ force: true, resumeAtCurrentTime: true });
     return;
@@ -4726,6 +4802,7 @@ function updateAdultPlayback(now, mediaTime) {
     if (mediaTime >= movement.loopEndTime - 0.04) {
       els.video?.pause();
       state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(movement.loopEndTime) || 0);
+      state.activeMovementId = null;
       if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
       renderAdultProgressiveUI(true);
       logEngineEvent('MOVEMENT_ENDED_AWAITING_SELECTION', {

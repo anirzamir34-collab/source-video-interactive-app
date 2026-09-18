@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import * as gameplay from '../public/adult-gameplay.js';
+import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const names = ['cancelAdultSeek', 'beginAdultSelection', 'seekAdultLoop',
   'clearPanelPlaybackRecovery', 'showPanelPlaybackRecovery', 'resumePanelPlayback',
+  'commitAdultSelectionProgress',
   'skipCurrentScene', 'finishAdultScene', 'updateAdultPlayback', 'handleSourceEnded'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
@@ -20,17 +23,26 @@ const handlers = names.map(name => {
 
 class Element extends EventTarget {
   children = [];
+  textContent = '';
   dataset = {};
   classes = new Set();
   classList = {
     add: (...names) => names.forEach(name => this.classes.add(name)),
-    remove: (...names) => names.forEach(name => this.classes.delete(name))
+    remove: (...names) => names.forEach(name => this.classes.delete(name)),
+    toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name)
   };
+  style = {};
+  set innerHTML(value) { this.html = value; this.children = []; }
   append(...children) { children.forEach(child => { child.parent = this; this.children.push(child); }); }
   appendChild(child) { this.append(child); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
   setAttribute() {}
-  querySelector(selector) { return selector === 'button' ? this.children.at(-1) : null; }
+  removeAttribute() {}
+  querySelector(selector) { return selector === 'button' ? this.children.at(-1) : new Element(); }
+  querySelectorAll(selector) {
+    const matches = node => selector === 'button' || node.className?.split(' ').includes(selector.slice(1));
+    return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]);
+  }
 }
 
 class Media extends Element {
@@ -236,4 +248,300 @@ test('pending media seek does not accidentally trigger scene exit', () => {
   f.updateAdultPlayback(1000, 130);
   assert.equal(f.state.adultMode, true);
   assert.deepEqual(f.state.navigationTargets, []);
+});
+
+// Integration coverage: real panel handlers, guards, progress and DOM click
+// handlers together. Fixtures are neutral timed chapters; no external media.
+const runtimeNames = [
+  'guardPlayable', 'setAdultMachinePhase', 'isWarmupPosition', 'isBonusPosition',
+  'adultTimeLabel', 'currentAdultFlow', 'orderedLockedAdultPositions',
+  'unlockNextAdultPositionFromLust', 'addFemaleLust', 'unlockedAdultPositions',
+  'unlockedAdultOutcomes', 'renderAdultFlowStatus', 'renderAdultProgress',
+  'renderAdultApproachChoices', 'renderAdultProgressiveUI', 'selectAdultCategory',
+  'selectAdultPosition', 'selectAdultMovement', 'refreshAdultCompactDock',
+  'playAdultPrelude', 'applyAdultPreludeProgress', 'applyAdultSelectionProgress',
+  'resetAdultTapRhythm', 'updateVariantButton', 'updateRhythmControl',
+  'nextEnergeticPositionMovement', 'selectMovementTempoVariant',
+  'triggerAdultOrgasmDecision', 'openAdultOrgasmDecision', 'continueAfterAdultOrgasm',
+  'playAdultOutcome', 'resetAdultSceneGameplay', 'renderAdultPanel',
+  'syncAdultPanelPlacement', 'setAdultPanelExpanded'
+];
+const runtimeHandlers = runtimeNames.map(name => {
+  const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
+  assert.ok(start >= 0, name);
+  const tail = source.slice(start);
+  const next = tail.slice(1).search(/\n(?:async )?function /);
+  return next < 0 ? tail : tail.slice(0, next + 1);
+}).join('\n');
+
+function chapter(id, start, family = id, role = 'core') {
+  return {
+    id, familyId: family, progressionRole: role, label: `Chapter ${id}`,
+    partnerTrackId: 'track-a', startTime: start, endTime: start + 30,
+    sourceRanges: [{ id: `source-${id}`, startTime: start, endTime: start + 30 }],
+    movements: [0, 1, 2].map(index => ({
+      id: `${id}-${index}`, sourcePositionId: `source-${id}`, sourceVerified: true,
+      label: `Action ${index}`, startTime: start + index * 10, endTime: start + (index + 1) * 10,
+      loopStartTime: start + index * 10, loopEndTime: start + (index + 1) * 10
+    }))
+  };
+}
+
+function runtimeFixture() {
+  const f = fixture();
+  Object.assign(f, gameplay, {
+    canPlayAction, advanceAdultPhase, queueMicrotask,
+    primeAdultPositionLanguage() {}, escapeHtml: String,
+    normalizeAdultLabel: value => String(value || '').toLowerCase()
+  });
+  Object.assign(f.state, {
+    adultPhaseMachine: 'foreplay', adultLastUiPhase: 'foreplay',
+    adultUiSignature: '', adultSexUnlocked: false, activePositionId: null,
+    activeMovementId: null, activeAdultPreludeId: null, activeAdultOccurrenceId: null,
+    femaleSceneProgress: 0, adultMaleOrgasmProgress: 0, adultFemaleOrgasmProgress: 0,
+    adultMaleOrgasmCount: 0, adultFemaleOrgasmCount: 0,
+    adultMovementPlayCounts: new Map(), adultPreludePlayCounts: new Map(),
+    adultPlayedOutcomeIds: new Set(), adultUnlockedOutcomeIds: new Set(),
+    adultComboCount: 0, adultClimaxProgress: 0, adultCorePlaySeconds: 0,
+    adultOrgasmDecision: null, adultPendingSelectionProgress: null,
+    adultScene: {
+      id: 'chapter-set', startTime: 0, endTime: 210,
+      positions: [chapter('one', 20), chapter('two', 60), chapter('three', 120, 'one')],
+      foreplay: [{ id: 'intro', label: 'Introduction', startTime: 0, endTime: 15, sourceVerified: true }],
+      outcomes: [{ id: 'ending', label: 'Ending', startTime: 200, endTime: 210,
+        sourceVerified: true, partnerTrackId: 'track-a' }]
+    }
+  });
+  f.els.video.duration = 210;
+  f.state.analysis.videoDuration = 210;
+  vm.runInContext(runtimeHandlers, f);
+  return f;
+}
+
+async function startFirstChapter(f) {
+  f.addFemaleLust(35);
+  await flush();
+  assert.equal(f.state.activePositionId, 'one');
+  assert.equal(f.els.video.paused, false);
+}
+
+test('first full threshold opens the panel and plays the first local clip automatically', async () => {
+  const f = runtimeFixture();
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.state.activeMovementId, null);
+  f.addFemaleLust(34);
+  await flush();
+  assert.equal(f.state.adultSexUnlocked, false);
+  f.addFemaleLust(1);
+  await flush();
+  assert.equal(f.state.adultSexUnlocked, true);
+  assert.equal(f.state.activeMovementId, 'one-0');
+  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.els.video.paused, false);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.ok(f.state.femaleSceneProgress < 35);
+  const token = f.state.adultSelectionToken;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.adultSelectionToken, token);
+  assert.equal(f.state.activeMovementId, 'one-0');
+  assert.equal(f.els.video.playCalls, 1);
+});
+
+test('an introduction without warmup-position metadata still keeps the gate closed', () => {
+  const f = runtimeFixture();
+  f.renderAdultPanel(f.state.adultScene);
+  assert.equal(f.state.adultSexUnlocked, false);
+  assert.equal(f.state.adultUnlockedPositionIds.size, 0);
+});
+
+test('later thresholds unlock exactly one next chapter without switching playback', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  f.state.femaleSceneProgress = 0;
+  assert.equal(f.unlockNextAdultPositionFromLust(), null);
+  f.addFemaleLust(35);
+  await flush();
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one', 'two']);
+  assert.equal(f.state.activePositionId, 'one');
+  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.state.femaleSceneProgress, 0);
+  f.addFemaleLust(35);
+  assert.equal(f.state.adultUnlockedPositionIds.has('three'), false);
+  assert.equal(f.state.femaleSceneProgress, 35);
+  f.state.femaleSceneProgress = 0;
+  f.selectAdultPosition('two', true);
+  await flush();
+  f.addFemaleLust(35);
+  assert.equal(f.state.adultUnlockedPositionIds.has('three'), true);
+});
+
+test('direct calls cannot play a locked chapter or movement', async () => {
+  const f = runtimeFixture();
+  f.selectAdultPosition('two', true);
+  assert.equal(f.els.video.playCalls, 0);
+  f.state.activePositionId = 'two';
+  f.state.activeAdultOccurrenceId = 'source-two';
+  f.selectAdultMovement('two-0', true);
+  await flush();
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.state.adultVisitedPositionIds.size, 0);
+});
+
+for (const mode of ['error', 'blocked']) {
+  test(`a ${mode} selection earns nothing until recovery actually starts playback`, async () => {
+    const f = runtimeFixture();
+    f.els.video.mode = mode;
+    f.playAdultPrelude('intro');
+    await flush();
+    assert.equal(f.state.femaleSceneProgress, 0);
+    assert.equal(f.state.adultPreludePlayCounts.size, 0);
+    f.els.video.mode = 'ready';
+    f.els.panelPlaybackRecovery.querySelector('button').dispatchEvent(new Event('click'));
+    await flush();
+    assert.equal(f.state.adultPreludePlayCounts.get('intro'), 1);
+    assert.ok(f.state.femaleSceneProgress > 0);
+    const progress = f.state.femaleSceneProgress;
+    f.commitAdultSelectionProgress(f.state.adultSelectionToken);
+    assert.equal(f.state.femaleSceneProgress, progress);
+    assert.equal(f.state.adultPreludePlayCounts.get('intro'), 1);
+  });
+}
+
+test('failed chapter playback cannot count as a visit or open the following chapter', async () => {
+  const f = runtimeFixture();
+  f.els.video.mode = 'error';
+  f.addFemaleLust(35);
+  await flush();
+  assert.equal(f.state.adultVisitedPositionIds.size, 0);
+  assert.equal(f.state.femaleSceneProgress, 0);
+  f.addFemaleLust(35);
+  assert.equal(f.state.adultUnlockedPositionIds.has('two'), false);
+});
+
+test('obsolete introduction selections cannot earn progress after a newer selection', async () => {
+  const f = runtimeFixture();
+  f.els.video.mode = 'stalled';
+  f.playAdultPrelude('intro');
+  const oldToken = f.state.adultSelectionToken;
+  f.beginAdultSelection();
+  f.commitAdultSelectionProgress(oldToken);
+  await flush();
+  assert.equal(f.state.femaleSceneProgress, 0);
+  assert.equal(f.state.adultPreludePlayCounts.size, 0);
+});
+
+test('movement cards and direct handlers stay in the active continuous occurrence', async () => {
+  const f = runtimeFixture();
+  const first = f.state.adultScene.positions[0];
+  const later = chapter('return', 120, 'one');
+  first.sourceRanges.push(...later.sourceRanges);
+  first.movements.push(...later.movements);
+  first.endTime = 150;
+  await startFirstChapter(f);
+  assert.deepEqual(Array.from(first.activeMovementChoices.flatMap(item => item.variants), item => item.id),
+    ['one-0', 'one-1', 'one-2']);
+  const token = f.state.adultSelectionToken;
+  f.selectAdultMovement('return-0', true);
+  assert.equal(f.state.adultSelectionToken, token);
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-one');
+  assert.equal(f.els.video.currentTime, 20);
+  f.els.movementChoices.querySelectorAll('.movement-choice-card')[1].dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.els.video.currentTime, 30);
+  assert.equal(f.state.activePositionId, 'one');
+});
+
+test('finishing a short clip pauses and clears it without arming another clip during render', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  f.els.video.time = 30;
+  f.updateAdultPlayback(1000, 30);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.activeMovementId, null);
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.playCalls, 1);
+});
+
+test('full ending meter plays a verified ending then continues at the exact saved time', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  f.selectAdultMovement('one-1', true);
+  await flush();
+  f.els.video.time = 34.375;
+  const progress = f.state.femaleSceneProgress;
+  const playCount = f.state.adultMovementPlayCounts.get('one-1');
+  f.state.adultMaleOrgasmProgress = 100;
+  assert.equal(f.triggerAdultOrgasmDecision(), true);
+  assert.equal(f.state.adultOrgasmDecision.mediaTime, 34.375);
+  await flush();
+  assert.equal(f.els.video.currentTime, 200);
+  assert.equal(f.state.adultOutcomePhase, 'outcome');
+  assert.equal(f.state.adultPlayedOutcomeIds.has('ending'), true);
+  // End-of-file must retain the decision and saved branch, not close the scene.
+  f.els.video.time = 210;
+  f.handleSourceEnded();
+  assert.equal(f.state.adultMode, true);
+  assert.equal(f.state.adultOutcomePhase, 'orgasm-decision');
+  f.continueAfterAdultOrgasm();
+  await flush();
+  assert.equal(f.els.video.currentTime, 34.375);
+  assert.equal(f.state.activePositionId, 'one');
+  assert.equal(f.state.activeMovementId, 'one-1');
+  assert.equal(f.state.adultPhaseMachine, 'positions');
+  assert.equal(f.state.adultOutcomePhase, 'idle');
+  assert.equal(f.state.activeAdultOutcomeId, null);
+  assert.equal(f.state.adultMaleOrgasmProgress, 0);
+  assert.equal(f.state.adultMaleOrgasmCount, 1);
+  assert.equal(f.state.femaleSceneProgress, progress);
+  assert.equal(f.state.adultMovementPlayCounts.get('one-1'), playCount);
+  assert.equal(f.els.video.paused, false);
+});
+
+test('ending completion at a scene boundary opens the decision instead of auto-exiting', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  f.els.video.time = 24;
+  f.state.adultMaleOrgasmProgress = 100;
+  f.triggerAdultOrgasmDecision();
+  await flush();
+  f.els.video.time = 210.2;
+  f.updateAdultPlayback(1000, 210.2);
+  assert.equal(f.state.adultOutcomePhase, 'orgasm-decision');
+  assert.equal(f.state.adultMode, true);
+  f.finishAdultScene({ force: true });
+  assert.equal(f.state.adultMode, false);
+  assert.equal(f.state.adultOrgasmDecision, null);
+});
+
+test('missing, unverified or other-partner endings never fabricate or play an ending', async () => {
+  for (const endings of [[], [{ sourceVerified: false }], [{ sourceVerified: true, partnerTrackId: 'track-b' }]]) {
+    const f = runtimeFixture();
+    await startFirstChapter(f);
+    f.els.video.time = 24;
+    f.state.adultScene.outcomes = endings.map(item => ({ id: 'invalid', startTime: 200, endTime: 210, ...item }));
+    f.state.adultMaleOrgasmProgress = 100;
+    f.triggerAdultOrgasmDecision();
+    await flush();
+    assert.equal(f.state.adultOutcomePhase, 'orgasm-decision');
+    assert.equal(f.state.adultOrgasmDecision.hasVerifiedOutcome, false);
+    assert.match(f.els.orgasmDecisionTitle.textContent, /bulunamadı/);
+    assert.equal(f.els.video.currentTime, 24);
+    assert.equal(f.state.adultPlayedOutcomeIds.size, 0);
+    f.continueAfterAdultOrgasm();
+    await flush();
+    assert.equal(f.els.video.currentTime, 24);
+    assert.equal(f.els.video.paused, false);
+  }
+});
+
+test('leaving the scene cancels a queued automatic first entry', async () => {
+  const f = runtimeFixture();
+  f.addFemaleLust(35);
+  f.skipCurrentScene();
+  await flush();
+  assert.equal(f.state.adultMode, false);
+  assert.equal(f.els.video.playCalls, 0);
 });
