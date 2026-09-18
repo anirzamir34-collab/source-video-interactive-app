@@ -143,15 +143,48 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
   video.playsInline = true;
   video.src = url;
 
-  const wait = (event) => new Promise((resolve, reject) => {
-    const abort = () => reject(new DOMException('İşlem iptal edildi', 'AbortError'));
+  const wait = (event, timeoutMs = 15000, trigger = null) => new Promise((resolve, reject) => {
+    let timer = null;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      video.removeEventListener(event, complete);
+      video.removeEventListener('error', fail);
+      signal?.removeEventListener('abort', abort);
+    };
+    const complete = () => {
+      cleanup();
+      resolve();
+    };
+    const fail = () => {
+      cleanup();
+      reject(new Error(`Video ${event} sırasında okunamadı.`));
+    };
+    const abort = () => {
+      cleanup();
+      reject(new DOMException('İşlem iptal edildi', 'AbortError'));
+    };
+    const timeout = () => {
+      cleanup();
+      const error = new Error(`Video ${event} zaman aşımına uğradı.`);
+      error.name = 'VideoFrameTimeoutError';
+      reject(error);
+    };
     if (signal?.aborted) return abort();
-    video.addEventListener(event, resolve, { once: true });
+    video.addEventListener(event, complete, { once: true });
+    video.addEventListener('error', fail, { once: true });
     signal?.addEventListener('abort', abort, { once: true });
+    timer = setTimeout(timeout, timeoutMs);
+    if (event === 'loadedmetadata' && video.readyState >= 1) return complete();
+    try {
+      trigger?.();
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
   });
 
   try {
-    await wait('loadedmetadata');
+    await wait('loadedmetadata', 30000);
 
     const duration = Number(video.duration);
     if (!Number.isFinite(duration) || duration <= 0) {
@@ -206,14 +239,19 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
     const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
     if (!motionCtx) throw new Error('Hareket analizi başlatılamadı.');
     const capturedFrames = [];
+    const skippedTimestamps = [];
+    const seekTimeoutMs = ownsObjectUrl ? 10000 : 15000;
 
     const captureFrame = async (time, progress) => {
       if (signal?.aborted) throw new DOMException('İşlem iptal edildi', 'AbortError');
 
       const safeTime = Math.min(time, Math.max(0, duration - 0.05));
       if (Math.abs(video.currentTime - safeTime) > 0.01) {
-        video.currentTime = safeTime;
-        await wait('seeked');
+        // Register the listener before assigning currentTime. Some mobile
+        // decoders emit `seeked` synchronously for nearby/keyframe seeks.
+        await wait('seeked', seekTimeoutMs, () => {
+          video.currentTime = safeTime;
+        });
       }
 
       const snapshot = document.createElement('canvas');
@@ -234,8 +272,42 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       onProgress(Math.min(84, Math.max(1, Math.round(progress))));
     };
 
+    const captureFrameSafely = async (time, progress) => {
+      const retryOffsets = [0, 0.12, -0.12];
+      let lastError = null;
+      for (const offset of retryOffsets) {
+        const retryTime = Math.min(
+          Math.max(0, Number(time) + offset),
+          Math.max(0, duration - 0.05)
+        );
+        try {
+          await captureFrame(retryTime, progress);
+          return true;
+        } catch (error) {
+          if (error?.name === 'AbortError') throw error;
+          lastError = error;
+        }
+      }
+      skippedTimestamps.push({
+        time: Number(Number(time).toFixed(3)),
+        reason: lastError?.message || 'Video karesi okunamadı.'
+      });
+      // A single undecodable/range-unavailable frame must not leave the whole
+      // mobile analysis waiting forever. Progress still advances and the
+      // remaining verified frames continue to the external analyzer.
+      onProgress(Math.min(84, Math.max(1, Math.round(progress))));
+      return false;
+    };
+
     for (let index = 0; index < times.length; index += 1) {
-      await captureFrame(times[index], ((index + 1) / times.length) * 58);
+      await captureFrameSafely(times[index], ((index + 1) / times.length) * 58);
+    }
+
+    if (capturedFrames.length < Math.min(12, Math.ceil(times.length * 0.25))) {
+      throw new Error(
+        `Video karelerinin çoğu okunamadı (${capturedFrames.length}/${times.length}). ` +
+        'Video bağlantısını veya dosya biçimini kontrol et.'
+      );
     }
 
     const buildMotionProfile = frames => {
@@ -270,7 +342,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       samplingPlan.focusedCount
     );
     for (let index = 0; index < focusedTimes.length; index += 1) {
-      await captureFrame(
+      await captureFrameSafely(
         focusedTimes[index],
         58 + ((index + 1) / Math.max(1, focusedTimes.length)) * 26
       );
@@ -317,7 +389,8 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       interval: effectiveInterval,
       totalBytes,
       motionProfile,
-      sceneBoundaries
+      sceneBoundaries,
+      skippedTimestamps
     };
   } finally {
     video.pause();

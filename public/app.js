@@ -1778,6 +1778,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   });
   session.storyboard = storyboard;
 
+  const skippedFrameCount = Array.isArray(storyboard.skippedTimestamps)
+    ? storyboard.skippedTimestamps.length
+    : 0;
+
   const storyboardMB = (storyboard.totalBytes / 1024 / 1024).toFixed(1);
   const sourceSize = file?.size || state.selectedRemoteVideo?.size || 0;
   const sourceSizeText = sourceSize
@@ -1913,10 +1917,11 @@ els.analyzeBtn.addEventListener('click', async () => {
       let chunkSucceeded = false;
       failureBody = null;
 
-      for (let attempt = 1; attempt <= 2 && !chunkSucceeded; attempt += 1) {
+      const maxChunkAttempts = 4;
+      for (let attempt = 1; attempt <= maxChunkAttempts && !chunkSucceeded; attempt += 1) {
         els.analysisOutput.textContent =
           `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...\n` +
-          `Deneme ${attempt}/2 · tamamlanan ${chunkResults.length}/${chunkCount}`;
+          `Deneme ${attempt}/${maxChunkAttempts} · tamamlanan ${chunkResults.length}/${chunkCount}`;
 
         // Every retry starts from a clean first pass. Review metadata is added
         // only after that first pass succeeds, so a failed review cannot poison
@@ -2026,8 +2031,13 @@ els.analyzeBtn.addEventListener('click', async () => {
           break;
         }
 
-        if (attempt < 2) {
-          await new Promise(resolve => setTimeout(resolve, attempt * 1800));
+        if (attempt < maxChunkAttempts) {
+          const retryDelay = Math.min(12000, 1800 * (2 ** (attempt - 1)));
+          els.analysisOutput.textContent =
+            `Bölüm ${chunkIndex + 1}/${chunkCount} geçici olarak başarısız oldu.\n` +
+            `${Math.ceil(retryDelay / 1000)} saniye sonra yalnız bu bölüm yeniden denenecek...\n` +
+            `Tamamlanan bölümler korunuyor: ${chunkResults.length}/${chunkCount}`;
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
       }
 
@@ -2109,6 +2119,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         chunkCount: chunkResults.length,
         expectedChunkCount: chunkCount,
         analysisCoverage: chunkCount ? chunkResults.length / chunkCount : 0,
+        skippedFrameCount,
         secondPassChunkCount: chunkResults.filter(result => result.secondPassReviewed).length,
         rebasedChunkCount: chunkResults.filter(result => result.chunkTimeRebased).length,
         analyzedThroughTime: Math.max(0, ...mergedActions.map(action => Number(action.endTime) || 0)),
@@ -2221,6 +2232,9 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${Number(body.chunkCount || 0)}/${Number(body.expectedChunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
     `${Number(body.secondPassChunkCount || 0)} bölüm görsel ikinci kontrolden geçti.`,
     `${Number(body.rebasedChunkCount || 0)} bölümün yerel zamanları video zamanına düzeltildi.`,
+    Number(body.skippedFrameCount || 0)
+      ? `${Number(body.skippedFrameCount)} okunamayan kare atlandı; analiz kalan doğrulanmış karelerle tamamlandı.`
+      : 'Bütün örnek kareler başarıyla hazırlandı.',
     `Zaman çizelgesi ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyeye kadar doğrulandı.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
     `Gemini kullanımı: ${state.aiUsage.requests} istek · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens} çıkış tokenı.`,
