@@ -22,6 +22,7 @@ import {
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   initialWarmupBeforeFirstPosition,
+  selectSequentialApproachChoices,
   movementsForPositionOccurrence,
   isEnergeticSexMoment,
   isPlayableVerifiedPositionDuration,
@@ -56,6 +57,22 @@ test('short source-verified positions remain playable without accepting flashes'
   assert.equal(isPlayableVerifiedPositionDuration(20, 23), true);
   assert.equal(isPlayableVerifiedPositionDuration(20, 22.99), false);
   assert.equal(isPlayableVerifiedPositionDuration('bad', 30), false);
+});
+
+test('approach choices advance through verified source chronology instead of staying on the first cards', () => {
+  const candidates = Array.from({ length: 8 }, (_, index) => ({
+    kind: 'foreplay', id: `warmup-${index + 1}`, label: `Warmup ${index + 1}`,
+    startTime: index * 10, endTime: index * 10 + 8, playCount: index === 2 ? 1 : 0
+  }));
+
+  assert.deepEqual(
+    selectSequentialApproachChoices(candidates, { timelineFloor: 0, limit: 5 }).map(item => item.id),
+    ['warmup-1', 'warmup-2', 'warmup-4', 'warmup-5', 'warmup-6']
+  );
+  assert.deepEqual(
+    selectSequentialApproachChoices(candidates, { timelineFloor: 28, limit: 5 }).map(item => item.id),
+    ['warmup-4', 'warmup-5', 'warmup-6', 'warmup-7', 'warmup-8']
+  );
 });
 
 test('lust and orgasm progression is slower and male/female cycles are staggered', () => {
@@ -148,6 +165,18 @@ test('warmup progress can build lust but repeated farming loses value', () => {
   const repeated = computeWarmupSelectionDelta({ repeatCount: 5, comboCount: 0 });
   assert.ok(first.male > repeated.male);
   assert.ok(first.female > repeated.female);
+});
+
+test('verified source pacing controls how quickly warmup progress grows', () => {
+  const calm = computeWarmupSelectionDelta({ repeatCount: 0, femaleRate: 0.45 });
+  const neutral = computeWarmupSelectionDelta({ repeatCount: 0, femaleRate: 1 });
+  const energetic = computeWarmupSelectionDelta({ repeatCount: 0, femaleRate: 1.8 });
+  assert.ok(calm.female < neutral.female);
+  assert.ok(neutral.female < energetic.female);
+
+  const calmPlayback = adultPlaybackProgressDelta({ elapsed: 0.25, femaleRate: 0.45, warmup: true });
+  const energeticPlayback = adultPlaybackProgressDelta({ elapsed: 0.25, femaleRate: 1.8, warmup: true });
+  assert.ok(calmPlayback.lust < energeticPlayback.lust);
 });
 
 test('position unlocks are progressive and special categories arrive later', () => {
