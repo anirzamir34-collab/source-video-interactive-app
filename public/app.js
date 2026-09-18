@@ -52,7 +52,6 @@ import {
   fittedDubPlaybackRate,
   hasRemainingVideo,
   isCompleteChunkAnalysis,
-  isDubStartTimely,
   mapVideoTimeToDubTime,
   nextDialogueSegments,
   resolveDubGender,
@@ -89,6 +88,7 @@ import {
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 
 import { createDubMixer, naturalDubRate, canFinishDubTail } from './dubbing-audio.js';
+import { createDubRequestQueue } from './dubbing-queue.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -118,7 +118,8 @@ const state = {
   dubUnavailableUntil: 0,
   dubFailureReason: '',
   dubProviderLock: '',
-  dubQueue: Promise.resolve(),
+  dubQueue: createDubRequestQueue(),
+  dubBuffer: null,
   dubVoiceIds: { female: '', male: '' },
   dubStableSpeakerGenders: new Map(),
   dubPlayedSegmentIds: new Set(),
@@ -244,6 +245,10 @@ const els = {
   subtitleText: $('subtitleText'),
   subtitleToggleBtn: $('subtitleToggleBtn'),
   dubToggleBtn: $('dubToggleBtn'),
+  dubBufferStatus: $('dubBufferStatus'),
+  dubBufferMessage: $('dubBufferMessage'),
+  dubRetryBtn: $('dubRetryBtn'),
+  dubContinueOriginalBtn: $('dubContinueOriginalBtn'),
   gameState: $('gameState'),
   cursorText: $('cursorText'),
   choices: $('choices'),
@@ -1348,6 +1353,109 @@ const preparedDubAudio = new Map();
 const dubMixer = createDubMixer(els.video);
 let dubPlaybackTimer = null;
 
+function renderDubBuffer(message, loading = false) {
+  els.dubBufferStatus?.classList.toggle('hidden', !state.dubBuffer);
+  if (els.dubBufferMessage) els.dubBufferMessage.textContent = message;
+  if (els.dubRetryBtn) els.dubRetryBtn.disabled = loading;
+}
+
+function cancelDubBuffer() {
+  state.dubBuffer = null;
+  renderDubBuffer('');
+}
+
+function isDubBufferCurrent(buffer) {
+  return state.dubBuffer === buffer && buffer.generation === state.dubSyncGeneration &&
+    buffer.controller === state.dubRequestController &&
+    buffer.selectionToken === state.adultSelectionToken &&
+    buffer.playbackGeneration === state.playbackGeneration && buffer.gameState === state.gameState &&
+    !els.video.seeking && !els.video.ended &&
+    Math.abs(Number(els.video.currentTime) - buffer.videoTime) < 0.35;
+}
+
+function beginDubBuffer(segment, loading = true) {
+  const buffer = {
+    segment, generation: state.dubSyncGeneration, controller: state.dubRequestController,
+    selectionToken: state.adultSelectionToken, playbackGeneration: state.playbackGeneration,
+    gameState: state.gameState, videoTime: Number(els.video.currentTime), loading
+  };
+  state.dubBuffer = buffer;
+  // Freeze the source, not just the voice: an unprepared line must not become
+  // an undubbed gap while TTS or audio decoding is still in flight.
+  els.video.pause();
+  stopDubClock();
+  renderDubBuffer(loading ? 'Türkçe dublaj hazırlanıyor… Video aynı noktada bekliyor.' :
+    'Dublaj oynatılamadı. Devam etmek için yeniden dene.', loading);
+  return buffer;
+}
+
+async function retryDubBuffer(useOriginal = false) {
+  const buffer = state.dubBuffer;
+  if (!buffer || !isDubBufferCurrent(buffer) || (buffer.loading && !useOriginal)) return;
+  if (!useOriginal && state.dubUnavailableUntil > Date.now()) {
+    const seconds = Math.ceil((state.dubUnavailableUntil - Date.now()) / 1000);
+    renderDubBuffer(`Dublaj servisi bekletiyor. ${seconds} saniye sonra yeniden deneyebilirsin.`);
+    return;
+  }
+  cancelDubBuffer();
+  state.dubStartingToken = null;
+  state.dubPlaybackBlocked = false;
+  if (useOriginal) {
+    state.dubbingEnabled = false;
+    stopDubPlayback();
+    if (els.dubToggleBtn) els.dubToggleBtn.textContent = 'TR DUBLAJ: KAPALI';
+  } else {
+    state.dubbingEnabled = true;
+  }
+  try {
+    await els.video.play();
+    if (state.dubbingEnabled) { startDubClock(); void syncDubPlayback(); }
+  } catch {
+    // Keep an actionable control if the browser requires a fresh play gesture.
+    if (buffer.generation !== state.dubSyncGeneration || buffer.controller !== state.dubRequestController ||
+        buffer.selectionToken !== state.adultSelectionToken || buffer.playbackGeneration !== state.playbackGeneration) return;
+    buffer.loading = false;
+    state.dubBuffer = buffer;
+    renderDubBuffer('Tarayıcı oynatmayı engelledi. Devam etmek için yeniden dokun.');
+  }
+}
+
+async function prepareDubForPlayback(segment) {
+  const id = getDubSegmentId(segment);
+  const prepared = preparedDubAudio.get(id);
+  // Cached, decoded lines start without stopping the source.
+  if (prepared?.readyState >= 2 && !prepared.error) return prepared;
+  const buffer = beginDubBuffer(segment);
+  let audio;
+  try { audio = await prepareDubAudio(segment, 100); }
+  catch (error) {
+    logEngineEvent('DUB_PREPARATION_FAILED', { message: error?.message || String(error) });
+  }
+  if (!isDubBufferCurrent(buffer) || !state.dubbingEnabled) {
+    if (state.dubBuffer === buffer) cancelDubBuffer();
+    return null;
+  }
+  buffer.loading = false;
+  if (!audio) {
+    renderDubBuffer('Bu bölümün Türkçe dublajı hazırlanamadı. Yeniden dene veya dublajı kapatarak devam et.');
+    return null;
+  }
+  try {
+    // Settle the source's play promise before starting its voice track.
+    await els.video.play();
+  } catch {
+    if (isDubBufferCurrent(buffer)) renderDubBuffer('Ses hazır. Oynatmak için yeniden dokun.');
+    return null;
+  }
+  if (!isDubBufferCurrent(buffer) || !state.dubbingEnabled) {
+    if (state.dubBuffer === buffer) cancelDubBuffer();
+    return null;
+  }
+  cancelDubBuffer();
+  startDubClock();
+  return audio;
+}
+
 function updateDubMix() {
   dubMixer.update({
     enabled: state.dubbingEnabled,
@@ -1367,9 +1475,9 @@ function clearPreparedDubAudio() {
   preparedDubAudio.clear();
 }
 
-async function prepareDubAudio(segment) {
+async function prepareDubAudio(segment, priority = 0) {
   const controller = state.dubRequestController;
-  const source = await ensureDubSegment(segment);
+  const source = await ensureDubSegment(segment, priority);
   if (!source || controller !== state.dubRequestController || !dubTimeline().includes(segment)) return null;
   const id = getDubSegmentId(segment);
   if (preparedDubAudio.has(id)) return preparedDubAudio.get(id)._vqReady;
@@ -1402,8 +1510,12 @@ async function prepareDubAudio(segment) {
   });
   audio.addEventListener('error', () => {
     if (dubChannels.get(id) !== audio) return;
+    audio.pause();
     dubChannels.delete(id);
     if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
+    state.dubPlayedSegmentIds.delete(id);
+    preparedDubAudio.delete(id);
+    if (state.dubbingEnabled) beginDubBuffer(segment, false);
     updateDubMix();
   });
   preparedDubAudio.set(id, audio);
@@ -1473,16 +1585,20 @@ function stableDubGender(segment) {
   return resolved;
 }
 
-async function ensureDubSegment(segment) {
+async function ensureDubSegment(segment, priority = 0) {
   if (!segment?.turkishText) return null;
   if (!dubTimeline().includes(segment)) return null;
   const requestController = state.dubRequestController;
   const isCurrent = () => requestController === state.dubRequestController && !requestController.signal.aborted;
-  if (state.dubUnavailableUntil > Date.now()) return null;
   const segmentId = getDubSegmentId(segment);
   if (!segmentId) return null;
   if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
-  if (state.dubRequests.has(segmentId)) return state.dubRequests.get(segmentId);
+  if (state.dubRequests.has(segmentId)) {
+    state.dubQueue.promote(segmentId, priority);
+    return state.dubRequests.get(segmentId);
+  }
+  // Provider cooldowns do not invalidate audio that is already available.
+  if (state.dubUnavailableUntil > Date.now()) return null;
 
   const segments = dubTimeline();
   const segmentIndex = Math.max(0, segments.indexOf(segment));
@@ -1498,7 +1614,7 @@ async function ensureDubSegment(segment) {
   });
 
   const runRequest = async () => {
-    if (!isCurrent()) return null;
+    if (!isCurrent() || state.dubbingEnabled === false || state.dubUnavailableUntil > Date.now()) return null;
     if (!activeElevenLabsApiKey()) throw new Error('ElevenLabs anahtarı gerekli');
     let lastFailure = null;
     for (let attempt = 1; attempt <= 4; attempt += 1) {
@@ -1553,8 +1669,8 @@ async function ensureDubSegment(segment) {
       const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
       state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
       state.dubFailureReason = body.reason;
-      state.dubbingEnabled = false;
-      stopDubPlayback();
+      // Keep the user's dubbing preference. At a missing line the player will
+      // pause with an explicit retry/original-audio choice, not silently switch.
       if (els.dubToggleBtn) {
         els.dubToggleBtn.textContent = 'TR DUBLAJ: LİMİT DOLDU';
         els.dubToggleBtn.classList.remove('hidden');
@@ -1575,7 +1691,7 @@ async function ensureDubSegment(segment) {
     throw lastFailure?.error || new Error(message);
   };
 
-  const request = (state.dubQueue = state.dubQueue.catch(() => {}).then(runRequest)).catch(error => {
+  const request = state.dubQueue.enqueue(segmentId, runRequest, priority).catch(error => {
     if (isCurrent()) console.error('Dub segment failed:', segmentId, error);
     return null;
   }).finally(() => {
@@ -1587,6 +1703,7 @@ async function ensureDubSegment(segment) {
 }
 
 function stopDubPlayback() {
+  cancelDubBuffer();
   state.dubStartingToken = null;
   dubChannels.forEach(audio => audio.pause());
   dubChannels.clear();
@@ -1610,7 +1727,8 @@ function resetDubState() {
   state.activeDubSegmentId = null;
   state.dubFailureReason = '';
   state.dubProviderLock = '';
-  state.dubQueue = Promise.resolve();
+  state.dubQueue.clear();
+  state.dubQueue = createDubRequestQueue();
   state.dubStableSpeakerGenders.clear();
   state.dubPlayedSegmentIds.clear();
   state.dubVoiceIds = { female: '', male: '' };
@@ -1628,7 +1746,7 @@ function resetDubState() {
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
   nextDialogueSegments(dubTimeline(), videoTime, 3)
-    .forEach(segment => void prepareDubAudio(segment));
+    .forEach((segment, index) => void prepareDubAudio(segment, 20 - index));
 }
 
 async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
@@ -1660,11 +1778,13 @@ async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
 function primeLanguageTracksAt(videoTime, count = 2) {
   if (!state.dubbingEnabled) return;
   dialogueSegmentsForTarget(dubTimeline(), videoTime, count)
-    .forEach(segment => void prepareDubAudio(segment));
+    .forEach((segment, index) => void prepareDubAudio(segment, 50 - index));
 }
 
 function primeAdultPositionLanguage(position) {
   if (!state.dubbingEnabled || !position) return;
+  const requestController = state.dubRequestController;
+  const selectionToken = state.adultSelectionToken;
   const targetTimes = [
     position.startTime,
     ...(position.movements || []).map(item => item.loopStartTime)
@@ -1676,7 +1796,8 @@ function primeAdultPositionLanguage(position) {
   );
   void (async () => {
     for (const segment of segments) {
-      if (!state.dubbingEnabled) break;
+      if (!state.dubbingEnabled || requestController !== state.dubRequestController ||
+          selectionToken !== state.adultSelectionToken) break;
       await ensureDubSegment(segment);
     }
   })();
@@ -1706,6 +1827,7 @@ async function playDubAudio(audio, segmentId, generation) {
     // A queued or blocked play() is not a heard sentence.
     state.dubPlayedSegmentIds.add(segmentId);
     state.dubResumeTime = null;
+    if (state.dubBuffer?.segment === audio._vqSegment) cancelDubBuffer();
     updateDubMix();
     return true;
   } catch (error) {
@@ -1714,6 +1836,7 @@ async function playDubAudio(audio, segmentId, generation) {
     if (error?.name !== 'AbortError') {
       state.dubPlaybackBlocked = true;
       logEngineEvent('DUB_PLAYBACK_BLOCKED', { message: error?.message || String(error) });
+      beginDubBuffer(audio._vqSegment, false);
     }
     updateDubMix();
     return false;
@@ -1755,23 +1878,22 @@ async function syncDubPlayback() {
   const token = { segmentId };
   state.dubStartingToken = token;
   try {
-    const audio = await prepareDubAudio(segment);
+    const audio = await prepareDubForPlayback(segment);
     if (!audio || token !== state.dubStartingToken || generation !== state.dubSyncGeneration ||
         !state.dubbingEnabled || els.video.paused || els.video.seeking || state.dubVideoWaiting ||
         state.dubPlayedSegmentIds.has(segmentId)) return;
     const now = Math.max(0, Number(els.video.currentTime) || 0);
     if (getDubSegmentId(dialogueSegmentAt(dubTimeline(), now, 0)) !== segmentId) return;
-    const afterSeek = state.dubResumeTime !== null && Math.abs(now - state.dubResumeTime) <= 1.5;
-    if (!afterSeek && !isDubStartTimely(now, segment)) return;
 
     const start = Number(segment.startTime);
     const nextStart = Math.min(...dubTimeline()
       .filter(item => Number(item.startTime) > start)
       .map(item => Number(item.startTime)));
     const end = Math.min(Number(segment.endTime), nextStart);
-    // An explicit seek into a sentence resumes at its matching audio offset;
-    // regular playback always keeps the opening syllable.
-    const offset = afterSeek && now - start > 0.65
+    // A delayed browser callback must not discard the entire line. Resume at
+    // its matching offset when already inside it; short boundary drift keeps
+    // the opening syllable, including after a normal preparation wait.
+    const offset = now - start > 0.65
       ? mapVideoTimeToDubTime({ videoTime: now, segmentStart: start,
           segmentEnd: segment.endTime, audioDuration: audio.duration })
       : 0;
@@ -1805,6 +1927,8 @@ els.video.addEventListener('waiting', () => {
 });
 els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
+  // Previously selected timestamps are now speculative, not urgent.
+  state.dubQueue?.deprioritize();
   state.dubResumeTime = Math.max(0, Number(els.video.currentTime) || 0);
   stopDubPlayback();
   state.dubPlayedSegmentIds.clear();
@@ -1817,15 +1941,17 @@ els.video.addEventListener('seeked', () => {
 });
 els.video.addEventListener('play', () => {
   state.dubPlaybackBlocked = false;
-  state.dubVideoWaiting = els.video.readyState < 3;
-  startDubClock();
-  void syncDubPlayback();
+  // play() is still pending here. Pausing for TTS inside this event would
+  // reject the caller's play promise and incorrectly fail its navigation.
+  state.dubVideoWaiting = true;
   prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
 });
 els.video.addEventListener('playing', () => {
   state.dubVideoWaiting = false;
   startDubClock();
-  void syncDubPlayback();
+  // The browser settles play() only after dispatching `playing`. Wait for
+  // that task to finish before a preparation hold is allowed to pause it.
+  setTimeout(() => void syncDubPlayback(), 0);
 });
 els.video.addEventListener('ratechange', () => {
   for (const audio of dubChannels.values()) {
@@ -1840,6 +1966,8 @@ els.keepOriginalAudio?.addEventListener('change', () => {
   state.keepOriginalAudioEnabled = Boolean(els.keepOriginalAudio.checked);
   updateDubMix();
 });
+els.dubRetryBtn?.addEventListener('click', () => void retryDubBuffer());
+els.dubContinueOriginalBtn?.addEventListener('click', () => void retryDubBuffer(true));
 
 els.subtitleToggleBtn?.addEventListener('click', () => {
   state.subtitlesEnabled = !state.subtitlesEnabled;
@@ -1849,6 +1977,7 @@ els.subtitleToggleBtn?.addEventListener('click', () => {
 });
 
 els.dubToggleBtn?.addEventListener('click', () => {
+  if (state.dubBuffer) { void retryDubBuffer(true); return; }
   if (els.dubToggleBtn.dataset.unavailable === 'true') return;
   state.dubbingEnabled = !state.dubbingEnabled;
   els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;

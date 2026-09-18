@@ -1,5 +1,31 @@
 /* One layout for embedded/fullscreen player controls. Scoped specificity is
    intentional: legacy fullscreen rules in styles.css use !important. */
+#playerSection .video-stage.scene-player .dub-buffer-status {
+  position: absolute;
+  z-index: 130;
+  left: max(8px, env(safe-area-inset-left));
+  top: max(56px, calc(env(safe-area-inset-top) + 48px));
+  width: min(300px, 60%);
+  max-height: calc(100% - 72px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .92);
+  color: white;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+#playerSection .video-stage.scene-player .dub-buffer-status p { margin: 0 0 8px; }
+#playerSection .video-stage.scene-player .dub-buffer-status button {
+  width: 100%;
+  min-height: 40px;
+  margin: 4px 0;
+  white-space: normal;
+}
+
 #playerSection .video-stage.scene-player .player-playback-recovery {
   position: absolute;
   z-index: 120;

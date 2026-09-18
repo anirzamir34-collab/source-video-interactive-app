@@ -7,7 +7,7 @@ import { dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget,
   isDubStartTimely, mapVideoTimeToDubTime, dubSegmentKey } from '../public/playback-logic.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const tick = () => new Promise(resolve => setImmediate(resolve));
+const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const deferred = () => { let resolve; let reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const line = (id, startTime, endTime) => ({ segmentId: id, startTime, endTime, turkishText: 'Merhaba.' });
 function functions(...names) {
@@ -28,12 +28,13 @@ function clock() {
     advance(ms) { time += ms; const work = [...jobs.values()]; jobs.clear(); work.forEach(fn => fn()); }
   };
 }
-function fixture(segments, { durations = {}, ensure, playGate } = {}) {
+function fixture(segments, { durations = {}, ensure, playGate, browserEvents = false } = {}) {
   const made = [];
   class Media extends EventTarget {
     paused = true; ended = false; seeking = false; volume = 1; muted = false;
     currentTime = 0; duration = 1; playbackRate = 1; readyState = 4; src = '';
     plays = 0; pauses = 0;
+    classList = { toggle() {} };
     removeAttribute(name) { this[name] = ''; }
     load() {
       if (this.src) {
@@ -47,9 +48,15 @@ function fixture(segments, { durations = {}, ensure, playGate } = {}) {
     }
     async play() {
       this.plays++;
-      if (playGate) await playGate(this);
+      if (playGate && made.includes(this)) await playGate(this);
       this.paused = false;
       this.ended = false;
+      if (browserEvents && this === video) {
+        this.dispatchEvent(new Event('play'));
+        await new Promise(resolve => setImmediate(resolve));
+        if (!this.paused) this.dispatchEvent(new Event('playing'));
+        if (this.paused) { const error = new Error('play interrupted by pause'); error.name = 'AbortError'; throw error; }
+      }
     }
     pause() { this.pauses++; this.paused = true; }
     end() { this.ended = true; this.paused = true; this.currentTime = this.duration; this.dispatchEvent(new Event('ended')); }
@@ -62,9 +69,10 @@ function fixture(segments, { durations = {}, ensure, playGate } = {}) {
   const state = {
     dubbingEnabled: true, keepOriginalAudioEnabled: true, dubSyncGeneration: 0,
     dubStartingToken: null, dubResumeTime: null, dubVideoWaiting: false, dubPlaybackBlocked: false,
-    activeDubSegmentId: null, dubPlayedSegmentIds: new Set(), dubRequestController: new AbortController()
+    activeDubSegmentId: null, dubBuffer: null, dubPlayedSegmentIds: new Set(), dubRequestController: new AbortController()
   };
-  const els = { video, keepOriginalAudio: new Media() };
+  const els = { video, keepOriginalAudio: new Media(), dubBufferStatus: new Media(),
+    dubBufferMessage: new Media(), dubRetryBtn: new Media(), dubContinueOriginalBtn: new Media() };
   const timers = new Map();
   let nextTimer = 0;
   const scope = vm.createContext({
@@ -82,7 +90,11 @@ function fixture(segments, { durations = {}, ensure, playGate } = {}) {
     'resyncLanguageTracks', 'playDubAudio', 'syncDubPlayback') + events + '\nupdateDubMix();', scope);
   return { scope, video, state, made, frames, timers, els,
     sync: () => scope.syncDubPlayback(),
-    event: name => video.dispatchEvent(new Event(name)),
+    event: name => {
+      if (name === 'play' || name === 'playing') video.paused = false;
+      video.dispatchEvent(new Event(name));
+      if (name === 'play') video.dispatchEvent(new Event('playing'));
+    },
     active: () => vm.runInContext('dubChannels.get(state.activeDubSegmentId)', scope),
     close: () => { state.dubbingEnabled = false; scope.stopDubPlayback(); scope.clearPreparedDubAudio(); }
   };
@@ -249,6 +261,7 @@ test('seek while synthesis is pending cannot start audio from the old timestamp'
     f.video.currentTime = 5;
     f.event('seeking');
     f.event('seeked');
+    f.event('play');
     await tick();
     request.resolve('a');
     await old;
@@ -305,5 +318,161 @@ test('decision hold lets the current voice finish while the video is paused', as
     assert.equal(audio.paused, false);
     audio.end();
     assert.equal(f.state.activeDubSegmentId, null);
+  } finally { f.close(); }
+});
+
+test('a slow current line holds the source and then starts from its first syllable', async () => {
+  const request = deferred();
+  const f = fixture([line('a', 1, 4)], { ensure: () => request.promise, durations: { a: 3 } });
+  try {
+    const pending = f.sync();
+    await tick();
+    assert.equal(f.video.paused, true);
+    assert.equal(f.video.currentTime, 1);
+    assert.equal(f.state.dubBuffer.loading, true);
+    assert.equal(f.els.dubRetryBtn.disabled, true);
+    request.resolve('a');
+    await pending;
+    assert.equal(f.video.paused, false);
+    assert.equal(f.active().currentTime, 0);
+    assert.equal(f.active().paused, false);
+    assert.equal(f.state.dubBuffer, null);
+  } finally { f.close(); }
+});
+
+test('callbacks delayed beyond the former 650ms cutoff still dub the current line', async () => {
+  const f = fixture([line('a', 1, 5)], { durations: { a: 4 } });
+  try {
+    f.video.currentTime = 2;
+    await f.sync();
+    assert.equal(f.state.activeDubSegmentId, 'a');
+    assert.equal(f.active().currentTime, 1);
+    assert.equal(f.active().paused, false);
+  } finally { f.close(); }
+});
+
+test('ready prefetched lines do not stop the video', async () => {
+  const segment = line('a', 1, 4);
+  const f = fixture([segment]);
+  try {
+    await f.scope.prepareDubAudio(segment);
+    const pauses = f.video.pauses;
+    await f.sync();
+    assert.equal(f.video.pauses, pauses);
+    assert.equal(f.state.dubBuffer, null);
+    assert.equal(f.active().plays, 1);
+  } finally { f.close(); }
+});
+
+test('a provider failure pauses visibly and a retry plays without consuming the line early', async () => {
+  let available = false;
+  const f = fixture([line('a', 1, 4)], { ensure: async () => available ? 'a' : null });
+  try {
+    await f.sync();
+    assert.equal(f.video.paused, true);
+    assert.equal(f.state.dubBuffer.loading, false);
+    assert.match(f.els.dubBufferMessage.textContent, /hazırlanamadı/);
+    assert.equal(f.state.dubPlayedSegmentIds.size, 0);
+    available = true;
+    await f.scope.retryDubBuffer();
+    await tick();
+    assert.equal(f.state.activeDubSegmentId, 'a');
+    assert.equal(f.state.dubBuffer, null);
+  } finally { f.close(); }
+});
+
+test('a provider cooldown cannot be bypassed by retrying the buffer', async () => {
+  const f = fixture([line('a', 1, 4)], { ensure: async () => null });
+  try {
+    await f.sync();
+    f.state.dubUnavailableUntil = Date.now() + 120000;
+    const plays = f.video.plays;
+    await f.scope.retryDubBuffer();
+    assert.equal(f.video.plays, plays);
+    assert.equal(f.video.paused, true);
+    assert.match(f.els.dubBufferMessage.textContent, /saniye sonra/);
+  } finally { f.close(); }
+});
+
+test('the user can continue without dubbing while generation is still pending', async () => {
+  const request = deferred();
+  const f = fixture([line('a', 1, 4)], { ensure: () => request.promise });
+  try {
+    const pending = f.sync();
+    await f.scope.retryDubBuffer(true);
+    assert.equal(f.state.dubbingEnabled, false);
+    assert.equal(f.state.dubBuffer, null);
+    assert.equal(f.video.paused, false);
+    request.resolve('a');
+    await pending;
+    assert.equal(f.state.activeDubSegmentId, null);
+    assert.ok(f.made.every(audio => audio.plays === 0));
+  } finally { f.close(); }
+});
+
+test('an obsolete selection cannot auto-resume after its voice finishes preparing', async () => {
+  for (const changed of ['adultSelectionToken', 'playbackGeneration', 'gameState']) {
+    const request = deferred();
+    const f = fixture([line('a', 1, 4)], { ensure: () => request.promise });
+    try {
+      const pending = f.sync();
+      f.state[changed] = 'changed';
+      request.resolve('a');
+      await pending;
+      assert.equal(f.video.plays, 0, changed);
+      assert.equal(f.video.paused, true);
+      assert.equal(f.state.dubBuffer, null);
+    } finally { f.close(); }
+  }
+});
+
+test('a source change while buffered cannot start a stale voice or source playback', async () => {
+  const request = deferred();
+  const f = fixture([line('a', 1, 4)], { ensure: () => request.promise });
+  try {
+    const pending = f.sync();
+    f.state.dubRequestController.abort();
+    f.state.dubRequestController = new AbortController();
+    f.scope.stopDubPlayback();
+    request.resolve('a');
+    await pending;
+    assert.equal(f.video.plays, 0);
+    assert.equal(f.state.activeDubSegmentId, null);
+    assert.equal(f.state.dubBuffer, null);
+  } finally { f.close(); }
+});
+
+test('an audio decode failure exposes recovery instead of leaving a heard-but-silent line', async () => {
+  const f = fixture([line('a', 1, 4)]);
+  try {
+    await f.sync();
+    const old = f.active();
+    old.error = { code: 3 };
+    old.dispatchEvent(new Event('error'));
+    assert.equal(f.video.paused, true);
+    assert.equal(f.state.dubPlayedSegmentIds.has('a'), false);
+    assert.equal(f.state.dubBuffer.loading, false);
+    await f.scope.retryDubBuffer();
+    await tick();
+    assert.notEqual(f.active(), old);
+    assert.equal(f.active().paused, false);
+  } finally { f.close(); }
+});
+
+test('buffering waits for the caller play promise to settle before pausing the source', async () => {
+  const request = deferred();
+  const f = fixture([line('a', 1, 4)], { ensure: () => request.promise, browserEvents: true });
+  try {
+    f.video.paused = true;
+    await assert.doesNotReject(f.video.play(), 'navigation must not receive AbortError from a dubbing hold');
+    await tick();
+    assert.equal(f.video.paused, true);
+    assert.equal(f.state.dubBuffer.loading, true);
+    request.resolve('a');
+    await tick();
+    assert.equal(f.video.paused, false);
+    assert.equal(f.state.dubBuffer, null);
+    assert.equal(f.active().paused, false);
+    assert.equal(f.active().plays, 1);
   } finally { f.close(); }
 });

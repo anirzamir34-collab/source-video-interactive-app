@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createDubRequestQueue } from '../public/dubbing-queue.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 function section(start, end) {
@@ -116,10 +117,10 @@ function dubbingFixture() {
   const state = {
     dialogue: { segments: [] }, dubRequestController: new AbortController(),
     dubUnavailableUntil: 0, dubCache: new Map(), dubRequests: new Map(), dubSyncGeneration: 0,
-    dubQueue: Promise.resolve(), dubVoiceIds: {}, dubStableSpeakerGenders: new Map(), dubPlayedSegmentIds: new Set()
+    dubQueue: createDubRequestQueue(), dubVoiceIds: {}, dubStableSpeakerGenders: new Map(), dubPlayedSegmentIds: new Set()
   };
   const f = fixture(functions('ensureDubSegment', 'resetDubState', 'prepareCompleteDubTimeline'), {
-    state, dubTimeline: () => state.dialogue.segments,
+    state, createDubRequestQueue, dubTimeline: () => state.dialogue.segments,
     getDubSegmentId: segment => segment.id, stableDubGender: () => 'female',
     activeElevenLabsApiKey: () => 'test-key', elevenLabsHeaders: value => value,
     logEngineEvent() {}, stopDubPlayback() {}, stopDubClock() {}, clearPreparedDubAudio() {}, checkAiUsageStatus() {},
@@ -203,6 +204,65 @@ test('preparation workers stop when their source changes', async () => {
   f.pending[0].resolve(voiceResponse());
   assert.equal(await preparation, 0);
   assert.equal(f.pending.length, 1);
+});
+
+test('cached speech remains playable during a provider cooldown', async () => {
+  const f = dubbingFixture();
+  const segment = { id: 'cached', turkishText: 'Merhaba' };
+  f.state.dialogue.segments = [segment];
+  f.state.dubCache.set('cached', 'cached-audio');
+  f.state.dubUnavailableUntil = Date.now() + 120000;
+  assert.equal(await f.scope.ensureDubSegment(segment, 100), 'cached-audio');
+  assert.equal(f.pending.length, 0);
+});
+
+test('the selected line overtakes queued preload work without duplicate synthesis', async () => {
+  const f = dubbingFixture();
+  const segments = ['running', 'preload', 'selected'].map(id => ({ id, turkishText: id }));
+  f.state.dialogue.segments = segments;
+  const running = f.scope.ensureDubSegment(segments[0]);
+  await tick();
+  const preload = f.scope.ensureDubSegment(segments[1]);
+  const selected = f.scope.ensureDubSegment(segments[2]);
+  const promoted = f.scope.ensureDubSegment(segments[2], 100);
+  f.pending[0].resolve(voiceResponse('running'));
+  await running;
+  await tick();
+  assert.equal(f.pending.length, 2);
+  f.pending[1].resolve(voiceResponse('selected'));
+  assert.match(await selected, /selected$/);
+  assert.equal(await promoted, await selected);
+  await tick();
+  f.pending[2].resolve(voiceResponse('preload'));
+  assert.match(await preload, /preload$/);
+  assert.equal(f.pending.length, 3);
+});
+
+test('queued requests respect a cooldown imposed after they were queued', async () => {
+  const f = dubbingFixture();
+  const segments = ['a', 'b'].map(id => ({ id, turkishText: 'Merhaba' }));
+  f.state.dialogue.segments = segments;
+  const first = f.scope.ensureDubSegment(segments[0]);
+  await tick();
+  const queued = f.scope.ensureDubSegment(segments[1]);
+  f.pending[0].resolve({ ok: false, json: async () => ({ reason: 'ELEVENLABS_RATE_LIMIT', retryAfterSeconds: 120 }) });
+  assert.equal(await first, null);
+  assert.equal(await queued, null);
+  assert.equal(f.pending.length, 1);
+});
+
+test('quota exhaustion does not silently change the chosen audio mode', async () => {
+  const f = dubbingFixture();
+  const segment = { id: 'a', turkishText: 'Merhaba' };
+  f.state.dialogue.segments = [segment];
+  f.state.dubbingEnabled = true;
+  const request = f.scope.ensureDubSegment(segment);
+  await tick();
+  f.pending[0].resolve({ ok: false, json: async () => ({ reason: 'ELEVENLABS_QUOTA_LIMIT' }) });
+  assert.equal(await request, null);
+  assert.equal(f.state.dubbingEnabled, true);
+  assert.equal(f.state.dubFailureReason, 'ELEVENLABS_QUOTA_LIMIT');
+  assert.ok(f.state.dubUnavailableUntil > Date.now());
 });
 
 test('changing source removes the previous time boundary listener and clears old analysis', () => {

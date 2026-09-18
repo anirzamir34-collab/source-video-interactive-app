@@ -196,6 +196,11 @@
       <div id="interactivePanel" class="tab-panel active">
         <div class="video-stage scene-player">
           <video id="video" playsinline disablepictureinpicture controlslist="nofullscreen noplaybackrate nodownload"></video>
+          <div id="dubBufferStatus" class="dub-buffer-status hidden" role="status" aria-live="polite">
+            <p id="dubBufferMessage"></p>
+            <button id="dubRetryBtn" type="button">Dublajı yeniden dene</button>
+            <button id="dubContinueOriginalBtn" type="button">Dublajı kapat ve devam et</button>
+          </div>
           <div id="subtitleOverlay" class="subtitle-overlay hidden" aria-live="polite">
             <span id="subtitleSpeaker" class="subtitle-speaker"></span>
             <span id="subtitleText" class="subtitle-text"></span>
