@@ -19,6 +19,7 @@ import {
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
   initialWarmupBeforeFirstPosition,
+  selectSequentialApproachChoices,
   movementsForPositionOccurrence,
   positionOccurrenceGroups,
   monotonicAdultPhase,
@@ -3738,11 +3739,12 @@ function renderAdultWarmupChoices(scene) {
 
 function renderAdultApproachChoices(scene) {
   const flow = currentAdultFlow();
-  const candidates = [
+  const approachPool = [
     ...initialWarmupBeforeFirstPosition(scene?.foreplay || [],
       (scene?.positions || []).filter(position => !isWarmupPosition(position))).map(item => ({
       kind: 'foreplay', id: item.id, label: item.label,
-      startTime: item.startTime, endTime: item.endTime
+      startTime: item.startTime, endTime: item.endTime,
+      playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
     })),
     ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
       const occurrenceId = positionOccurrenceGroups(position)[0]?.id;
@@ -3753,14 +3755,17 @@ function renderAdultApproachChoices(scene) {
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
         label: card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
         startTime: Math.min(...(card?.variants || movements || []).map(item => Number(item.loopStartTime)).filter(Number.isFinite), Number(position.startTime)),
-        endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime))
+        endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime)),
+        playCount: Math.max(0, ...((card?.variants || movements || []).map(item =>
+          Number(state.adultMovementPlayCounts.get(item.id) || 0)
+        )))
       }));
     })
-  ].sort((a, b) => Number(a.startTime) - Number(b.startTime))
-    .filter((item, index, items) => items.findIndex(candidate =>
-      candidate.kind === item.kind && candidate.id === item.id && candidate.movementId === item.movementId
-    ) === index)
-    .slice(0, 5);
+  ];
+  const candidates = selectSequentialApproachChoices(approachPool, {
+    timelineFloor: state.adultTimelineFloor,
+    limit: 5
+  });
 
   els.choices.innerHTML = '';
   els.choices.classList.remove('hidden');

@@ -44,6 +44,34 @@ export function initialWarmupBeforeFirstPosition(foreplay = [], positions = []) 
   });
 }
 
+export function selectSequentialApproachChoices(candidates = [], {
+  timelineFloor = 0,
+  limit = 5
+} = {}) {
+  const floor = Math.max(0, Number(timelineFloor) || 0);
+  const safeLimit = Math.max(1, Math.floor(Number(limit) || 5));
+  const seen = new Set();
+  const forward = (Array.isArray(candidates) ? candidates : [])
+    .filter(item => {
+      const startTime = Number(item?.startTime);
+      const endTime = Number(item?.endTime);
+      if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return false;
+      if (endTime <= floor + 0.05) return false;
+      const key = `${String(item?.kind || '')}:${String(item?.id || '')}:${String(item?.movementId || '')}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+
+  const fresh = forward.filter(item => Math.max(0, Number(item.playCount) || 0) === 0);
+  const repeated = forward
+    .filter(item => Math.max(0, Number(item.playCount) || 0) > 0)
+    .sort((a, b) => Number(a.playCount) - Number(b.playCount) || Number(a.startTime) - Number(b.startTime));
+
+  return [...fresh, ...repeated].slice(0, safeLimit);
+}
+
 export function verifiedPartnerTransition(action = {}) {
   const previousPartnerTrackId = String(action?.previousPartnerTrackId || '').trim();
   const partnerTrackId = String(action?.partnerTrackId || '').trim();
