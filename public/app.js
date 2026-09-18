@@ -1500,7 +1500,7 @@ async function ensureDubSegment(segment, priority = 0) {
     gender,
     speakerId: segment.speakerId || segmentId,
     voiceId: state.dubVoiceIds[gender] || '',
-    seed: gender === 'male' ? 417231 : 829117,
+    emotion: segment.emotion || 'uncertain',
     previousText: segments[segmentIndex - 1]?.turkishText || '',
     nextText: segments[segmentIndex + 1]?.turkishText || ''
   });

@@ -61,6 +61,18 @@ test('malformed cookie cannot crash login or authenticated route middleware', ()
   assert.equal(f.scope.readCookie({ headers: { cookie: 'other=x; videoquest_owner=hello%3Dworld' } }, 'videoquest_owner'), 'hello=world');
 });
 
+test('Eleven v3 delivery keeps neutral lines clean and maps grounded emotion conservatively', () => {
+  const f = fixture(section('function elevenV3DeliveryTag(', '\n\nasync function elevenLabsSynthesize('));
+  assert.equal(f.scope.elevenV3DeliveryTag('uncertain'), '');
+  assert.equal(f.scope.elevenV3DeliveryTag('neutral'), '');
+  assert.equal(f.scope.elevenV3DeliveryTag('excited'), '[excited]');
+  assert.equal(f.scope.elevenV3DeliveryTag('soft and relaxed'), '[softly]');
+  assert.equal(f.scope.elevenV3DeliveryTag('unrecognized-state'), '');
+  assert.match(source, /model_id:\s*'eleven_v3'/);
+  assert.match(source, /stability:\s*0\.5/);
+  assert.doesNotMatch(source, /model_id:\s*'eleven_multilingual_v2'/);
+});
+
 test('expired video token returns 410 without contacting any upstream', async () => {
   const f = proxyFixture({ fetchPublicUrl: () => assert.fail('expired token must not fetch') });
   f.req.query = { token: 'expired', url: 'https://example.com/ignored.mp4' };

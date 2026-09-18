@@ -2489,7 +2489,21 @@ async function elevenLabsSubscription(apiKey) {
   return response.json();
 }
 
-async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', seed, previousText = '', nextText = '' }) {
+function elevenV3DeliveryTag(emotion = '') {
+  const value = String(emotion || '').trim().toLowerCase();
+  if (!value || /uncertain|unknown|neutral|normal/.test(value)) return '';
+  if (/whisper|fısılda|breathy|nefesli/.test(value)) return '[whispers]';
+  if (/excited|energetic|enthusiastic|heyecan|coşku/.test(value)) return '[excited]';
+  if (/happy|joy|cheerful|mutlu|neşeli/.test(value)) return '[warmly]';
+  if (/sad|melanch|üzgün|hüzün/.test(value)) return '[sad]';
+  if (/angry|furious|annoyed|kızgın|öfkeli/.test(value)) return '[angry]';
+  if (/fear|nervous|anxious|afraid|gergin|kork/.test(value)) return '[nervously]';
+  if (/curious|question|merak/.test(value)) return '[curious]';
+  if (/calm|soft|gentle|relaxed|sakin|yumuşak|rahat/.test(value)) return '[softly]';
+  return '';
+}
+
+async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotion = '', previousText = '', nextText = '' }) {
   const voiceSet = await elevenLabsVoices(apiKey);
   const requested = String(voiceId || '').trim();
   const voice = voiceSet.voices.find(item => item.voice_id === requested) ||
@@ -2502,18 +2516,17 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', seed, 
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
       body: JSON.stringify({
-        text,
-        model_id: 'eleven_multilingual_v2',
+        text: [elevenV3DeliveryTag(emotion), text].filter(Boolean).join(' '),
+        model_id: 'eleven_v3',
         language_code: 'tr',
-        seed: Number.isInteger(Number(seed)) ? Number(seed) : undefined,
         previous_text: String(previousText || '').slice(-600) || undefined,
         next_text: String(nextText || '').slice(0, 600) || undefined,
         voice_settings: {
-          stability: 0.95,
-          similarity_boost: 0.9,
-          style: 0,
-          use_speaker_boost: false,
-          speed: 1
+          // Eleven v3 Natural mode: expressive without the hallucination risk
+          // of Creative or the mechanical delivery of Robust.
+          stability: 0.5,
+          similarity_boost: 0.82,
+          use_speaker_boost: true
         }
       })
     }
@@ -2586,7 +2599,7 @@ app.post('/api/elevenlabs-dub-segment', async (req, res) => {
   try {
     const audio = await elevenLabsSynthesize({
       apiKey, text, gender, voiceId,
-      seed: req.body?.seed,
+      emotion: req.body?.emotion,
       previousText: req.body?.previousText,
       nextText: req.body?.nextText
     });
