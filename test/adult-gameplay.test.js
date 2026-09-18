@@ -30,6 +30,7 @@ import {
   MALE_ORGASM_CYCLE_SECONDS,
   MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
   monotonicAdultPhase,
+  maleOrgasmPlaybackMultiplier,
   movementBelongsToVerifiedPosition,
   normalizeOutcomeUnlockProgress,
   playbackRateForTapTempo,
@@ -76,12 +77,14 @@ test('approach choices advance through verified source chronology instead of sta
   );
 });
 
-test('lust and orgasm progression is slower and male/female cycles are staggered', () => {
+test('lust and orgasm progression remains bounded and uses balanced cycle lengths', () => {
   const delta = adultPlaybackProgressDelta({ elapsed: 0.25, maleRate: 1, femaleRate: 1 });
   assert.ok(delta.lust < 0.06);
-  assert.ok(delta.femaleOrgasm > delta.maleOrgasm);
+  assert.ok(delta.maleOrgasm > 0);
+  assert.ok(delta.femaleOrgasm > 0);
   assert.ok(FEMALE_ORGASM_CYCLE_SECONDS >= 150);
-  assert.ok(MALE_ORGASM_CYCLE_SECONDS - FEMALE_ORGASM_CYCLE_SECONDS >= 60);
+  assert.ok(MALE_ORGASM_CYCLE_SECONDS >= 140);
+  assert.ok(MALE_ORGASM_CYCLE_SECONDS <= 190);
 
   const warmup = adultPlaybackProgressDelta({ elapsed: 0.25, warmup: true });
   assert.equal(warmup.maleOrgasm, 0);
@@ -89,6 +92,43 @@ test('lust and orgasm progression is slower and male/female cycles are staggered
   assert.equal(shouldAdvanceMaleOrgasm(34.9, 0), false);
   assert.equal(shouldAdvanceMaleOrgasm(35, 0), true);
   assert.equal(shouldAdvanceMaleOrgasm(0, 1), true);
+});
+
+test('male orgasm starts around the middle and follows verified movement intensity', () => {
+  const base = {
+    requiredCorePlaySeconds: 100,
+    coreVisitedCount: 1,
+    maleRate: 1
+  };
+  assert.equal(maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 25, movementTempo: 'moderate'
+  }), 0);
+  assert.ok(maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 43, movementTempo: 'moderate'
+  }) > 0);
+  assert.ok(maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 38, movementTempo: 'fast'
+  }) > 0);
+  assert.equal(maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 38, movementTempo: 'slow'
+  }), 0);
+
+  const slow = maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 60, movementTempo: 'slow'
+  });
+  const moderate = maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 60, movementTempo: 'moderate'
+  });
+  const fast = maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 60, movementTempo: 'fast'
+  });
+  assert.ok(slow < moderate);
+  assert.ok(moderate < fast);
+  assert.ok(slow >= 0.7);
+  assert.ok(fast <= 1.45);
+  assert.equal(maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 100, coreVisitedCount: 0, movementTempo: 'fast'
+  }), 0);
 });
 
 test('adult graph report exposes duplicate family tabs and movement variants', () => {

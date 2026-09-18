@@ -24,6 +24,7 @@ import {
   positionOccurrenceGroups,
   positionOccurrenceForMovement,
   monotonicAdultPhase,
+  maleOrgasmPlaybackMultiplier,
   movementBelongsToVerifiedPosition,
   nearestAvailableTempo,
   normalizeOutcomeUnlockProgress,
@@ -5176,12 +5177,17 @@ function updateAdultPlayback(now, mediaTime) {
       state.adultClimaxProgress + elapsed * ratePerSecond * movementRate
     );
     const corePositions = (state.adultScene?.positions || []).filter(item => !isWarmupPosition(item) && !isBonusPosition(item));
-    const requiredPositions = Math.min(2, Math.max(1, corePositions.length));
     const visitedCore = corePositions.filter(item => state.adultVisitedPositionIds.has(item.id)).length;
-    const maleOrgasmActive = state.adultCorePlaySeconds >= requiredSeconds * 0.65 && visitedCore >= requiredPositions;
-    if (maleOrgasmActive) {
+    const maleOrgasmMultiplier = maleOrgasmPlaybackMultiplier({
+      corePlaySeconds: state.adultCorePlaySeconds,
+      requiredCorePlaySeconds: requiredSeconds,
+      coreVisitedCount: visitedCore,
+      movementTempo: movement.movementTempo,
+      maleRate: movement.maleProgressRate || 1
+    });
+    if (maleOrgasmMultiplier > 0) {
       state.adultMaleOrgasmProgress = Math.min(100,
-        state.adultMaleOrgasmProgress + progress.maleOrgasm
+        state.adultMaleOrgasmProgress + progress.maleOrgasm * maleOrgasmMultiplier
       );
     }
     state.adultFemaleOrgasmProgress = 0;

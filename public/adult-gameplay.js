@@ -295,7 +295,7 @@ export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
 export const MIN_CORE_PLAY_SECONDS_FOR_OUTCOME = 75;
 export const MIN_VERIFIED_POSITION_SECONDS = 3;
 export const FEMALE_ORGASM_CYCLE_SECONDS = 165;
-export const MALE_ORGASM_CYCLE_SECONDS = 235;
+export const MALE_ORGASM_CYCLE_SECONDS = 150;
 
 export function isPlayableVerifiedPositionDuration(startTime, endTime) {
   const start = Number(startTime);
@@ -323,6 +323,30 @@ export function adultPlaybackProgressDelta({
 export function shouldAdvanceMaleOrgasm(femaleProgress = 0, femaleOrgasmCount = 0) {
   return Math.max(0, Number(femaleOrgasmCount) || 0) > 0 ||
     clamp(femaleProgress, 0, 100) >= 35;
+}
+
+export function maleOrgasmPlaybackMultiplier({
+  corePlaySeconds = 0,
+  requiredCorePlaySeconds = MIN_CORE_PLAY_SECONDS_FOR_OUTCOME,
+  coreVisitedCount = 0,
+  movementTempo = 'unclear',
+  maleRate = 1
+} = {}) {
+  if (Math.max(0, Number(coreVisitedCount) || 0) < 1) return 0;
+
+  const played = Math.max(0, Number(corePlaySeconds) || 0);
+  const required = Math.max(MIN_CORE_PLAY_SECONDS_FOR_OUTCOME, Number(requiredCorePlaySeconds) || 0);
+  const sceneRatio = clamp(played / required, 0, 1.5);
+  const safeMaleRate = clamp(maleRate, 0.4, 2);
+  const tempo = String(movementTempo || '').toLowerCase();
+  const thresholdShift = tempo === 'fast' ? -0.05 : tempo === 'slow' ? 0.05 : 0;
+  const activationRatio = clamp(0.42 - (safeMaleRate - 1) * 0.08 + thresholdShift, 0.3, 0.5);
+
+  if (sceneRatio < activationRatio) return 0;
+
+  const tempoFactor = tempo === 'fast' ? 1.3 : tempo === 'slow' ? 0.72 : tempo === 'moderate' ? 1 : 0.9;
+  const ramp = 0.75 + Math.min(0.35, (sceneRatio - activationRatio) * 0.7);
+  return clamp(tempoFactor * ramp, 0.7, 1.45);
 }
 
 export function averageAdultProgress(maleProgress, femaleProgress) {
