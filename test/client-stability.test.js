@@ -104,7 +104,7 @@ test('quota status does not advertise an unused provider as ready for dubbing', 
   const badges = [];
   const f = fixture(functions('checkAiUsageStatus'), {
     fetch: async () => ({ json: async () => ({ subtitles: { state: 'available' }, dubbing: { state: 'available' } }) }),
-    geminiRequestHeaders: () => ({}), activeElevenLabsApiKey: () => '', activeAzureSpeechKey: () => 'configured',
+    geminiRequestHeaders: () => ({}), activeElevenLabsApiKey: () => '',
     renderQuotaBadge: (_el, status) => badges.push(status)
   });
   await f.scope.checkAiUsageStatus();
@@ -204,6 +204,26 @@ test('preparation workers stop when their source changes', async () => {
   f.pending[0].resolve(voiceResponse());
   assert.equal(await preparation, 0);
   assert.equal(f.pending.length, 1);
+});
+
+test('complete preparation reports every translated line ready before playback', async () => {
+  const f = dubbingFixture();
+  const segments = ['one', 'two', 'three'].map(id => ({ id, turkishText: `Türkçe ${id}` }));
+  const progress = [];
+  f.state.dialogue.segments = segments;
+  f.state.dubbingEnabled = true;
+  const preparation = f.scope.prepareCompleteDubTimeline(
+    segments,
+    1,
+    (ready, total) => progress.push([ready, total])
+  );
+  for (let index = 0; index < segments.length; index += 1) {
+    await tick();
+    f.pending[index].resolve(voiceResponse(`audio-${index}`));
+  }
+  assert.equal(await preparation, segments.length);
+  assert.deepEqual(progress.at(-1), [segments.length, segments.length]);
+  assert.deepEqual([...f.state.dubCache.keys()], ['one', 'two', 'three']);
 });
 
 test('cached speech remains playable during a provider cooldown', async () => {

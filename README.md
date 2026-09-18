@@ -28,7 +28,7 @@ Başlatmadan önce `APP_PASSWORD` tanımlanmalıdır. Tanımlı değilse uygulam
 
 Hareket analizi Gemini storyboard uçlarını kullanır. Diyalog çözümlemesi ve çeviri ayrı Gemini işlemleridir. `/api/external-analyze` ayrıca yapılandırılmış harici servise dosya iletir; harici servisin kullanılabilirliği Gemini'den ayrı değerlendirilmelidir.
 
-Mevcut istemci dublajı ElevenLabs kullanır. Azure/Gemini ses uçlarının sunucuda bulunması, oynatıcının bunlara otomatik geçeceği anlamına gelmez. Arayüz dublaj için gereken ElevenLabs anahtarını açıkça belirtir.
+Gemini konuşma çözümleme ve Türkçe çeviri için, ElevenLabs ise oynatıcı dublaj seslerini üretmek için kullanılır. Dublaj modu bütün zamanlanmış Türkçe konuşma bloklarını oynatma başlamadan önce hazırlar.
 
 ## Yapılandırma
 
@@ -53,7 +53,7 @@ Tarayıcıdan girilen sağlayıcı anahtarları oturum depolamasında tutulur. D
 - Storyboard: en çok 20 dosya, her biri en çok 2 MiB.
 - Tarayıcıya tam indirme: en çok 600 MiB; içerik uzunluğu bildirilmediğinde de sınır uygulanır.
 - Video proxy yanıt başlığı bekleme süresi: 30 saniye. Aktarım hareketsizliği: 45 saniye. HLS dönüşüm üst süresi: 30 dakika.
-- Azure/ElevenLabs sunucu istek süresi: 60 saniye. İstemci dublaj isteği: 70 saniye.
+- ElevenLabs sunucu istek süresi: 60 saniye. İstemci dublaj isteği: 70 saniye.
 
 Tamamlanan analiz bölümleri aynı sekmede yeniden kullanılabilir. Okunamayan bölümler doğrulanmış içerik olarak gösterilmez. Analiz oturumları, video bağlantı belirteçleri ve yükleme oturumları kalıcı bir veritabanında tutulmaz; sayfa yenileme veya sunucu yeniden başlatma sonrasında devam garantisi yoktur.
 

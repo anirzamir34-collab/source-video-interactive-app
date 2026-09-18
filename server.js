@@ -359,6 +359,9 @@ ${storyContextMemory}
 - UNKNOWN means the source does not establish it. Never silently promote unknown information into a fact.
 - Sensitive relationship/background labels such as ex-partner, spouse, step-parent, parent, sibling, relative, boss, employee, teacher, landlord or neighbor may be FACT only when dialogue explicitly states it or unmistakable source evidence proves it. Mere age difference, familiarity, location, clothing, intimacy or body language is never enough.
 - Example: two familiar people meeting at a house does NOT prove 'ex-girlfriend' or 'stepfather'. If dialogue explicitly says they broke up, 'ex-partner' may be a fact. Otherwise keep the exact relationship unknown or as a cautious inference.
+- Give each recurring adult a stable character entry with participantTrackId, displayName, sourceRole, evidenceLevel, confidence and evidence. Preserve an explicitly spoken proper name exactly; otherwise use the most specific non-sensitive source-grounded story role instead of repeatedly reducing a known character to generic age/gender wording.
+- Carry verified character names and non-sensitive story roles into sceneTitle, sceneGoal and narrativeChoiceLabel whenever that makes the real action clearer. Keep the same wording across chunks and never rename a recurring character.
+- Never infer age, kinship or another sensitive relationship from appearance. If dialogue explicitly establishes a sensitive family relationship, retain it only as neutral factual story context; do not turn that relationship label into sexualized choice wording, a reward, or invented motivation.
 - Return top-level storyContext with synopsisTr, currentSceneTitle, currentSceneGoal, setting, emotionalTone, characters[], relationships[], facts[], inferences[], unknowns[].
 - Every relationship entry must contain from, to, relation, evidenceLevel, confidence and evidence.
 - Every returned action must additionally contain narrativeChoiceLabel, narrativeReason, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence.
@@ -1992,51 +1995,40 @@ Rules:
       }
 
       // If multimodal enrichment returns empty/truncated output but dedicated ASR succeeded,
-      // recover subtitles from text-only translation so timestamps/speakers are preserved.
+      // translate in bounded batches so a long response cannot silently lose later lines.
       if (!parsed && asr?.segments?.length) {
         console.warn('[gemini-dialogue-fallback] switching to text-only Turkish translation');
         const translationInput = asr.segments.map(({ segmentId, originalText }) => ({ segmentId, originalText }));
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
-          try {
-            const translationResponse = await ai.models.generateContent({
-              model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
-              contents: [{
-                role: 'user',
-                parts: [{ text: `Translate every supplied dialogue segment into natural Turkish. Preserve segmentId exactly. Do not omit, censor, summarize, merge, split or reorder lines. Return JSON only as {\"segments\":[{\"segmentId\":\"...\",\"turkishText\":\"...\",\"gender\":\"male|female|uncertain\",\"emotion\":\"...\",\"confidence\":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(translationInput)}` }]
-              }],
-              config: { responseMimeType: 'application/json', temperature: 0.05, maxOutputTokens: 16384 }
-            });
-            addGeminiUsage(dialogueUsage, translationResponse?.usageMetadata);
-            const raw = String(translationResponse.text || '').trim();
-            if (!raw) throw new Error('GEMINI_EMPTY_TEXT_TRANSLATION');
-            parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
-            break;
-          } catch (error) {
-            lastDialogueError = error;
-            console.warn(`[gemini-dialogue-text-fallback-retry] attempt ${attempt}/3: ${error?.message || error}`);
-            if (attempt < 3) await wait(attempt * 1200);
+        const translatedSegments = [];
+        for (let offset = 0; offset < translationInput.length; offset += 30) {
+          const batch = translationInput.slice(offset, offset + 30);
+          let translatedBatch = null;
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+              const translationResponse = await ai.models.generateContent({
+                model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
+                contents: [{ role: 'user', parts: [{ text: `Translate every supplied dialogue segment into natural Turkish. Preserve segmentId exactly. Do not omit, censor, summarize, merge, split or reorder lines. Return JSON only as {\"segments\":[{\"segmentId\":\"...\",\"turkishText\":\"...\",\"gender\":\"male|female|uncertain\",\"emotion\":\"...\",\"confidence\":0.0}]}\n\nSEGMENTS:\n${JSON.stringify(batch)}` }] }],
+                config: { responseMimeType: 'application/json', temperature: 0.05, maxOutputTokens: 8192 }
+              });
+              addGeminiUsage(dialogueUsage, translationResponse?.usageMetadata);
+              const raw = String(translationResponse.text || '').trim();
+              if (!raw) throw new Error('GEMINI_EMPTY_TEXT_TRANSLATION');
+              translatedBatch = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
+              break;
+            } catch (error) {
+              lastDialogueError = error;
+              console.warn(`[gemini-dialogue-text-fallback-retry] batch ${offset / 30 + 1}, attempt ${attempt}/3: ${error?.message || error}`);
+              if (attempt < 3) await wait(attempt * 1200);
+            }
           }
+          if (!translatedBatch?.segments?.length) throw lastDialogueError || new Error('GEMINI_TRANSLATION_BATCH_FAILED');
+          translatedSegments.push(...translatedBatch.segments);
         }
+        parsed = { hasDialogue: true, segments: translatedSegments, fallbackMode: 'asr-text-translation' };
       }
 
       if (!parsed && asr?.segments?.length) {
-        // Last-resort continuity: return grounded transcript segments instead of losing all subtitles.
-        // For already-Turkish speech this is correct; for other languages the UI still has timed dialogue.
-        parsed = {
-          hasDialogue: true,
-          segments: asr.segments.map(item => ({
-            segmentId: item.segmentId,
-            speakerId: item.speakerId,
-            startTime: item.startTime,
-            endTime: item.endTime,
-            originalText: item.originalText,
-            turkishText: item.originalText,
-            gender: 'uncertain',
-            emotion: 'uncertain',
-            confidence: 0.5
-          })),
-          fallbackMode: 'asr-original-text'
-        };
+        throw lastDialogueError || new Error('GEMINI_TURKISH_TRANSLATION_REQUIRED');
       }
 
       if (!parsed) throw lastDialogueError || new Error('GEMINI_DIALOGUE_JSON_PARSE_FAILED');
@@ -2073,9 +2065,16 @@ Rules:
           }
         }
 
+        const untranslated = asr.segments.filter(grounded =>
+          !String(enriched.get(grounded.segmentId)?.turkishText || '').trim()
+        );
+        if (untranslated.length) {
+          throw new Error(`GEMINI_TRANSLATION_INCOMPLETE:${untranslated.length}/${asr.segments.length}`);
+        }
+
         const groundedSegments = asr.segments.map(grounded => {
           const item = enriched.get(grounded.segmentId) || {};
-          return { ...item, segmentId: grounded.segmentId, speakerId: grounded.speakerId, startTime: grounded.startTime, endTime: grounded.endTime, originalText: grounded.originalText, turkishText: String(item.turkishText || grounded.originalText).trim() };
+          return { ...item, segmentId: grounded.segmentId, speakerId: grounded.speakerId, startTime: grounded.startTime, endTime: grounded.endTime, originalText: grounded.originalText, turkishText: String(item.turkishText).trim() };
         });
 
         // The multimodal pass can recover whispers and overlapping lines missed
@@ -2403,102 +2402,6 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
   }
 });
 
-function azureSpeechCredentials(req) {
-  const key = String(req.get('X-Azure-Speech-Key') || '').trim();
-  const region = String(req.get('X-Azure-Speech-Region') || '').trim().toLowerCase();
-  if (key.length < 20 || key.length > 256 || /\s/.test(key)) return null;
-  if (!/^[a-z0-9-]{2,40}$/.test(region)) return null;
-  return { key, region };
-}
-
-function xmlEscape(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-async function azureSpeechSynthesize({ key, region, text, gender }) {
-  const voiceName = gender === 'male' ? 'tr-TR-AhmetNeural' : 'tr-TR-EmelNeural';
-  const ssml =
-    `<speak version="1.0" xml:lang="tr-TR">` +
-    `<voice name="${voiceName}">${xmlEscape(text)}</voice>` +
-    `</speak>`;
-  const response = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
-    method: 'POST',
-    signal: AbortSignal.timeout(60000),
-    headers: {
-      'Ocp-Apim-Subscription-Key': key,
-      'Content-Type': 'application/ssml+xml',
-      'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-      'User-Agent': 'VIDEOQUEST-AI'
-    },
-    body: ssml
-  });
-  if (!response.ok) {
-    const details = await response.text().catch(() => '');
-    const error = new Error(`AZURE_SPEECH_${response.status}: ${details.slice(0, 300)}`);
-    error.status = response.status;
-    throw error;
-  }
-  return {
-    voiceName,
-    audioBase64: Buffer.from(await response.arrayBuffer()).toString('base64')
-  };
-}
-
-app.post('/api/azure-speech-status', async (req, res) => {
-  const credentials = azureSpeechCredentials(req);
-  if (!credentials) {
-    return res.status(400).json({ ok: false, state: 'invalid', message: 'Geçerli Azure Speech anahtarı ve bölgesi gönderilmedi.' });
-  }
-  try {
-    await azureSpeechSynthesize({ ...credentials, text: 'Merhaba', gender: 'female' });
-    return res.json({ ok: true, state: 'available', message: `Azure Speech çalışıyor · ${credentials.region}` });
-  } catch (error) {
-    const status = Number(error?.status) || 502;
-    const quota = status === 429;
-    return res.status(status === 401 || status === 403 || quota ? status : 502).json({
-      ok: false,
-      state: quota ? 'rate_limited' : 'invalid',
-      reason: quota ? 'AZURE_SPEECH_QUOTA_LIMIT' : 'AZURE_SPEECH_AUTH_ERROR',
-      message: quota ? 'Azure Speech F0 kotası veya hız sınırı dolu.' : 'Azure Speech anahtarı ya da bölgesi doğrulanamadı.'
-    });
-  }
-});
-
-app.post('/api/azure-dub-segment', async (req, res) => {
-  const credentials = azureSpeechCredentials(req);
-  if (!credentials) return res.status(400).json({ available: false, reason: 'AZURE_SPEECH_NOT_CONFIGURED' });
-  const text = String(req.body?.text || '').trim();
-  const gender = String(req.body?.gender || 'uncertain');
-  const speakerId = String(req.body?.speakerId || 'speaker');
-  if (!text || text.length > 1200) return res.status(400).json({ available: false, reason: 'INVALID_DUB_TEXT' });
-  try {
-    const audio = await azureSpeechSynthesize({ ...credentials, text, gender });
-    return res.json({
-      available: true,
-      provider: 'azure',
-      speakerId,
-      gender,
-      voiceName: audio.voiceName,
-      mimeType: 'audio/mpeg',
-      audioBase64: audio.audioBase64
-    });
-  } catch (error) {
-    const status = Number(error?.status) || 502;
-    const quota = status === 429;
-    return res.status(quota ? 429 : (status === 401 || status === 403 ? status : 502)).json({
-      available: false,
-      reason: quota ? 'AZURE_SPEECH_QUOTA_LIMIT' : 'AZURE_DUB_ERROR',
-      retryAfterSeconds: quota ? 60 : undefined,
-      message: quota ? 'Azure Speech F0 kotası veya hız sınırı dolu.' : 'Azure Türkçe dublaj sesi üretilemedi.'
-    });
-  }
-});
-
 const elevenLabsVoiceCache = new Map();
 
 async function elevenLabsRequest(apiKey, path, options = {}) {
@@ -2687,6 +2590,12 @@ app.post('/api/elevenlabs-dub-segment', async (req, res) => {
       previousText: req.body?.previousText,
       nextText: req.body?.nextText
     });
+    console.info('[elevenlabs-dub-ok]', JSON.stringify({
+      speakerId: speakerId.slice(0, 80),
+      gender,
+      characters: text.length,
+      voiceId: audio.voiceId
+    }));
     return res.json({
       available: true,
       provider: 'elevenlabs',

@@ -220,12 +220,6 @@ const els = {
   testElevenLabsBtn: $('testElevenLabsBtn'),
   clearElevenLabsBtn: $('clearElevenLabsBtn'),
   elevenLabsStatus: $('elevenLabsStatus'),
-  azureSpeechKeyInput: $('azureSpeechKeyInput'),
-  azureSpeechRegionInput: $('azureSpeechRegionInput'),
-  saveAzureSpeechBtn: $('saveAzureSpeechBtn'),
-  testAzureSpeechBtn: $('testAzureSpeechBtn'),
-  clearAzureSpeechBtn: $('clearAzureSpeechBtn'),
-  azureSpeechStatus: $('azureSpeechStatus'),
   motionMode: $('motionMode'),
   subtitleMode: $('subtitleMode'),
   dubMode: $('dubMode'),
@@ -530,8 +524,6 @@ function renderQuotaBadge(element, status) {
 
 const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
 const ELEVENLABS_SESSION_KEY = 'videoquest_elevenlabs_api_key';
-const AZURE_SPEECH_SESSION_KEY = 'videoquest_azure_speech_key';
-const AZURE_SPEECH_REGION_KEY = 'videoquest_azure_speech_region';
 
 function activeGeminiApiKey() {
   try { return String(sessionStorage.getItem(GEMINI_SESSION_KEY) || '').trim(); }
@@ -697,100 +689,6 @@ function clearElevenLabsKey() {
   checkAiUsageStatus();
 }
 
-function activeAzureSpeechKey() {
-  try { return String(sessionStorage.getItem(AZURE_SPEECH_SESSION_KEY) || '').trim(); }
-  catch { return ''; }
-}
-
-function activeAzureSpeechRegion() {
-  try { return String(sessionStorage.getItem(AZURE_SPEECH_REGION_KEY) || 'eastus').trim().toLowerCase(); }
-  catch { return 'eastus'; }
-}
-
-function azureSpeechHeaders(base = {}) {
-  const key = activeAzureSpeechKey();
-  const region = activeAzureSpeechRegion();
-  return key ? { ...base, 'X-Azure-Speech-Key': key, 'X-Azure-Speech-Region': region } : base;
-}
-
-function renderAzureSpeechState() {
-  const active = Boolean(activeAzureSpeechKey());
-  if (els.azureSpeechStatus) {
-    els.azureSpeechStatus.className = active ? 'available' : '';
-    els.azureSpeechStatus.textContent = active
-      ? `Azure anahtarı tanımlı · ${activeAzureSpeechRegion()}`
-      : 'Anahtar girilmedi';
-  }
-  els.testAzureSpeechBtn?.classList.toggle('hidden', !active);
-  els.clearAzureSpeechBtn?.classList.toggle('hidden', !active);
-  if (active && els.azureSpeechKeyInput) els.azureSpeechKeyInput.value = '';
-  if (els.azureSpeechRegionInput) els.azureSpeechRegionInput.value = activeAzureSpeechRegion();
-}
-
-function saveAzureSpeechKey() {
-  const key = String(els.azureSpeechKeyInput?.value || '').trim();
-  const region = String(els.azureSpeechRegionInput?.value || 'eastus').trim().toLowerCase();
-  if (key.length < 20 || key.length > 256 || /\s/.test(key)) {
-    if (els.azureSpeechStatus) els.azureSpeechStatus.textContent = 'Anahtar eksik veya geçersiz';
-    return;
-  }
-  if (!/^[a-z0-9-]{2,40}$/.test(region)) {
-    if (els.azureSpeechStatus) els.azureSpeechStatus.textContent = 'Bölge geçersiz';
-    return;
-  }
-  try {
-    sessionStorage.setItem(AZURE_SPEECH_SESSION_KEY, key);
-    sessionStorage.setItem(AZURE_SPEECH_REGION_KEY, region);
-  } catch {}
-  resetDubState();
-  renderAzureSpeechState();
-  testAzureSpeechKey();
-}
-
-async function testAzureSpeechKey() {
-  if (!activeAzureSpeechKey()) return;
-  if (els.testAzureSpeechBtn) {
-    els.testAzureSpeechBtn.disabled = true;
-    els.testAzureSpeechBtn.textContent = 'Test...';
-  }
-  if (els.azureSpeechStatus) {
-    els.azureSpeechStatus.className = 'checking';
-    els.azureSpeechStatus.textContent = 'Azure bağlantısı kontrol ediliyor';
-  }
-  try {
-    const response = await fetch('/api/azure-speech-status', {
-      method: 'POST',
-      headers: azureSpeechHeaders({ 'Content-Type': 'application/json' }),
-      body: '{}'
-    });
-    const body = await response.json().catch(() => ({}));
-    if (els.azureSpeechStatus) {
-      els.azureSpeechStatus.className = response.ok ? 'available' : 'invalid';
-      els.azureSpeechStatus.textContent = body.message || (response.ok ? 'Azure Speech çalışıyor' : 'Azure kullanılamıyor');
-    }
-  } catch {
-    if (els.azureSpeechStatus) {
-      els.azureSpeechStatus.className = 'invalid';
-      els.azureSpeechStatus.textContent = 'Azure bağlantısı kurulamadı';
-    }
-  } finally {
-    if (els.testAzureSpeechBtn) {
-      els.testAzureSpeechBtn.disabled = false;
-      els.testAzureSpeechBtn.textContent = 'Test et';
-    }
-  }
-}
-
-function clearAzureSpeechKey() {
-  try {
-    sessionStorage.removeItem(AZURE_SPEECH_SESSION_KEY);
-    sessionStorage.removeItem(AZURE_SPEECH_REGION_KEY);
-  } catch {}
-  if (els.azureSpeechKeyInput) els.azureSpeechKeyInput.value = '';
-  resetDubState();
-  renderAzureSpeechState();
-}
-
 async function checkAiUsageStatus() {
   try {
     const response = await fetch('/api/ai-usage-status', {
@@ -874,15 +772,8 @@ els.clearElevenLabsBtn?.addEventListener('click', clearElevenLabsKey);
 els.elevenLabsApiKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveElevenLabsKey();
 });
-els.saveAzureSpeechBtn?.addEventListener('click', saveAzureSpeechKey);
-els.testAzureSpeechBtn?.addEventListener('click', testAzureSpeechKey);
-els.clearAzureSpeechBtn?.addEventListener('click', clearAzureSpeechKey);
-els.azureSpeechKeyInput?.addEventListener('keydown', event => {
-  if (event.key === 'Enter') saveAzureSpeechKey();
-});
 renderGeminiApiKeyState();
 renderElevenLabsState();
-renderAzureSpeechState();
 
 function releaseVideoObjectUrl() {
   if (!state.videoObjectUrl) return;
@@ -1750,7 +1641,7 @@ function prefetchDubSegmentsAround(videoTime) {
     .forEach((segment, index) => void prepareDubAudio(segment, 20 - index));
 }
 
-async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
+async function prepareCompleteDubTimeline(segments = [], concurrency = 1, onProgress = null) {
   const requestController = state.dubRequestController;
   const queue = (Array.isArray(segments) ? segments : [])
     .filter(segment => String(segment?.turkishText || '').trim());
@@ -1760,7 +1651,13 @@ async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
       const index = cursor;
       cursor += 1;
       if (index >= queue.length) return;
-      await ensureDubSegment(queue[index]);
+      await ensureDubSegment(queue[index], 10);
+      if (typeof onProgress === 'function') {
+        onProgress(
+          queue.filter(segment => state.dubCache.has(getDubSegmentId(segment))).length,
+          queue.length
+        );
+      }
     }
   };
   await Promise.all(Array.from(
@@ -1771,7 +1668,13 @@ async function prepareCompleteDubTimeline(segments = [], concurrency = 1) {
   const missing = queue.filter(segment => !state.dubCache.has(getDubSegmentId(segment)));
   for (const segment of missing) {
     if (!state.dubbingEnabled || requestController !== state.dubRequestController) break;
-    await ensureDubSegment(segment);
+    await ensureDubSegment(segment, 10);
+    if (typeof onProgress === 'function') {
+      onProgress(
+        queue.filter(item => state.dubCache.has(getDubSegmentId(item))).length,
+        queue.length
+      );
+    }
   }
   return queue.filter(segment => state.dubCache.has(getDubSegmentId(segment))).length;
 }
@@ -2079,15 +1982,22 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
         updateDubMix();
-        // One TTS request per line for the complete video can consume the
-        // model's daily request quota before playback starts. Prime only a
-        // rolling window; the existing playback prefetch keeps filling it.
-        els.analysisTitle.textContent = 'Türkçe dublaj başlangıcı hazırlanıyor';
-        els.analysisOutput.textContent = 'İlk konuşmalar hazırlanıyor; devamı oynatma sırasında önden yüklenecek…';
+        const dubSegments = dialogue.dubSegments || dialogue.segments;
+        els.analysisState.textContent = 'PREPARING_DUB';
+        els.analysisTitle.textContent = 'Türkçe dublajın tamamı hazırlanıyor';
+        els.analysisOutput.textContent = `0/${dubSegments.length} konuşma bloğu hazır…`;
         if (!state.dubVoiceIds.female || !state.dubVoiceIds.male) await testElevenLabsKey();
-        const initialSegments = nextDialogueSegments(dialogue.dubSegments || dialogue.segments, 0, 2);
+        const ready = await prepareCompleteDubTimeline(dubSegments, 1, (completed, total) => {
+          els.analysisOutput.textContent = `${completed}/${total} konuşma bloğu ElevenLabs ile hazırlandı…`;
+        });
+        if (ready !== dubSegments.length) {
+          const reason = state.dubFailureReason ? ` (${state.dubFailureReason})` : '';
+          throw new Error(`Dublaj eksik kaldı: ${ready}/${dubSegments.length} blok hazır${reason}. Video dublajsız başlatılmadı.`);
+        }
+        dialogue.dubCoverage = { ready, total: dubSegments.length, complete: true };
+        const initialSegments = nextDialogueSegments(dubSegments, 0, 2);
         for (const segment of initialSegments) await prepareDubAudio(segment);
-        prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
+        els.analysisOutput.textContent = `${ready}/${dubSegments.length} konuşma bloğunun tamamı Türkçe dublaja hazır.`;
       }
 
       if (!modes.motion) {
@@ -2102,7 +2012,7 @@ els.analyzeBtn.addEventListener('click', async () => {
           dialogue.summaryTr || 'Diyalog analizi tamamlandı.',
           `${dialogue.speakers?.length || 0} konuşmacı algılandı.`,
           modes.dubbing
-            ? 'Dublaj için konuşma verisi hazırlandı.'
+            ? `${dialogue.dubCoverage?.ready || 0}/${dialogue.dubCoverage?.total || 0} dublaj bloğunun tamamı hazır.`
             : 'Türkçe altyazılar kullanıma hazır.'
         ].join('\n');
         setGameState('DIALOGUE_READY');
@@ -2113,7 +2023,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       els.analysisOutput.textContent =
         `Diyalog analizi başarısız: ${error.message}`;
 
-      if (!modes.motion) {
+      if (modes.dubbing || !modes.motion) {
         setGameState('ERROR');
         return;
       }
