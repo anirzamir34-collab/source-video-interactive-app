@@ -3045,10 +3045,21 @@ function prepareAdultScenes() {
               }
             );
             if (!movements.length && isPlayableVerifiedPositionDuration(position.startTime, position.endTime)) {
+              const overlappingAction = actions
+                .filter(action => action?.sourceVerified === true && String(action?.label || '').trim())
+                .map(action => ({
+                  action,
+                  overlap: Math.max(0,
+                    Math.min(Number(action.endTime), Number(position.endTime)) -
+                    Math.max(Number(action.startTime), Number(position.startTime))
+                  )
+                }))
+                .filter(item => item.overlap >= 1)
+                .sort((a, b) => b.overlap - a.overlap)[0]?.action;
               const verifiedBase = {
                 id: `${position.id}:verified-base`,
                 actionId: `${position.id}:verified-base`,
-                label: `${position.label} sekansını oynat`,
+                label: String(overlappingAction?.label || `${position.label} oynat`).trim(),
                 startTime: position.startTime,
                 endTime: position.endTime,
                 loopStartTime: position.startTime,
@@ -3060,13 +3071,7 @@ function prepareAdultScenes() {
                 femaleProgressRate: 1,
                 positionOnlyFallback: true
               };
-              movements = expandVerifiedMovementVariants(
-                [verifiedBase],
-                verifiedBase.loopStartTime,
-                verifiedBase.loopEndTime,
-                { minSeconds: 5, maxVariants: 3, baseLabel: position.label, splitEachMovement: true }
-              );
-              if (!movements.length) movements = [verifiedBase];
+              movements = [verifiedBase];
             }
             return { ...position, movements };
           })
@@ -4112,7 +4117,6 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
-  if (shouldSeek && Number(position.startTime) < state.adultTimelineFloor - 0.1) return;
   primeAdultPositionLanguage(position);
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
@@ -4224,7 +4228,6 @@ function selectAdultMovement(
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || state.adultOutcomePhase !== 'idle') return;
-  if (shouldSeek && Number(movement.loopStartTime) < state.adultTimelineFloor - 0.1) return;
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
   if (!occurrenceMovements.some(item => item.id === movement.id)) {
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
@@ -4521,7 +4524,12 @@ function updateAdultPlayback(now, mediaTime) {
   // floor only after a clicked card ended, leaving the UI permanently stuck
   // on an earlier room even while the video had moved far ahead.
   const previousFloor = Number(state.adultTimelineFloor) || 0;
-  state.adultTimelineFloor = Math.max(previousFloor, Number(mediaTime) || 0);
+  // Do not move the chronology floor through the currently playable clip.
+  // Doing so made every visible card a forbidden "past" target moments after
+  // playback started. Completed clips advance the floor in their own branches.
+  if (!state.activeAdultPreludeId && !state.activeMovementId) {
+    state.adultTimelineFloor = Math.max(previousFloor, Number(mediaTime) || 0);
+  }
   const floorAdvanced = state.adultTimelineFloor > previousFloor + 0.01;
   if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
   if (floorAdvanced && now - Number(state.adultLastApproachRefreshAt || 0) >= 750) {

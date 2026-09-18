@@ -653,7 +653,7 @@ test('position-only evidence stays one honest playable card without generic cut 
   }], 'Kovboy Pozisyonu', 3);
 
   assert.equal(choices.length, 1);
-  assert.equal(choices[0].label, 'Kovboy Pozisyonu sekansını oynat');
+  assert.equal(choices[0].label, 'Kovboy Pozisyonu oynat');
   assert.doesNotMatch(choices[0].label, /Pozisyon içi hareket|Kesit\s+\d/i);
 });
 
