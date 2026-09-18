@@ -1,5 +1,3 @@
-import { hasDeclaredPartialCoverage } from './analysis-recovery.js';
-
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
 export const ANALYSIS_SCHEMA_VERSION = 5;
@@ -381,15 +379,8 @@ export function reviewAndHardenAnalysis(input = {}) {
 
   const chunkCount = Math.max(0, Math.floor(numberOr(input.chunkCount)));
   const expectedChunkCount = Math.max(0, Math.floor(numberOr(input.expectedChunkCount)));
-  const declaredPartial = hasDeclaredPartialCoverage(input);
-  const analysisGaps = Array.isArray(input.analysisGaps) ? input.analysisGaps : [];
-  if ((input.partial === true || analysisGaps.length) && !declaredPartial) {
-    issues.push({ severity: 'fatal', code: 'INVALID_PARTIAL_COVERAGE' });
-  }
   if (expectedChunkCount && chunkCount !== expectedChunkCount) {
-    issues.push({ severity: declaredPartial ? 'warning' : 'fatal',
-      code: declaredPartial ? 'DECLARED_PARTIAL_CHUNK_COVERAGE' : 'INCOMPLETE_CHUNK_COVERAGE',
-      chunkCount, expectedChunkCount });
+    issues.push({ severity: 'fatal', code: 'INCOMPLETE_CHUNK_COVERAGE', chunkCount, expectedChunkCount });
   }
 
   const sorted = rawActions
@@ -412,29 +403,8 @@ export function reviewAndHardenAnalysis(input = {}) {
       issues.push({ severity: 'drop', code: 'LOW_CONFIDENCE', actionId: id, confidence, minimum });
       continue;
     }
-    if (analysisGaps.some(gap =>
-      (interval.start < gap.endTime && interval.end > gap.startTime) ||
-      (numberOr(action.loopStartTime, interval.start) < gap.endTime &&
-       numberOr(action.loopEndTime, interval.end) > gap.startTime))) {
-      droppedActionIds.push(id);
-      issues.push({ severity: 'drop', code: 'ACTION_OVERLAPS_ANALYSIS_GAP', actionId: id });
-      continue;
-    }
 
     const { __index, ...clean } = action;
-    // An overlong parent annotation must not bridge an unanalysed interval.
-    for (const [startKey, endKey] of [
-      ['positionStartTime', 'positionEndTime'], ['adultSceneStartTime', 'adultSceneEndTime']
-    ]) {
-      for (const gap of analysisGaps) {
-        if (gap.endTime <= interval.start && Number.isFinite(Number(clean[startKey]))) {
-          clean[startKey] = Math.max(Number(clean[startKey]), gap.endTime);
-        }
-        if (gap.startTime >= interval.end && Number.isFinite(Number(clean[endKey]))) {
-          clean[endKey] = Math.min(Number(clean[endKey]), gap.startTime);
-        }
-      }
-    }
     const route = normalizedActivityType(clean);
     if (['vaginal', 'anal'].includes(route) && (
       activityTypeConfidence(clean) < SECOND_PASS_ACTIVITY_CONFIDENCE ||

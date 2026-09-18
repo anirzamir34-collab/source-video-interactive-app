@@ -28,6 +28,7 @@ import {
   playbackRateForTapTempo,
   pickNearbyRhythmVariant,
   pickNextChronologicalVariant,
+  pickNextVariant,
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
   requiredWarmupDiscoveries,
@@ -39,9 +40,6 @@ import {
 } from './adult-gameplay.js';
 import {
   buildDubBlocks,
-  clipTimeRange,
-  remainingClipsInRange,
-  timelineChoicesAt,
   dialogueSegmentAt,
   dialogueSegmentsAt,
   dialogueSegmentsForTarget,
@@ -86,7 +84,6 @@ import {
   adaptiveAnalysisChunkPlan,
   extractStoryboard
 } from './storyboard.js';
-import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -95,7 +92,6 @@ const state = {
   serviceCapabilities: null,
   selectedFile: null,
   selectedRemoteVideo: null,
-  sourceGeneration: 0,
   videoObjectUrl: '',
   analysisSession: null,
   analysis: null,
@@ -874,12 +870,6 @@ function releaseVideoObjectUrl() {
 
 els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
-  selectLocalVideoFile(file);
-});
-
-function selectLocalVideoFile(file) {
-  clearPreviousGameResidue();
-  if (resolveUrlBtn) resolveUrlBtn.disabled = false;
   state.selectedFile = file;
   state.selectedRemoteVideo = null;
   state.analysisSession = null;
@@ -897,7 +887,7 @@ function selectLocalVideoFile(file) {
   }
   updateAnalyzeAvailability();
   renderDebug();
-}
+});
 
 function createDialogueWav(audioBuffer, targetRate = 16000) {
   const sourceRate = audioBuffer.sampleRate;
@@ -1835,25 +1825,18 @@ els.analyzeBtn.addEventListener('click', async () => {
       session.analysisModeKey = analysisModeKey;
       session.chunkCount = chunkCount;
       session.chunkResults = [];
-      session.firstPassResults = {};
       session.protagonistProfile = '';
       session.storyContextMemory = null;
     }
     const chunkResults = session.chunkResults;
-    session.firstPassResults ||= {};
     let failureBody = null;
-    let failedChunk = null;
     let response = null;
     let body = null;
 
     let protagonistProfile = session.protagonistProfile || requestedProtagonist;
     let storyContextMemory = session.storyContextMemory || normalizeStoryContext({});
 
-  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-      // Resume by index: completed later chapters survive a failure in the middle.
-      if (chunkResults[chunkIndex]?.available || chunkResults[chunkIndex]?.retryable === false) continue;
-      // A retry in the middle only receives context from earlier chapters.
-      storyContextMemory = mergeStoryContexts(chunkResults.slice(0, chunkIndex).filter(result => result?.available));
+  for (let chunkIndex = chunkResults.length; chunkIndex < chunkCount; chunkIndex += 1) {
       const firstSheet = chunkIndex * sheetsPerChunk;
       const chunkSheets = storyboard.sheets.slice(
         firstSheet,
@@ -1940,50 +1923,44 @@ els.analyzeBtn.addEventListener('click', async () => {
         `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...`;
 
       let chunkSucceeded = false;
-      let firstPassBody = session.firstPassResults[chunkIndex] || null;
       failureBody = null;
 
       const maxChunkAttempts = 4;
       for (let attempt = 1; attempt <= maxChunkAttempts && !chunkSucceeded; attempt += 1) {
         els.analysisOutput.textContent =
           `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...\n` +
-          `Deneme ${attempt}/${maxChunkAttempts} · tamamlanan ${chunkResults.filter(result => result?.available).length}/${chunkCount}`;
+          `Deneme ${attempt}/${maxChunkAttempts} · tamamlanan ${chunkResults.length}/${chunkCount}`;
 
-        // Keep a completed first pass when only its review needs retrying.
+        // Every retry starts from a clean first pass. Review metadata is added
+        // only after that first pass succeeds, so a failed review cannot poison
+        // the next retry.
         form.delete('reviewMode');
         form.delete('reviewCandidates');
 
         try {
-          if (firstPassBody) {
-            body = firstPassBody;
-            response = { ok: true };
-          } else {
-            response = await fetch('/api/gemini-storyboard-analyze', {
-              method: 'POST',
-              headers: geminiRequestHeaders(),
-              body: freshChunkForm(),
-              signal: AbortSignal.timeout(240000)
-            });
+          response = await fetch('/api/gemini-storyboard-analyze', {
+            method: 'POST',
+            headers: geminiRequestHeaders(),
+            body: freshChunkForm(),
+            signal: AbortSignal.timeout(240000)
+          });
 
-            body = await response.json();
-            recordAiUsage(body?.aiUsage);
+          body = await response.json();
+          recordAiUsage(body?.aiUsage);
 
-            if (response.ok && body?.available) {
-              const normalizedChunk = normalizeChunkActionTimes(
-                body.actions,
-                chunkStart,
-                chunkEnd
-              );
-              body = {
-                ...body,
-                actions: normalizedChunk.actions,
-                chunkStart,
-                chunkEnd,
-                chunkTimeRebased: normalizedChunk.rebased
-              };
-              firstPassBody = body;
-              session.firstPassResults[chunkIndex] = body;
-            }
+          if (response.ok && body?.available) {
+            const normalizedChunk = normalizeChunkActionTimes(
+              body.actions,
+              chunkStart,
+              chunkEnd
+            );
+            body = {
+              ...body,
+              actions: normalizedChunk.actions,
+              chunkStart,
+              chunkEnd,
+              chunkTimeRebased: normalizedChunk.rebased
+            };
           }
 
           if (!response.ok || !body?.available) {
@@ -2041,9 +2018,8 @@ els.analyzeBtn.addEventListener('click', async () => {
               }
               body = mergeSecondPassReview(body, reviewBody, criticalReviewCandidates);
             }
-            chunkResults[chunkIndex] = body;
-            delete session.firstPassResults[chunkIndex];
-            storyContextMemory = mergeStoryContexts(chunkResults.filter(result => result?.available));
+            chunkResults.push(body);
+            storyContextMemory = mergeStoryContexts(chunkResults);
             if (body.protagonistProfile) {
               protagonistProfile = String(body.protagonistProfile).trim();
             }
@@ -2072,26 +2048,16 @@ els.analyzeBtn.addEventListener('click', async () => {
           els.analysisOutput.textContent =
             `Bölüm ${chunkIndex + 1}/${chunkCount} geçici olarak başarısız oldu.\n` +
             `${Math.ceil(retryDelay / 1000)} saniye sonra yalnız bu bölüm yeniden denenecek...\n` +
-            `Tamamlanan bölümler korunuyor: ${chunkResults.filter(result => result?.available).length}/${chunkCount}`;
+            `Tamamlanan bölümler korunuyor: ${chunkResults.length}/${chunkCount}`;
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
       }
 
-      if (!chunkSucceeded) {
-        if (!canContinuePastChunkFailure(failureBody)) {
-          failedChunk = chunkIndex + 1;
-          break;
-        }
-        chunkResults[chunkIndex] = chunkGapResult(failureBody, chunkIndex, chunkStart, chunkEnd);
-        session.chunkResults = chunkResults;
-        els.analysisState.textContent = 'CONTINUING_WITH_GAP';
-        els.analysisOutput.textContent = `Bölüm ${chunkIndex + 1} okunamadı; tamamlanan bölümler korunarak sıradaki bölüme geçiliyor.`;
-        failureBody = null;
-      }
+      if (!chunkSucceeded) break;
     }
 
     const completeChunkAnalysis = isCompleteChunkAnalysis({
-      completedChunkCount: chunkResults.filter(Boolean).length,
+      completedChunkCount: chunkResults.length,
       expectedChunkCount: chunkCount,
       failed: Boolean(failureBody)
     });
@@ -2101,27 +2067,25 @@ els.analyzeBtn.addEventListener('click', async () => {
         body = {
           ...failureBody,
           available: false,
-          completedChunkCount: chunkResults.filter(result => result?.available).length,
+          completedChunkCount: chunkResults.length,
           expectedChunkCount: chunkCount,
-          failedChunk
+          failedChunk: Math.min(chunkCount, chunkResults.length + 1)
         };
       } else {
         body = {
           available: false,
           reason: 'INCOMPLETE_CHUNK_ANALYSIS',
           message:
-            `Analiz durakladı: ${chunkResults.filter(result => result?.available).length}/${chunkCount} bölüm tamamlandı. ` +
-            'Tamamlanan bölümler korunuyor; bağlantı veya servis sorunu düzeldiğinde kalan bölümler yeniden denenebilir.',
-          completedChunkCount: chunkResults.filter(result => result?.available).length,
+            `Analiz eksik kaldı: ${chunkResults.length}/${chunkCount} bölüm tamamlandı. ` +
+            `Eksik video hiçbir zaman hazır oyun olarak açılmayacak.`,
+          completedChunkCount: chunkResults.length,
           expectedChunkCount: chunkCount,
-          failedChunk,
+          failedChunk: Math.min(chunkCount, chunkResults.length + 1),
           failure: failureBody
         };
       }
     } else {
-      const completedResults = chunkResults.filter(result => result?.available);
-      const analysisGaps = chunkResults.flatMap(result => result?.analysisGaps || []);
-      const mergedActions = completedResults
+      const mergedActions = chunkResults
         .flatMap(result =>
           Array.isArray(result.actions) ? result.actions : []
         )
@@ -2135,16 +2099,15 @@ els.analyzeBtn.addEventListener('click', async () => {
             `scene-${String(index + 1).padStart(3, '0')}`
         }));
 
-      const prompts = completedResults
+      const prompts = chunkResults
         .map(result => String(result.videoPrompt || '').trim())
         .filter(Boolean);
-      const mergedStoryContext = mergeStoryContexts(completedResults);
+      const mergedStoryContext = mergeStoryContexts(chunkResults);
 
       const firstResult = chunkResults[0] || {};
 
       body = {
         available: true,
-        partial: analysisGaps.length > 0,
         videoDuration: storyboard.duration,
         introEndTime: Number(firstResult.introEndTime || 0),
         playStartTime: Number(
@@ -2161,12 +2124,13 @@ els.analyzeBtn.addEventListener('click', async () => {
         warnings: chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
         ),
-        analysisGaps,
+        analysisGaps: chunkResults.flatMap(result =>
+          Array.isArray(result.analysisGaps) ? result.analysisGaps : []
+        ),
         analysisMode: 'MULTI_PASS_DEEP_HARDENED',
-        chunkCount: completedResults.length,
-        processedChunkCount: chunkResults.filter(Boolean).length,
+        chunkCount: chunkResults.length,
         expectedChunkCount: chunkCount,
-        analysisCoverage: chunkCount ? completedResults.length / chunkCount : 0,
+        analysisCoverage: chunkCount ? chunkResults.length / chunkCount : 0,
         skippedFrameCount,
         secondPassChunkCount: chunkResults.filter(result => result.secondPassReviewed).length,
         rebasedChunkCount: chunkResults.filter(result => result.chunkTimeRebased).length,
@@ -2177,7 +2141,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     }
 
   if (
-    body?.available && !body?.partial &&
+    body?.available &&
     (!Array.isArray(body.actions) || !body.actions.length) &&
     (state.selectedFile || state.selectedRemoteVideo)
   ) {
@@ -2266,9 +2230,6 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (!normalized.actions.length) {
     els.analysisState.textContent = 'NO_ACTIONS';
     els.analysisTitle.textContent = 'Doğrulanmış action bulunmadı';
-    els.analysisOutput.textContent = body.partial
-      ? ['Modelden oynanabilir analiz verisi alınamadı. Okunamayan bölümler başarı sayılmadı.', ...(body.warnings || [])].join('\n')
-      : 'Analiz edilen görüntülerde doğrulanmış seçenek bulunamadı.';
     setGameState('ERROR');
     renderDebug({ lastAnalyzeBody: body });
     return;
@@ -2281,22 +2242,21 @@ els.analyzeBtn.addEventListener('click', async () => {
   } catch (error) {
     console.warn("Analysis could not be saved locally:", error);
   }
-  els.analysisState.textContent = body.partial ? 'PARTIAL_TIMELINE_READY' : 'TIMELINE_READY';
-  els.analysisTitle.textContent = `${body.partial ? 'Kısmi analiz hazır · ' : ''}${normalized.actions.length} doğrulanmış aksiyon`;
+  els.analysisState.textContent = 'TIMELINE_READY';
+  els.analysisTitle.textContent = `${normalized.actions.length} doğrulanmış aksiyon`;
   els.analysisOutput.textContent = [
-    body.partial ? 'Analiz kısmen hazır. Okunamayan aralıklarda seçenek üretilmedi.' : 'Derin analiz tamamlandı.',
+    'Derin analiz tamamlandı.',
     `${normalized.actions.length} doğrulanmış aksiyon hazır.`,
     `${Number(body.chunkCount || 0)}/${Number(body.expectedChunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
-    ...(body.analysisGaps || []).map(gap => `Bölüm ${gap.chunkIndex + 1}: ${gap.startTime.toFixed(1)}–${gap.endTime.toFixed(1)} sn doğrulanamadı.`),
     `${Number(body.secondPassChunkCount || 0)} bölüm görsel ikinci kontrolden geçti.`,
     `${Number(body.rebasedChunkCount || 0)} bölümün yerel zamanları video zamanına düzeltildi.`,
     Number(body.skippedFrameCount || 0)
       ? `${Number(body.skippedFrameCount)} okunamayan kare atlandı; analiz kalan doğrulanmış karelerle tamamlandı.`
       : 'Bütün örnek kareler başarıyla hazırlandı.',
-    `Son doğrulanmış aksiyon ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyede bitiyor.`,
+    `Zaman çizelgesi ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyeye kadar doğrulandı.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
     `Gemini kullanımı: ${state.aiUsage.requests} istek · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens} çıkış tokenı.`,
-    body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Yeniden analiz, yalnız geçici hata veren eksik bölümleri dener.' : 'Oyun modu kullanıma hazır.'
+    'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
   } catch (error) {
@@ -2432,7 +2392,6 @@ function normalizeAnalysis(body) {
       narrativeChoiceLabel: String(a.narrativeChoiceLabel || ''),
       narrativeReason: String(a.narrativeReason || ''),
       sceneTitle: String(a.sceneTitle || ''),
-      sceneId: String(a.sceneId || ''),
       sceneGoal: String(a.sceneGoal || ''),
       relationshipContext: String(a.relationshipContext || ''),
       storyEvidenceLevel: String(a.storyEvidenceLevel || 'unknown'),
@@ -2514,9 +2473,6 @@ function normalizeAnalysis(body) {
     schemaVersion: Number(body?.schemaVersion || ANALYSIS_SCHEMA_VERSION),
     engineVersion: String(body?.engineVersion || ENGINE_VERSION),
     chunkCount: Number(body?.chunkCount || 0),
-    processedChunkCount: Number(body?.processedChunkCount || 0),
-    partial: body?.partial === true,
-    analysisGaps: Array.isArray(body?.analysisGaps) ? body.analysisGaps : [],
     expectedChunkCount: Number(body?.expectedChunkCount || 0),
     analysisCoverage: Number(body?.analysisCoverage || 0),
     secondPassChunkCount: Number(body?.secondPassChunkCount || 0),
@@ -2534,18 +2490,17 @@ function initializeInteractive(analysis) {
   const requestedStart = Number(
     analysis.playStartTime ??
     analysis.introEndTime ??
+    analysis.actions?.[0]?.startTime ??
     0
   );
 
   const playStartTime = Number.isFinite(requestedStart)
     ? Math.max(0, requestedStart)
     : 0;
-  const sourceGeneration = state.sourceGeneration;
 
   state.gameCursorTime = playStartTime;
 
   const seekToMainScene = () => {
-    if (sourceGeneration !== state.sourceGeneration || state.analysis !== analysis) return;
     const safeDuration = Number.isFinite(els.video.duration)
       ? els.video.duration
       : playStartTime;
@@ -2605,7 +2560,6 @@ function initializeInteractive(analysis) {
   if (restoredSnapshot) {
     const restoreTarget = Math.max(0, Number(state.gameCursorTime) || 0);
     const applyRestoreSeek = () => {
-      if (sourceGeneration !== state.sourceGeneration || state.analysis !== analysis) return;
       if (Number.isFinite(els.video.duration)) {
         els.video.pause();
         els.video.currentTime = Math.min(restoreTarget, Math.max(0, els.video.duration - 0.05));
@@ -2710,9 +2664,10 @@ function isBonusPosition(position) {
   return category === 'anal' || category === 'other';
 }
 
-// Only adjacent source fragments can share a panel. A silent gap is not
-// evidence that separated scenes are one continuous occurrence.
-const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 1.5;
+// One encounter is often split into several model scene ids even though the
+// source continues with other verified positions. Keep nearby occurrences in
+// one gameplay graph so progression can reveal them instead of ending early.
+const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 180;
 
 function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
@@ -2727,7 +2682,7 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
     }
 
     const gap = Number(scene.startTime) - Number(previous.endTime);
-    const narrativeBarrier = nonAdultActions.some(action => {
+    const narrativeBarrier = gap >= 30 && nonAdultActions.some(action => {
       const start = Number(action.startTime);
       const end = Number(action.endTime);
       const actionType = String(action.actionType || '').toLowerCase();
@@ -3189,7 +3144,10 @@ function prepareAdultScenes() {
     .filter(scene => scene.positions.length)
     .sort((a, b) => a.startTime - b.startTime);
 
-  // Join only adjacent fragments without an intervening narrative boundary.
+  // Providers frequently split one continuous encounter into several scene
+  // ids. Merge nearby fragments unless a verified narrative barrier exists;
+  // otherwise early oral/manual clips become isolated panels and skipping one
+  // incorrectly reveals every later position.
   state.adultScenes = mergeAdultSceneFragments(
     state.adultScenes,
     actions.filter(action => !action?.adultScene && !String(action?.adultSceneId || '').trim())
@@ -3208,7 +3166,7 @@ function prepareAdultScenes() {
       };
     });
     scene.positions = consolidateVerifiedPositions(scene.positions, {
-      mergeDistantReturns: false
+      mergeDistantReturns: true
     }).map(position => ({
       ...position,
       movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 5)
@@ -3444,50 +3402,15 @@ function adultWarmupStats(scene = state.adultScene) {
   };
 }
 
-function panelTimelineCursor() {
-  return Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
-}
-
-function currentPanelOccurrence(position) {
-  const cursor = panelTimelineCursor();
-  return positionOccurrenceGroups(position).find(group =>
-    cursor >= Number(group.startTime) - 0.15 && cursor < Number(group.endTime) - 0.04
-  ) || null;
-}
-
-function nextPanelChoiceClip(variants) {
-  return remainingClipsInRange(variants, state.adultScene, panelTimelineCursor())[0] || null;
-}
-
-function panelClipIsReachable(clip) {
-  const range = clipTimeRange(clip);
-  const scene = clipTimeRange(state.adultScene);
-  const cursor = Number(els.video?.currentTime);
-  return Boolean(range && scene && Number.isFinite(cursor) &&
-    range.startTime >= scene.startTime - 0.1 && range.endTime <= scene.endTime + 0.1 &&
-    cursor >= scene.startTime - 0.15 && panelTimelineCursor() < range.endTime - 0.04);
-}
-
-function showPanelContinuation() {
-  if (!els.video?.paused || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision ||
-      els.panelPlaybackRecovery) return;
-  showPanelPlaybackRecovery('Sıradaki bölüme kaynak videoyla devam et.', () => {
-    const token = beginAdultSelection();
-    state.activeMovementId = null;
-    state.activeAdultPreludeId = null;
-    state.activePositionId = null;
-    state.activeAdultOccurrenceId = null;
-    return resumePanelPlayback(token);
-  }, 'Videoya devam et');
-}
-
 function unlockedAdultPositions(scene = state.adultScene) {
-  const positions = (scene?.positions || []).filter(position => currentPanelOccurrence(position));
+  const positions = scene?.positions || [];
   if (!state.adultSexUnlocked) return positions.filter(isWarmupPosition);
   const unlocked = positions
     .filter(position => !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
-  // Retain availability only for occurrences covering the current frame.
+  // Keep every position the player has unlocked visible. Showing only the
+  // newest one turned the panel into a single-choice dead end and made earlier
+  // valid selections disappear after each Lust unlock.
   return unlocked;
 }
 
@@ -3588,7 +3511,9 @@ function refreshAdultCompactDock() {
       const position = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
       const choice = position?.activeMovementChoices?.find(item => item.id === choiceId);
       if (!choice) return;
-      const movement = nextPanelChoiceClip(choice.variants);
+      const currentId = choice.variants.some(item => item.id === state.activeMovementId)
+        ? state.activeMovementId : null;
+      const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
       if (!movement) return;
       state.activeMovementChoiceId = choice.id;
       selectAdultMovement(movement.id, true);
@@ -3686,26 +3611,24 @@ function renderAdultWarmupChoices(scene) {
 function renderAdultApproachChoices(scene) {
   const flow = currentAdultFlow();
   const candidates = [
-    ...(scene?.foreplay || []).filter(panelClipIsReachable).map(item => ({
+    ...(scene?.foreplay || []).map(item => ({
       kind: 'foreplay', id: item.id, label: item.label,
       startTime: item.startTime, endTime: item.endTime
     })),
     ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
-      const occurrence = currentPanelOccurrence(position);
-      if (!occurrence) return [];
-      const movements = remainingClipsInRange(
-        movementsForPositionOccurrence(position, occurrence.id), occurrence, panelTimelineCursor()
+      const movements = (position.movements || []).filter(item =>
+        Number(item.loopEndTime) > state.adultTimelineFloor - 0.1
       );
-      const cards = buildVerifiedMovementChoices(movements, position.label, 5);
-      return cards.map(card => ({
+      const cards = buildVerifiedMovementChoices(movements, position.label, 4);
+      return (cards.length ? cards : [null]).map((card, index) => ({
         kind: 'position', id: position.id,
-        occurrenceId: occurrence.id, variants: card.variants,
-        label: card.label || position.label,
-        startTime: Math.min(...card.variants.map(item => clipTimeRange(item).startTime)),
-        endTime: Math.max(...card.variants.map(item => clipTimeRange(item).endTime))
+        movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
+        label: card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
+        startTime: Math.min(...(card?.variants || movements || []).map(item => Number(item.loopStartTime)).filter(Number.isFinite), Number(position.startTime)),
+        endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime))
       }));
     })
-  ].filter(panelClipIsReachable)
+  ].filter(item => Number(item.endTime) > state.adultTimelineFloor - 0.1)
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))
     .filter((item, index, items) => items.findIndex(candidate =>
       normalizeAdultLabel(candidate.label) === normalizeAdultLabel(item.label)
@@ -3729,21 +3652,10 @@ function renderAdultApproachChoices(scene) {
     button.className = 'choice-btn';
     button.textContent = compactChoiceLabel(choice.label);
     button.addEventListener('click', () => {
-      if (!state.adultMode || scene !== state.adultScene) return;
       if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
       else {
-        const position = scene.positions.find(item => item.id === choice.id);
-        const occurrence = currentPanelOccurrence(position);
-        const movement = occurrence?.id === choice.occurrenceId
-          ? remainingClipsInRange(choice.variants, occurrence, panelTimelineCursor())[0]
-          : null;
-        if (!movement) {
-          renderAdultProgressiveUI(true);
-          showPanelContinuation();
-          return;
-        }
         selectAdultPosition(choice.id, false);
-        selectAdultMovement(movement.id, true);
+        if (choice.movementId) selectAdultMovement(choice.movementId, true);
       }
     });
     els.choices.appendChild(button);
@@ -3855,7 +3767,6 @@ function renderAdultProgressiveUI(force = false) {
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');
-    showPanelContinuation();
     return;
   }
 
@@ -3921,7 +3832,7 @@ function renderAdultPanel(scene) {
 
   state.adultScene = scene;
   if (previousSceneId !== scene.id && !restoringSameScene) {
-    state.adultTimelineFloor = Math.max(0, Number(scene.startTime) || 0, Number(els.video.currentTime) || 0);
+    state.adultTimelineFloor = Math.max(0, Number(scene.startTime) || 0);
   }
   state.adultMode = true;
   const warmupPositions = (scene.positions || []).filter(isWarmupPosition);
@@ -3957,11 +3868,6 @@ function renderAdultPanel(scene) {
 
 function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}) {
   if (!scene || state.completedAdultSceneIds?.has(scene.id) || !els.video) return false;
-  const mediaTime = Number(els.video.currentTime) || 0;
-  const insideScene = mediaTime >= Number(scene.startTime) - 0.15 &&
-    mediaTime < Number(scene.endTime) - 0.04;
-  const explicitNavigation = reason === 'choice-navigation-adult-scene';
-  if (!insideScene && !explicitNavigation) return false;
   if (state.adultScene?.id !== scene.id) cancelAdultSeek();
 
   if (state.stopListener) {
@@ -3974,12 +3880,15 @@ function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}
   document.querySelector('.choice-navigation')?.classList.add('hidden');
 
   const sameSession = state.adultMode && state.adultScene?.id === scene.id;
-  if (forceStart && explicitNavigation && !sameSession) {
+  const mediaTime = Number(els.video.currentTime) || 0;
+  const insideScene = mediaTime >= Number(scene.startTime) - 0.15 &&
+    mediaTime < Number(scene.endTime) - 0.04;
+  if (forceStart && !sameSession && (!insideScene || mediaTime > Number(scene.startTime) + 1)) {
     els.video.pause();
     els.video.currentTime = Math.max(0, Number(scene.startTime) || 0);
   }
 
-  state.gameCursorTime = Number(els.video.currentTime) || 0;
+  state.gameCursorTime = Math.max(0, Number(scene.startTime) || 0);
   renderAdultPanel(scene);
   setGameState('SEGMENT_PLAYING');
   logEngineEvent('ADULT_SCENE_ENTERED', { sceneId: scene.id, reason, sameSession });
@@ -4046,7 +3955,6 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
 }
 
 function cancelAdultSeek() {
-  state.panelPendingClipStart = null;
   state.adultSeekRequestId = (state.adultSeekRequestId || 0) + 1;
   state.adultSeekController?.abort();
   state.adultSeekController = null;
@@ -4091,11 +3999,7 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scene?.foreplay?.find(entry => entry.id === preludeId);
   if (!item || !els.video || state.adultOutcomePhase !== 'idle') return;
-  if (!panelClipIsReachable(item)) {
-    renderAdultProgressiveUI(true);
-    showPanelContinuation();
-    return;
-  }
+  if (Number(item.startTime) < state.adultTimelineFloor - 0.1) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
   logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
@@ -4108,7 +4012,7 @@ function playAdultPrelude(preludeId) {
   applyAdultPreludeProgress(item);
   renderAdultProgressiveUI(true);
   els.video.pause();
-  void playPanelClipContinuously(item, token);
+  void seekAdultLoop(item.startTime, token);
 }
 
 function applyAdultSelectionProgress(position, movement, { positionChanged = false } = {}) {
@@ -4171,7 +4075,6 @@ function resetAdultTapRhythm() {
 
 function nextEnergeticPositionMovement(position, currentMovement = null) {
   const energetic = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId)
-    .filter(item => Number(item.loopEndTime) > panelTimelineCursor() + 0.04)
     .filter(item => isEnergeticSexMoment(item))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   if (!energetic.length) return null;
@@ -4240,7 +4143,9 @@ function tempoLabel(value) {
 function selectMovementTempoVariant(choice) {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   if (!position || !choice?.tempoVariants?.length) return;
-  const next = nextPanelChoiceClip(choice.tempoVariants.filter(item => item.id !== state.activeMovementId));
+  const currentIndex = choice.tempoVariants.findIndex(item => item.id === state.activeMovementId);
+  const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % choice.tempoVariants.length;
+  const next = choice.tempoVariants[nextIndex];
   if (!next) return;
   state.activeMovementChoiceId = choice.id;
   selectAdultMovement(next.id, true, null, { awardProgress: false });
@@ -4250,8 +4155,6 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
-  const occurrence = currentPanelOccurrence(position);
-  if (!occurrence) { showPanelContinuation(); return; }
   primeAdultPositionLanguage(position);
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
@@ -4269,17 +4172,19 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   state.activePositionId = position.id;
   if (changedPosition) {
     state.activeMovementId = null;
+    state.activeAdultOccurrenceId = positionOccurrenceGroups(position)[0]?.id || null;
   }
-  state.activeAdultOccurrenceId = occurrence.id;
   if (changedPosition) resetAdultTapRhythm();
 
   els.positionTabs?.querySelectorAll('.position-tab').forEach(button => {
     button.classList.toggle('active', button.dataset.positionId === position.id);
   });
 
-  const occurrenceMovements = remainingClipsInRange(
-    movementsForPositionOccurrence(position, occurrence.id), occurrence, panelTimelineCursor()
-  );
+  // One position tab owns all verified returns to that position. The player
+  // explicitly chooses the movement; the engine never hides later occurrences
+  // merely because the first occurrence has only one detected action.
+  const occurrenceMovements = [...(position.movements || [])]
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 5);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
@@ -4299,14 +4204,17 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     const variantStatus = choice.variants.length > 1
-      ? `<small class="movement-variant-status" data-variant-status>${choice.variants.length} kesit · zaman sırasıyla</small>`
+      ? `<small class="movement-variant-status" data-variant-status>${choice.variants.length} kesit · dönüşümlü oynatılır</small>`
       : '<small class="movement-variant-status" data-variant-status>1 kesit</small>';
     const tempoSummary = choice.hasTempoShift && choice.tempoVariants?.length
       ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
       : '';
     button.innerHTML = `<span>${escapeHtml(choice.label)}</span>${variantStatus}${tempoSummary}`;
     button.addEventListener('click', () => {
-      const movement = nextPanelChoiceClip(choice.variants);
+      const currentId = choice.variants.some(item => item.id === state.activeMovementId)
+        ? state.activeMovementId
+        : null;
+      const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
       if (!movement) return;
       state.activeMovementChoiceId = choice.id;
       const selectedIndex = choice.variants.findIndex(item => item.id === movement.id);
@@ -4335,8 +4243,12 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   updateRhythmControl(position);
 
   const movement = shouldSeek
-    ? nextPanelChoiceClip(occurrenceMovements)
-    : occurrenceMovements.find(item => item.id === state.activeMovementId);
+    ? pickNextVariant(
+        occurrenceMovements,
+        state.activeMovementId,
+        state.adultMovementPlayCounts
+      )
+    : occurrenceMovements.find(item => item.id === state.activeMovementId) || occurrenceMovements[0];
 
   if (movement) {
     selectAdultMovement(
@@ -4347,11 +4259,12 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     );
   } else {
     state.activeMovementId = null;
-    if (!occurrenceMovements.length) showPanelContinuation();
-    if (shouldSeek && !occurrenceMovements.length && els.video) {
+    if (els.movementChoices) els.movementChoices.innerHTML = '';
+    if (els.movementCount) els.movementCount.textContent = '10 saniyelik ek varyasyon yok';
+    if (shouldSeek && els.video) {
       applyAdultSelectionProgress(position, null, { positionChanged: changedPosition });
       els.video.pause();
-      void playPanelClipContinuously(position, selectionToken);
+      void seekAdultLoop(position.startTime, selectionToken);
     }
   }
 }
@@ -4365,8 +4278,6 @@ function selectAdultMovement(
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || state.adultOutcomePhase !== 'idle') return;
-  const currentOccurrence = currentPanelOccurrence(position);
-  if (!currentOccurrence) return;
   const matchingOccurrence = positionOccurrenceGroups(position).find(group => {
     const sourceIds = new Set(group.sourcePositionIds || []);
     const start = Number(movement.loopStartTime ?? movement.startTime);
@@ -4374,12 +4285,7 @@ function selectAdultMovement(
     return sourceIds.has(String(movement.sourcePositionId || '')) &&
       start >= Number(group.startTime) - 0.05 && end <= Number(group.endTime) + 0.05;
   });
-  if (!matchingOccurrence || matchingOccurrence.id !== currentOccurrence.id ||
-      !remainingClipsInRange([movement], currentOccurrence, panelTimelineCursor()).length) {
-    logEngineEvent('CLIP_OUTSIDE_CURRENT_OCCURRENCE', { movementId });
-    return;
-  }
-  state.activeAdultOccurrenceId = currentOccurrence.id;
+  if (matchingOccurrence) state.activeAdultOccurrenceId = matchingOccurrence.id;
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
   if (!occurrenceMovements.some(item => item.id === movement.id)) {
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
@@ -4420,7 +4326,7 @@ function selectAdultMovement(
 
   if (shouldSeek && els.video) {
     els.video.pause();
-    void playPanelClipContinuously(movement, effectiveToken);
+    void seekAdultLoop(movement.loopStartTime, effectiveToken);
   }
 }
 
@@ -4444,7 +4350,7 @@ function playAdultOutcome(outcomeId, options = {}) {
   updateVariantButton(null);
   renderAdultFlowStatus();
   els.video.pause();
-  void playPanelClipContinuously(outcome, selectionToken);
+  void seekAdultLoop(outcome.startTime, selectionToken);
 }
 
 function handleSourceEnded() {
@@ -4597,20 +4503,6 @@ async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
   }
 }
 
-async function playPanelClipContinuously(clip, selectionToken = state.adultSelectionToken) {
-  if (!els.video || !state.adultMode || selectionToken !== state.adultSelectionToken) return false;
-  if (!panelClipIsReachable(clip)) {
-    showPanelContinuation();
-    return false;
-  }
-  const range = clipTimeRange(clip);
-  const cursor = Number(els.video.currentTime);
-  state.panelPendingClipStart = cursor < range.startTime - 0.04 ? range.startTime : null;
-  state.lastAdultFrameNow = performance.now();
-  primeLanguageTracksAt(cursor, 2);
-  return resumePanelPlayback(selectionToken);
-}
-
 async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
   if (!els.video || !state.adultMode || selectionToken !== state.adultSelectionToken) return false;
 
@@ -4696,14 +4588,6 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
-  // The source plays through the footage preceding a selected clip. Its
-  // completion/progress handlers start only when its real interval begins.
-  if (Number.isFinite(state.panelPendingClipStart)) {
-    state.lastAdultFrameNow = now;
-    if (mediaTime < state.panelPendingClipStart - 0.04) return;
-    state.panelPendingClipStart = null;
-  }
-
   if (state.adultOutcomePhase === 'outcome') {
     const outcome = state.adultScene?.outcomes?.find(
       item => item.id === state.activeAdultOutcomeId
@@ -4726,7 +4610,7 @@ function updateAdultPlayback(now, mediaTime) {
         setAdultMachinePhase('aftermath');
         logEngineEvent('AFTERMATH_STARTED', { sceneId: state.adultScene?.id || null });
         els.video.pause();
-        void playPanelClipContinuously(aftermath, token);
+        void seekAdultLoop(aftermath.startTime, token);
       } else {
         finishAdultScene({ force: true });
       }
@@ -4808,7 +4692,6 @@ function updateAdultPlayback(now, mediaTime) {
     if (mediaTime >= movement.loopEndTime - 0.04) {
       els.video?.pause();
       state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(movement.loopEndTime) || 0);
-      state.activeMovementId = null;
       if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
       renderAdultProgressiveUI(true);
       logEngineEvent('MOVEMENT_ENDED_AWAITING_SELECTION', {
@@ -4912,10 +4795,16 @@ if (els.video?.requestVideoFrameCallback) {
 }
 
 function futureActions() {
-  const currentSceneActions = new Set(timelineChoicesAt(state.analysis?.actions, state.gameCursorTime));
-  const pool = (state.analysis?.actions || []).filter((a, idx) =>
-    currentSceneActions.has(a) &&
+  const lookAheadSeconds = 45;
+  const windowEnd = Math.min(
+    state.gameCursorTime + lookAheadSeconds,
+    state.analysis.videoDuration || Number.POSITIVE_INFINITY
+  );
+
+  const pool = state.analysis.actions.filter((a, idx) =>
     idx > state.currentActionIndex &&
+    a.startTime >= state.gameCursorTime - 0.001 &&
+    a.startTime <= windowEnd &&
     !state.consumedActionIds.has(a.actionId) &&
     !verifiedAdultPositionFamily(a)
   );
@@ -4933,18 +4822,7 @@ function futureActions() {
     seenChoices.add(key);
     return true;
   });
-  return selectDiverseStoryActions(unique, 5);
-}
-
-function updateSourceTimeline() {
-  if (!state.analysis || state.adultMode || state.activeAction ||
-      state.navigationSeeking || els.video.seeking || els.video.paused ||
-      state.gameState !== 'SEGMENT_PLAYING') return;
-  state.gameCursorTime = Number(els.video.currentTime) || 0;
-  if (!futureActions().length && !findAdultSceneAt(state.gameCursorTime)) return;
-  els.video.pause();
-  setGameState('DECISION_PENDING');
-  renderChoices();
+  return selectDiverseStoryActions(unique, 3);
 }
 
 function renderChoices() {
@@ -4971,6 +4849,16 @@ function renderChoices() {
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
   let candidates = futureActions();
 
+  if (!candidates.length && state.analysis?.actions?.length) {
+    candidates = selectDiverseStoryActions(state.analysis.actions
+      .filter((action, index) =>
+        index > state.currentActionIndex &&
+        Number(action.startTime) >= state.gameCursorTime - 0.001 &&
+        !state.consumedActionIds.has(action.actionId) &&
+        !verifiedAdultPositionFamily(action)
+      ), 3);
+  }
+
   const firstCandidate = candidates[0];
   const candidateScene = findAdultSceneForTimeline(state.adultScenes, {
     action: firstCandidate,
@@ -4991,11 +4879,25 @@ function renderChoices() {
   );
 
   if (!candidates.length) {
+    candidates = selectDiverseStoryActions(state.analysis.actions
+      .filter((action, index) =>
+        index > state.currentActionIndex &&
+        Number(action.startTime) >= state.gameCursorTime - 0.001 &&
+        !state.consumedActionIds.has(action.actionId) &&
+        !verifiedAdultPositionFamily(action) &&
+        !findAdultSceneForTimeline(state.adultScenes, {
+          action,
+          completedSceneIds: state.completedAdultSceneIds
+        })
+      ), 3);
+  }
+
+  if (!candidates.length) {
     const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration);
     const cursor = Math.max(state.gameCursorTime, Number(els.video.currentTime) || 0);
     if (hasRemainingVideo(cursor, duration)) {
       setGameState('DECISION_PENDING');
-      showPlaybackRecovery('Bu aralıkta seçim yok. Kaynak videoyla devam et.', resumeSourceVideo, 'Videoya devam et');
+      showPlaybackRecovery('Bu noktadan sonra seçim yok; video devam ediyor.', resumeSourceVideo, 'Videoya devam et');
     } else {
       setGameState('ENDED');
       els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
@@ -5090,12 +4992,6 @@ function cancelTimelineNavigation() {
 }
 
 async function playAction(action) {
-  if (!(state.analysis?.actions || []).includes(action) ||
-      !timelineChoicesAt(state.analysis.actions, Number(els.video.currentTime) || 0).includes(action) ||
-      state.consumedActionIds.has(action.actionId)) {
-    logEngineEvent('TIMELINE_STALE_OR_OUTSIDE_SCENE', { actionId: action?.actionId || null });
-    return;
-  }
   cancelTimelineNavigation();
   const adultScene = findAdultSceneForTimeline(state.adultScenes, {
     action,
@@ -5108,7 +5004,7 @@ async function playAction(action) {
 
   const guard = guardPlayable('timeline', action, { unlocked: true });
   const actionStart = Number(action?.startTime);
-  if (!guard.allowed || !Number.isFinite(actionStart) || Number(action.endTime) <= Number(els.video.currentTime) + 0.04) {
+  if (!guard.allowed || !Number.isFinite(actionStart) || actionStart < state.gameCursorTime - 0.03) {
     logEngineEvent('TIMELINE_BACKWARD_SEEK_BLOCKED', {
       actionId: action?.actionId || null,
       actionStart,
@@ -5129,9 +5025,7 @@ async function playAction(action) {
   setGameState('SEGMENT_SEEKING');
   els.video.pause();
 
-  // Play intervening footage from the current frame. Selecting a later clip
-  // in this scene must not seek over the actions leading up to it.
-  const seekTarget = Math.max(0, Number(els.video.currentTime) || 0);
+  const seekTarget = Math.max(state.gameCursorTime, actionStart);
   const controller = new AbortController();
   state.navigationSeekController = controller;
   state.navigationSeeking = true;
@@ -5411,7 +5305,6 @@ els.video.addEventListener('play', () => {
   }
 });
 els.video.addEventListener('timeupdate', renderDebug);
-els.video.addEventListener('timeupdate', updateSourceTimeline);
 els.video.addEventListener('ended', handleSourceEnded);
 
 checkHealth();
@@ -5420,16 +5313,8 @@ setInterval(checkAiUsageStatus, 60 * 1000);
 renderDebug();
 
 function clearPreviousGameResidue() {
-  state.sourceGeneration = (state.sourceGeneration || 0) + 1;
   cancelTimelineNavigation();
   cancelAdultSeek();
-  if (state.stopListener && els.video) {
-    els.video.removeEventListener('timeupdate', state.stopListener);
-    state.stopListener = null;
-  }
-  state.selectedFile = null;
-  state.selectedRemoteVideo = null;
-  state.analysisSession = null;
   localStorage.removeItem('videoquest:last-analysis');
   localStorage.removeItem('videoquest:last-dialogue');
   localStorage.removeItem(RUNTIME_SAVE_KEY);
@@ -5455,18 +5340,6 @@ function clearPreviousGameResidue() {
   state.activeAction = null;
   state.activePositionId = null;
   state.activeMovementId = null;
-  state.activeAdultOccurrenceId = null;
-  state.activeAdultPreludeId = null;
-  state.activeAdultOutcomeId = null;
-  state.activeMovementChoiceId = null;
-  state.adultSelectionToken += 1;
-  state.adultTimelineFloor = 0;
-  state.adultOutcomePhase = 'idle';
-  state.adultOrgasmDecision = null;
-  state.restoredAdultSceneId = null;
-  state.adultAnalysisTrace = null;
-  state.subtitlesEnabled = false;
-  state.dubbingEnabled = false;
   state.engineEvents = [];
   els.choices.innerHTML = '';
   els.timelineList.innerHTML = '';
@@ -5474,9 +5347,6 @@ function clearPreviousGameResidue() {
   els.adultInteractionPanel?.classList.add('hidden');
   els.playerSection?.classList.add('hidden');
   els.analysisCard?.classList.add('hidden');
-  els.adultPanelToggleBtn?.classList.add('hidden');
-  els.subtitleOverlay?.classList.add('hidden');
-  els.adultTraceOutput?.classList.add('hidden');
   if (els.video) {
     releaseVideoObjectUrl();
     els.video.pause();
@@ -5600,12 +5470,10 @@ function remoteVideoFileName(sourceUrl, contentType = '') {
 
 async function ensureSelectedRemoteFile() {
   if (state.selectedFile) return state.selectedFile;
-  const sourceGeneration = state.sourceGeneration;
   const remote = state.selectedRemoteVideo;
   if (!remote?.proxyUrl) throw new Error('İndirilecek uzak video kaynağı bulunamadı.');
   setUrlStatus('Bu analiz modu için video cihaza geçici olarak indiriliyor...');
   const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl);
-  if (sourceGeneration !== state.sourceGeneration) throw new DOMException('Video kaynağı değişti.', 'AbortError');
   if (!blob.size) throw new Error('Video boş geldi.');
   const file = new File([blob], remote.fileName, { type: blob.type || remote.contentType || 'video/mp4' });
   state.selectedFile = file;
@@ -5621,9 +5489,6 @@ async function resolveVideoUrl() {
     return;
   }
 
-  clearPreviousGameResidue();
-  const sourceGeneration = state.sourceGeneration;
-  updateAnalyzeAvailability();
   resolveUrlBtn.disabled = true;
   setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor...');
   const resolveStartedAt = performance.now();
@@ -5636,7 +5501,6 @@ async function resolveVideoUrl() {
     });
 
     const result = await resolveResponse.json().catch(() => ({}));
-    if (sourceGeneration !== state.sourceGeneration) return;
     if (!resolveResponse.ok || !result.ok) {
       const detail = String(result.technicalDetail || '').trim();
       throw new Error(
@@ -5650,7 +5514,6 @@ async function resolveVideoUrl() {
     if (result.type === 'video') {
       setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Akış desteği kontrol ediliyor...`);
       const probe = await probeSeekableVideo(result.proxyUrl);
-      if (sourceGeneration !== state.sourceGeneration) return;
       if (probe.seekable) {
         releaseVideoObjectUrl();
         state.selectedFile = null;
@@ -5677,7 +5540,6 @@ async function resolveVideoUrl() {
       ? `HLS akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
       : `Kaynak ileri sarmayı desteklemiyor. Video cihaza hazırlanıyor...`);
     const blob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
-    if (sourceGeneration !== state.sourceGeneration) return;
 
     if (!blob.size) throw new Error('Video boş geldi.');
 
@@ -5697,14 +5559,13 @@ async function resolveVideoUrl() {
 
     setUrlStatus('Video hazır. Şimdi “Videoyu analiz et” düğmesine bas.', 'success');
   } catch (error) {
-    if (sourceGeneration !== state.sourceGeneration) return;
     state.selectedFile = null;
     state.selectedRemoteVideo = null;
     state.analysisSession = null;
     updateAnalyzeAvailability();
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
   } finally {
-    if (sourceGeneration === state.sourceGeneration) resolveUrlBtn.disabled = false;
+    resolveUrlBtn.disabled = false;
   }
 }
 
