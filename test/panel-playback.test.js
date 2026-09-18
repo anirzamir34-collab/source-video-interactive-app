@@ -451,6 +451,59 @@ test('one position tab exposes later verified returns and switches occurrence on
   assert.equal(f.state.activePositionId, 'one');
 });
 
+test('a rejected later selection does not mutate the current occurrence or playback token', async () => {
+  const f = runtimeFixture();
+  const first = f.state.adultScene.positions[0];
+  const later = chapter('return', 120, 'one');
+  first.sourceRanges.push(...later.sourceRanges);
+  first.movements.push(...later.movements);
+  first.endTime = 150;
+  await startFirstChapter(f);
+  const token = f.state.adultSelectionToken;
+  const currentOccurrence = f.state.activeAdultOccurrenceId;
+  const playCalls = f.els.video.playCalls;
+  f.state.adultUnlockedPositionIds.delete(first.id);
+  f.selectAdultMovement('return-0', true);
+  await flush();
+  assert.equal(f.state.activeAdultOccurrenceId, currentOccurrence);
+  assert.equal(f.state.adultSelectionToken, token);
+  assert.equal(f.state.activeMovementId, 'one-0');
+  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.els.video.playCalls, playCalls);
+});
+
+test('render-only selection leaves the active occurrence unchanged', async () => {
+  const f = runtimeFixture();
+  const first = f.state.adultScene.positions[0];
+  const later = chapter('return', 120, 'one');
+  first.sourceRanges.push(...later.sourceRanges);
+  first.movements.push(...later.movements);
+  first.endTime = 150;
+  await startFirstChapter(f);
+  const occurrence = f.state.activeAdultOccurrenceId;
+  f.selectAdultMovement('return-0', false);
+  assert.equal(f.state.activeAdultOccurrenceId, occurrence);
+  assert.equal(f.state.activeMovementId, 'one-0');
+  assert.equal(f.els.video.currentTime, 20);
+});
+
+test('invalid child clips are neither shown nor allowed to bridge disjoint source ranges', async () => {
+  const f = runtimeFixture();
+  const first = f.state.adultScene.positions[0];
+  first.sourceRanges = [
+    { id: 'source-one', startTime: 20, endTime: 30 },
+    { id: 'source-one', startTime: 40, endTime: 50 }
+  ];
+  await startFirstChapter(f);
+  assert.deepEqual(first.activeMovementChoices.flatMap(c => c.variants).map(m => m.id), ['one-2']);
+  const currentOccurrence = f.state.activeAdultOccurrenceId;
+  f.selectAdultMovement('one-1', true);
+  await flush();
+  assert.equal(f.state.activeAdultOccurrenceId, currentOccurrence);
+  assert.equal(f.state.activeMovementId, 'one-0');
+  assert.equal(f.els.video.currentTime, 20);
+});
+
 test('finishing a short clip pauses and clears it without arming another clip during render', async () => {
   const f = runtimeFixture();
   await startFirstChapter(f);

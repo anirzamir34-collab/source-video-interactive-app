@@ -49,10 +49,12 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
     const page = await request('/', { headers: { Cookie: cookie } });
     assert.equal(page.status, 200);
     assert.match(await page.text(), /app\.js/);
-    const script = await request('/app.js', { headers: { Cookie: cookie } });
-    assert.equal(script.status, 200);
-    assert.match(script.headers.get('content-type'), /javascript/);
-    await script.text();
+    for (const path of ['/app.js', '/adult-gameplay.js', '/engine-hardening.js', '/sequence-integrity.js']) {
+      const script = await request(path, { headers: { Cookie: cookie } });
+      assert.equal(script.status, 200, path);
+      assert.match(script.headers.get('content-type'), /javascript/);
+      await script.text();
+    }
   });
   await t.test('unknown API and malformed or oversized JSON return JSON errors', async () => {
     const missing = await request('/api/does-not-exist', { headers: { Cookie: cookie } });

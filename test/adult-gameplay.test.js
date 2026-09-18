@@ -197,7 +197,7 @@ test('outcome pacing scales with scene length and remains deliberately slow', ()
 
 test('long verified position becomes four playable variants of at least ten seconds', () => {
   const variants = expandVerifiedMovementVariants([
-    { id: 'doggy-long', label: 'Doggy-style ritmi', loopStartTime: 120, loopEndTime: 300 }
+    { id: 'doggy-long', label: 'Doggy-style ritmi', loopStartTime: 120, loopEndTime: 300, sourceVerified: true }
   ], 120, 300);
   assert.equal(variants.length, 4);
   assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 10));

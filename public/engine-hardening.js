@@ -1,10 +1,11 @@
 import { hasDeclaredPartialCoverage } from './analysis-recovery.js';
+import { clipRange, sourceRangeForClip } from './sequence-integrity.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
 export const ANALYSIS_SCHEMA_VERSION = 5;
 export const ENGINE_VERSION = 'videoquest-story-v1';
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 export const ADULT_PHASE_ORDER = Object.freeze({
   foreplay: 0,
@@ -589,12 +590,22 @@ export function canPlayAction({
     return { allowed: false, reason: 'POSITION_PHASE_LOCKED' };
   }
   if (kind === 'movement' && parentPosition) {
-    const start = numberOr(action.loopStartTime, action.startTime);
-    const end = numberOr(action.loopEndTime, action.endTime);
+    const loop = clipRange(action);
+    if (!loop || action.sourceVerified !== true) {
+      return { allowed: false, reason: 'INVALID_VERIFIED_CLIP' };
+    }
+    const { startTime: start, endTime: end } = loop;
     const parentStart = numberOr(parentPosition.startTime);
     const parentEnd = numberOr(parentPosition.endTime);
     if (start < parentStart - 0.05 || end > parentEnd + 0.05) {
       return { allowed: false, reason: 'MOVEMENT_OUTSIDE_PARENT' };
+    }
+    if (start < interval.start - 1e-7 || end > interval.end + 1e-7 ||
+        (videoDuration > 0 && end > videoDuration + 1e-7)) {
+      return { allowed: false, reason: 'CLIP_OUTSIDE_SOURCE' };
+    }
+    if (Array.isArray(parentPosition.sourceRanges) && !sourceRangeForClip(parentPosition, action)) {
+      return { allowed: false, reason: 'CLIP_OUTSIDE_VERIFIED_RANGE' };
     }
   }
   if (kind === 'outcome') {

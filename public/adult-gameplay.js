@@ -1,3 +1,5 @@
+import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
 export function adultPositionFamily(value) {
@@ -98,31 +100,33 @@ export function verifiedPartnerTransition(action = {}) {
 }
 
 export function positionOccurrenceGroups(position = {}) {
-  const ranges = (Array.isArray(position?.sourceRanges) ? position.sourceRanges : [])
-    .map(range => ({
-      id: String(range?.id || ''),
-      startTime: Number(range?.startTime),
-      endTime: Number(range?.endTime)
-    }))
-    .filter(range => range.id && Number.isFinite(range.startTime) &&
-      Number.isFinite(range.endTime) && range.endTime > range.startTime)
-    .sort((a, b) => a.startTime - b.startTime);
+  const ranges = normalizedSourceRanges(position);
   const groups = [];
   for (const range of ranges) {
     const previous = groups[groups.length - 1];
     if (previous && range.startTime <= previous.endTime + 0.25) {
       previous.endTime = Math.max(previous.endTime, range.endTime);
-      previous.sourcePositionIds.push(range.id);
+      if (!previous.sourcePositionIds.includes(range.id)) previous.sourcePositionIds.push(range.id);
+      previous.sourceRanges.push(range);
       continue;
     }
     groups.push({
       id: range.id,
       startTime: range.startTime,
       endTime: range.endTime,
-      sourcePositionIds: [range.id]
+      sourcePositionIds: [range.id],
+      sourceRanges: [range]
     });
   }
-  return groups;
+  // Providers can reuse an identifier for disjoint returns. Such returns must
+  // still have distinct runtime identities, without losing source provenance.
+  const counts = new Map();
+  groups.forEach(group => counts.set(group.id, (counts.get(group.id) || 0) + 1));
+  return groups.map(group => ({
+    ...group,
+    id: counts.get(group.id) > 1
+      ? `${group.id}@${group.startTime}:${group.endTime}` : group.id
+  }));
 }
 
 export function movementsForPositionOccurrence(position = {}, occurrenceId = '') {
@@ -131,30 +135,14 @@ export function movementsForPositionOccurrence(position = {}, occurrenceId = '')
     ? groups.find(item => item.id === String(occurrenceId))
     : groups[0];
   if (!group) return [];
-  const sourceIds = new Set(group.sourcePositionIds);
   return (Array.isArray(position?.movements) ? position.movements : [])
-    .filter(movement => {
-      const startTime = Number(movement?.loopStartTime ?? movement?.startTime);
-      const endTime = Number(movement?.loopEndTime ?? movement?.endTime);
-      const sourceMatch = sourceIds.has(String(movement?.sourcePositionId || ''));
-      const partnerMatch = !position.partnerTrackId || !movement.partnerTrackId ||
-        String(position.partnerTrackId) === String(movement.partnerTrackId);
-      const timeMatch = Number.isFinite(startTime) && Number.isFinite(endTime) &&
-        startTime >= group.startTime - 0.05 && endTime <= group.endTime + 0.05;
-      return sourceMatch && timeMatch && partnerMatch;
-    })
+    .filter(movement => sourceRangeForClip(position, movement, group.sourceRanges))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 }
 
 export function positionOccurrenceForMovement(position = {}, movement = null) {
-  if (!movement) return null;
-  const sourceId = String(movement.sourcePositionId || '');
-  const startTime = Number(movement.loopStartTime ?? movement.startTime);
-  const endTime = Number(movement.loopEndTime ?? movement.endTime);
   return positionOccurrenceGroups(position).find(group =>
-    group.sourcePositionIds.includes(sourceId) &&
-    Number.isFinite(startTime) && Number.isFinite(endTime) &&
-    startTime >= group.startTime - 0.05 && endTime <= group.endTime + 0.05
+    sourceRangeForClip(position, movement, group.sourceRanges)
   ) || null;
 }
 
@@ -407,25 +395,21 @@ export function expandVerifiedMovementVariants(
   const limit = Math.max(1, Math.min(24, Math.floor(Number(maxVariants) || 4)));
   const positionDuration = end - start;
   const rawSource = (Array.isArray(movements) ? movements : [])
+    .filter(item => item?.sourceVerified === true && clipRange(item))
     .map(item => ({
       ...item,
-      loopStartTime: Math.max(start, Number(item?.loopStartTime)),
-      loopEndTime: Math.min(end, Number(item?.loopEndTime))
+      loopStartTime: Math.max(start, clipRange(item).startTime),
+      loopEndTime: Math.min(end, clipRange(item).endTime)
     }))
     .filter(item => item.loopEndTime - item.loopStartTime >= minimum)
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 
   const source = rawSource.reduce((items, item) => {
     const duplicateIndex = items.findIndex(existing => {
-      const overlap = Math.max(0,
-        Math.min(existing.loopEndTime, item.loopEndTime) -
-        Math.max(existing.loopStartTime, item.loopStartTime)
-      );
-      const shorter = Math.min(
-        existing.loopEndTime - existing.loopStartTime,
-        item.loopEndTime - item.loopStartTime
-      );
-      return shorter > 0 && overlap / shorter >= 0.88;
+      return existing.loopStartTime === item.loopStartTime &&
+        existing.loopEndTime === item.loopEndTime &&
+        String(existing.label || '') === String(item.label || '') &&
+        String(existing.partnerTrackId || '') === String(item.partnerTrackId || '');
     });
     if (duplicateIndex < 0) items.push(item);
     else if (Number(item.confidence || 0) > Number(items[duplicateIndex].confidence || 0)) {
@@ -436,15 +420,24 @@ export function expandVerifiedMovementVariants(
 
   if (!source.length || positionDuration < minimum) return [];
 
-  if (splitEachMovement) {
+  {
     const variants = [];
-    for (const item of source) {
+    for (const [sourceIndex, item] of source.entries()) {
       const itemStart = Number(item.loopStartTime);
       const itemEnd = Number(item.loopEndTime);
       const duration = itemEnd - itemStart;
-      const desiredParts = duration >= 18 ? 3 : duration >= 10 ? 2 : 1;
-      const partCount = Math.max(1, Math.min(desiredParts, Math.floor(duration / minimum)));
-      for (let index = 0; index < partCount && variants.length < limit; index += 1) {
+      const desiredParts = splitEachMovement
+        ? (duration >= 18 ? 3 : duration >= 10 ? 2 : 1)
+        : (duration >= 60 ? 4 : duration >= 30 ? 3 : duration >= 20 ? 2 : 1);
+      // The cap limits optional splitting, never the number of source clips.
+      // Reserve one slot for every remaining clip, even on long timelines.
+      const budget = Math.max(1, limit - variants.length - (source.length - sourceIndex - 1));
+      const partCount = Math.max(1, Math.min(desiredParts, Math.floor(duration / minimum), budget));
+      if (!splitEachMovement && partCount === 1) {
+        variants.push(item);
+        continue;
+      }
+      for (let index = 0; index < partCount; index += 1) {
         const partStart = itemStart + (duration / partCount) * index;
         const partEnd = index === partCount - 1
           ? itemEnd
@@ -453,7 +446,7 @@ export function expandVerifiedMovementVariants(
           ...item,
           id: `${item.id}:variant-${index + 1}-${Math.round(partStart * 1000)}`,
           label: partCount > 1
-            ? `${String(item.label || baseLabel || 'Gerçek pozisyon hareketi').replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')} · Sekans ${index + 1}`
+            ? `${String((splitEachMovement ? item.label || baseLabel : baseLabel || item.label) || 'Gerçek pozisyon hareketi').replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')} · Sekans ${index + 1}`
             : item.label || baseLabel || 'Gerçek pozisyon hareketi',
           loopStartTime: partStart,
           loopEndTime: partEnd,
@@ -464,45 +457,6 @@ export function expandVerifiedMovementVariants(
     }
     return variants;
   }
-
-  const desired = Math.min(
-    limit,
-    Math.floor(positionDuration / minimum),
-    positionDuration >= 60 ? 4 : positionDuration >= 30 ? 3 : positionDuration >= 20 ? 2 : 1
-  );
-
-  const naturallyDistinct = source.filter((item, index, list) =>
-    index === 0 || Number(item.loopStartTime) >= Number(list[index - 1].loopEndTime) - 0.25
-  );
-  if (naturallyDistinct.length >= desired) return naturallyDistinct.slice(0, limit);
-
-  const sliceDuration = positionDuration / desired;
-  return Array.from({ length: desired }, (_, index) => {
-    const sliceStart = start + sliceDuration * index;
-    const sliceEnd = index === desired - 1 ? end : start + sliceDuration * (index + 1);
-    const rankedEvidence = source.map(item => ({
-      item,
-      overlap: Math.max(0,
-        Math.min(Number(item.loopEndTime), sliceEnd) -
-        Math.max(Number(item.loopStartTime), sliceStart)
-      )
-    })).sort((a, b) => b.overlap - a.overlap);
-    const evidence = rankedEvidence[0]?.item || source[0];
-    const tempoDirectlySupported = Number(rankedEvidence[0]?.overlap || 0) >= (sliceEnd - sliceStart) * 0.65;
-    const labelBase = String(baseLabel || evidence.label || 'Gerçek pozisyon sekansı')
-      .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '');
-    return {
-      ...evidence,
-      id: `${evidence.id}:variant-${index + 1}-${Math.round(sliceStart * 1000)}`,
-      label: `${labelBase} · Sekans ${index + 1}`,
-      loopStartTime: sliceStart,
-      loopEndTime: sliceEnd,
-      movementTempo: tempoDirectlySupported ? evidence.movementTempo : 'unclear',
-      sourceVerified: true,
-      derivedFromVerifiedSegment: evidence.id,
-      derivedFromVerifiedPosition: !tempoDirectlySupported
-    };
-  });
 }
 
 export const ADULT_PHASE_ORDER = Object.freeze({
@@ -731,7 +685,7 @@ export function findAdultSceneForTimeline(
 export function consolidateVerifiedPositions(positions = [], { mergeDistantReturns = false } = {}) {
   const clusters = [];
   const sorted = [...(Array.isArray(positions) ? positions : [])]
-    .filter(position => position?.familyId)
+    .filter(position => position?.familyId && timelineRange(position.startTime, position.endTime))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   for (const position of sorted) {
     if (!position?.familyId) continue;
@@ -749,10 +703,32 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
       : `${position.familyId}:${partnerKey}${roleSuffix}`;
     const key = `${String(position.familyId)}::${partnerKey}::${role}::${routeSuffix}`;
     const sourceId = String(position.id || key);
+    // A second normalization pass must preserve the original ranges and IDs.
+    // Replacing them with the parent envelope would make gaps playable.
+    const ranges = normalizedSourceRanges({
+      sourceRanges: position.sourceRanges === undefined
+        ? [{ id: sourceId, startTime: position.startTime, endTime: position.endTime }]
+        : position.sourceRanges
+    }).filter(range => range.startTime >= Number(position.startTime) &&
+      range.endTime <= Number(position.endTime));
+    if (!ranges.length) continue;
     const movements = (Array.isArray(position.movements) ? position.movements : [])
-      .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
+      .filter(movement => movement && clipRange(movement))
+      .map(movement => {
+        const range = clipRange(movement);
+        const possibleSources = ranges.filter(source => range.startTime >= source.startTime &&
+          range.endTime <= source.endTime);
+        const sourceIds = [...new Set(possibleSources.map(source => source.id))];
+        return {
+          ...movement,
+          sourcePositionId: movement.sourcePositionId || (sourceIds.length === 1 ? sourceIds[0] : ''),
+          loopStartTime: range.startTime,
+          loopEndTime: range.endTime
+        };
+      })
+      .filter(movement => sourceRangeForClip(position, movement, ranges));
     // Keep separate continuous returns separate unless a caller explicitly
-    // requests an encounter-wide summary. Playback uses the continuous form.
+    // requests an encounter-wide summary. Exact ranges still govern playback.
     const existing = [...clusters].reverse().find(item =>
       item.clusterKey === key && (
         mergeDistantReturns || Number(position.startTime) <= Number(item.endTime) + 0.25
@@ -768,24 +744,15 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
         partnerTrackId: partnerKey === 'partner-unknown' ? '' : partnerKey,
         startTime: Number(position.startTime),
         endTime: Number(position.endTime),
-        sourcePositionIds: [sourceId],
-        sourceRanges: [{
-          id: sourceId,
-          startTime: Number(position.startTime),
-          endTime: Number(position.endTime)
-        }],
+        sourcePositionIds: [...new Set(ranges.map(range => range.id))],
+        sourceRanges: ranges,
         movements
       });
       continue;
     }
     existing.startTime = Math.min(existing.startTime, Number(position.startTime));
     existing.endTime = Math.max(existing.endTime, Number(position.endTime));
-    existing.sourcePositionIds.push(sourceId);
-    existing.sourceRanges.push({
-      id: sourceId,
-      startTime: Number(position.startTime),
-      endTime: Number(position.endTime)
-    });
+    existing.sourceRanges.push(...ranges);
     existing.movements.push(...movements);
     if (Number(position.activityTypeConfidence || 0) > Number(existing.activityTypeConfidence || 0)) {
       existing.activityType = position.activityType;
@@ -800,24 +767,37 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
     const seen = new Set();
     position.movements = position.movements
       .filter(movement => {
-        const key = String(movement.id || [
-          Number(movement.loopStartTime).toFixed(3),
-          Number(movement.loopEndTime).toFixed(3),
-          String(movement.label || '')
-        ].join('|'));
+        const key = JSON.stringify([
+          movement.sourcePositionId, movement.id || '',
+          movement.loopStartTime, movement.loopEndTime, movement.label || ''
+        ]);
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
       })
       .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-    const ranges = [...position.sourceRanges]
-      .filter(range => Number.isFinite(range.startTime) && Number.isFinite(range.endTime))
-      .sort((a, b) => a.startTime - b.startTime);
+    const idCounts = new Map();
+    position.movements.forEach(movement => {
+      if (movement.id) idCounts.set(String(movement.id), (idCounts.get(String(movement.id)) || 0) + 1);
+    });
+    const usedIds = new Set(position.movements.filter(movement => idCounts.get(String(movement.id)) === 1)
+      .map(movement => String(movement.id)));
+    position.movements = position.movements.map(movement => {
+      const originalId = String(movement.id || '');
+      if (originalId && idCounts.get(originalId) === 1) return movement;
+      const baseId = `clip:${encodeURIComponent(JSON.stringify([originalId, movement.sourcePositionId,
+        movement.loopStartTime, movement.loopEndTime]))}`;
+      let id = baseId;
+      for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${baseId}:${suffix}`;
+      usedIds.add(id);
+      return { ...movement, id };
+    });
+    const ranges = normalizedSourceRanges(position);
     consolidated.push({
       ...position,
       startTime: Math.min(...ranges.map(range => range.startTime)),
       endTime: Math.max(...ranges.map(range => range.endTime)),
-      sourcePositionIds: ranges.map(range => String(range.id)),
+      sourcePositionIds: [...new Set(ranges.map(range => String(range.id)))],
       sourceRanges: ranges,
       movements: position.movements,
       entryMovementId: position.movements[0]?.id || '',
@@ -868,10 +848,12 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     if (existing) existing.items.push(item);
     else grouped.push({ key, items: [item] });
   });
-  const cardGroups = grouped.slice(0, limit);
-  grouped.slice(limit).forEach((group, index) => {
-    cardGroups[index % cardGroups.length].items.push(...group.items);
-  });
+  // Never relabel unrelated overflow clips as the first few named actions.
+  // Keep every clip accessible in an explicitly generic overflow choice.
+  const cardGroups = grouped.length <= limit ? grouped : [
+    ...grouped.slice(0, limit - 1),
+    { key: 'overflow', overflow: true, items: grouped.slice(limit - 1).flatMap(group => group.items) }
+  ];
   const cards = [];
 
   for (let index = 0; index < cardGroups.length; index += 1) {
@@ -911,7 +893,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       item.activityEvidence,
       item.sensoryEvidence
     ].filter(Boolean).join(' ')).join(' '));
-    const label = meaningfulLabel
+    const label = cardGroups[index].overflow ? 'Diğer doğrulanmış kesitler' : meaningfulLabel
       ? rawLabel
       : inferredAction || tempoLabels[tempo] || `${clean(positionLabel) || 'Doğrulanmış pozisyon'} sekansını oynat`;
     const tempoVariants = ['fast', 'moderate', 'slow'].map(kind =>

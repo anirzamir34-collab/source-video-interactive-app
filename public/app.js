@@ -3250,6 +3250,7 @@ function prepareAdultScenes() {
         startTime: correctedStart,
         endTime: correctedEnd,
         unlockProgress: 0,
+        sourceRanges: [],
         movements: []
       });
     }
@@ -3267,18 +3268,26 @@ function prepareAdultScenes() {
     if (action.label || action.movementType) {
       const movementStart = Math.max(
         position.startTime,
+        Number(action.startTime),
         Number(action.loopStartTime ?? action.startTime)
       );
       const movementEnd = Math.min(
-        Number(action.positionEndTime ?? position.endTime),
+        position.endTime,
+        Number(action.endTime),
         Number(action.loopEndTime ?? action.endTime)
       );
       if (movementBelongsToVerifiedPosition(action, canonical.id)) {
         traceRow.movementAccepted = true;
         traceRow.movementReason = 'MOVEMENT_MATCHES_CANONICAL_POSITION';
+        position.sourceRanges.push({
+          id: position.id,
+          startTime: movementStart,
+          endTime: movementEnd
+        });
         position.movements.push({
           ...action,
           id: action.actionId || `movement-${index}`,
+          sourcePositionId: position.id,
           label: action.label,
           loopStartTime: movementStart,
           loopEndTime: movementEnd
@@ -3325,7 +3334,7 @@ function prepareAdultScenes() {
 
       const positions = [...scene.positions.values()]
           .map(position => {
-            let movements = expandVerifiedMovementVariants(
+            const movements = expandVerifiedMovementVariants(
               position.movements,
               position.startTime,
               position.endTime,
@@ -3336,38 +3345,12 @@ function prepareAdultScenes() {
                 splitEachMovement: true
               }
             );
-            if (!movements.length && isPlayableVerifiedPositionDuration(position.startTime, position.endTime)) {
-              const overlappingAction = actions
-                .filter(action => action?.sourceVerified === true && String(action?.label || '').trim())
-                .map(action => ({
-                  action,
-                  overlap: Math.max(0,
-                    Math.min(Number(action.endTime), Number(position.endTime)) -
-                    Math.max(Number(action.startTime), Number(position.startTime))
-                  )
-                }))
-                .filter(item => item.overlap >= 1)
-                .sort((a, b) => b.overlap - a.overlap)[0]?.action;
-              const verifiedBase = {
-                id: `${position.id}:verified-base`,
-                actionId: `${position.id}:verified-base`,
-                label: String(overlappingAction?.label || `${position.label} oynat`).trim(),
-                startTime: position.startTime,
-                endTime: position.endTime,
-                loopStartTime: position.startTime,
-                loopEndTime: position.endTime,
-                movementType: position.familyId,
-                movementTempo: 'unclear',
-                sourceVerified: true,
-                maleProgressRate: 1,
-                femaleProgressRate: 1,
-                positionOnlyFallback: true
-              };
-              movements = [verifiedBase];
-            }
+            // An empty or conflicting analysis is not evidence for the whole
+            // parent interval. Keep it unavailable instead of fabricating a clip.
             return { ...position, movements };
           })
-          .filter(position => isPlayableVerifiedPositionDuration(position.startTime, position.endTime))
+          .filter(position => position.movements.length &&
+            isPlayableVerifiedPositionDuration(position.startTime, position.endTime))
           .sort((a, b) => a.startTime - b.startTime);
       if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
       const positionStart = Math.min(...positions.map(position => Number(position.startTime)));
@@ -4505,10 +4488,11 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   // The main tab owns only the verified position entry. All later returns and
   // movements from the same canonical position live under its subchoices.
-  const entryMovement = position.movements.find(item => item.id === position.entryMovementId) ||
-    [...position.movements].sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0] || null;
+  const verifiedMovements = position.movements.filter(item => positionOccurrenceForMovement(position, item));
+  const entryMovement = verifiedMovements.find(item => item.id === position.entryMovementId) ||
+    [...verifiedMovements].sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0] || null;
   const entryMovementId = entryMovement?.id || '';
-  const movementPool = position.movements.filter(item => item.id !== entryMovementId);
+  const movementPool = verifiedMovements.filter(item => item.id !== entryMovementId);
   const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
@@ -4572,8 +4556,6 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const movement = entryMovement;
 
   if (movement) {
-    state.activeAdultOccurrenceId = positionOccurrenceForMovement(position, movement)?.id ||
-      state.activeAdultOccurrenceId;
     selectAdultMovement(
       movement.id,
       shouldSeek,
@@ -4601,9 +4583,7 @@ function selectAdultMovement(
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || movement.sourceVerified !== true || state.adultOutcomePhase !== 'idle') return;
   const movementOccurrence = positionOccurrenceForMovement(position, movement);
-  if (movementOccurrence) state.activeAdultOccurrenceId = movementOccurrence.id;
-  const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
-  if (!occurrenceMovements.some(item => item.id === movement.id)) {
+  if (!movementOccurrence) {
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
       movementId: movement.id,
       positionId: position.id,
@@ -4623,6 +4603,7 @@ function selectAdultMovement(
 
   if (!shouldSeek) return;
   const effectiveToken = selectionToken ?? beginAdultSelection();
+  state.activeAdultOccurrenceId = movementOccurrence.id;
   state.activeAdultPreludeId = null;
   state.activeMovementId = movement.id;
   const matchingChoice = (position.activeMovementChoices || []).find(
