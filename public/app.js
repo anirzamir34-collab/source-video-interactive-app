@@ -3425,6 +3425,15 @@ function nextPanelChoiceClip(variants) {
   return remainingClipsInRange(variants, state.adultScene, panelTimelineCursor())[0] || null;
 }
 
+function panelClipIsReachable(clip) {
+  const range = clipTimeRange(clip);
+  const scene = clipTimeRange(state.adultScene);
+  const cursor = Number(els.video?.currentTime);
+  return Boolean(range && scene && Number.isFinite(cursor) &&
+    range.startTime >= scene.startTime - 0.1 && range.endTime <= scene.endTime + 0.1 &&
+    cursor >= scene.startTime - 0.15 && panelTimelineCursor() < range.endTime - 0.04);
+}
+
 function showPanelContinuation() {
   if (!els.video?.paused || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision ||
       els.panelPlaybackRecovery) return;
@@ -3643,24 +3652,26 @@ function renderAdultWarmupChoices(scene) {
 function renderAdultApproachChoices(scene) {
   const flow = currentAdultFlow();
   const candidates = [
-    ...(scene?.foreplay || []).map(item => ({
+    ...(scene?.foreplay || []).filter(panelClipIsReachable).map(item => ({
       kind: 'foreplay', id: item.id, label: item.label,
       startTime: item.startTime, endTime: item.endTime
     })),
-    ...(scene?.positions || []).filter(position => isWarmupPosition(position) && currentPanelOccurrence(position)).flatMap(position => {
-      const movements = (position.movements || []).filter(item =>
-        Number(item.loopEndTime) > state.adultTimelineFloor - 0.1
+    ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
+      const occurrence = currentPanelOccurrence(position);
+      if (!occurrence) return [];
+      const movements = remainingClipsInRange(
+        movementsForPositionOccurrence(position, occurrence.id), occurrence, panelTimelineCursor()
       );
-      const cards = buildVerifiedMovementChoices(movements, position.label, 4);
-      return (cards.length ? cards : [null]).map((card, index) => ({
+      const cards = buildVerifiedMovementChoices(movements, position.label, 5);
+      return cards.map(card => ({
         kind: 'position', id: position.id,
-        movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
-        label: card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
-        startTime: Math.min(...(card?.variants || movements || []).map(item => Number(item.loopStartTime)).filter(Number.isFinite), Number(position.startTime)),
-        endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime))
+        occurrenceId: occurrence.id, variants: card.variants,
+        label: card.label || position.label,
+        startTime: Math.min(...card.variants.map(item => clipTimeRange(item).startTime)),
+        endTime: Math.max(...card.variants.map(item => clipTimeRange(item).endTime))
       }));
     })
-  ].filter(item => Number(item.endTime) > state.adultTimelineFloor - 0.1)
+  ].filter(panelClipIsReachable)
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))
     .filter((item, index, items) => items.findIndex(candidate =>
       normalizeAdultLabel(candidate.label) === normalizeAdultLabel(item.label)
@@ -3684,10 +3695,21 @@ function renderAdultApproachChoices(scene) {
     button.className = 'choice-btn';
     button.textContent = compactChoiceLabel(choice.label);
     button.addEventListener('click', () => {
+      if (!state.adultMode || scene !== state.adultScene) return;
       if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
       else {
+        const position = scene.positions.find(item => item.id === choice.id);
+        const occurrence = currentPanelOccurrence(position);
+        const movement = occurrence?.id === choice.occurrenceId
+          ? remainingClipsInRange(choice.variants, occurrence, panelTimelineCursor())[0]
+          : null;
+        if (!movement) {
+          renderAdultProgressiveUI(true);
+          showPanelContinuation();
+          return;
+        }
         selectAdultPosition(choice.id, false);
-        if (choice.movementId) selectAdultMovement(choice.movementId, true);
+        selectAdultMovement(movement.id, true);
       }
     });
     els.choices.appendChild(button);
@@ -4035,7 +4057,11 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scene?.foreplay?.find(entry => entry.id === preludeId);
   if (!item || !els.video || state.adultOutcomePhase !== 'idle') return;
-  if (Number(item.startTime) < state.adultTimelineFloor - 0.1) return;
+  if (!panelClipIsReachable(item)) {
+    renderAdultProgressiveUI(true);
+    showPanelContinuation();
+    return;
+  }
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
   logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
@@ -4539,12 +4565,12 @@ async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
 
 async function playPanelClipContinuously(clip, selectionToken = state.adultSelectionToken) {
   if (!els.video || !state.adultMode || selectionToken !== state.adultSelectionToken) return false;
+  if (!panelClipIsReachable(clip)) {
+    showPanelContinuation();
+    return false;
+  }
   const range = clipTimeRange(clip);
-  const scene = clipTimeRange(state.adultScene);
   const cursor = Number(els.video.currentTime);
-  if (!range || !scene || !Number.isFinite(cursor) ||
-      range.startTime < scene.startTime - 0.1 || range.endTime > scene.endTime + 0.1 ||
-      cursor < scene.startTime - 0.15 || cursor >= range.endTime - 0.04) return false;
   state.panelPendingClipStart = cursor < range.startTime - 0.04 ? range.startTime : null;
   state.lastAdultFrameNow = performance.now();
   primeLanguageTracksAt(cursor, 2);
