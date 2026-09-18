@@ -48,8 +48,10 @@ import {
   dubSegmentKey,
   fittedDubPlaybackRate,
   isCompleteChunkAnalysis,
+  isDubStartTimely,
   mapVideoTimeToDubTime,
-  nextDialogueSegments
+  nextDialogueSegments,
+  resolveDubGender
 } from './playback-logic.js';
 import {
   ANALYSIS_SCHEMA_VERSION,
@@ -82,6 +84,7 @@ const state = {
   serviceCapabilities: null,
   selectedFile: null,
   selectedRemoteVideo: null,
+  videoObjectUrl: '',
   analysisSession: null,
   analysis: null,
   dialogue: null,
@@ -234,7 +237,6 @@ const els = {
   adultDockPhase: $('adultDockPhase'),
   adultDockTitle: $('adultDockTitle'),
   adultDockLustValue: $('adultDockLustValue'),
-  adultDockFemaleValue: $('adultDockFemaleValue'),
   adultDockMaleValue: $('adultDockMaleValue'),
   adultQuickChoices: $('adultQuickChoices'),
   adultDockMoreBtn: $('adultDockMoreBtn'),
@@ -263,8 +265,6 @@ const els = {
   maleProgressBar: $('maleProgressBar'),
   femaleProgressText: $('femaleProgressText'),
   femaleProgressBar: $('femaleProgressBar'),
-  climaxProgressText: $('climaxProgressText'),
-  climaxProgressBar: $('climaxProgressBar'),
   orgasmDecision: $('orgasmDecision'),
   orgasmDecisionTitle: $('orgasmDecisionTitle'),
   orgasmDecisionMeta: $('orgasmDecisionMeta'),
@@ -636,6 +636,11 @@ async function testElevenLabsKey() {
       els.elevenLabsStatus.className = response.ok ? String(body.state || 'available') : String(body.state || 'invalid');
       els.elevenLabsStatus.textContent = body.message || (response.ok ? 'ElevenLabs çalışıyor' : 'ElevenLabs kullanılamıyor');
     }
+    if (response.ok && els.dubToggleBtn) {
+      delete els.dubToggleBtn.dataset.unavailable;
+      els.dubToggleBtn.title = '';
+      els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
+    }
     checkAiUsageStatus();
   } catch {
     if (els.elevenLabsStatus) {
@@ -847,17 +852,28 @@ renderGeminiApiKeyState();
 renderElevenLabsState();
 renderAzureSpeechState();
 
+function releaseVideoObjectUrl() {
+  if (!state.videoObjectUrl) return;
+  URL.revokeObjectURL(state.videoObjectUrl);
+  state.videoObjectUrl = '';
+}
+
 els.videoInput.addEventListener('change', () => {
   const file = els.videoInput.files?.[0] || null;
   state.selectedFile = file;
   state.selectedRemoteVideo = null;
   state.analysisSession = null;
   resetDubState();
+  releaseVideoObjectUrl();
   if (file) {
     els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • ${file.type || 'video'}`;
-    els.video.src = URL.createObjectURL(file);
+    state.videoObjectUrl = URL.createObjectURL(file);
+    els.video.src = state.videoObjectUrl;
   } else {
     els.fileMeta.textContent = '';
+    els.video.pause();
+    els.video.removeAttribute('src');
+    els.video.load();
   }
   updateAnalyzeAvailability();
   renderDebug();
@@ -1334,17 +1350,13 @@ function stableDubGender(segment) {
   // The time-aligned segment is the closest evidence to the audible line.
   // A global speaker profile can be wrong for an isolated diarization turn;
   // preferring it made a woman's voice read a man's line (and vice versa).
-  const segmentGender = String(segment?.gender || '').toLowerCase();
-  const candidate = String(
-    ['male', 'female'].includes(segmentGender)
-      ? segmentGender
-      : (profile?.gender || 'uncertain')
-  ).toLowerCase();
-  const normalized = candidate === 'male' || candidate === 'female' ? candidate : 'uncertain';
-  if (!state.dubStableSpeakerGenders.has(speakerId)) {
-    state.dubStableSpeakerGenders.set(speakerId, normalized);
-  }
-  return state.dubStableSpeakerGenders.get(speakerId) || normalized;
+  const resolved = resolveDubGender(
+    segment?.gender,
+    profile?.gender,
+    state.dubStableSpeakerGenders.get(speakerId)
+  );
+  if (resolved !== 'uncertain') state.dubStableSpeakerGenders.set(speakerId, resolved);
+  return resolved;
 }
 
 async function ensureDubSegment(segment) {
@@ -1536,21 +1548,22 @@ async function syncDubPlayback() {
 
   const generation = state.dubSyncGeneration;
   const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
+  const segment = dialogueSegmentAt(dubTimeline(), videoTime, 0.12);
+  const segmentId = getDubSegmentId(segment);
   const currentAudio = state.activeDubSegmentId
     ? dubChannels.get(state.activeDubSegmentId)
     : null;
-  if (currentAudio && !currentAudio.ended) {
+  if (currentAudio && !currentAudio.ended && state.activeDubSegmentId === segmentId) {
     if (!els.video.paused && currentAudio.paused) currentAudio.play().catch(() => {});
     prefetchDubSegmentsAround(videoTime);
     return;
   }
   if (state.activeDubSegmentId) {
+    currentAudio?.pause();
     dubChannels.delete(state.activeDubSegmentId);
     state.activeDubSegmentId = null;
   }
 
-  const segment = dialogueSegmentAt(dubTimeline(), videoTime, 0.12);
-  const segmentId = getDubSegmentId(segment);
   if (!segment?.turkishText || !segmentId || state.dubPlayedSegmentIds.has(segmentId)) {
     prefetchDubSegmentsAround(videoTime);
     return;
@@ -1567,7 +1580,9 @@ async function syncDubPlayback() {
     Math.max(0, Number(els.video.currentTime) || 0),
     0.12
   );
-  if (getDubSegmentId(currentSegment) !== segmentId) return;
+  const currentVideoTime = Math.max(0, Number(els.video.currentTime) || 0);
+  if (getDubSegmentId(currentSegment) !== segmentId ||
+      !isDubStartTimely(currentVideoTime, currentSegment)) return;
 
   const audio = new Audio(source);
   audio.preload = 'auto';
@@ -1614,12 +1629,29 @@ els.subtitleToggleBtn?.addEventListener('click', () => {
   renderSubtitle();
 });
 
+els.dubToggleBtn?.addEventListener('click', () => {
+  if (els.dubToggleBtn.dataset.unavailable === 'true') return;
+  state.dubbingEnabled = !state.dubbingEnabled;
+  els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
+  if (!state.dubbingEnabled) {
+    stopDubPlayback();
+    els.video.muted = false;
+    return;
+  }
+  state.dubPlayedSegmentIds.clear();
+  els.video.muted = !state.keepOriginalAudioEnabled;
+  resyncLanguageTracks();
+});
+
 els.video.addEventListener('timeupdate', renderSubtitle);
 els.video.addEventListener('seeked', renderSubtitle);
 
 els.analyzeBtn.addEventListener('click', async () => {
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
   els.analyzeBtn.disabled = true;
+  els.videoInput.disabled = true;
+  if (videoUrlInput) videoUrlInput.disabled = true;
+  if (resolveUrlBtn) resolveUrlBtn.disabled = true;
   els.analysisCard.classList.remove('hidden');
   els.analysisTitle.textContent = 'Harici servis analiz isteği';
   els.analysisState.textContent = 'ANALYZING';
@@ -1631,7 +1663,8 @@ els.analyzeBtn.addEventListener('click', async () => {
   const sourceKey = file
     ? `file:${file.name}:${file.size}:${file.lastModified}`
     : `remote:${state.selectedRemoteVideo?.sourceUrl || state.selectedRemoteVideo?.proxyUrl || ''}`;
-  const analysisModeKey = JSON.stringify({ motion: modes.motion, quality: modes.quality });
+  const requestedProtagonist = String(els.protagonistInput?.value || '').trim();
+  let analysisModeKey = '';
   const reusableSession = state.analysisSession?.sourceKey === sourceKey;
   const session = reusableSession ? state.analysisSession : {
     sourceKey, file: file || null, dialogue: null, storyboard: null,
@@ -1757,6 +1790,21 @@ els.analyzeBtn.addEventListener('click', async () => {
       storyboard.sheets.length / sheetsPerChunk
     );
 
+    const dialogueRows = state.dialogue?.segments || [];
+    const dialogueSample = [
+      dialogueRows.length,
+      ...dialogueRows.slice(0, 4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`),
+      ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
+    ].join('|');
+    analysisModeKey = JSON.stringify({
+      motion: modes.motion,
+      quality: modes.quality,
+      subtitles: modes.subtitles,
+      dubbing: modes.dubbing,
+      protagonist: requestedProtagonist,
+      dialogue: dialogueSample
+    });
+
     if (session.analysisModeKey !== analysisModeKey || session.chunkCount !== chunkCount) {
       session.analysisModeKey = analysisModeKey;
       session.chunkCount = chunkCount;
@@ -1769,7 +1817,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     let response = null;
     let body = null;
 
-    let protagonistProfile = session.protagonistProfile || String(els.protagonistInput?.value || '').trim();
+    let protagonistProfile = session.protagonistProfile || requestedProtagonist;
     let storyContextMemory = session.storyContextMemory || normalizeStoryContext({});
 
   for (let chunkIndex = chunkResults.length; chunkIndex < chunkCount; chunkIndex += 1) {
@@ -2184,6 +2232,9 @@ els.analyzeBtn.addEventListener('click', async () => {
     setGameState('ERROR');
     renderDebug({ analysisError: error?.message || String(error) });
   } finally {
+    els.videoInput.disabled = false;
+    if (videoUrlInput) videoUrlInput.disabled = false;
+    if (resolveUrlBtn) resolveUrlBtn.disabled = false;
     updateAnalyzeAvailability();
   }
 });
@@ -3363,10 +3414,7 @@ function renderAdultProgress() {
   if (els.femaleProgressText) els.femaleProgressText.textContent = `${Math.round(lust)}%`;
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${maleOrgasm}%`;
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${lust}%`;
-  if (els.climaxProgressText) els.climaxProgressText.textContent = `${Math.round(femaleOrgasm)}%`;
-  if (els.climaxProgressBar) els.climaxProgressBar.style.width = `${femaleOrgasm}%`;
   if (els.adultDockLustValue) els.adultDockLustValue.textContent = String(Math.round(lust));
-  if (els.adultDockFemaleValue) els.adultDockFemaleValue.textContent = String(Math.round(femaleOrgasm));
   if (els.adultDockMaleValue) els.adultDockMaleValue.textContent = String(Math.round(maleOrgasm));
   renderAdultFlowStatus();
   persistRuntimeSnapshot('adult-progress');
@@ -3613,6 +3661,12 @@ function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel) return;
 
+  // Full Lust is the transition condition itself. Waiting for the approach
+  // list to become empty left playback paused forever at 100/100.
+  if (!state.adultSexUnlocked && currentAdultFlow() >= 99.9) {
+    unlockNextAdultPositionFromLust();
+  }
+
   const availablePositions = unlockedAdultPositions(scene)
     .filter(position => !isWarmupPosition(position))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
@@ -3740,7 +3794,11 @@ function renderAdultPanel(scene) {
     const firstCore = (scene.positions || [])
       .filter(position => !isWarmupPosition(position) && !isBonusPosition(position))
       .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
-    if (firstCore) state.adultUnlockedPositionIds.add(firstCore.id);
+    if (firstCore) {
+      state.adultUnlockedPositionIds.add(firstCore.id);
+      state.adultRevealedPositionIds.add(firstCore.id);
+      state.adultSexUnlocked = true;
+    }
   }
   els.adultInteractionPanel.classList.remove('hidden');
   setAdultPanelExpanded(true);
@@ -5048,6 +5106,7 @@ function clearPreviousGameResidue() {
   els.playerSection?.classList.add('hidden');
   els.analysisCard?.classList.add('hidden');
   if (els.video) {
+    releaseVideoObjectUrl();
     els.video.pause();
     els.video.removeAttribute('src');
     els.video.load();
@@ -5214,6 +5273,7 @@ async function resolveVideoUrl() {
       setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Akış desteği kontrol ediliyor...`);
       const probe = await probeSeekableVideo(result.proxyUrl);
       if (probe.seekable) {
+        releaseVideoObjectUrl();
         state.selectedFile = null;
         state.selectedRemoteVideo = {
           proxyUrl: result.proxyUrl,
@@ -5247,7 +5307,9 @@ async function resolveVideoUrl() {
     state.selectedRemoteVideo = null;
     state.analysisSession = null;
     resetDubState();
-    els.video.src = URL.createObjectURL(file);
+    releaseVideoObjectUrl();
+    state.videoObjectUrl = URL.createObjectURL(file);
+    els.video.src = state.videoObjectUrl;
     els.fileMeta.textContent =
       `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • URL kaynağı`;
     updateAnalyzeAvailability();

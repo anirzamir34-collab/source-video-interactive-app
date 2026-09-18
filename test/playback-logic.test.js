@@ -12,14 +12,30 @@ import {
   dubSegmentKey,
   fittedDubPlaybackRate,
   isCompleteChunkAnalysis,
+  isDubStartTimely,
   mapVideoTimeToDubTime,
-  nextDialogueSegments
+  nextDialogueSegments,
+  resolveDubGender
 } from '../public/playback-logic.js';
 
 test('partial chunk analysis is never considered complete', () => {
   assert.equal(isCompleteChunkAnalysis({ completedChunkCount: 2, expectedChunkCount: 10 }), false);
   assert.equal(isCompleteChunkAnalysis({ completedChunkCount: 10, expectedChunkCount: 10, failed: true }), false);
   assert.equal(isCompleteChunkAnalysis({ completedChunkCount: 10, expectedChunkCount: 10 }), true);
+});
+
+test('line-level dub gender overrides stale speaker memory', () => {
+  assert.equal(resolveDubGender('female', 'male', 'male'), 'female');
+  assert.equal(resolveDubGender('male', 'female', 'female'), 'male');
+  assert.equal(resolveDubGender('uncertain', 'female', 'male'), 'male');
+  assert.equal(resolveDubGender('', 'female', ''), 'female');
+});
+
+test('late dub audio is skipped instead of shifting later dialogue', () => {
+  const segment = { startTime: 10, endTime: 13 };
+  assert.equal(isDubStartTimely(10.4, segment), true);
+  assert.equal(isDubStartTimely(11, segment), false);
+  assert.equal(isDubStartTimely(13.1, segment), false);
 });
 
 test('dialogueSegmentAt returns only the segment matching the current video time', () => {
