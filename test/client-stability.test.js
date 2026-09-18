@@ -33,7 +33,7 @@ function fixture(code, overrides = {}) {
   const scope = vm.createContext({
     AbortController, AbortSignal, URL, Blob, File, FormData, performance, setTimeout, clearTimeout,
     console: { error: (...args) => errors.push(args), warn() {} },
-    els: elements(), state: {}, ...overrides
+    els: elements(), state: {}, updateDubMix() {}, ...overrides
   });
   vm.runInContext(code, scope);
   return { scope, errors };
@@ -122,7 +122,7 @@ function dubbingFixture() {
     state, dubTimeline: () => state.dialogue.segments,
     getDubSegmentId: segment => segment.id, stableDubGender: () => 'female',
     activeElevenLabsApiKey: () => 'test-key', elevenLabsHeaders: value => value,
-    logEngineEvent() {}, stopDubPlayback() {}, checkAiUsageStatus() {},
+    logEngineEvent() {}, stopDubPlayback() {}, stopDubClock() {}, clearPreparedDubAudio() {}, checkAiUsageStatus() {},
     fetch: (_url, options) => { const item = { ...deferred(), signal: options.signal }; pending.push(item); return item.promise; }
   });
   return { ...f, state, pending };
