@@ -4576,27 +4576,29 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
-    // Continue only inside the active source occurrence. Never auto-enter a
-    // later occurrence or another partner when this clip ends.
+    // A verified clip never chooses the next movement on behalf of the user.
+    // Automatic chaining could cross a bad model grouping and visibly jump
+    // from missionary to another position. End on the current frame and keep
+    // the panel available until the user explicitly chooses what plays next.
     if (mediaTime >= movement.loopEndTime - 0.04) {
-      const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
-      const nextMovement = pickNextChronologicalVariant(occurrenceMovements, movement.id);
-      if (nextMovement) {
-        selectAdultMovement(nextMovement.id, true, null, { awardProgress: false });
-        return;
-      }
       els.video?.pause();
       state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(movement.loopEndTime) || 0);
       if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
       renderAdultProgressiveUI(true);
-      logEngineEvent('POSITION_OCCURRENCE_ENDED', {
+      logEngineEvent('MOVEMENT_ENDED_AWAITING_SELECTION', {
         positionId: position.id,
         occurrenceId: state.activeAdultOccurrenceId,
         movementId: movement.id
       });
       return;
     }
-    seekAdultLoop(movement.loopStartTime, state.adultSelectionToken);
+    els.video?.pause();
+    renderAdultProgressiveUI(true);
+    logEngineEvent('MOVEMENT_LEFT_RANGE_AWAITING_SELECTION', {
+      positionId: position.id,
+      movementId: movement.id,
+      mediaTime
+    });
     return;
   }
 
