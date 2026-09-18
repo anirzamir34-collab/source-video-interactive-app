@@ -98,6 +98,25 @@ test('adult graph report exposes duplicate family tabs and movement variants', (
   assert.equal(report.scenes[0].positions[1].movementChoices[0].variantCount, 2);
 });
 
+test('same verified family returns merge into one tab across the encounter', () => {
+  const positions = consolidateVerifiedPositions([
+    {
+      id: 'missionary-a', familyId: 'missionary', progressionRole: 'core',
+      partnerTrackId: 'PARTNER_A', startTime: 100, endTime: 120,
+      movements: [{ id: 'm-a', sourceVerified: true, loopStartTime: 100, loopEndTime: 120 }]
+    },
+    {
+      id: 'missionary-b', familyId: 'missionary', progressionRole: 'core',
+      partnerTrackId: 'PARTNER_A', startTime: 300, endTime: 330,
+      movements: [{ id: 'm-b', sourceVerified: true, loopStartTime: 300, loopEndTime: 330 }]
+    }
+  ], { mergeDistantReturns: true });
+
+  assert.equal(positions.length, 1);
+  assert.deepEqual(positions[0].movements.map(item => item.id), ['m-a', 'm-b']);
+  assert.equal(positions[0].sourceRanges.length, 2);
+});
+
 test('selection progress rewards novelty and reduces repeated farming', () => {
   const novel = computeAdultSelectionDelta({
     repeatCount: 0,
