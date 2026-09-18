@@ -76,6 +76,10 @@ import {
   selectDiverseStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
+import {
+  adaptiveAnalysisChunkPlan,
+  extractStoryboard
+} from './storyboard.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -1765,7 +1769,6 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
   els.analysisState.textContent = 'LOCAL_PROCESSING';
 
-  const { extractStoryboard, adaptiveAnalysisChunkPlan } = await import('./storyboard.js');
   const storyboardSource = file || state.selectedRemoteVideo?.proxyUrl;
   const storyboard = session.storyboard || await extractStoryboard(storyboardSource, (progress) => {
     els.analysisTitle.textContent = state.selectedRemoteVideo && !file

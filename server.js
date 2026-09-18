@@ -176,7 +176,16 @@ app.use((req, res, next) => {
   return res.redirect('/login');
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    // The app is deployed as one coherent ES-module graph. Caching an old
+    // entry module across a deployment can make a later module request point
+    // at a different release, so HTML/JS must always be revalidated together.
+    if (/\.(?:html|js)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+    }
+  }
+}));
 
 async function readJsonSafe(response) {
   const text = await response.text();
