@@ -1331,7 +1331,15 @@ function stableDubGender(segment) {
   const profile = (state.dialogue?.speakers || []).find(item =>
     String(item?.speakerId || '') === speakerId
   );
-  const candidate = String(profile?.gender || segment?.gender || 'uncertain').toLowerCase();
+  // The time-aligned segment is the closest evidence to the audible line.
+  // A global speaker profile can be wrong for an isolated diarization turn;
+  // preferring it made a woman's voice read a man's line (and vice versa).
+  const segmentGender = String(segment?.gender || '').toLowerCase();
+  const candidate = String(
+    ['male', 'female'].includes(segmentGender)
+      ? segmentGender
+      : (profile?.gender || 'uncertain')
+  ).toLowerCase();
   const normalized = candidate === 'male' || candidate === 'female' ? candidate : 'uncertain';
   if (!state.dubStableSpeakerGenders.has(speakerId)) {
     state.dubStableSpeakerGenders.set(speakerId, normalized);
@@ -1551,6 +1559,15 @@ async function syncDubPlayback() {
   const source = await ensureDubSegment(segment);
   if (!state.dubbingEnabled || generation !== state.dubSyncGeneration) return;
   if (!source || state.dubPlayedSegmentIds.has(segmentId)) return;
+  // Synthesis may finish after the video has already left this sentence.
+  // Never start late audio: skipping one late line is preferable to shifting
+  // every following line after a choice/seek.
+  const currentSegment = dialogueSegmentAt(
+    dubTimeline(),
+    Math.max(0, Number(els.video.currentTime) || 0),
+    0.12
+  );
+  if (getDubSegmentId(currentSegment) !== segmentId) return;
 
   const audio = new Audio(source);
   audio.preload = 'auto';
@@ -3156,8 +3173,11 @@ function orderedLockedAdultPositions(scene = state.adultScene) {
 }
 
 function unlockNextAdultPositionFromLust() {
+  // Lust opens the next chronological source-verified position. Requiring the
+  // video to have already reached its timestamp created a deadlock: the last
+  // warm-up paused, but the only control able to advance was still locked.
   const locked = orderedLockedAdultPositions().filter(position =>
-    Number(position.startTime) <= Number(state.adultTimelineFloor) + 0.3
+    Number(position.endTime) > Number(state.adultTimelineFloor) - 0.1
   );
   const coreVisited = (state.adultScene?.positions || []).some(position =>
     !isWarmupPosition(position) && !isBonusPosition(position) &&
@@ -3496,18 +3516,29 @@ function renderAdultWarmupChoices(scene) {
 function renderAdultApproachChoices(scene) {
   const flow = currentAdultFlow();
   const candidates = [
-    ...(scene?.foreplay || []).map(item => ({ kind: 'foreplay', id: item.id, label: item.label, startTime: item.startTime })),
+    ...(scene?.foreplay || []).map(item => ({
+      kind: 'foreplay', id: item.id, label: item.label,
+      startTime: item.startTime, endTime: item.endTime
+    })),
     ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
-      const movements = (position.movements || []).filter(item => Number(item.loopStartTime) >= state.adultTimelineFloor - 0.1);
-      return (movements.length ? movements : [null]).map((movement, index) => ({
-        kind: 'position', id: position.id, movementId: movement?.id || '',
-        label: movement?.label || position.label || `Yakınlaşma ${index + 1}`,
-        startTime: movement?.loopStartTime ?? position.startTime
+      const movements = (position.movements || []).filter(item =>
+        Number(item.loopEndTime) > state.adultTimelineFloor - 0.1
+      );
+      const cards = buildVerifiedMovementChoices(movements, position.label, 4);
+      return (cards.length ? cards : [null]).map((card, index) => ({
+        kind: 'position', id: position.id,
+        movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
+        label: card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
+        startTime: Math.min(...(card?.variants || movements || []).map(item => Number(item.loopStartTime)).filter(Number.isFinite), Number(position.startTime)),
+        endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime))
       }));
     })
-  ].filter(item => Number(item.startTime) >= state.adultTimelineFloor - 0.1)
+  ].filter(item => Number(item.endTime) > state.adultTimelineFloor - 0.1)
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))
-    .slice(0, 3);
+    .filter((item, index, items) => items.findIndex(candidate =>
+      normalizeAdultLabel(candidate.label) === normalizeAdultLabel(item.label)
+    ) === index)
+    .slice(0, 5);
 
   els.choices.innerHTML = '';
   els.choices.classList.remove('hidden');
@@ -3534,6 +3565,19 @@ function renderAdultApproachChoices(scene) {
     });
     els.choices.appendChild(button);
   });
+
+  // A choice screen must never be an empty pause trap. At full Lust the next
+  // core position is revealed; otherwise natural playback continues until a
+  // verified forward action becomes reachable.
+  if (!candidates.length) {
+    const unlocked = flow >= 99.9 ? unlockNextAdultPositionFromLust() : null;
+    if (unlocked) {
+      state.adultUiSignature = '';
+      queueMicrotask(() => renderAdultProgressiveUI(true));
+    } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId) {
+      els.video.play().catch(() => {});
+    }
+  }
 }
 
 function renderAdultOutcomes(scene) {
