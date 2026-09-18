@@ -359,9 +359,11 @@ ${storyContextMemory}
 - UNKNOWN means the source does not establish it. Never silently promote unknown information into a fact.
 - Sensitive relationship/background labels such as ex-partner, spouse, step-parent, parent, sibling, relative, boss, employee, teacher, landlord or neighbor may be FACT only when dialogue explicitly states it or unmistakable source evidence proves it. Mere age difference, familiarity, location, clothing, intimacy or body language is never enough.
 - Example: two familiar people meeting at a house does NOT prove 'ex-girlfriend' or 'stepfather'. If dialogue explicitly says they broke up, 'ex-partner' may be a fact. Otherwise keep the exact relationship unknown or as a cautious inference.
-- Give each recurring adult a stable character entry with participantTrackId, displayName, sourceRole, evidenceLevel, confidence and evidence. Preserve an explicitly spoken proper name exactly; otherwise use the most specific non-sensitive source-grounded story role instead of repeatedly reducing a known character to generic age/gender wording.
+- Give each recurring adult a stable character entry with id, participantTrackId, displayName, sourceRole, evidenceLevel, confidence and evidence. Preserve an explicitly spoken proper name exactly; otherwise use the most specific source-grounded story role instead of repeatedly reducing a known character to generic age/gender wording.
 - Carry verified character names and non-sensitive story roles into sceneTitle, sceneGoal and narrativeChoiceLabel whenever that makes the real action clearer. Keep the same wording across chunks and never rename a recurring character.
 - Never infer age, kinship or another sensitive relationship from appearance. If dialogue explicitly establishes a sensitive family relationship, retain it only as neutral factual story context; do not turn that relationship label into sexualized choice wording, a reward, or invented motivation.
+- Every action must return involvedCharacterIds and primaryCharacterLabel. For ordinary story actions, primaryCharacterLabel is the verified displayName or sourceRole. For an adult/intimate action, use the verified displayName when available; otherwise use its stable participant label, never a kinship title as erotic wording.
+- narrativeChoiceLabel, label and every BONUS/extra option must explicitly identify the involved recurring character through primaryCharacterLabel whenever more than one character exists in the video. Do not fall back to generic 'kadın', 'erkek', 'genç kız', 'olgun adam', 'biri' or 'partner' when a verified stable identity is available.
 - Return top-level storyContext with synopsisTr, currentSceneTitle, currentSceneGoal, setting, emotionalTone, characters[], relationships[], facts[], inferences[], unknowns[].
 - Every relationship entry must contain from, to, relation, evidenceLevel, confidence and evidence.
 - Every returned action must additionally contain narrativeChoiceLabel, narrativeReason, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence.
@@ -456,6 +458,8 @@ Return ONLY valid JSON with this exact shape:
       "participantTrackIds": [],
       "partnerTrackId": "",
       "partnerLabel": "",
+      "involvedCharacterIds": [],
+      "primaryCharacterLabel": "",
       "partnerEvidence": "",
       "partnerSwitch": false,
       "previousPartnerTrackId": "",
@@ -527,7 +531,7 @@ Rules:
 - Keep positionId as the canonical semantic position family. Give each uninterrupted occurrence of that family a stable positionOccurrenceId; if the same position returns later after another position, transition, cut, or real time gap, it must have a different positionOccurrenceId.
 - GROUP/SWINGER SCENES: When three or more clearly adult participants are visibly present in the same consensual encounter, set groupScene true and adultParticipantCount to the directly verified count. Otherwise keep groupScene false; never infer off-screen participants.
 - Give every visible adult a stable neutral participantTrackId such as MAIN_MALE, PARTNER_A, PARTNER_B. Reuse the same ID from face, hair, body, clothing and scene continuity; never use a real-world identity or infer a relationship.
-- participantTrackIds must list only adults directly involved in that exact action interval. partnerTrackId is the one adult directly paired with MAIN_MALE in that interval; partnerLabel must be a neutral Turkish UI label such as Partner A or Partner B.
+- participantTrackIds must list only adults directly involved in that exact action interval. partnerTrackId is the one adult directly paired with MAIN_MALE in that interval. partnerLabel must use that character's verified displayName when available; otherwise use a stable neutral Turkish UI label such as Partner A or Partner B.
 - If one exact position interval visibly involves MAIN_MALE with multiple partners simultaneously, use partnerTrackId MULTI_PARTNER, list every involved adult in participantTrackIds and use the neutral partnerLabel Birden fazla partner. Do this only from direct interval evidence.
 - When the same canonical position occurs with a different partnerTrackId, end the previous position occurrence and create a new positionOccurrenceId. They are separate playable positions and must never be merged merely because positionId is the same.
 - Set partnerSwitch true only when the frames visibly show MAIN_MALE ending interaction with previousPartnerTrackId and beginning interaction with partnerTrackId. Emit the visible transition as actionType partner_transition with a direct Turkish label such as Partner B'ye geç only when the transition itself has a valid playable interval.
@@ -814,6 +818,10 @@ Rules:
             : [],
           partnerTrackId: String(action.partnerTrackId || '').trim(),
           partnerLabel: String(action.partnerLabel || '').trim(),
+          involvedCharacterIds: Array.isArray(action.involvedCharacterIds)
+            ? action.involvedCharacterIds.map(value => String(value || '').trim()).filter(Boolean).slice(0, 12)
+            : [],
+          primaryCharacterLabel: String(action.primaryCharacterLabel || '').trim(),
           partnerEvidence: String(action.partnerEvidence || '').trim(),
           partnerSwitch: action.partnerSwitch === true,
           previousPartnerTrackId: String(action.previousPartnerTrackId || '').trim(),

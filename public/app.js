@@ -2677,6 +2677,10 @@ function normalizeAnalysis(body) {
       actionId: String(a.actionId ?? a.id ?? `ACTION_${String(i + 1).padStart(3, '0')}`),
       label: String(a.label ?? a.action ?? 'Unnamed action'),
       narrativeChoiceLabel: String(a.narrativeChoiceLabel || ''),
+      involvedCharacterIds: Array.isArray(a.involvedCharacterIds)
+        ? a.involvedCharacterIds.map(value => String(value || '').trim()).filter(Boolean).slice(0, 12)
+        : [],
+      primaryCharacterLabel: String(a.primaryCharacterLabel || ''),
       narrativeReason: String(a.narrativeReason || ''),
       sceneTitle: String(a.sceneTitle || ''),
       sceneGoal: String(a.sceneGoal || ''),
@@ -3212,7 +3216,16 @@ function prepareAdultScenes() {
         traceRow.routeReason = 'EXPLICIT_OR_LABEL_WARMUP';
         scene.foreplay.push({
           id: action.actionId || `${sceneId}:warmup-${index}`,
-          label: action.label,
+          label: (() => {
+            const base = String(action.narrativeChoiceLabel || action.label || '').trim();
+            const rawIdentity = String(action.primaryCharacterLabel || '').trim();
+            const identity = action.adultScene === true && /\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(rawIdentity)
+              ? String(action.partnerLabel || action.partnerTrackId || '').trim()
+              : rawIdentity;
+            return identity && !base.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))
+              ? `${base} · ${identity}`
+              : base;
+          })(),
           sourceVerified: true,
           startTime,
           endTime,
@@ -3279,8 +3292,8 @@ function prepareAdultScenes() {
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
         label: (() => {
           const base = activityDisplayLabel(canonical.label, action);
-          const partnerLabel = String(action.partnerLabel || '').trim();
-          return action.groupScene === true && partnerLabel &&
+          const partnerLabel = String(action.partnerLabel || action.primaryCharacterLabel || '').trim();
+          return partnerLabel &&
             !normalizeAdultLabel(base).includes(normalizeAdultLabel(partnerLabel))
             ? `${base} · ${partnerLabel}`
             : base;
@@ -3328,7 +3341,16 @@ function prepareAdultScenes() {
           ...action,
           id: action.actionId || `movement-${index}`,
           sourcePositionId: position.id,
-          label: action.label,
+          label: (() => {
+            const base = String(action.narrativeChoiceLabel || action.label || '').trim();
+            const rawIdentity = String(action.partnerLabel || action.primaryCharacterLabel || '').trim();
+            const identity = /\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(rawIdentity)
+              ? String(action.partnerTrackId || '').trim().replace(/^PARTNER[_-]?/i, 'Partner ')
+              : rawIdentity;
+            return identity && !base.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))
+              ? `${base} · ${identity}`
+              : base;
+          })(),
           loopStartTime: movementStart,
           loopEndTime: movementEnd
         });

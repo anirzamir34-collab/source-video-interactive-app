@@ -44,11 +44,16 @@ export function normalizeStoryContext(input = {}) {
     .slice(0, 16)
     .map(item => ({
       id: cleanText(item?.id, 80),
-      role: cleanText(item?.role, 100),
+      participantTrackId: cleanText(item?.participantTrackId ?? item?.id, 80),
+      displayName: cleanText(item?.displayName ?? item?.name, 100),
+      sourceRole: cleanText(item?.sourceRole ?? item?.role, 100),
+      role: cleanText(item?.role ?? item?.sourceRole, 100),
       description: cleanText(item?.description, 280),
-      confidence: clamp(item?.confidence)
+      evidenceLevel: normalizeEvidenceLevel(item?.evidenceLevel),
+      confidence: clamp(item?.confidence),
+      evidence: cleanText(item?.evidence, 360)
     }))
-    .filter(item => item.id || item.role || item.description);
+    .filter(item => item.id || item.participantTrackId || item.displayName || item.sourceRole || item.description);
 
   return {
     synopsisTr: cleanText(context.synopsisTr, 900),
@@ -105,7 +110,7 @@ export function mergeStoryContexts(results = []) {
   const characterKeys = new Set();
   for (const context of contexts) {
     for (const character of context.characters) {
-      const key = (character.id || character.description || character.role).toLocaleLowerCase('tr-TR');
+      const key = (character.participantTrackId || character.id || character.displayName || character.description || character.sourceRole).toLocaleLowerCase('tr-TR');
       if (!key || characterKeys.has(key)) continue;
       characterKeys.add(key);
       characters.push(character);
@@ -130,15 +135,28 @@ export function mergeStoryContexts(results = []) {
 export function storyChoiceLabelForAction(action = {}) {
   const fallback = cleanText(action.label, 180) || 'Devam et';
   const narrative = cleanText(action.narrativeChoiceLabel, 180);
-  if (!narrative) return fallback;
+  const withCharacter = label => {
+    let character = cleanText(action.primaryCharacterLabel, 100);
+    if (action.adultScene === true && /\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(character)) {
+      const partner = cleanText(action.partnerLabel, 100);
+      character = partner && !/\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(partner)
+        ? partner
+        : cleanText(action.partnerTrackId, 80).replace(/^PARTNER[_-]?/i, 'Partner ');
+    }
+    if (!character) return label;
+    const normalizedLabel = label.toLocaleLowerCase('tr-TR');
+    if (normalizedLabel.includes(character.toLocaleLowerCase('tr-TR'))) return label;
+    return `${label} · ${character}`;
+  };
+  if (!narrative) return withCharacter(fallback);
 
   const level = normalizeEvidenceLevel(action.storyEvidenceLevel);
   const confidence = clamp(action.storyConfidence);
   const evidence = cleanText(action.storyEvidence, 360);
 
-  if (level === 'fact' && confidence >= 0.68 && evidence) return narrative;
-  if (level === 'inference' && confidence >= 0.88 && evidence) return narrative;
-  return fallback;
+  if (level === 'fact' && confidence >= 0.68 && evidence) return withCharacter(narrative);
+  if (level === 'inference' && confidence >= 0.88 && evidence) return withCharacter(narrative);
+  return withCharacter(fallback);
 }
 
 function normalizeChoiceIntentText(value) {

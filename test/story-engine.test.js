@@ -27,6 +27,21 @@ test('uses narrative choice only when evidence is strong enough', () => {
   }), 'Kadına yaklaş');
 });
 
+test('preserves verified character identity in main and fallback choices', () => {
+  assert.equal(storyChoiceLabelForAction({
+    label: 'Yanına yaklaş',
+    primaryCharacterLabel: 'Meral'
+  }), 'Yanına yaklaş · Meral');
+  assert.equal(storyChoiceLabelForAction({
+    label: 'Meral ile konuş',
+    primaryCharacterLabel: 'Meral'
+  }), 'Meral ile konuş');
+  assert.equal(storyChoiceLabelForAction({
+    label: 'Ritmi sürdür', adultScene: true, primaryCharacterLabel: 'Anne',
+    partnerTrackId: 'PARTNER_A'
+  }), 'Ritmi sürdür · Partner A');
+});
+
 test('sensory cues require direct evidence and sufficient confidence', () => {
   assert.deepEqual(sensoryActionMeta({ audioIntensity: 'high', sensoryConfidence: 0.9 }).cues, []);
   assert.deepEqual(sensoryActionMeta({
@@ -43,6 +58,11 @@ test('sensory cues require direct evidence and sufficient confidence', () => {
 test('normalizes story evidence without upgrading uncertainty', () => {
   const context = normalizeStoryContext({
     synopsisTr: 'Erkek eve gelir.',
+    characters: [{
+      id: 'CHAR_A', participantTrackId: 'PARTNER_A', displayName: 'Meral',
+      sourceRole: 'ev sahibi', evidenceLevel: 'fact', confidence: 0.94,
+      evidence: 'Diyalogda adı söyleniyor.'
+    }],
     relationships: [{ from: 'MAIN_MALE', to: 'WOMAN_1', relation: 'eski sevgili', evidenceLevel: 'maybe', confidence: 2 }],
     inferences: [{ text: 'Birbirlerini tanıyor olabilirler.', confidence: 0.65 }],
     unknowns: ['İlişkinin kesin türü']
@@ -50,6 +70,11 @@ test('normalizes story evidence without upgrading uncertainty', () => {
   assert.equal(context.relationships[0].evidenceLevel, 'unknown');
   assert.equal(context.relationships[0].confidence, 1);
   assert.equal(context.inferences[0].confidence, 0.65);
+  assert.deepEqual(context.characters[0], {
+    id: 'CHAR_A', participantTrackId: 'PARTNER_A', displayName: 'Meral',
+    sourceRole: 'ev sahibi', role: 'ev sahibi', description: '',
+    evidenceLevel: 'fact', confidence: 0.94, evidence: 'Diyalogda adı söyleniyor.'
+  });
 });
 
 test('merges chunk story context while keeping facts and unknowns', () => {
