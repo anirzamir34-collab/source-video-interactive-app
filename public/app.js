@@ -3169,7 +3169,7 @@ function prepareAdultScenes() {
       mergeDistantReturns: true
     }).map(position => ({
       ...position,
-      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
+      movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 5)
     }));
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
@@ -4185,7 +4185,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // merely because the first occurrence has only one detected action.
   const occurrenceMovements = [...(position.movements || [])]
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 3);
+  const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 5);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
