@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  canvasBlob,
   buildDubBlocks,
   dialogueSegmentAt,
   dialogueSegmentsAt,
@@ -73,6 +74,32 @@ test('superseded seek is cancelled and cannot settle the new navigation', async 
   await assert.rejects(oldSeek, { name: 'AbortError' });
   video.mode = 'sync';
   assert.equal(await seekMediaTo(video, 50, { timeoutMs: 20 }), 50);
+});
+
+test('same-time seek waits for decoded image data, including the first frame', async () => {
+  const video = new TestMedia();
+  video.readyState = 1;
+  const pending = seekMediaTo(video, 0, { timeoutMs: 50 });
+  let completed = false;
+  pending.then(() => { completed = true; });
+  await Promise.resolve();
+  assert.equal(completed, false);
+  video.readyState = 2;
+  video.dispatchEvent(new Event('loadeddata'));
+  assert.equal(await pending, 0);
+});
+
+test('image encoding fails promptly, handles abort, and ignores late callbacks', async () => {
+  await assert.rejects(canvasBlob({ toBlob() {} }, { timeoutMs: 5 }), /zaman aşımına/);
+  await assert.rejects(canvasBlob({ toBlob(callback) { callback(null); } }), /oluşturulamadı/);
+  const controller = new AbortController();
+  let callback;
+  const pending = canvasBlob({ toBlob(fn) { callback = fn; } }, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  callback(new Blob(['late']));
+  const expected = new Blob(['image']);
+  assert.equal(await canvasBlob({ toBlob(fn) { fn(expected); } }), expected);
 });
 
 test('partial chunk analysis is never considered complete', () => {

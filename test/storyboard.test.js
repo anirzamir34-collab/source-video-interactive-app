@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   adaptiveAnalysisChunkPlan,
   detectSceneBoundaries,
+  extractStoryboard,
   selectFocusedTimestamps,
   sheetsPerAnalysisChunk,
   storyboardSamplingPlan
@@ -95,4 +96,81 @@ test('focuses extra remote samples around motion without duplicating base times'
   assert.deepEqual(focused, focused.slice().sort((a, b) => a - b));
   assert.ok(focused.some(time => time > 4 && time < 8));
   assert.ok(focused.every(time => profile.every(item => Math.abs(item.time - time) >= 0.3)));
+});
+async function withMediaFixture(run, { encodeFails = false } = {}) {
+  const originalDocument = globalThis.document;
+  const canvases = [];
+  let capturedBeforeDecode = false;
+  class Video extends EventTarget {
+    duration = 3;
+    readyState = 1;
+    videoWidth = 320;
+    videoHeight = 180;
+    time = 0;
+    seeking = false;
+    unloaded = false;
+    get currentTime() { return this.time; }
+    set currentTime(value) {
+      this.time = value;
+      this.seeking = true;
+      queueMicrotask(() => {
+        this.seeking = false;
+        this.readyState = 2;
+        this.dispatchEvent(new Event('loadeddata'));
+        this.dispatchEvent(new Event('seeked'));
+      });
+    }
+    pause() {}
+    removeAttribute() { this.unloaded = true; }
+    load() {}
+  }
+  const video = new Video();
+  globalThis.document = { createElement(tag) {
+    if (tag === 'video') return video;
+    const canvas = {
+      width: 0, height: 0,
+      getContext: () => ({
+        drawImage(source) { if (source === video && video.readyState < 2) capturedBeforeDecode = true; },
+        fillRect() {}, fillText() {},
+        getImageData: () => ({ data: new Uint8ClampedArray(64 * 36 * 4) })
+      }),
+      toBlob(callback) { callback(encodeFails ? null : new Blob(['image'])); }
+    };
+    canvases.push(canvas);
+    return canvas;
+  } };
+  try {
+    await run({ video, canvases, capturedBeforeDecode: () => capturedBeforeDecode });
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
+}
+
+test('frame preparation waits for decoded data and releases frame buffers', async () => {
+  await withMediaFixture(async fixture => {
+    const result = await extractStoryboard(new Blob(['video']));
+    assert.equal(result.timestamps.length, 4);
+    assert.equal(result.skippedTimestamps.length, 0);
+    assert.equal(fixture.capturedBeforeDecode(), false);
+    assert.equal(fixture.video.unloaded, true);
+    assert.ok(fixture.canvases.slice(2).every(canvas => canvas.width === 0 && canvas.height === 0));
+  });
+});
+
+test('failed image encoding releases all frames and the source video', async () => {
+  await withMediaFixture(async fixture => {
+    await assert.rejects(extractStoryboard(new Blob(['video'])), /oluşturulamadı/);
+    assert.equal(fixture.video.unloaded, true);
+    assert.ok(fixture.canvases.slice(2).every(canvas => canvas.width === 0 && canvas.height === 0));
+  }, { encodeFails: true });
+});
+
+test('cancelled frame preparation closes its video source', async () => {
+  await withMediaFixture(async fixture => {
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(extractStoryboard(new Blob(['video']), () => {}, controller.signal), { name: 'AbortError' });
+    assert.equal(fixture.video.unloaded, true);
+  });
 });

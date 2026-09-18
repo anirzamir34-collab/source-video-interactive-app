@@ -1775,10 +1775,12 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisState.textContent = 'LOCAL_PROCESSING';
 
   const storyboardSource = file || state.selectedRemoteVideo?.proxyUrl;
-  const storyboard = session.storyboard || await extractStoryboard(storyboardSource, (progress) => {
+  const storyboard = session.storyboard || await extractStoryboard(storyboardSource, (progress, detail) => {
     els.analysisTitle.textContent = state.selectedRemoteVideo && !file
       ? `Video akışından kareler hazırlanıyor: %${progress}`
       : `Video telefonda hazırlanıyor: %${progress}`;
+    if (detail) els.analysisOutput.textContent =
+      `${detail.time.toFixed(1)} saniyedeki görüntü ${detail.retrying ? 'yeniden yükleniyor' : 'hazırlanıyor'}…`;
   });
   session.storyboard = storyboard;
 
@@ -2006,7 +2008,11 @@ els.analyzeBtn.addEventListener('click', async () => {
                 if (failureBody?.retryable === false || failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
                   break;
                 }
-                continue;
+                // Apply the same retry delay to failed review requests as to
+                // failed initial requests; preserve the provider's reason.
+                throw Object.assign(new Error(failureBody.message || 'Doğrulama isteği başarısız.'), {
+                  analysisFailure: failureBody
+                });
               }
               body = mergeSecondPassReview(body, reviewBody, criticalReviewCandidates);
             }
@@ -2023,7 +2029,7 @@ els.analyzeBtn.addEventListener('click', async () => {
             break;
           }
         } catch (error) {
-          failureBody = {
+          failureBody = error?.analysisFailure || {
             available: false,
             reason: 'NETWORK_ERROR',
             message: `Bölüm ${chunkIndex + 1} sırasında bağlantı hatası oluştu.`,
@@ -2181,7 +2187,13 @@ els.analyzeBtn.addEventListener('click', async () => {
             'Aynı bölüm boş sonuçla başarı sayılmadı ve oyun modu açılmadı.',
             'Bu bir Render, API anahtarı veya kota hatası değildir.'
           ].join('\n')
-        : (body?.message || 'Tüm video bölümleri doğrulanmadan oyun başlatılmadı.');
+        : [
+            body?.message || 'Tüm video bölümleri doğrulanmadan oyun başlatılmadı.',
+            body?.failure?.message || '',
+            Number(body?.completedChunkCount) > 0
+              ? 'Tamamlanan bölümler bu sekmede korunuyor. Aynı ayarlarla yeniden analiz et; eksik bölümden devam edilecek.'
+              : ''
+          ].filter(Boolean).join('\n');
     setGameState('ERROR');
     renderDebug({ lastAnalyzeBody: body });
     return;
@@ -4839,11 +4851,13 @@ function showPlaybackRecovery(message, retry, label = 'Geçişi tekrar dene') {
 
 async function resumeSourceVideo() {
   if (state.navigationSeeking || state.adultMode) return;
+  const generation = state.playbackGeneration;
   state.activeAction = null;
   els.choices.classList.add('hidden');
   setGameState('SEGMENT_PLAYING');
   try { await els.video.play(); }
   catch {
+    if (generation !== state.playbackGeneration) return;
     setGameState('DECISION_PENDING');
     showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.', resumeSourceVideo, 'Videoya devam et');
   }
@@ -4884,6 +4898,8 @@ async function navigateTimelineTo(target, { resumeWhenEmpty = false } = {}) {
 }
 
 function cancelTimelineNavigation() {
+  state.playbackGeneration = (state.playbackGeneration || 0) + 1;
+  state.decisionDubHold = false;
   state.navigationSeekController?.abort();
   state.navigationSeekController = null;
   state.navigationSeeking = false;
@@ -4925,29 +4941,79 @@ async function playAction(action) {
   els.video.pause();
 
   const seekTarget = Math.max(state.gameCursorTime, actionStart);
-  els.video.currentTime = seekTarget;
-  const mobilePlayPromise = els.video.play().catch(() => {});
+  const controller = new AbortController();
+  state.navigationSeekController = controller;
+  state.navigationSeeking = true;
+  try {
+    await seekMediaTo(els.video, seekTarget, { signal: controller.signal });
+    if (controller.signal.aborted || state.activeAction !== action) return;
+    state.navigationSeeking = false;
+    const decisionEndTime = decisionBoundaryAfterDialogue(
+      state.dialogue?.segments || [],
+      action.endTime,
+      state.analysis?.videoDuration || els.video.duration
+    );
+    state.stopListener = () => {
+      if (state.activeAction === action && els.video.currentTime >= decisionEndTime - 0.03) {
+        void finishActionAfterDub(action, decisionEndTime);
+      }
+    };
+    els.video.addEventListener('timeupdate', state.stopListener);
+    await resumeActionPlayback(action);
+  } catch (error) {
+    if (controller.signal.aborted || state.activeAction !== action) return;
+    state.navigationSeeking = false;
+    setGameState('DECISION_PENDING');
+    showPlaybackRecovery(error.message, () => void playAction(action));
+  } finally {
+    if (state.navigationSeekController === controller) state.navigationSeekController = null;
+  }
+}
 
-  await waitForEvent(els.video, 'seeked', 5000).catch(() => {});
+async function resumeActionPlayback(action) {
+  if (state.activeAction !== action || state.navigationSeeking) return;
+  const generation = state.playbackGeneration;
+  els.choices.classList.add('hidden');
   setGameState('SEGMENT_PLAYING');
+  try { await els.video.play(); }
+  catch {
+    if (state.activeAction !== action || generation !== state.playbackGeneration) return;
+    setGameState('DECISION_PENDING');
+    showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.',
+      () => void resumeActionPlayback(action), 'Videoya devam et');
+  }
+}
 
-  const decisionEndTime = decisionBoundaryAfterDialogue(
-    state.dialogue?.segments || [],
-    action.endTime,
-    state.analysis?.videoDuration || els.video.duration
-  );
-
-  state.stopListener = () => {
-    if (els.video.currentTime >= decisionEndTime - 0.03) {
-      finishActionAfterDub(action, decisionEndTime);
+function waitForDubEnd(playing) {
+  return new Promise(resolve => {
+    const pending = new Set(playing);
+    const listeners = new Map();
+    const finish = () => {
+      clearTimeout(timer);
+      for (const [audio, done] of listeners) {
+        audio.removeEventListener('ended', done);
+        audio.removeEventListener('error', done);
+      }
+      resolve();
+    };
+    const timer = setTimeout(finish, 8000);
+    for (const audio of playing) {
+      const done = () => {
+        pending.delete(audio);
+        if (!pending.size) finish();
+      };
+      listeners.set(audio, done);
+      audio.addEventListener('ended', done, { once: true });
+      audio.addEventListener('error', done, { once: true });
+      if (audio.ended) done();
     }
-  };
-  els.video.addEventListener('timeupdate', state.stopListener);
-  await els.video.play().catch(() => {});
+    if (!pending.size) finish();
+  });
 }
 
 async function finishActionAfterDub(action, decisionEndTime) {
-  if (state.decisionDubHold) return;
+  if (state.decisionDubHold || state.activeAction !== action) return;
+  const generation = state.playbackGeneration;
   const playing = [...dubChannels.values()].filter(audio =>
     audio && !audio.paused && !audio.ended && Number(audio.currentTime) < Number(audio.duration || Infinity) - 0.03
   );
@@ -4962,14 +5028,8 @@ async function finishActionAfterDub(action, decisionEndTime) {
     state.stopListener = null;
   }
   els.video.pause();
-  await Promise.race([
-    Promise.all(playing.map(audio => new Promise(resolve => {
-      if (audio.ended) return resolve();
-      audio.addEventListener('ended', resolve, { once: true });
-      audio.addEventListener('error', resolve, { once: true });
-    }))),
-    new Promise(resolve => setTimeout(resolve, 8000))
-  ]);
+  await waitForDubEnd(playing);
+  if (generation !== state.playbackGeneration || state.activeAction !== action) return;
   playing.forEach(audio => audio.pause());
   state.decisionDubHold = false;
   finishAction(action, decisionEndTime);

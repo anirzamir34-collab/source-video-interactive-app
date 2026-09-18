@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import { decisionBoundaryAfterDialogue, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const names = ['finishAdultScene', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation'];
+const names = ['finishAdultScene', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback', 'finishActionAfterDub', 'waitForDubEnd'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} is present`);
@@ -59,11 +59,14 @@ function fixture() {
   const state = {
     analysis: { actions: [], videoDuration: 100 }, adultMode: false, adultScenes: [],
     completedAdultSceneIds: new Set(), consumedActionIds: new Set(), currentActionIndex: -1,
-    gameCursorTime: 0, adultSelectionToken: 0, gameState: 'DECISION_PENDING'
+    gameCursorTime: 0, adultSelectionToken: 0, gameState: 'DECISION_PENDING', stopListener: null
   };
   const els = new Proxy({ video: new Media() }, { get(target, key) { return target[key] ||= new Element(); } });
   const scope = vm.createContext({ state, els, AbortController, DOMException,
-    hasRemainingVideo, sceneExitTime, seekMediaTo,
+    hasRemainingVideo, sceneExitTime, seekMediaTo, decisionBoundaryAfterDialogue,
+    setTimeout, clearTimeout, dubChannels: new Map(),
+    guardPlayable: () => ({ allowed: true }),
+    finishAction: action => { state.finishedAction = action; },
     document: { createElement: () => new Element(), querySelector: () => new Element() },
     setGameState: value => { state.gameState = value; },
     setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, persistRuntimeSnapshot() {}, renderDebug() {},
@@ -116,4 +119,64 @@ test('blocked play has a continue action; only the source end is terminal', asyn
   assert.equal(f.els.video.paused, false);
   await f.navigateTimelineTo(100);
   assert.equal(f.state.gameState, 'ENDED');
+});
+
+test('ordinary choice seek errors expose retry without starting playback', async () => {
+  const f = fixture();
+  const action = { actionId: 'door', startTime: 20, endTime: 30 };
+  f.els.video.mode = 'error';
+  await f.playAction(action);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.navigationSeeking, false);
+  assert.equal(f.els.choices.children[1].dataset.playbackRecovery, 'retry');
+  f.els.video.mode = 'ready';
+  await f.playAction(action);
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.activeAction, action);
+});
+
+test('blocked ordinary choice resumes with its original end boundary intact', async () => {
+  const f = fixture();
+  const action = { actionId: 'walk', startTime: 20, endTime: 30 };
+  f.els.video.mode = 'blocked';
+  await f.playAction(action);
+  assert.equal(f.els.choices.children[1].dataset.playbackRecovery, 'continue');
+  f.els.video.mode = 'ready';
+  await f.resumeActionPlayback(action);
+  assert.equal(f.state.activeAction, action);
+  f.els.video.time = 30;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.finishedAction, action);
+});
+
+test('a new navigation cancels an ordinary choice still seeking', async () => {
+  const f = fixture();
+  const action = { actionId: 'walk', startTime: 20, endTime: 30 };
+  f.els.video.mode = 'stalled';
+  const pending = f.playAction(action);
+  f.els.video.mode = 'ready';
+  await f.navigateTimelineTo(60);
+  await pending;
+  assert.equal(f.state.gameCursorTime, 60);
+  assert.equal(f.state.activeAction, null);
+  assert.equal(f.state.stopListener, null);
+  assert.equal(f.els.video.paused, true);
+});
+
+test('old dubbing completion cannot finish a choice after navigation', async () => {
+  const f = fixture();
+  const action = { actionId: 'talk', startTime: 20, endTime: 30 };
+  await f.playAction(action);
+  f.state.dubbingEnabled = true;
+  const audio = new Media();
+  audio.paused = false;
+  f.dubChannels.set('line', audio);
+  const pending = f.finishActionAfterDub(action, 30);
+  assert.equal(f.state.decisionDubHold, true);
+  await f.navigateTimelineTo(60);
+  audio.dispatchEvent(new Event('ended'));
+  await pending;
+  assert.equal(f.state.finishedAction, undefined);
+  assert.equal(f.state.gameCursorTime, 60);
+  assert.equal(f.state.decisionDubHold, false);
 });

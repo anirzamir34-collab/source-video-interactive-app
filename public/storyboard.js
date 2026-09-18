@@ -1,3 +1,5 @@
+import { canvasBlob, seekMediaTo } from './playback-logic.js';
+
 export function detectSceneBoundaries(motionProfile = [], interval = 1) {
   const samples = Array.isArray(motionProfile)
     ? motionProfile.filter(item => Number.isFinite(Number(item?.time)) && Number.isFinite(Number(item?.score)))
@@ -138,10 +140,11 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
   const url = ownsObjectUrl ? URL.createObjectURL(source) : String(source || '');
   if (!url) throw new Error('Video kaynağı bulunamadı.');
   const video = document.createElement('video');
-  video.preload = 'metadata';
+  video.preload = 'auto';
   video.muted = true;
   video.playsInline = true;
   video.src = url;
+  const capturedFrames = [];
 
   const wait = (event, timeoutMs = 15000, trigger = null) => new Promise((resolve, reject) => {
     let timer = null;
@@ -217,13 +220,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
 
     const finishSheet = async () => {
       if (!sheetFrame) return;
-      const blob = await new Promise((resolve, reject) =>
-        canvas.toBlob(
-          (value) => value ? resolve(value) : reject(new Error('Storyboard oluşturulamadı.')),
-          'image/jpeg',
-          0.6
-        )
-      );
+      const blob = await canvasBlob(canvas, { signal });
       sheets.push(blob);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -238,7 +235,6 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
     motionCanvas.height = 36;
     const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
     if (!motionCtx) throw new Error('Hareket analizi başlatılamadı.');
-    const capturedFrames = [];
     const skippedTimestamps = [];
     const seekTimeoutMs = ownsObjectUrl ? 10000 : 15000;
 
@@ -246,13 +242,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       if (signal?.aborted) throw new DOMException('İşlem iptal edildi', 'AbortError');
 
       const safeTime = Math.min(time, Math.max(0, duration - 0.05));
-      if (Math.abs(video.currentTime - safeTime) > 0.01) {
-        // Register the listener before assigning currentTime. Some mobile
-        // decoders emit `seeked` synchronously for nearby/keyframe seeks.
-        await wait('seeked', seekTimeoutMs, () => {
-          video.currentTime = safeTime;
-        });
-      }
+      await seekMediaTo(video, safeTime, { signal, timeoutMs: seekTimeoutMs });
 
       const snapshot = document.createElement('canvas');
       snapshot.width = cellWidth;
@@ -272,6 +262,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       onProgress(Math.min(84, Math.max(1, Math.round(progress))));
     };
 
+    let consecutiveFailures = 0;
     const captureFrameSafely = async (time, progress) => {
       const retryOffsets = [0, 0.12, -0.12];
       let lastError = null;
@@ -281,12 +272,22 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
           Math.max(0, duration - 0.05)
         );
         try {
+          onProgress(Math.min(84, Math.max(1, Math.round(progress))), {
+            time: retryTime, retrying: offset !== 0
+          });
           await captureFrame(retryTime, progress);
+          consecutiveFailures = 0;
           return true;
         } catch (error) {
           if (error?.name === 'AbortError') throw error;
+          if (error?.name === 'SecurityError') throw error;
+          if (video.error) throw new Error('Video kaynağı okunamıyor. Bağlantıyı veya dosya biçimini kontrol edip yeniden dene.');
           lastError = error;
         }
+      }
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= 3) {
+        throw new Error('Arka arkaya üç video karesi yüklenemedi. Hazırlama durduruldu; bağlantıyı kontrol edip yeniden deneyebilirsin.');
       }
       skippedTimestamps.push({
         time: Number(Number(time).toFixed(3)),
@@ -360,6 +361,8 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       const y = row * cellHeight;
 
       ctx.drawImage(snapshot, x, y, cellWidth, cellHeight);
+      snapshot.width = 0;
+      snapshot.height = 0;
       ctx.fillStyle = 'rgba(0,0,0,.75)';
       ctx.fillRect(x + 6, y + 6, 92, 28);
       ctx.fillStyle = '#fff';
@@ -378,10 +381,6 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
     const effectiveInterval = Math.max(0.75, duration / Math.max(1, capturedFrames.length));
     const totalBytes = sheets.reduce((sum, blob) => sum + blob.size, 0);
     const sceneBoundaries = detectSceneBoundaries(motionProfile, effectiveInterval);
-    for (const frame of capturedFrames) {
-      frame.snapshot.width = 0;
-      frame.snapshot.height = 0;
-    }
     return {
       sheets,
       timestamps,
@@ -393,6 +392,10 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       skippedTimestamps
     };
   } finally {
+    for (const frame of capturedFrames) {
+      frame.snapshot.width = 0;
+      frame.snapshot.height = 0;
+    }
     video.pause();
     video.removeAttribute('src');
     video.load();

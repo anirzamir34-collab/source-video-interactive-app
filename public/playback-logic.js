@@ -17,13 +17,20 @@ export function seekMediaTo(video, requestedTime, { signal, timeoutMs = 8000 } =
   const target = sceneExitTime(requestedTime, video.duration);
   return new Promise((resolve, reject) => {
     let timer;
+    let poll;
+    let settled = false;
     const cleanup = () => {
       clearTimeout(timer);
+      clearInterval(poll);
       video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('loadeddata', onSeeked);
+      video.removeEventListener('canplay', onSeeked);
       video.removeEventListener('error', onError);
       signal?.removeEventListener('abort', onAbort);
     };
     const finish = (error) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       if (error) reject(error);
       else resolve(target);
@@ -37,14 +44,41 @@ export function seekMediaTo(video, requestedTime, { signal, timeoutMs = 8000 } =
     if (atTarget()) return finish();
     // Listen first, including for synchronous/same-frame seek completion.
     video.addEventListener('seeked', onSeeked);
+    video.addEventListener('loadeddata', onSeeked);
+    video.addEventListener('canplay', onSeeked);
     video.addEventListener('error', onError);
     signal?.addEventListener('abort', onAbort, { once: true });
     timer = setTimeout(() => {
       if (atTarget()) finish();
       else finish(new Error('Video konumu beklenen sürede yüklenemedi. Tekrar deneyebilirsin.'));
     }, timeoutMs);
+    // Some decoders omit seeked when reusing a buffered frame. Readiness and
+    // the requested media time must both be satisfied before continuing.
+    poll = setInterval(onSeeked, 100);
     try { video.currentTime = target; }
     catch (error) { finish(error); }
+  });
+}
+
+export function canvasBlob(canvas, { signal, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let timer;
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onAbort = () => finish(new DOMException('İşlem iptal edildi.', 'AbortError'));
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => finish(new Error('Karelerin görüntüye dönüştürülmesi zaman aşımına uğradı. Yeniden deneyebilirsin.')), timeoutMs);
+    try {
+      canvas.toBlob(value => finish(value ? null : new Error('Storyboard oluşturulamadı.'), value), 'image/jpeg', 0.6);
+    } catch (error) { finish(error); }
   });
 }
 
