@@ -43,6 +43,27 @@ export function dialogueSegmentsAt(segments, videoTime, tolerance = 0.04) {
     );
 }
 
+export function resolveDubGender(segmentGender, profileGender, rememberedGender = 'uncertain') {
+  const normalize = value => {
+    const gender = String(value || '').trim().toLowerCase();
+    return gender === 'male' || gender === 'female' ? gender : 'uncertain';
+  };
+  const line = normalize(segmentGender);
+  if (line !== 'uncertain') return line;
+  const remembered = normalize(rememberedGender);
+  if (remembered !== 'uncertain') return remembered;
+  return normalize(profileGender);
+}
+
+export function isDubStartTimely(videoTime, segment = {}, maxDelaySeconds = 0.65) {
+  const now = Number(videoTime);
+  const start = Number(segment?.startTime);
+  const end = Number(segment?.endTime);
+  if (![now, start, end].every(Number.isFinite) || end <= start) return false;
+  const latest = Math.min(end, start + Math.max(0.1, Number(maxDelaySeconds) || 0.65));
+  return now >= start - 0.12 && now <= latest;
+}
+
 export function buildDubBlocks(segments, { maxGap = 0.28, maxDuration = 14 } = {}) {
   const rows = (Array.isArray(segments) ? segments : [])
     .filter(segment => String(segment?.turkishText || '').trim())
