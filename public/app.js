@@ -86,6 +86,7 @@ import {
   adaptiveAnalysisChunkPlan,
   extractStoryboard
 } from './storyboard.js';
+import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -1834,18 +1835,25 @@ els.analyzeBtn.addEventListener('click', async () => {
       session.analysisModeKey = analysisModeKey;
       session.chunkCount = chunkCount;
       session.chunkResults = [];
+      session.firstPassResults = {};
       session.protagonistProfile = '';
       session.storyContextMemory = null;
     }
     const chunkResults = session.chunkResults;
+    session.firstPassResults ||= {};
     let failureBody = null;
+    let failedChunk = null;
     let response = null;
     let body = null;
 
     let protagonistProfile = session.protagonistProfile || requestedProtagonist;
     let storyContextMemory = session.storyContextMemory || normalizeStoryContext({});
 
-  for (let chunkIndex = chunkResults.length; chunkIndex < chunkCount; chunkIndex += 1) {
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      // Resume by index: completed later chapters survive a failure in the middle.
+      if (chunkResults[chunkIndex]?.available || chunkResults[chunkIndex]?.retryable === false) continue;
+      // A retry in the middle only receives context from earlier chapters.
+      storyContextMemory = mergeStoryContexts(chunkResults.slice(0, chunkIndex).filter(result => result?.available));
       const firstSheet = chunkIndex * sheetsPerChunk;
       const chunkSheets = storyboard.sheets.slice(
         firstSheet,
@@ -1932,44 +1940,50 @@ els.analyzeBtn.addEventListener('click', async () => {
         `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...`;
 
       let chunkSucceeded = false;
+      let firstPassBody = session.firstPassResults[chunkIndex] || null;
       failureBody = null;
 
       const maxChunkAttempts = 4;
       for (let attempt = 1; attempt <= maxChunkAttempts && !chunkSucceeded; attempt += 1) {
         els.analysisOutput.textContent =
           `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...\n` +
-          `Deneme ${attempt}/${maxChunkAttempts} · tamamlanan ${chunkResults.length}/${chunkCount}`;
+          `Deneme ${attempt}/${maxChunkAttempts} · tamamlanan ${chunkResults.filter(result => result?.available).length}/${chunkCount}`;
 
-        // Every retry starts from a clean first pass. Review metadata is added
-        // only after that first pass succeeds, so a failed review cannot poison
-        // the next retry.
+        // Keep a completed first pass when only its review needs retrying.
         form.delete('reviewMode');
         form.delete('reviewCandidates');
 
         try {
-          response = await fetch('/api/gemini-storyboard-analyze', {
-            method: 'POST',
-            headers: geminiRequestHeaders(),
-            body: freshChunkForm(),
-            signal: AbortSignal.timeout(240000)
-          });
+          if (firstPassBody) {
+            body = firstPassBody;
+            response = { ok: true };
+          } else {
+            response = await fetch('/api/gemini-storyboard-analyze', {
+              method: 'POST',
+              headers: geminiRequestHeaders(),
+              body: freshChunkForm(),
+              signal: AbortSignal.timeout(240000)
+            });
 
-          body = await response.json();
-          recordAiUsage(body?.aiUsage);
+            body = await response.json();
+            recordAiUsage(body?.aiUsage);
 
-          if (response.ok && body?.available) {
-            const normalizedChunk = normalizeChunkActionTimes(
-              body.actions,
-              chunkStart,
-              chunkEnd
-            );
-            body = {
-              ...body,
-              actions: normalizedChunk.actions,
-              chunkStart,
-              chunkEnd,
-              chunkTimeRebased: normalizedChunk.rebased
-            };
+            if (response.ok && body?.available) {
+              const normalizedChunk = normalizeChunkActionTimes(
+                body.actions,
+                chunkStart,
+                chunkEnd
+              );
+              body = {
+                ...body,
+                actions: normalizedChunk.actions,
+                chunkStart,
+                chunkEnd,
+                chunkTimeRebased: normalizedChunk.rebased
+              };
+              firstPassBody = body;
+              session.firstPassResults[chunkIndex] = body;
+            }
           }
 
           if (!response.ok || !body?.available) {
@@ -2027,8 +2041,9 @@ els.analyzeBtn.addEventListener('click', async () => {
               }
               body = mergeSecondPassReview(body, reviewBody, criticalReviewCandidates);
             }
-            chunkResults.push(body);
-            storyContextMemory = mergeStoryContexts(chunkResults);
+            chunkResults[chunkIndex] = body;
+            delete session.firstPassResults[chunkIndex];
+            storyContextMemory = mergeStoryContexts(chunkResults.filter(result => result?.available));
             if (body.protagonistProfile) {
               protagonistProfile = String(body.protagonistProfile).trim();
             }
@@ -2057,16 +2072,26 @@ els.analyzeBtn.addEventListener('click', async () => {
           els.analysisOutput.textContent =
             `Bölüm ${chunkIndex + 1}/${chunkCount} geçici olarak başarısız oldu.\n` +
             `${Math.ceil(retryDelay / 1000)} saniye sonra yalnız bu bölüm yeniden denenecek...\n` +
-            `Tamamlanan bölümler korunuyor: ${chunkResults.length}/${chunkCount}`;
+            `Tamamlanan bölümler korunuyor: ${chunkResults.filter(result => result?.available).length}/${chunkCount}`;
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
       }
 
-      if (!chunkSucceeded) break;
+      if (!chunkSucceeded) {
+        if (!canContinuePastChunkFailure(failureBody)) {
+          failedChunk = chunkIndex + 1;
+          break;
+        }
+        chunkResults[chunkIndex] = chunkGapResult(failureBody, chunkIndex, chunkStart, chunkEnd);
+        session.chunkResults = chunkResults;
+        els.analysisState.textContent = 'CONTINUING_WITH_GAP';
+        els.analysisOutput.textContent = `Bölüm ${chunkIndex + 1} okunamadı; tamamlanan bölümler korunarak sıradaki bölüme geçiliyor.`;
+        failureBody = null;
+      }
     }
 
     const completeChunkAnalysis = isCompleteChunkAnalysis({
-      completedChunkCount: chunkResults.length,
+      completedChunkCount: chunkResults.filter(Boolean).length,
       expectedChunkCount: chunkCount,
       failed: Boolean(failureBody)
     });
@@ -2076,25 +2101,27 @@ els.analyzeBtn.addEventListener('click', async () => {
         body = {
           ...failureBody,
           available: false,
-          completedChunkCount: chunkResults.length,
+          completedChunkCount: chunkResults.filter(result => result?.available).length,
           expectedChunkCount: chunkCount,
-          failedChunk: Math.min(chunkCount, chunkResults.length + 1)
+          failedChunk
         };
       } else {
         body = {
           available: false,
           reason: 'INCOMPLETE_CHUNK_ANALYSIS',
           message:
-            `Analiz eksik kaldı: ${chunkResults.length}/${chunkCount} bölüm tamamlandı. ` +
-            `Eksik video hiçbir zaman hazır oyun olarak açılmayacak.`,
-          completedChunkCount: chunkResults.length,
+            `Analiz durakladı: ${chunkResults.filter(result => result?.available).length}/${chunkCount} bölüm tamamlandı. ` +
+            'Tamamlanan bölümler korunuyor; bağlantı veya servis sorunu düzeldiğinde kalan bölümler yeniden denenebilir.',
+          completedChunkCount: chunkResults.filter(result => result?.available).length,
           expectedChunkCount: chunkCount,
-          failedChunk: Math.min(chunkCount, chunkResults.length + 1),
+          failedChunk,
           failure: failureBody
         };
       }
     } else {
-      const mergedActions = chunkResults
+      const completedResults = chunkResults.filter(result => result?.available);
+      const analysisGaps = chunkResults.flatMap(result => result?.analysisGaps || []);
+      const mergedActions = completedResults
         .flatMap(result =>
           Array.isArray(result.actions) ? result.actions : []
         )
@@ -2108,15 +2135,16 @@ els.analyzeBtn.addEventListener('click', async () => {
             `scene-${String(index + 1).padStart(3, '0')}`
         }));
 
-      const prompts = chunkResults
+      const prompts = completedResults
         .map(result => String(result.videoPrompt || '').trim())
         .filter(Boolean);
-      const mergedStoryContext = mergeStoryContexts(chunkResults);
+      const mergedStoryContext = mergeStoryContexts(completedResults);
 
       const firstResult = chunkResults[0] || {};
 
       body = {
         available: true,
+        partial: analysisGaps.length > 0,
         videoDuration: storyboard.duration,
         introEndTime: Number(firstResult.introEndTime || 0),
         playStartTime: Number(
@@ -2133,13 +2161,12 @@ els.analyzeBtn.addEventListener('click', async () => {
         warnings: chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
         ),
-        analysisGaps: chunkResults.flatMap(result =>
-          Array.isArray(result.analysisGaps) ? result.analysisGaps : []
-        ),
+        analysisGaps,
         analysisMode: 'MULTI_PASS_DEEP_HARDENED',
-        chunkCount: chunkResults.length,
+        chunkCount: completedResults.length,
+        processedChunkCount: chunkResults.filter(Boolean).length,
         expectedChunkCount: chunkCount,
-        analysisCoverage: chunkCount ? chunkResults.length / chunkCount : 0,
+        analysisCoverage: chunkCount ? completedResults.length / chunkCount : 0,
         skippedFrameCount,
         secondPassChunkCount: chunkResults.filter(result => result.secondPassReviewed).length,
         rebasedChunkCount: chunkResults.filter(result => result.chunkTimeRebased).length,
@@ -2150,7 +2177,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     }
 
   if (
-    body?.available &&
+    body?.available && !body?.partial &&
     (!Array.isArray(body.actions) || !body.actions.length) &&
     (state.selectedFile || state.selectedRemoteVideo)
   ) {
@@ -2239,6 +2266,9 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (!normalized.actions.length) {
     els.analysisState.textContent = 'NO_ACTIONS';
     els.analysisTitle.textContent = 'Doğrulanmış action bulunmadı';
+    els.analysisOutput.textContent = body.partial
+      ? ['Modelden oynanabilir analiz verisi alınamadı. Okunamayan bölümler başarı sayılmadı.', ...(body.warnings || [])].join('\n')
+      : 'Analiz edilen görüntülerde doğrulanmış seçenek bulunamadı.';
     setGameState('ERROR');
     renderDebug({ lastAnalyzeBody: body });
     return;
@@ -2251,21 +2281,22 @@ els.analyzeBtn.addEventListener('click', async () => {
   } catch (error) {
     console.warn("Analysis could not be saved locally:", error);
   }
-  els.analysisState.textContent = 'TIMELINE_READY';
-  els.analysisTitle.textContent = `${normalized.actions.length} doğrulanmış aksiyon`;
+  els.analysisState.textContent = body.partial ? 'PARTIAL_TIMELINE_READY' : 'TIMELINE_READY';
+  els.analysisTitle.textContent = `${body.partial ? 'Kısmi analiz hazır · ' : ''}${normalized.actions.length} doğrulanmış aksiyon`;
   els.analysisOutput.textContent = [
-    'Derin analiz tamamlandı.',
+    body.partial ? 'Analiz kısmen hazır. Okunamayan aralıklarda seçenek üretilmedi.' : 'Derin analiz tamamlandı.',
     `${normalized.actions.length} doğrulanmış aksiyon hazır.`,
     `${Number(body.chunkCount || 0)}/${Number(body.expectedChunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
+    ...(body.analysisGaps || []).map(gap => `Bölüm ${gap.chunkIndex + 1}: ${gap.startTime.toFixed(1)}–${gap.endTime.toFixed(1)} sn doğrulanamadı.`),
     `${Number(body.secondPassChunkCount || 0)} bölüm görsel ikinci kontrolden geçti.`,
     `${Number(body.rebasedChunkCount || 0)} bölümün yerel zamanları video zamanına düzeltildi.`,
     Number(body.skippedFrameCount || 0)
       ? `${Number(body.skippedFrameCount)} okunamayan kare atlandı; analiz kalan doğrulanmış karelerle tamamlandı.`
       : 'Bütün örnek kareler başarıyla hazırlandı.',
-    `Zaman çizelgesi ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyeye kadar doğrulandı.`,
+    `Son doğrulanmış aksiyon ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyede bitiyor.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
     `Gemini kullanımı: ${state.aiUsage.requests} istek · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens} çıkış tokenı.`,
-    'Oyun modu kullanıma hazır.'
+    body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Yeniden analiz, yalnız geçici hata veren eksik bölümleri dener.' : 'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
   } catch (error) {
@@ -2483,6 +2514,9 @@ function normalizeAnalysis(body) {
     schemaVersion: Number(body?.schemaVersion || ANALYSIS_SCHEMA_VERSION),
     engineVersion: String(body?.engineVersion || ENGINE_VERSION),
     chunkCount: Number(body?.chunkCount || 0),
+    processedChunkCount: Number(body?.processedChunkCount || 0),
+    partial: body?.partial === true,
+    analysisGaps: Array.isArray(body?.analysisGaps) ? body.analysisGaps : [],
     expectedChunkCount: Number(body?.expectedChunkCount || 0),
     analysisCoverage: Number(body?.analysisCoverage || 0),
     secondPassChunkCount: Number(body?.secondPassChunkCount || 0),
