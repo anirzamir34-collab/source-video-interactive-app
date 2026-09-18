@@ -684,7 +684,7 @@ export function findAdultSceneForTimeline(
     .sort((a, b) => b.overlap - a.overlap)[0]?.scene || null;
 }
 
-export function consolidateVerifiedPositions(positions = []) {
+export function consolidateVerifiedPositions(positions = [], { mergeDistantReturns = false } = {}) {
   const clusters = [];
   const sorted = [...(Array.isArray(positions) ? positions : [])]
     .filter(position => position?.familyId)
@@ -704,8 +704,14 @@ export function consolidateVerifiedPositions(positions = []) {
     const sourceId = String(position.id || key);
     const movements = (Array.isArray(position.movements) ? position.movements : [])
       .map(movement => ({ ...movement, sourcePositionId: movement.sourcePositionId || sourceId }));
+    // A position family is one user-facing tab for the whole encounter. The
+    // source can return to the same position much later; keeping those returns
+    // as separate tabs produced duplicate position names and stranded most
+    // verified movements behind hidden occurrences.
     const existing = [...clusters].reverse().find(item =>
-      item.clusterKey === key && Number(position.startTime) <= Number(item.endTime) + 1.5
+      item.clusterKey === key && (
+        mergeDistantReturns || Number(position.startTime) <= Number(item.endTime) + 1.5
+      )
     );
     if (!existing) {
       const occurrenceNumber = clusters.filter(item => item.clusterKey === key).length + 1;

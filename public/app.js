@@ -3132,7 +3132,9 @@ function prepareAdultScenes() {
         progressionRole: beforeFirstCore ? 'foreplay' : stimulation ? 'bonus' : 'core'
       };
     });
-    scene.positions = consolidateVerifiedPositions(scene.positions).map(position => ({
+    scene.positions = consolidateVerifiedPositions(scene.positions, {
+      mergeDistantReturns: true
+    }).map(position => ({
       ...position,
       movementChoices: buildVerifiedMovementChoices(position.movements, position.label, 3)
     }));
@@ -3373,7 +3375,10 @@ function unlockedAdultPositions(scene = state.adultScene) {
   const unlocked = positions
     .filter(position => !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
-  return unlocked.length ? [unlocked[unlocked.length - 1]] : [];
+  // Keep every position the player has unlocked visible. Showing only the
+  // newest one turned the panel into a single-choice dead end and made earlier
+  // valid selections disappear after each Lust unlock.
+  return unlocked;
 }
 
 function unlockedAdultOutcomes(scene = state.adultScene) {
@@ -4146,7 +4151,11 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.classList.toggle('active', button.dataset.positionId === position.id);
   });
 
-  const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
+  // One position tab owns all verified returns to that position. The player
+  // explicitly chooses the movement; the engine never hides later occurrences
+  // merely because the first occurrence has only one detected action.
+  const occurrenceMovements = [...(position.movements || [])]
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   const movementChoices = buildVerifiedMovementChoices(occurrenceMovements, position.label, 3);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
@@ -4232,6 +4241,14 @@ function selectAdultMovement(
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const movement = position?.movements.find(item => item.id === movementId);
   if (!movement || state.adultOutcomePhase !== 'idle') return;
+  const matchingOccurrence = positionOccurrenceGroups(position).find(group => {
+    const sourceIds = new Set(group.sourcePositionIds || []);
+    const start = Number(movement.loopStartTime ?? movement.startTime);
+    const end = Number(movement.loopEndTime ?? movement.endTime);
+    return sourceIds.has(String(movement.sourcePositionId || '')) &&
+      start >= Number(group.startTime) - 0.05 && end <= Number(group.endTime) + 0.05;
+  });
+  if (matchingOccurrence) state.activeAdultOccurrenceId = matchingOccurrence.id;
   const occurrenceMovements = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId);
   if (!occurrenceMovements.some(item => item.id === movement.id)) {
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
@@ -4320,6 +4337,21 @@ function finishAdultScene(options = {}) {
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
   if (remainingPosition && !force) {
     selectAdultPosition(remainingPosition.id, true);
+    return;
+  }
+  // "Sahneyi geç" inside an encounter means advance to the next verified
+  // position, not delete the complete panel. Unlock exactly one chronological
+  // position and keep control with the player. Only a forced finish or a truly
+  // exhausted graph may close the encounter.
+  const nextLockedPosition = orderedLockedAdultPositions(scene)[0];
+  if (nextLockedPosition && !force) {
+    state.adultUnlockedPositionIds.add(nextLockedPosition.id);
+    state.adultRevealedPositionIds.add(nextLockedPosition.id);
+    state.adultSexUnlocked = true;
+    state.adultUiSignature = '';
+    logEngineEvent('ADULT_SCENE_SKIP_ADVANCED', { positionId: nextLockedPosition.id });
+    renderAdultProgressiveUI(true);
+    selectAdultPosition(nextLockedPosition.id, true);
     return;
   }
   if (!state.completedAdultSceneIds) state.completedAdultSceneIds = new Set();
