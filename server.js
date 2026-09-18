@@ -9,6 +9,7 @@ import ffmpegPath from 'ffmpeg-static';
 import youtubedl from 'youtube-dl-exec';
 import { spawn } from 'node:child_process';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
+import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -243,104 +244,6 @@ const storyboardUpload = multer({
     fields: 16
   }
 });
-
-function cropStoryboardRow(file, rowIndex) {
-  return new Promise((resolve, reject) => {
-    const ffmpeg = spawn(ffmpegPath, [
-      '-hide_banner', '-loglevel', 'error',
-      '-i', 'pipe:0',
-      '-vf', `crop=iw:ih/4:0:${rowIndex}*ih/4`,
-      '-frames:v', '1',
-      '-q:v', '3',
-      '-f', 'image2pipe',
-      '-vcodec', 'mjpeg',
-      'pipe:1'
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
-    const chunks = [];
-    let stderr = '';
-    const deadline = setTimeout(() => ffmpeg.kill('SIGKILL'), 15000);
-    ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
-    ffmpeg.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-2000); });
-    ffmpeg.on('error', reject);
-    ffmpeg.on('close', code => {
-      clearTimeout(deadline);
-      if (code !== 0 || !chunks.length) {
-        reject(new Error(stderr || `STORYBOARD_ROW_CROP_FAILED:${code}`));
-        return;
-      }
-      resolve({
-        ...file,
-        buffer: Buffer.concat(chunks),
-        size: chunks.reduce((sum, chunk) => sum + chunk.length, 0),
-        mimetype: 'image/jpeg',
-        originalname: `${path.parse(file.originalname || 'storyboard').name}-row-${rowIndex + 1}.jpg`
-      });
-    });
-    ffmpeg.stdin.end(file.buffer);
-  });
-}
-
-function cropStoryboardCell(file, frameIndex) {
-  return new Promise((resolve, reject) => {
-    const column = frameIndex % 3;
-    const row = Math.floor(frameIndex / 3);
-    const ffmpeg = spawn(ffmpegPath, [
-      '-hide_banner', '-loglevel', 'error',
-      '-i', 'pipe:0',
-      '-vf', `crop=iw/3:ih/4:${column}*iw/3:${row}*ih/4`,
-      '-frames:v', '1',
-      '-q:v', '3',
-      '-f', 'image2pipe',
-      '-vcodec', 'mjpeg',
-      'pipe:1'
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
-    const chunks = [];
-    let stderr = '';
-    const deadline = setTimeout(() => ffmpeg.kill('SIGKILL'), 15000);
-    ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
-    ffmpeg.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-2000); });
-    ffmpeg.on('error', reject);
-    ffmpeg.on('close', code => {
-      clearTimeout(deadline);
-      if (code !== 0 || !chunks.length) {
-        reject(new Error(stderr || `STORYBOARD_CELL_CROP_FAILED:${code}`));
-        return;
-      }
-      resolve({
-        ...file,
-        buffer: Buffer.concat(chunks),
-        size: chunks.reduce((sum, chunk) => sum + chunk.length, 0),
-        mimetype: 'image/jpeg',
-        originalname: `${path.parse(file.originalname || 'storyboard').name}-frame-${frameIndex + 1}.jpg`
-      });
-    });
-    ffmpeg.stdin.end(file.buffer);
-  });
-}
-
-async function splitSingleStoryboardSheet(file, timestampValues) {
-  const frameCount = Math.min(12, timestampValues.length);
-  const occupiedRows = Math.ceil(frameCount / 3);
-  if (frameCount >= 2 && occupiedRows < 2) {
-    const cells = [];
-    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-      cells.push({
-        file: await cropStoryboardCell(file, frameIndex),
-        timestamps: [timestampValues[frameIndex]]
-      });
-    }
-    return cells;
-  }
-  if (occupiedRows < 2) return [];
-  const rows = [];
-  for (let rowIndex = 0; rowIndex < occupiedRows; rowIndex += 1) {
-    rows.push({
-      file: await cropStoryboardRow(file, rowIndex),
-      timestamps: timestampValues.slice(rowIndex * 3, (rowIndex + 1) * 3)
-    });
-  }
-  return rows.filter(row => row.timestamps.length);
-}
 
 app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards', 20), async (req, res) => {
   try {
@@ -683,17 +586,6 @@ Rules:
 `;
 
     const ai = new GoogleGenAI({ apiKey });
-    const storyboardFailureReason = (error) => {
-      const details = String(error?.message || error || '');
-      if (/PROHIBITED_CONTENT/i.test(details)) return 'GEMINI_CONTENT_RESTRICTED';
-      if (/RESOURCE_EXHAUSTED|429|quota|credit/i.test(details)) return 'GEMINI_QUOTA_OR_CREDITS';
-      if (/503|UNAVAILABLE|high demand/i.test(details)) return 'GEMINI_TEMPORARILY_UNAVAILABLE';
-      if (/GEMINI_EMPTY_JSON_RESPONSE/i.test(details)) return 'GEMINI_EMPTY_RESPONSE';
-      if (/Unexpected end of JSON input|Unexpected token|not valid JSON/i.test(details)) {
-        return 'GEMINI_INVALID_JSON';
-      }
-      return 'GEMINI_STORYBOARD_ERROR';
-    };
     const unverifiedGapResult = (startTime, endTime, reason) => ({
       available: true,
       videoDuration: duration,
@@ -710,23 +602,6 @@ Rules:
       }],
       warnings: ['Bu aralık modelden doğrulanabilir sonuç alınamadığı için seçenek üretilmeden geçildi.']
     });
-    const restrictedTerminalResult = (startTime, endTime, reason) => ({
-      available: true,
-      videoDuration: duration,
-      introEndTime: chunkIndex === 0 ? Math.max(0, startTime) : chunkStart,
-      playStartTime: chunkIndex === 0 ? Math.max(0, startTime) : chunkStart,
-      protagonistProfile,
-      videoPrompt: '',
-      storyContext: {},
-      actions: [],
-      analysisGaps: [],
-      restrictedRanges: [{
-        startTime: Math.max(0, Number(startTime) || 0),
-        endTime: Math.min(duration, Math.max(Number(startTime) || 0, Number(endTime) || 0)),
-        reason: String(reason || 'PROHIBITED_CONTENT')
-      }],
-      warnings: ['Son kısıtlı aralık seçim üretmeden atlandı; önceki doğrulanmış bölümler korundu.']
-    });
     const generateStoryboardJson = async (requestPrompt, requestFiles, retryLabel = 'full') => {
       const parts = [
         { text: requestPrompt },
@@ -737,10 +612,8 @@ Rules:
           }
         }))
       ];
-      let lastGenerationError = null;
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const response = await ai.models.generateContent({
+      return generateStoryboardWithRetry(async () => {
+        const response = await ai.models.generateContent({
           model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
           contents: [{ role: "user", parts }],
           config: {
@@ -748,38 +621,14 @@ Rules:
             temperature: 0.1,
             maxOutputTokens: 16384
           }
-          });
-          addGeminiUsage(analysisUsage, response?.usageMetadata);
-          const raw = String(response.text || '').trim();
-          if (!raw) {
-            const finishReason = String(
-              response?.candidates?.[0]?.finishReason ||
-              response?.promptFeedback?.blockReason ||
-              'UNKNOWN'
-            );
-            throw new Error(`GEMINI_EMPTY_JSON_RESPONSE:${finishReason}`);
-          }
-          return JSON.parse(raw.replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
-        } catch (error) {
-          lastGenerationError = error;
-          const details = String(error?.message || error);
-          const retryable =
-            details.includes("503") ||
-            details.includes("UNAVAILABLE") ||
-            details.includes("high demand") ||
-            details.includes("Unexpected end of JSON input") ||
-            details.includes("Unexpected token") ||
-            details.includes("not valid JSON") ||
-            details.includes("GEMINI_EMPTY_JSON_RESPONSE");
-          // Safety-blocked image groups are deterministic. Hand control to the
-          // smaller visual recovery path instead of resending the same group.
-          if (details.includes('PROHIBITED_CONTENT')) throw error;
-          if (!retryable || attempt === 2) throw error;
-          console.warn(`[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/2: ${details}`);
-          await new Promise(resolve => setTimeout(resolve, attempt * 1800));
-        }
-      }
-      throw lastGenerationError || new Error('GEMINI_JSON_PARSE_FAILED');
+        });
+        addGeminiUsage(analysisUsage, response?.usageMetadata);
+        return response;
+      }, {
+        onRetry: (reason, attempt) => console.warn(
+          `[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/2: ${reason}`
+        )
+      });
     };
 
     let parsed;
@@ -802,6 +651,16 @@ Rules:
           chunkEnd
         });
       }
+      if (isTerminalStoryboardFailure(fullChunkError)) {
+        console.warn(`[gemini-storyboard-unavailable] chunk ${chunkIndex + 1}/${chunkCount}: ${fullFailureReason}`);
+        return res.status(422).json({
+          available: false, retryable: false, reason: fullFailureReason,
+          message: `Bölüm ${chunkIndex + 1}/${chunkCount} için model analiz verisi döndürmedi. Bu aralık için seçenek üretilmedi; diğer bölümlere devam edilecek.`,
+          chunkIndex, chunkCount, chunkStart, chunkEnd,
+          analysisGaps: [{ startTime: chunkStart, endTime: chunkEnd, reason: fullFailureReason }],
+          aiUsage: analysisUsage
+        });
+      }
       const allTimestamps = (() => {
         try {
           const value = JSON.parse(timestamps);
@@ -811,7 +670,7 @@ Rules:
         }
       })();
       const framesPerSheet = Math.max(1, Math.ceil(allTimestamps.length / files.length));
-      let recoverySegments = files.map((file, fileIndex) => ({
+      const recoverySegments = files.map((file, fileIndex) => ({
         file,
         timestamps: allTimestamps.slice(
           fileIndex * framesPerSheet,
@@ -819,30 +678,9 @@ Rules:
         )
       }));
 
-      if (/PROHIBITED_CONTENT/i.test(String(fullChunkError?.message || fullChunkError))) {
-        try {
-          const rowGroups = await Promise.all(
-            recoverySegments.map(async segment => {
-              const rows = await splitSingleStoryboardSheet(segment.file, segment.timestamps);
-              return rows.length ? rows : [segment];
-            })
-          );
-          const rowSegments = rowGroups.flat();
-          if (rowSegments.length) recoverySegments = rowSegments;
-        } catch (cropError) {
-          console.warn(`[gemini-storyboard-crop-error] chunk ${chunkIndex + 1}/${chunkCount}: ${cropError?.message || cropError}`);
-        }
-      }
-
-      const terminalProhibited = chunkIndex === chunkCount - 1 &&
-        /PROHIBITED_CONTENT/i.test(String(fullChunkError?.message || fullChunkError));
       if (recoverySegments.length <= 1) {
-        console.warn(terminalProhibited
-          ? `[gemini-storyboard-restricted-tail] chunk ${chunkIndex + 1}/${chunkCount} contains no selectable verified action`
-          : `[gemini-storyboard-gap] chunk ${chunkIndex + 1}/${chunkCount} kept as a non-playable verified gap after repeated empty responses`);
-        parsed = terminalProhibited
-          ? restrictedTerminalResult(chunkStart, chunkEnd, String(fullChunkError?.message || fullChunkError))
-          : unverifiedGapResult(chunkStart, chunkEnd, String(fullChunkError?.message || fullChunkError));
+        console.warn(`[gemini-storyboard-gap] chunk ${chunkIndex + 1}/${chunkCount}: ${fullFailureReason}`);
+        parsed = unverifiedGapResult(chunkStart, chunkEnd, fullChunkError);
       } else {
       const recoveredParts = new Array(recoverySegments.length);
       console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${recoverySegments.length} smaller requests`);
@@ -868,16 +706,12 @@ Rules:
               `split-${fileIndex + 1}`
             );
           } catch (splitError) {
-            const splitReason = String(splitError?.message || splitError);
             const splitReasonCode = storyboardFailureReason(splitError);
             console.warn(
               `[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} ` +
               `in chunk ${chunkIndex + 1} kept non-playable: ${splitReasonCode}`
             );
-            recoveredParts[fileIndex] =
-              chunkIndex === chunkCount - 1 && /PROHIBITED_CONTENT/i.test(splitReason)
-                ? restrictedTerminalResult(splitStart, splitEnd, splitReason)
-                : unverifiedGapResult(splitStart, splitEnd, splitReason);
+            recoveredParts[fileIndex] = unverifiedGapResult(splitStart, splitEnd, splitError);
           }
         }
       };
@@ -909,32 +743,34 @@ Rules:
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
       : [];
     if (unresolvedGaps.length) {
-      const quotaBlocked = unresolvedGaps.every(gap =>
+      const quotaBlocked = unresolvedGaps.some(gap =>
         String(gap?.reason || '') === 'GEMINI_QUOTA_OR_CREDITS'
       );
-      const contentRestricted = unresolvedGaps.every(gap =>
+      const contentRestricted = unresolvedGaps.some(gap =>
         String(gap?.reason || '') === 'GEMINI_CONTENT_RESTRICTED'
       );
-      return res.status(quotaBlocked ? 429 : contentRestricted ? 422 : 503).json({
+      const unstructured = unresolvedGaps.some(gap => gap.reason === 'MODEL_UNSTRUCTURED_RESPONSE');
+      return res.status(quotaBlocked ? 429 : contentRestricted || unstructured ? 422 : 503).json({
         available: false,
-        retryable: !(quotaBlocked || contentRestricted),
+        retryable: !(quotaBlocked || contentRestricted || unstructured),
         reason: quotaBlocked
           ? 'GEMINI_CREDITS_DEPLETED'
           : contentRestricted
             ? 'GEMINI_CONTENT_RESTRICTED'
-            : 'CHUNK_ANALYSIS_GAP',
+            : unstructured ? 'MODEL_UNSTRUCTURED_RESPONSE' : 'CHUNK_ANALYSIS_GAP',
         message: quotaBlocked
           ? 'Gemini API kredisi veya proje kotası kullanılamıyor. Aynı istek otomatik tekrarlanmadı.'
           : contentRestricted
             ? `Bölüm ${chunkIndex + 1}/${chunkCount} Gemini tarafından içerik kısıtlaması nedeniyle okunamadı. ` +
-              'Aynı görüntüleri otomatik yeniden göndermek sonucu değiştirmeyeceği için analiz durduruldu.'
+              'Bu aralık için seçenek üretilmedi; diğer bölümlere devam edilecek.'
             : `Bölüm ${chunkIndex + 1}/${chunkCount} modelden eksiksiz okunamadı. ` +
-              'Boş aralık başarı sayılmadı; bu bölüm yeniden denenmeli.',
+              'Bu aralık doğrulanmadı; diğer bölümler korunuyor.',
         chunkIndex,
         chunkCount,
         chunkStart,
         chunkEnd,
-        analysisGaps: unresolvedGaps
+        analysisGaps: unresolvedGaps,
+        aiUsage: analysisUsage
       });
     }
 
