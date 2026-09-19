@@ -424,3 +424,118 @@ test('cancelling storyboard transfer aborts and releases its active reader', asy
   assert.equal(cancelled, true);
   assert.equal(released, true);
 });
+
+function remoteFileFixture(download) {
+  const state = { selectedFile: null, selectedRemoteVideo: {
+    sourceUrl: 'https://example.com/video.mp4', proxyUrl: '/proxy?token=one', fileName: 'video.mp4', size: 0
+  }, videoObjectUrl: '' };
+  return fixture(functions('analysisSourceKey', 'prepareStoryboardSource', 'ensureSelectedRemoteFile'), {
+    state, setUrlStatus() {}, downloadUrlVideo: download
+  });
+}
+
+test('one complete remote download is shared and reused without losing the analysis identity', async () => {
+  const gate = deferred();
+  let downloads = 0;
+  const f = remoteFileFixture(async () => { downloads++; return gate.promise; });
+  const { state } = f.scope;
+  const beforeKey = f.scope.analysisSourceKey(null, state.selectedRemoteVideo);
+  const first = f.scope.ensureSelectedRemoteFile();
+  const second = f.scope.ensureSelectedRemoteFile();
+  assert.equal(downloads, 1);
+  gate.resolve(new Blob(['source-video'], { type: 'video/mp4' }));
+  const [firstFile, secondFile] = await Promise.all([first, second]);
+  assert.equal(firstFile, secondFile);
+  assert.equal(await firstFile.text(), 'source-video');
+  assert.equal(f.scope.analysisSourceKey(firstFile, state.selectedRemoteVideo), beforeKey);
+  assert.equal(await f.scope.ensureSelectedRemoteFile(), firstFile);
+  assert.equal(downloads, 1);
+  assert.equal(state.remoteFileDownload, null);
+});
+
+test('frame preparation waits for the complete download, then uses the same local bytes for playback and retry', async () => {
+  const gate = deferred();
+  const progress = [];
+  const f = remoteFileFixture(async (_url, _source, options) => {
+    progress.push(options);
+    return gate.promise;
+  });
+  const session = {};
+  f.scope.els.video.src = '/proxy?token=one';
+  let prepared = false;
+  const pending = f.scope.prepareStoryboardSource(session, null).then(file => { prepared = true; return file; });
+  await tick();
+  assert.equal(prepared, false);
+  assert.equal(f.scope.els.video.src, undefined);
+  assert.equal(f.scope.els.analysisState.textContent, 'DOWNLOADING_VIDEO');
+  progress[0].onProgress({ loaded: 6, total: 12 });
+  assert.match(f.scope.els.analysisTitle.textContent, /%50/);
+  gate.resolve(new Blob(['source-video'], { type: 'video/mp4' }));
+  try {
+    const file = await pending;
+    assert.equal(await file.text(), 'source-video');
+    assert.equal(session.file, file);
+    assert.match(f.scope.els.video.src, /^blob:/);
+    const localUrl = f.scope.els.video.src;
+    assert.equal(await f.scope.prepareStoryboardSource(session, null), file);
+    assert.equal(progress.length, 1);
+    assert.equal(f.scope.els.video.src, localUrl);
+  } finally { URL.revokeObjectURL(f.scope.state.videoObjectUrl); }
+});
+
+test('large and unknown-size remote sources go directly to download without adaptive seek probes', async () => {
+  for (const size of [0, 200 * 1024 * 1024]) {
+    const f = remoteFileFixture(() => assert.fail('using the complete-file helper'));
+    f.scope.state.selectedRemoteVideo.size = size;
+    let downloads = 0;
+    const expectedFile = new Blob(['video']);
+    f.scope.ensureSelectedRemoteFile = async () => { downloads++; return expectedFile; };
+    try {
+      assert.equal(await f.scope.prepareStoryboardSource({}, null), expectedFile);
+      assert.equal(downloads, 1);
+    } finally { URL.revokeObjectURL(f.scope.state.videoObjectUrl); }
+  }
+});
+
+test('an already uploaded local file needs no download or source replacement', async () => {
+  const f = remoteFileFixture(() => assert.fail('local file must never be fetched'));
+  f.scope.state.selectedRemoteVideo = null;
+  const file = new File(['video'], 'local.mp4', { type: 'video/mp4' });
+  const session = {};
+  f.scope.els.video.src = 'blob:existing';
+  assert.equal(await f.scope.prepareStoryboardSource(session, file), file);
+  assert.equal(session.file, file);
+  assert.equal(f.scope.els.video.src, 'blob:existing');
+});
+
+test('failed download restores the preview and can be retried without silently resuming remote frame seeks', async () => {
+  let attempts = 0;
+  const f = remoteFileFixture(async () => {
+    if (++attempts === 1) throw Error('network stalled');
+    return new Blob(['video']);
+  });
+  const session = {};
+  await assert.rejects(f.scope.prepareStoryboardSource(session, null), /network stalled/);
+  assert.equal(f.scope.els.video.src, '/proxy?token=one');
+  assert.equal(f.scope.state.selectedFile, null);
+  assert.equal(session.file, undefined);
+  assert.equal(f.scope.state.remoteFileDownload, null);
+  try {
+    assert.equal(await (await f.scope.prepareStoryboardSource(session, null)).text(), 'video');
+    assert.equal(attempts, 2);
+  } finally { URL.revokeObjectURL(f.scope.state.videoObjectUrl); }
+});
+
+test('a stale transfer or incomplete file cannot replace the current source', async () => {
+  const gate = deferred();
+  const f = remoteFileFixture(async () => gate.promise);
+  const pending = f.scope.ensureSelectedRemoteFile();
+  f.scope.state.selectedRemoteVideo = { proxyUrl: '/other-source' };
+  gate.resolve(new Blob(['old-video']));
+  await assert.rejects(pending, /kaynağı değişti/);
+  assert.equal(f.scope.state.selectedFile, null);
+  const incomplete = remoteFileFixture(async () => new Blob(['short']));
+  incomplete.scope.state.selectedRemoteVideo.size = 100;
+  await assert.rejects(incomplete.scope.ensureSelectedRemoteFile(), /aktarım.*eksik/);
+  assert.equal(incomplete.scope.state.selectedFile, null);
+});

@@ -100,6 +100,7 @@ const state = {
   serviceCapabilities: null,
   selectedFile: null,
   selectedRemoteVideo: null,
+  remoteFileDownload: null,
   videoObjectUrl: '',
   analysisSession: null,
   analysisInProgress: false,
@@ -1952,6 +1953,58 @@ els.dubToggleBtn?.addEventListener('click', () => {
 els.video.addEventListener('timeupdate', renderSubtitle);
 els.video.addEventListener('seeked', renderSubtitle);
 
+function analysisSourceKey(file, remote) {
+  // The transport can change from a URL to a downloaded File during analysis.
+  // Keep the same session identity so completed chapters/dialogue survive retry.
+  return remote
+    ? `remote:${remote.sourceUrl || remote.proxyUrl || ''}`
+    : `file:${file?.name}:${file?.size}:${file?.lastModified}`;
+}
+
+async function prepareStoryboardSource(session, file) {
+  const remote = state.selectedRemoteVideo;
+  let localFile = file || state.selectedFile || session.file;
+  if (!localFile && remote) {
+    els.analysisState.textContent = 'DOWNLOADING_VIDEO';
+    els.analysisTitle.textContent = 'Hızlı kare analizi için video telefona alınıyor';
+    els.analysisOutput.textContent = 'Video bir kez geçici olarak indirilecek; ardından kareler cihazdan hazırlanacak.';
+    // Release the preview connection while the complete source is downloaded.
+    els.video.pause();
+    els.video.removeAttribute('src');
+    els.video.load();
+    const startedAt = performance.now();
+    try {
+      localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total }) => {
+        const knownTotal = total || remote.size || 0;
+        const elapsed = Math.max(0.1, (performance.now() - startedAt) / 1000);
+        const percent = knownTotal ? ` · %${Math.min(100, Math.round(loaded / knownTotal * 100))}` : '';
+        els.analysisTitle.textContent = `Video telefona alınıyor${percent}`;
+        els.analysisOutput.textContent = [
+          `${(loaded / 1024 / 1024).toFixed(1)}${knownTotal ? ` / ${(knownTotal / 1024 / 1024).toFixed(1)}` : ''} MB`,
+          `${(loaded / 1024 / 1024 / elapsed).toFixed(1)} MB/sn · ${Math.round(elapsed)} sn geçti`,
+          'İndirme bitince kareler internetten beklenmeden hazırlanacak.'
+        ].join('\n');
+      } });
+      session.sourceDownloadMs = Math.round(performance.now() - startedAt);
+    } catch (error) {
+      if (state.selectedRemoteVideo === remote) {
+        els.video.src = remote.proxyUrl;
+        els.video.load();
+      }
+      throw error;
+    }
+  }
+  if (!(localFile instanceof Blob) || !localFile.size) throw new Error('Kare analizi için video dosyası hazırlanamadı.');
+  session.file = localFile;
+  // Playback uses the same bytes too; later seeks need no remote range requests.
+  if (remote && !state.videoObjectUrl) {
+    state.videoObjectUrl = URL.createObjectURL(localFile);
+    els.video.src = state.videoObjectUrl;
+    els.video.load();
+  }
+  return localFile;
+}
+
 els.analyzeBtn.addEventListener('click', async () => {
   if (state.analysisInProgress || state.urlResolutionInProgress) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
@@ -1973,9 +2026,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (modes.dubbing && !activeElevenLabsApiKey()) {
     throw new Error('Türkçe dublaj için ElevenLabs anahtarı gerekli. Anahtarı ekle veya yalnız altyazı/hareket analizini seç.');
   }
-  const sourceKey = file
-    ? `file:${file.name}:${file.size}:${file.lastModified}`
-    : `remote:${state.selectedRemoteVideo?.sourceUrl || state.selectedRemoteVideo?.proxyUrl || ''}`;
+  const sourceKey = analysisSourceKey(file, state.selectedRemoteVideo);
   const requestedProtagonist = String(els.protagonistInput?.value || '').trim();
   let analysisModeKey = '';
   let dubPreparation = null;
@@ -2026,13 +2077,16 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Motion-only analysis stays visual and must not spend time or AI quota on audio.
   if (modes.subtitles || modes.dubbing) {
     try {
-      const remoteForDialogue = !file ? state.selectedRemoteVideo : null;
+      const remoteForDialogue = state.selectedRemoteVideo;
       if (!file && !selectedRemoteToken(remoteForDialogue)) {
         els.analysisTitle.textContent = 'Ses analizi için video indiriliyor';
         file = await ensureSelectedRemoteFile();
         session.file = file;
       }
-      const dialogue = session.dialogue || await analyzeSelectedDialogue(file, remoteForDialogue);
+      const dialogue = session.dialogue || await analyzeSelectedDialogue(
+        selectedRemoteToken(remoteForDialogue) ? null : file,
+        remoteForDialogue
+      );
       session.dialogue = dialogue;
       state.dialogue = dialogue;
 
@@ -2102,50 +2156,27 @@ els.analyzeBtn.addEventListener('click', async () => {
       }
     }
   }
-  els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
-  els.analysisState.textContent = 'LOCAL_PROCESSING';
-
   const remoteStoryboardSource = state.selectedRemoteVideo;
-  // A dialogue fallback may already have downloaded the video since `file`
-  // was read. Reuse those bytes instead of seeking the remote source again.
-  const storyboardSource = file || state.selectedFile || session.storyboardFile || remoteStoryboardSource?.proxyUrl;
+  const storyboardSource = session.storyboard ? null : await prepareStoryboardSource(session, file);
+  els.analysisTitle.textContent = 'Video cihazdan işleniyor';
+  els.analysisState.textContent = 'LOCAL_PROCESSING';
   const storyboard = session.storyboard || await extractStoryboard(storyboardSource, (progress, detail) => {
     const count = detail ? `${detail.captured}/${detail.total} kare · ` : '';
-    els.analysisTitle.textContent = detail?.phase === 'buffering'
-      ? 'Yavaş video kaynağı hızlandırılıyor'
-      : `Kareler hazırlanıyor: ${count}%${Math.round(progress)}`;
+    els.analysisTitle.textContent = `Cihazdan kareler hazırlanıyor: ${count}%${Math.round(progress)}`;
     if (!detail) return;
-    const elapsed = `${Math.round(detail.elapsedSeconds)} sn geçti`;
-    if (detail.phase === 'buffering') {
-      const transfer = detail.transfer;
-      els.analysisOutput.textContent = [
-        'Kalan kareler için video bir kez geçici olarak alınıyor. Hazır kareler korunuyor.',
-        transfer ? `${(transfer.loaded / 1024 / 1024).toFixed(1)} / ${((transfer.total || remoteStoryboardSource?.size || 0) / 1024 / 1024).toFixed(1)} MB` : '',
-        elapsed
-      ].filter(Boolean).join('\n');
-    } else {
-      els.analysisOutput.textContent = [
-        Number.isFinite(detail.time) ? `Videodaki konum: ${detail.time.toFixed(1)} sn${detail.retrying ? ' · yeniden deneniyor' : ''}` : 'Kareler analiz için birleştiriliyor…',
-        elapsed,
-        detail.bufferingFailed ? 'Geçici aktarım tamamlanamadı; kaynak akışından devam ediliyor.' : ''
-      ].filter(Boolean).join('\n');
-    }
+    els.analysisOutput.textContent = [
+      Number.isFinite(detail.time) ? `Videodaki konum: ${detail.time.toFixed(1)} sn${detail.retrying ? ' · yeniden deneniyor' : ''}` : 'Kareler analiz için birleştiriliyor…',
+      `${Math.round(detail.elapsedSeconds)} sn geçti`
+    ].join('\n');
   }, undefined, {
-    sourceBytes: remoteStoryboardSource?.size || 0,
-    remoteSampling: Boolean(remoteStoryboardSource && !file),
-    getLocalSource: remoteStoryboardSource ? async transferOptions => {
-      if (session.storyboardFile) return session.storyboardFile;
-      const blob = await downloadUrlVideo(remoteStoryboardSource.proxyUrl, remoteStoryboardSource.sourceUrl, transferOptions);
-      if (remoteStoryboardSource.size && blob.size !== remoteStoryboardSource.size) {
-        throw new Error('Video boyutu değişti; kaynak akışından devam edilecek.');
-      }
-      return blob;
-    } : undefined,
-    onBufferedSource: blob => { session.storyboardFile = blob; }
+    // Preserve every original sample, including focused motion probes, even
+    // though the URL video's bytes are now local.
+    remoteSampling: Boolean(remoteStoryboardSource)
   });
   session.storyboard = storyboard;
-  session.storyboardFile = null;
-  if (storyboard.performance) logEngineEvent('STORYBOARD_PREPARED', storyboard.performance);
+  if (storyboard.performance) logEngineEvent('STORYBOARD_PREPARED', {
+    ...storyboard.performance, downloadMs: session.sourceDownloadMs || 0
+  });
 
   const skippedFrameCount = Array.isArray(storyboard.skippedTimestamps)
     ? storyboard.skippedTimestamps.length
@@ -5851,6 +5882,8 @@ setInterval(checkAiUsageStatus, 60 * 1000);
 renderDebug();
 
 function clearPreviousGameResidue() {
+  state.remoteFileDownload?.controller.abort();
+  state.remoteFileDownload = null;
   cancelTimelineNavigation();
   cancelAdultSeek();
   if (state.stopListener) {
@@ -6061,19 +6094,35 @@ function remoteVideoFileName(sourceUrl, contentType = '') {
   return sourceName || `url-video${extension}`;
 }
 
-async function ensureSelectedRemoteFile() {
+async function ensureSelectedRemoteFile({ onProgress } = {}) {
   if (state.selectedFile) return state.selectedFile;
   const remote = state.selectedRemoteVideo;
   if (!remote?.proxyUrl) throw new Error('İndirilecek uzak video kaynağı bulunamadı.');
+  if (state.remoteFileDownload?.remote === remote) return state.remoteFileDownload.promise;
   setUrlStatus('Bu analiz modu için video cihaza geçici olarak indiriliyor...');
-  const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl);
-  if (remote !== state.selectedRemoteVideo) throw new Error('Video kaynağı değişti. Yeni kaynağı tekrar analiz et.');
-  if (!blob.size) throw new Error('Video boş geldi.');
-  const file = new File([blob], remote.fileName, { type: blob.type || remote.contentType || 'video/mp4' });
-  state.selectedFile = file;
-  state.selectedRemoteVideo = { ...remote, size: blob.size, contentType: file.type };
-  els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • URL kaynağı`;
-  return file;
+  const task = { remote, controller: new AbortController(), promise: null };
+  task.promise = (async () => {
+    const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl, {
+      signal: task.controller.signal,
+      onProgress: progress => {
+        if (remote !== state.selectedRemoteVideo) return;
+        if (typeof onProgress === 'function') onProgress(progress);
+        else setUrlStatus(`Video hazırlanıyor: ${(progress.loaded / 1024 / 1024).toFixed(1)} MB`);
+      }
+    });
+    if (remote !== state.selectedRemoteVideo || task.controller.signal.aborted) throw new Error('Video kaynağı değişti. Yeni kaynağı tekrar analiz et.');
+    if (!blob.size) throw new Error('Video boş geldi.');
+    if (remote.size && blob.size !== remote.size) throw new Error('Video aktarımı eksik veya kaynak boyutu değişti. Bağlantıyı yeniden açıp tekrar dene.');
+    const file = new File([blob], remote.fileName, { type: blob.type || remote.contentType || 'video/mp4' });
+    state.selectedFile = file;
+    state.selectedRemoteVideo = { ...remote, size: blob.size, contentType: file.type };
+    els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • Cihazda hazır`;
+    return file;
+  })().finally(() => {
+    if (state.remoteFileDownload === task) state.remoteFileDownload = null;
+  });
+  state.remoteFileDownload = task;
+  return task.promise;
 }
 
 async function resolveVideoUrl() {
@@ -6130,7 +6179,7 @@ async function resolveVideoUrl() {
         els.fileMeta.textContent = `${fileName}${sizeText} • URL akışı`;
         updateAnalyzeAvailability();
         renderDebug();
-        setUrlStatus('Video akıştan hazır. Tam indirme yapmadan analiz edebilirsin.', 'success');
+        setUrlStatus('Video hazır. Hareket analizi başladığında hızlı kare hazırlığı için bir kez telefona alınacak.', 'success');
         return;
       }
     }
