@@ -5950,6 +5950,7 @@ attachPanelFeedback({
       state.adultScene?.foreplay?.find(item => item.id === state.activeAdultPreludeId) || state.activeAction;
     return {
       scope: `${state.analysisFingerprint}:${state.adultScene?.id}:${state.activePositionId}:${state.activeAdultOccurrenceId}`,
+      choiceClips: position?.activeMovementChoices || [],
       clip, seeking: state.adultLoopSeeking || state.navigationSeeking,
       buffering: Boolean(state.dubBuffer), failed: Boolean(els.panelPlaybackRecovery)
     };

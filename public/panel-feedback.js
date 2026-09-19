@@ -1,5 +1,6 @@
 // Presentation helpers only: never seek, play, change speed or generate clips.
 import { cleanPanelDisplayLabels } from './display-labels.js';
+import { createClipDetails } from './clip-details.js';
 
 const timeNumber = value => value === null || value === '' || typeof value === 'boolean'
   ? NaN : Number(value);
@@ -43,6 +44,7 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   let waiting = false;
   let lastClip = null;
   let lastScope = null;
+  const detailViews = new WeakMap();
   const text = (element, value) => {
     if (element && element.textContent !== value) element.textContent = value;
   };
@@ -69,6 +71,22 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
       for (const card of root.querySelectorAll('[data-variant-ids], [data-clip-id]')) {
         const ids = card.dataset.variantIds?.split(',') || [card.dataset.clipId];
         const active = visible && clip && ids.includes(String(clip.id || clip.actionId));
+        const variantStatus = card.querySelector('[data-variant-status]');
+        if (variantStatus) text(variantStatus, active
+          ? `${ids.indexOf(String(clip.id || clip.actionId)) + 1}/${ids.length} kesit`
+          : `${ids.length} kesit`);
+        if (card.dataset.movementChoiceId) {
+          const choice = snapshot.choiceClips?.find(item => item.id === card.dataset.movementChoiceId);
+          const old = detailViews.get(card);
+          if (old?.choice !== choice) {
+            old?.element?.remove();
+            const element = choice ? createClipDetails(doc, choice.variants) : null;
+            const wrapper = card.closest('.movement-choice-wrap');
+            wrapper?.classList.toggle('has-clip-details', Boolean(element));
+            if (element) wrapper?.appendChild(element);
+            detailViews.set(card, { choice, element });
+          }
+        }
         let status = card.querySelector('[data-playback-status]');
         if (!status) {
           status = doc.createElement('small');
