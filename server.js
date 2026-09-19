@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
 import youtubedl from 'youtube-dl-exec';
+import { resolveVideoPage, probeVideoSource, selectExtractorSource, videoResolutionFailure } from './lib/video-url.js';
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
@@ -1024,8 +1025,9 @@ async function validatePublicUrl(rawUrl) {
     throw new Error('Yalnızca HTTP veya HTTPS adresleri desteklenir.');
   }
 
-  const hostname = url.hostname.toLowerCase();
-  if (hostname === 'localhost' || hostname.endsWith('.local')) {
+  if (url.username || url.password) throw new Error('Kimlik bilgisi içeren URL kullanılamaz.');
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
     throw new Error('Yerel ağ adresleri kullanılamaz.');
   }
 
@@ -1043,6 +1045,7 @@ async function fetchPublicUrl(rawUrl, options = {}) {
   const signals = [options.signal];
   if (options.timeoutMs !== 0) signals.push(AbortSignal.timeout(options.timeoutMs || 25000));
   const signal = signals.filter(Boolean).length ? AbortSignal.any(signals.filter(Boolean)) : undefined;
+  const requestHeaders = { ...(options.headers || {}) };
 
   for (let redirect = 0; redirect < 5; redirect++) {
     signal?.throwIfAborted();
@@ -1055,7 +1058,7 @@ async function fetchPublicUrl(rawUrl, options = {}) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
         'Accept': '*/*',
-        ...(options.headers || {})
+        ...requestHeaders
       }
     });
 
@@ -1063,7 +1066,13 @@ async function fetchPublicUrl(rawUrl, options = {}) {
       const location = response.headers.get('location');
       await response.body?.cancel();
       if (!location) throw new Error('Yönlendirme adresi bulunamadı.');
-      current = new URL(location, current).href;
+      const next = new URL(location, current).href;
+      if (new URL(next).origin !== new URL(current).origin) {
+        for (const key of Object.keys(requestHeaders)) {
+          if (['cookie', 'authorization', 'proxy-authorization'].includes(key.toLowerCase())) delete requestHeaders[key];
+        }
+      }
+      current = next;
       continue;
     }
 
@@ -1073,93 +1082,8 @@ async function fetchPublicUrl(rawUrl, options = {}) {
   throw new Error('Çok fazla yönlendirme yapıldı.');
 }
 
-function decodeMediaUrl(value, baseUrl) {
-  if (!value) return null;
-
-  const decoded = String(value)
-    .replace(/\\u002f/gi, '/')
-    .replace(/\\\//g, '/')
-    .replace(/&amp;|&#038;/gi, '&')
-    .replace(/&quot;|&#34;/gi, '"')
-    .replace(/&#x2f;/gi, '/')
-    .replace(/&#x3a;/gi, ':')
-    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)))
-    .trim();
-
-  try {
-    return new URL(decoded, baseUrl).href;
-  } catch {
-    return null;
-  }
-}
-
-function findVideoCandidates(html, baseUrl) {
-  const candidates = [];
-  const add = value => {
-    const resolved = decodeMediaUrl(value, baseUrl);
-    if (resolved && !candidates.includes(resolved)) candidates.push(resolved);
-  };
-
-  for (const match of html.matchAll(/<(?:video|source)\b[^>]*\b(?:src|data-src)=["']([^"']+)["']/gi)) add(match[1]);
-  for (const match of html.matchAll(/\b(?:src|file|data-src|data-video|data-url|data-file|data-mp4|data-hls|data-stream)=["']([^"']+)["']/gi)) add(match[1]);
-  for (const match of html.matchAll(/["'](?:contentUrl|content_url|videoUrl|video_url|videoSource|video_source|playUrl|play_url|streamUrl|stream_url|file|src)["']\s*[:=]\s*["']([^"']+)["']/gi)) add(match[1]);
-  for (const match of html.matchAll(/https?:\\?\/\\?\/[^"'<>\s]+(?:\.(?:mp4|webm|m4v|mov|m3u8|mpd)(?:\?[^"'<>\s]*)?|[?&](?:mime|type)=video(?:%2F|\/)[^"'<>\s&]+)/gi)) add(match[0]);
-
-  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
-    const tag = match[0];
-    const key = tag.match(/(?:property|name)=["']([^"']+)["']/i)?.[1]?.toLowerCase();
-    const content = tag.match(/content=["']([^"']+)["']/i)?.[1];
-    if (content && ['og:video', 'og:video:url', 'og:video:secure_url', 'og:video:secure_url', 'twitter:player:stream', 'twitter:player'].includes(key)) {
-      add(content);
-    }
-  }
-
-  return candidates;
-}
-
-function findEmbeddedPageCandidates(html, baseUrl) {
-  const pages = [];
-  const add = value => {
-    const resolved = decodeMediaUrl(value, baseUrl);
-    if (resolved && !pages.includes(resolved)) pages.push(resolved);
-  };
-  for (const match of html.matchAll(/<iframe\b[^>]*\b(?:src|data-src)=["']([^"']+)["']/gi)) add(match[1]);
-  for (const match of html.matchAll(/<link\b[^>]*\brel=["'](?:amphtml|canonical)["'][^>]*\bhref=["']([^"']+)["']/gi)) add(match[1]);
-  return pages.slice(0, 8);
-}
-
-function collectSetCookies(response) {
-  const values = typeof response.headers.getSetCookie === 'function'
-    ? response.headers.getSetCookie()
-    : [response.headers.get('set-cookie')].filter(Boolean);
-  return values.map(value => String(value).split(';')[0]).filter(Boolean).join('; ');
-}
-
-async function probeVideoCandidate(candidate, referer, cookie = '') {
-  try {
-    const headers = {
-      Range: 'bytes=0-1',
-      Referer: referer,
-      Origin: new URL(referer).origin,
-      Accept: 'video/*,application/vnd.apple.mpegurl,application/x-mpegURL;q=0.9,*/*;q=0.5'
-    };
-    if (cookie) headers.Cookie = cookie;
-    const { response, finalUrl } = await fetchPublicUrl(candidate, { headers, timeoutMs: 18000 });
-    if (!response.ok && response.status !== 206) return null;
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    const mediaLike = contentType.startsWith('video/') ||
-      /mpegurl|application\/octet-stream/.test(contentType) ||
-      /\.(mp4|webm|m4v|mov|m3u8)(?:$|\?)/i.test(finalUrl);
-    try { await response.body?.cancel(); } catch {}
-    if (!mediaLike) return null;
-    return {
-      sourceUrl: finalUrl,
-      type: /mpegurl|\.m3u8(?:$|\?)/i.test(`${contentType} ${finalUrl}`) ? 'hls' : 'video',
-      contentType
-    };
-  } catch {
-    return null;
-  }
+async function probeVideoCandidate(candidate, referer, cookie = '', userAgent = '') {
+  return probeVideoSource(candidate, referer, { fetchPublicUrl, cookie, userAgent });
 }
 
 const resolvedVideoSessions = new Map();
@@ -1192,140 +1116,36 @@ function registerResolvedVideoSession(resolved) {
 }
 
 async function resolvePublicVideoPage(startUrl) {
-  const queue = [{ url: startUrl, depth: 0, referer: startUrl, cookie: '' }];
-  const visited = new Set();
-  const found = [];
-
-  while (queue.length && visited.size < 10) {
-    const page = queue.shift();
-    if (visited.has(page.url)) continue;
-    visited.add(page.url);
-
-    const { response, finalUrl } = await fetchPublicUrl(page.url, {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml,video/*;q=0.9,*/*;q=0.6',
-        Referer: page.referer,
-        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
-      }
-    });
-    if (!response.ok) continue;
-
-    const responseCookie = collectSetCookies(response) || page.cookie;
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    if (contentType.startsWith('video/')) {
-      return { sourceUrl: finalUrl, pageUrl: page.referer, type: 'video', cookie: responseCookie };
-    }
-
-    const html = (await response.text()).slice(0, 6000000);
-    for (const candidate of findVideoCandidates(html, finalUrl)) {
-      found.push({ url: candidate, referer: finalUrl, cookie: responseCookie });
-    }
-    if (page.depth < 2) {
-      for (const embedded of findEmbeddedPageCandidates(html, finalUrl)) {
-        queue.push({ url: embedded, depth: page.depth + 1, referer: finalUrl, cookie: responseCookie });
-      }
-    }
-  }
-
-  const preferred = found.sort((left, right) => {
-    const score = value => /\.(mp4|webm|m4v|mov)(?:$|\?)/i.test(value) ? 0 : /\.m3u8(?:$|\?)/i.test(value) ? 2 : 1;
-    return score(left.url) - score(right.url);
-  }).slice(0, 30);
-
-  // Candidate probes are independent. Small parallel batches avoid waiting up
-  // to 18 seconds for every dead source while keeping traffic bounded.
-  const probeConcurrency = 4;
-  for (let offset = 0; offset < preferred.length; offset += probeConcurrency) {
-    const batch = preferred.slice(offset, offset + probeConcurrency);
-    const results = await Promise.all(batch.map(async item => ({
-      item,
-      verified: await probeVideoCandidate(item.url, item.referer, item.cookie)
-    })));
-    const match = results.find(result => result.verified);
-    if (match) {
-      return {
-        ...match.verified,
-        pageUrl: match.item.referer,
-        cookie: match.item.cookie
-      };
-    }
-  }
-  return null;
+  return resolveVideoPage(startUrl, { fetchPublicUrl });
 }
 
 async function resolveWithSiteExtractor(rawUrl) {
+  await validatePublicUrl(rawUrl);
   const userAgent = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36';
   const baseOptions = {
-    dumpSingleJson: true,
-    skipDownload: true,
-    noWarnings: true,
-    noPlaylist: true,
-    noCheckCertificates: true,
-    socketTimeout: 25,
-    userAgent,
-    referer: rawUrl,
+    dumpSingleJson: true, skipDownload: true, noWarnings: true,
+    noPlaylist: true, socketTimeout: 15, retries: 1, extractorRetries: 1,
+    userAgent, referer: rawUrl,
     format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best[ext=mp4]/best'
   };
-  const runtimeOptions = {
-    timeout: 90000,
+  const run = options => youtubedl(rawUrl, options, {
+    timeout: 30000, killSignal: 'SIGKILL', signal: AbortSignal.timeout(30000),
     maxBuffer: 16 * 1024 * 1024
-  };
-
+  });
   let output;
-  let browserImpersonation = false;
-  let impersonationError = '';
   try {
-    output = await youtubedl(rawUrl, {
-      ...baseOptions,
-      impersonate: 'chrome'
-    }, runtimeOptions);
-    browserImpersonation = true;
+    output = await run({ ...baseOptions, impersonate: 'chrome' });
   } catch (error) {
-    impersonationError = String(error?.stderr || error?.message || error).slice(0, 500);
-    // Unsupported URLs fail before browser impersonation matters. Repeating
-    // the same extractor call without impersonation only doubles the wait.
-    if (/unsupported url/i.test(impersonationError)) throw error;
-    output = await youtubedl(rawUrl, baseOptions, runtimeOptions);
+    const detail = String(error?.stderr || error?.message || error);
+    // Retry only a missing local capability, not a site's access denial.
+    const missingCapability = /impersonat.*(?:not available|unavailable|not installed|not supported)|no such option.*impersonate/i.test(detail);
+    if (!missingCapability || /403|captcha|cloudflare/i.test(detail)) throw error;
+    output = await run(baseOptions);
   }
-
-  const info = Array.isArray(output?.entries) ? output.entries[0] : output;
-  if (!info || typeof info !== 'object') {
-    throw new Error('SITE_EXTRACTOR_EMPTY_RESULT');
-  }
-
-  const candidates = [
-    info.url,
-    ...(Array.isArray(info.requested_formats) ? info.requested_formats.map(item => item?.url) : []),
-    ...(Array.isArray(info.formats) ? info.formats
-      .filter(item => item?.url && item?.vcodec !== 'none' && item?.acodec !== 'none')
-      .sort((a, b) => Number(b.height || 0) - Number(a.height || 0))
-      .map(item => item.url) : [])
-  ].filter(Boolean);
-
-  const sourceUrl = candidates.find(value => /^https?:\/\//i.test(String(value)));
-  if (!sourceUrl) throw new Error('SITE_EXTRACTOR_NO_PROGRESSIVE_SOURCE');
-  await validatePublicUrl(sourceUrl);
-
-  const protocol = String(info.protocol || '').toLowerCase();
-  const ext = String(info.ext || '').toLowerCase();
-  const type = /m3u8|hls/.test(protocol) || ext === 'm3u8' || /\.m3u8(?:$|\?)/i.test(sourceUrl)
-    ? 'hls'
-    : 'video';
-  const httpHeaders = info.http_headers && typeof info.http_headers === 'object'
-    ? info.http_headers
-    : {};
-
-  return {
-    sourceUrl,
-    pageUrl: String(info.webpage_url || rawUrl),
-    type,
-    cookie: String(httpHeaders.Cookie || httpHeaders.cookie || ''),
-    userAgent: String(httpHeaders['User-Agent'] || httpHeaders['user-agent'] || userAgent),
-    extractor: String(info.extractor_key || info.extractor || 'yt-dlp'),
-    browserImpersonation,
-    extractorFallbackUsed: !browserImpersonation,
-    impersonationError: browserImpersonation ? '' : impersonationError
-  };
+  const selected = selectExtractorSource(output, rawUrl);
+  await validatePublicUrl(selected.sourceUrl);
+  await validatePublicUrl(selected.pageUrl);
+  return { ...selected, userAgent: selected.userAgent || userAgent };
 }
 
 app.post('/api/resolve-video-url', async (req, res) => {
@@ -1335,89 +1155,64 @@ app.post('/api/resolve-video-url', async (req, res) => {
     if (!requestedUrl) {
       return res.status(400).json({ ok: false, reason: 'URL_REQUIRED', message: 'Video sayfası URL’si gerekli.' });
     }
-
-    const normalizedUrl = normalizeAmpUrl(requestedUrl);
-    const pathname = new URL(normalizedUrl).pathname.toLowerCase();
-
-    if (/\.(mp4|webm|m4v|mov|m3u8)$/.test(pathname)) {
-      await validatePublicUrl(normalizedUrl);
-      const type = pathname.endsWith('.m3u8') ? 'hls' : 'video';
-      const token = registerResolvedVideoSession({
-        sourceUrl: normalizedUrl,
-        pageUrl: normalizedUrl,
-        type
-      });
-      return res.json({
-        ok: true,
-        type,
-        sourceUrl: normalizedUrl,
-        proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`
-      });
+    let normalizedUrl;
+    try { normalizedUrl = normalizeAmpUrl(requestedUrl); }
+    catch {
+      return res.status(400).json({ ok: false, reason: 'INVALID_URL', message: 'Geçerli bir HTTP veya HTTPS video bağlantısı gir.' });
     }
-
+    // Validate before either the HTTP reader or external extractor can connect.
+    await validatePublicUrl(normalizedUrl);
     let resolved = null;
-    let extractorError = '';
+    let cacheHit = false;
     const cached = resolvedVideoCache.get(normalizedUrl);
-    const cacheHit = Boolean(cached?.expiresAt > Date.now());
-    if (cacheHit) {
-      resolved = cached.resolved;
-    } else {
-      if (cached) resolvedVideoCache.delete(normalizedUrl);
+    if (cached?.expiresAt > Date.now()) {
+      const fresh = await probeVideoCandidate(cached.resolved.sourceUrl,
+        cached.resolved.pageUrl || normalizedUrl, cached.resolved.cookie, cached.resolved.userAgent);
+      if (fresh) { resolved = { ...cached.resolved, ...fresh }; cacheHit = true; }
+    }
+    if (cached && !cacheHit) resolvedVideoCache.delete(normalizedUrl);
+    let failureDetail = '';
+    if (!resolved) {
       let pending = pendingVideoResolutions.get(normalizedUrl);
       if (!pending) {
         pending = (async () => {
           let candidate = null;
-          let candidateError = '';
-          try {
-            candidate = await resolveWithSiteExtractor(normalizedUrl);
-          } catch (error) {
-            candidateError = String(error?.stderr || error?.message || error).slice(0, 900);
-            console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, candidateError);
+          const errors = [];
+          // Standard public pages/direct media should not wait for a subprocess.
+          try { candidate = await resolvePublicVideoPage(normalizedUrl); }
+          catch (error) { errors.push(String(error?.message || error)); }
+          if (!candidate) {
+            try { candidate = await resolveWithSiteExtractor(normalizedUrl); }
+            catch (error) {
+              const detail = String(error?.stderr || error?.message || error).slice(0, 900);
+              errors.push(detail);
+              console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, videoResolutionFailure(detail).reason);
+            }
           }
-          if (!candidate) candidate = await resolvePublicVideoPage(normalizedUrl);
           if (candidate) {
-            resolvedVideoCache.set(normalizedUrl, {
-              resolved: candidate,
-              expiresAt: Date.now() + VIDEO_RESOLUTION_CACHE_MS
-            });
+            resolvedVideoCache.set(normalizedUrl, { resolved: candidate, expiresAt: Date.now() + VIDEO_RESOLUTION_CACHE_MS });
           }
-          return { resolved: candidate, extractorError: candidateError };
+          return { resolved: candidate, failureDetail: errors.join('; ') };
         })().finally(() => pendingVideoResolutions.delete(normalizedUrl));
         pendingVideoResolutions.set(normalizedUrl, pending);
       }
-      const resolution = await pending;
-      resolved = resolution.resolved;
-      extractorError = resolution.extractorError;
+      const result = await pending;
+      resolved = result.resolved;
+      failureDetail = result.failureDetail;
     }
     if (!resolved) {
-      const protectedSite = /captcha|sign in|login|cookies|forbidden|403|unsupported url|drm/i.test(extractorError);
-      return res.status(422).json({
-        ok: false,
-        reason: protectedSite ? 'SITE_ACCESS_BLOCKED' : 'VIDEO_SOURCE_HIDDEN',
-        message: protectedSite
-          ? 'Site oynatıcı erişimini engelledi. Giriş, CAPTCHA, bölge veya bot koruması olabilir.'
-          : 'Dinamik oynatıcı ve sayfa kaynağı tarandı ancak indirilebilir video bulunamadı.',
-        technicalDetail: extractorError
-          ? extractorError.replace(/https?:\/\/\S+/g, '[adres]').slice(0, 280)
-          : 'Extractor ve HTML taraması sonuç vermedi.'
-      });
+      const failure = videoResolutionFailure(failureDetail);
+      return res.status(failure.reason === 'VIDEO_RESOLUTION_TIMEOUT' ? 504 : 422).json({ ok: false, ...failure });
     }
-
     const token = registerResolvedVideoSession(resolved);
-
-    res.json({
-      ok: true,
-      type: resolved.type,
-      sourceUrl: resolved.sourceUrl,
-      pageUrl: resolved.pageUrl,
+    return res.json({
+      ok: true, type: resolved.type, sourceUrl: resolved.sourceUrl, pageUrl: resolved.pageUrl,
       proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`,
-      cached: cacheHit,
-      resolveMs: Date.now() - startedAt
+      cached: cacheHit, resolveMs: Date.now() - startedAt
     });
   } catch (error) {
-    res.status(502).json({
-      ok: false,
-      reason: 'URL_RESOLVE_ERROR',
+    return res.status(502).json({
+      ok: false, reason: 'URL_RESOLVE_ERROR',
       message: error?.message || 'Video sayfası çözümlenemedi.'
     });
   }

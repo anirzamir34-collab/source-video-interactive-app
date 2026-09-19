@@ -187,7 +187,7 @@ test('redirect responses are cancelled and caller cancellation survives redirect
   const abort = new AbortController();
   let cancelled = 0;
   let calls = 0;
-  const f = fixture(section('async function fetchPublicUrl(', '\nfunction decodeMediaUrl('), {
+  const f = fixture(section('async function fetchPublicUrl(', '\nasync function probeVideoCandidate('), {
     normalizeAmpUrl: value => value,
     fetch: async (_url, options) => {
       calls++;
