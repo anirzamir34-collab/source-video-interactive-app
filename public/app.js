@@ -906,7 +906,7 @@ async function extractDialogueAudio(file) {
   els.analysisTitle.textContent = 'Videodan konuşma sesi ayrılıyor';
   els.analysisOutput.textContent =
     'Video telefonda işleniyor...\n' +
-    'Büyük video sunucuya gönderilmeyecek.';
+    'Konuşma için ses kanalı cihazdaki dosyadan hazırlanıyor.';
 
   const audioContext = new AudioEngine();
 
@@ -1145,55 +1145,26 @@ async function uploadDialogueWithProgress(
   };
 }
 
-function selectedRemoteToken(remoteVideo) {
+async function prepareDialoguePayload(file, session = state.analysisSession) {
+  if (session?.audioSource === file && session.audioFile instanceof Blob) return session.audioFile;
   try {
-    return new URL(remoteVideo?.proxyUrl || '', location.origin).searchParams.get('token') || '';
-  } catch {
-    return '';
+    const audioFile = await extractDialogueAudio(file);
+    if (session) {
+      session.audioSource = file;
+      session.audioFile = audioFile;
+    }
+    return audioFile;
+  } catch (error) {
+    console.warn('Ses ayrılamadı; cihazdaki özgün video kullanılacak:', error);
+    els.analysisOutput.textContent = 'Ses ayrılamadı. Cihazdaki dosyanın ses kanalı doğrudan analiz edilecek.';
+    return file;
   }
 }
 
-async function analyzeSelectedDialogue(file, remoteVideo = null) {
+async function analyzeSelectedDialogue(file) {
   els.analysisCard.classList.remove('hidden');
-  els.analysisTitle.textContent = 'Video diyaloğu analiz ediliyor';
+  els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
   els.analysisState.textContent = 'AUDIO_ANALYSIS';
-
-  const remoteToken = !file ? selectedRemoteToken(remoteVideo) : '';
-  if (remoteToken) {
-    els.analysisTitle.textContent = 'Render konuşma sesini hazırlıyor';
-    els.analysisOutput.textContent =
-      'Video telefona yeniden indirilmeden kaynaktan işleniyor.\n' +
-      'Ses, konuşma kalitesi korunarak küçük MP3 biçimine dönüştürülüyor...';
-    const form = new FormData();
-    form.append('remoteToken', remoteToken);
-    form.append('duration', String(Number(els.video.duration) || 0));
-    form.append('protagonistProfile', String(els.protagonistInput?.value || '').trim());
-    const response = await fetch('/api/gemini-dialogue-analyze', {
-      method: 'POST',
-      headers: geminiRequestHeaders(),
-      body: form
-    });
-    const body = await response.json().catch(() => ({}));
-    recordAiUsage(body?.aiUsage);
-    if (!response.ok || !body.available) {
-      const remotePreparationFailed = /REMOTE_AUDIO_(?:PREPARATION|SOURCE)/i.test(String(body.error || ''));
-      if (remotePreparationFailed) {
-        els.analysisTitle.textContent = 'Uyumlu ses yöntemi deneniyor';
-        els.analysisOutput.textContent =
-          'Kaynak sunucu doğrudan ses aktarımını kapattı.\n' +
-          'Analiz, cihazdaki güvenli yedek yöntemle otomatik sürdürülecek...';
-        const fallbackFile = await ensureSelectedRemoteFile();
-        return analyzeSelectedDialogue(fallbackFile, null);
-      }
-      throw new Error(body.error || body.message || `HTTP ${response.status}`);
-    }
-    state.dialogue = {
-      ...body,
-      segments: Array.isArray(body.segments) ? body.segments : [],
-      dubSegments: buildDubBlocks(Array.isArray(body.segments) ? body.segments : [])
-    };
-    return state.dialogue;
-  }
 
   if (!file) throw new Error('Diyalog analizi için video bulunamadı.');
   els.analysisOutput.textContent =
@@ -1201,39 +1172,44 @@ async function analyzeSelectedDialogue(file, remoteVideo = null) {
     `${(file.size / 1024 / 1024).toFixed(1)} MB`;
 
   const form = new FormData();
-  let dialogueFile = file;
-  try {
-    dialogueFile = await extractDialogueAudio(file);
-  } catch (error) {
-    console.warn('Ses ayrılamadı; özgün video yedek olarak kullanılacak:', error);
-    els.analysisOutput.textContent = 'Ses ayrılamadı. Videonun ses kanalı doğrudan işleniyor...';
-  }
+  const dialogueFile = await prepareDialoguePayload(file);
 
   form.append(
     'video',
     dialogueFile,
     dialogueFile.name || 'dialogue.wav'
   );
-  form.append('duration', String(Number(els.video.duration) || 0));
+  form.append('duration', String(Number(els.video.duration) || Number(state.analysisSession?.sourceDuration) || 0));
   form.append('protagonistProfile', String(els.protagonistInput?.value || '').trim());
 
-  const upload = await uploadDialogueWithProgress(
-    form,
-    ({ loaded, total, percent, speed }) => {
-      els.analysisTitle.textContent = `Video yükleniyor · %${percent}`;
-      els.analysisOutput.textContent =
-        `Gerçek yükleme ilerlemesi: %${percent}\n` +
-        `${(loaded / 1024 / 1024).toFixed(1)} / ` +
-        `${(total / 1024 / 1024).toFixed(1)} MB\n` +
-        `Yükleme hızı: ${speed.toFixed(1)} MB/sn`;
-    },
-    () => {
-      els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
-      els.analysisOutput.textContent =
-        'Yükleme %100 tamamlandı.\n' +
-        'Kaynak dil algılanıyor ve Türkçeye çevriliyor...';
-    }
-  );
+  let processingTimer = null;
+  let upload;
+  try {
+    upload = await uploadDialogueWithProgress(
+      form,
+      ({ loaded, total, percent, speed }) => {
+        els.analysisState.textContent = 'AUDIO_UPLOAD';
+        els.analysisTitle.textContent = `${dialogueFile.type.startsWith('audio/') ? 'Konuşma sesi' : 'Cihazdaki video'} yükleniyor · %${percent}`;
+        els.analysisOutput.textContent =
+          `Gerçek yükleme ilerlemesi: %${percent}\n` +
+          `${(loaded / 1024 / 1024).toFixed(1)} / ` +
+          `${(total / 1024 / 1024).toFixed(1)} MB\n` +
+          `Yükleme hızı: ${speed.toFixed(1)} MB/sn`;
+      },
+      () => {
+        const processingStartedAt = performance.now();
+        const showProcessing = () => {
+          els.analysisState.textContent = 'DIALOGUE_PROCESSING';
+          els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
+          els.analysisOutput.textContent = `Yükleme tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n${Math.round((performance.now() - processingStartedAt) / 1000)} sn geçti`;
+        };
+        showProcessing();
+        processingTimer = setInterval(showProcessing, 1000);
+      }
+    );
+  } finally {
+    if (processingTimer !== null) clearInterval(processingTimer);
+  }
 
   const { body } = upload;
 
@@ -1961,10 +1937,12 @@ function analysisSourceKey(file, remote) {
 async function prepareStoryboardSource(session, file) {
   const remote = state.selectedRemoteVideo;
   let localFile = file || state.selectedFile || session.file;
+  // Loading the local object URL resets video.duration until metadata arrives.
+  session.sourceDuration = Number(els.video.duration) || Number(session.sourceDuration) || 0;
   if (!localFile && remote) {
     els.analysisState.textContent = 'DOWNLOADING_VIDEO';
-    els.analysisTitle.textContent = 'Hızlı kare analizi için video telefona alınıyor';
-    els.analysisOutput.textContent = 'Video bir kez geçici olarak indirilecek; ardından kareler cihazdan hazırlanacak.';
+    els.analysisTitle.textContent = 'Ses ve kare analizi için video telefona alınıyor';
+    els.analysisOutput.textContent = 'Video bir kez indirilecek; ses, kareler ve oynatma aynı cihaz dosyasını kullanacak.';
     // Release the preview connection while the complete source is downloaded.
     els.video.pause();
     els.video.removeAttribute('src');
@@ -1979,7 +1957,7 @@ async function prepareStoryboardSource(session, file) {
         els.analysisOutput.textContent = [
           `${(loaded / 1024 / 1024).toFixed(1)}${knownTotal ? ` / ${(knownTotal / 1024 / 1024).toFixed(1)}` : ''} MB`,
           `${(loaded / 1024 / 1024 / elapsed).toFixed(1)} MB/sn · ${Math.round(elapsed)} sn geçti`,
-          'İndirme bitince kareler internetten beklenmeden hazırlanacak.'
+          'İndirme bitince ses ve kareler aynı dosyadan hazırlanacak.'
         ].join('\n');
       } });
       session.sourceDownloadMs = Math.round(performance.now() - startedAt);
@@ -1991,7 +1969,7 @@ async function prepareStoryboardSource(session, file) {
       throw error;
     }
   }
-  if (!(localFile instanceof Blob) || !localFile.size) throw new Error('Kare analizi için video dosyası hazırlanamadı.');
+  if (!(localFile instanceof Blob) || !localFile.size) throw new Error('Analiz için video dosyası hazırlanamadı.');
   session.file = localFile;
   // Playback uses the same bytes too; later seeks need no remote range requests.
   if (remote && !state.videoObjectUrl) {
@@ -2073,18 +2051,15 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Dialogue also supplies source evidence for character identity. Reuse the
   // same audio result across motion, subtitles and dubbing for this video.
   session.audioContextStatus = session.dialogue ? 'ready' : 'pending';
+  // Finish one complete download before any audio or frame request. A retained
+  // URL token must never override an already downloaded File on retry.
+  if ((!session.dialogue && (modes.motion || modes.subtitles || modes.dubbing)) ||
+      (modes.motion && !session.storyboard)) {
+    file = await prepareStoryboardSource(session, file);
+  }
   if (modes.motion || modes.subtitles || modes.dubbing) {
     try {
-      const remoteForDialogue = state.selectedRemoteVideo;
-      if (!file && !selectedRemoteToken(remoteForDialogue)) {
-        els.analysisTitle.textContent = 'Ses analizi için video indiriliyor';
-        file = await ensureSelectedRemoteFile();
-        session.file = file;
-      }
-      const dialogue = session.dialogue || await analyzeSelectedDialogue(
-        selectedRemoteToken(remoteForDialogue) ? null : file,
-        remoteForDialogue
-      );
+      const dialogue = session.dialogue || await analyzeSelectedDialogue(file);
       session.dialogue = dialogue;
       state.dialogue = dialogue;
       session.audioContextStatus = dialogue.segments.length ? 'ready' : 'no_speech';

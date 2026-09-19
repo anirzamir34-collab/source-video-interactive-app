@@ -1946,7 +1946,9 @@ Rules:
         } catch (error) {
           lastDialogueError = error;
           const details = String(error?.message || error);
-          const retryable = details.includes('Unexpected end of JSON input') || details.includes('GEMINI_EMPTY_JSON_RESPONSE') || details.includes('503') || details.includes('UNAVAILABLE') || details.includes('high demand');
+          const retryable = details.includes('Unexpected end of JSON input') || details.includes('GEMINI_EMPTY_JSON_RESPONSE') || details.includes('503') || details.includes('UNAVAILABLE') || details.includes('high demand') ||
+            [500, 502, 503, 504].includes(Number(error?.status || error?.code)) ||
+            /"code"\s*:\s*(?:500|502|503|504)\b/.test(details);
           if (!retryable || attempt === 3) break;
           console.warn(`[gemini-dialogue-retry] attempt ${attempt}/3: ${details}`);
           await wait(attempt * 1400);

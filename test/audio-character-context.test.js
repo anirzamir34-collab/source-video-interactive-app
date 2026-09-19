@@ -12,19 +12,31 @@ assert.ok(start >= 0 && end > start);
 const branch = source.slice(start, end);
 const dialogue = { segments: [{ originalText: 'My name is Meral.', speakerId: 'voice-1', startTime: 1, endTime: 3 }], speakers: [{ speakerId: 'voice-1' }] };
 
-async function run(session = {}, fail = false) {
+async function run(session = {}, fail = false, options = {}) {
   let requests = 0;
   const node = () => ({ textContent: '', classList: { toggle() {}, add() {}, remove() {} } });
-  const state = { subtitlesEnabled: false, dubbingEnabled: false };
-  const scope = vm.createContext({ session, state, file: { name: 'source.mp4' },
+  const state = { subtitlesEnabled: false, dubbingEnabled: false, selectedRemoteVideo: options.remote || null };
+  const calls = options.calls || [];
+  const originalFile = options.remote ? null : { name: 'source.mp4' };
+  const localFile = originalFile || { name: 'downloaded.mp4' };
+  const scope = vm.createContext({ session, state, file: originalFile,
     modes: { motion: true, subtitles: false, dubbing: false },
     els: { subtitleToggleBtn: node(), subtitleSpeaker: node(), subtitleText: node(), subtitleOverlay: node(),
       analysisState: node(), analysisOutput: node() },
-    selectedRemoteToken: () => '', logEngineEvent() {},
-    analyzeSelectedDialogue: async () => { requests += 1; if (fail) throw Error('Unavailable'); return dialogue; }
+    logEngineEvent() {},
+    prepareStoryboardSource: async (_session, file) => {
+      calls.push({ stage: 'prepare', file });
+      if (options.waitForDownload) await options.waitForDownload;
+      _session.file = localFile;
+      return localFile;
+    },
+    analyzeSelectedDialogue: async file => {
+      calls.push({ stage: 'audio', file });
+      requests += 1; if (fail) throw Error('Unavailable'); return dialogue;
+    }
   });
   await vm.runInContext(`(async () => { ${branch} })()`, scope);
-  return { requests, state, session };
+  return { requests, state, session, calls, localFile };
 }
 
 test('motion-only analysis obtains speech context while leaving subtitles and dubbing disabled', async () => {
@@ -47,4 +59,19 @@ test('a speech failure remains explicit and does not fabricate identity data or 
   assert.equal(result.requests, 1);
   assert.equal(result.session.audioContextStatus, 'unavailable');
   assert.equal(result.state.dialogue, undefined);
+});
+
+
+test('a URL with a valid token waits for local download and passes those exact bytes to speech analysis', async () => {
+  let finishDownload;
+  const waitForDownload = new Promise(resolve => { finishDownload = resolve; });
+  const calls = [];
+  const pending = run({}, false, { calls, waitForDownload, remote: { proxyUrl: '/proxy?token=still-valid' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.map(item => item.stage), ['prepare']);
+  finishDownload();
+  const result = await pending;
+  assert.deepEqual(calls.map(item => item.stage), ['prepare', 'audio']);
+  assert.equal(calls[1].file, result.localFile);
+  assert.equal(result.session.file, result.localFile);
 });
