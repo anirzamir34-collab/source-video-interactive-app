@@ -53,7 +53,7 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
     for (const id of ['dubBufferStatus', 'dubBufferMessage', 'dubRetryBtn', 'dubContinueOriginalBtn']) {
       assert.ok(html.includes(`id="${id}"`), id);
     }
-    for (const path of ['/app.js', '/dubbing-audio.js', '/dubbing-queue.js', '/adult-gameplay.js', '/engine-hardening.js', '/sequence-integrity.js']) {
+    for (const path of ['/app.js', '/dubbing-audio.js', '/dubbing-queue.js', '/adult-gameplay.js', '/engine-hardening.js', '/sequence-integrity.js', '/story-engine.js', '/character-identity.js']) {
       const script = await request(path, { headers: { Cookie: cookie } });
       assert.equal(script.status, 200, path);
       assert.match(script.headers.get('content-type'), /javascript/);

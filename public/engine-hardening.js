@@ -1,5 +1,6 @@
 import { hasDeclaredPartialCoverage } from './analysis-recovery.js';
 import { clipRange, sourceRangeForClip } from './sequence-integrity.js';
+import { mergeStoryContexts } from './story-engine.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
@@ -365,6 +366,7 @@ export function mergeSecondPassReview(firstPass = {}, reviewPass = {}, candidate
   return {
     ...firstPass,
     ...reviewPass,
+    storyContext: mergeStoryContexts([firstPass, reviewPass]),
     actions,
     warnings,
     secondPassReviewed: true,

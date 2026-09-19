@@ -361,6 +361,8 @@ ${storyContextMemory}
 - Sensitive relationship/background labels such as ex-partner, spouse, step-parent, parent, sibling, relative, boss, employee, teacher, landlord or neighbor may be FACT only when dialogue explicitly states it or unmistakable source evidence proves it. Mere age difference, familiarity, location, clothing, intimacy or body language is never enough.
 - Example: two familiar people meeting at a house does NOT prove 'ex-girlfriend' or 'stepfather'. If dialogue explicitly says they broke up, 'ex-partner' may be a fact. Otherwise keep the exact relationship unknown or as a cautious inference.
 - Give each recurring adult a stable character entry with id, participantTrackId, displayName, sourceRole, evidenceLevel, confidence and evidence. Preserve an explicitly spoken proper name exactly; otherwise use the most specific source-grounded story role instead of repeatedly reducing a known character to generic age/gender wording.
+- Keep displayName separate from sourceRole and relationships: a displayName is an explicitly established proper name or a stable participant label. Never manufacture possessive identities such as "Danny'nin kadını". If a later chunk establishes the name of an existing track, update that same character entry with the direct evidence.
+- Return primaryCharacterId for the exact character addressed by each choice; it must reference that character's id or participantTrackId. List only people involved in the exact action in involvedCharacterIds. Apply these identity rules equally to two-person and group scenes. Do not choose an identity by matching an age/gender description or merely because only two people appear elsewhere in the video.
 - Carry verified character names and non-sensitive story roles into sceneTitle, sceneGoal and narrativeChoiceLabel whenever that makes the real action clearer. Keep the same wording across chunks and never rename a recurring character.
 - Never infer age, kinship or another sensitive relationship from appearance. If dialogue explicitly establishes a sensitive family relationship, retain it only as neutral factual story context; do not turn that relationship label into sexualized choice wording, a reward, or invented motivation.
 - Every action must return involvedCharacterIds and primaryCharacterLabel. For ordinary story actions, primaryCharacterLabel is the verified displayName or sourceRole. For an adult/intimate action, use the verified displayName when available; otherwise use its stable participant label, never a kinship title as erotic wording.
@@ -460,6 +462,7 @@ Return ONLY valid JSON with this exact shape:
       "partnerTrackId": "",
       "partnerLabel": "",
       "involvedCharacterIds": [],
+      "primaryCharacterId": "",
       "primaryCharacterLabel": "",
       "partnerEvidence": "",
       "partnerSwitch": false,
@@ -823,6 +826,7 @@ Rules:
             ? action.involvedCharacterIds.map(value => String(value || '').trim()).filter(Boolean).slice(0, 12)
             : [],
           primaryCharacterLabel: String(action.primaryCharacterLabel || '').trim(),
+          primaryCharacterId: String(action.primaryCharacterId || '').trim(),
           partnerEvidence: String(action.partnerEvidence || '').trim(),
           partnerSwitch: action.partnerSwitch === true,
           previousPartnerTrackId: String(action.previousPartnerTrackId || '').trim(),

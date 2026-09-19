@@ -1,3 +1,5 @@
+import { mergeCharacterRecords } from './character-identity.js';
+
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, Number(value) || 0));
 
 const FACT_LEVELS = new Set(['fact', 'inference', 'unknown']);
@@ -45,6 +47,9 @@ export function normalizeStoryContext(input = {}) {
     .map(item => ({
       id: cleanText(item?.id, 80),
       participantTrackId: cleanText(item?.participantTrackId ?? item?.id, 80),
+      ...(item?.identityConflict === true ? { identityConflict: true } : {}),
+      ...(Array.isArray(item?.characterIds) && item.characterIds.length
+        ? { characterIds: [...new Set(item.characterIds.map(id => cleanText(id, 80)).filter(Boolean))].slice(0, 24) } : {}),
       displayName: cleanText(item?.displayName ?? item?.name, 100),
       sourceRole: cleanText(item?.sourceRole ?? item?.role, 100),
       role: cleanText(item?.role ?? item?.sourceRole, 100),
@@ -80,11 +85,12 @@ export function normalizeStoryContext(input = {}) {
 export function mergeStoryContexts(results = []) {
   const contexts = (Array.isArray(results) ? results : [])
     .map(result => normalizeStoryContext(result?.storyContext || result))
-    .filter(context => context.synopsisTr || context.currentSceneTitle || context.facts.length || context.inferences.length);
+    .filter(context => context.synopsisTr || context.currentSceneTitle || context.facts.length || context.inferences.length ||
+      context.characters.length || context.relationships.length || context.unknowns.length);
 
   if (!contexts.length) return normalizeStoryContext({});
 
-  const last = contexts[contexts.length - 1];
+  const latestText = key => contexts.reduce((value, context) => context[key] || value, '');
   const facts = uniqueByText(contexts.flatMap(context => context.facts), 40)
     .map(item => ({ text: item.text, confidence: clamp(item.confidence ?? 1), evidence: cleanText(item.evidence, 360) }));
   const inferences = uniqueByText(contexts.flatMap(context => context.inferences), 40)
@@ -106,24 +112,15 @@ export function mergeStoryContexts(results = []) {
     }
   }
 
-  const characters = [];
-  const characterKeys = new Set();
-  for (const context of contexts) {
-    for (const character of context.characters) {
-      const key = (character.participantTrackId || character.id || character.displayName || character.description || character.sourceRole).toLocaleLowerCase('tr-TR');
-      if (!key || characterKeys.has(key)) continue;
-      characterKeys.add(key);
-      characters.push(character);
-    }
-  }
+  const characters = mergeCharacterRecords(contexts.flatMap(context => context.characters));
 
   const synopsisParts = contexts.map(context => context.synopsisTr).filter(Boolean);
   return normalizeStoryContext({
     synopsisTr: synopsisParts.slice(-4).join(' '),
-    currentSceneTitle: last.currentSceneTitle,
-    currentSceneGoal: last.currentSceneGoal,
-    setting: last.setting,
-    emotionalTone: last.emotionalTone,
+    currentSceneTitle: latestText('currentSceneTitle'),
+    currentSceneGoal: latestText('currentSceneGoal'),
+    setting: latestText('setting'),
+    emotionalTone: latestText('emotionalTone'),
     characters,
     relationships,
     facts,

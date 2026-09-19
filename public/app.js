@@ -82,6 +82,7 @@ import {
   selectDiverseStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
+import { bindActionCharacter } from './character-identity.js';
 import {
   adaptiveAnalysisChunkPlan,
   extractStoryboard
@@ -2749,6 +2750,7 @@ function assignPositionOccurrenceIds(actions) {
 }
 
 function normalizeAnalysis(body) {
+  const storyContext = mergeStoryContexts([{ storyContext: body?.storyContext || {} }]);
   const actions = Array.isArray(body?.actions) ? body.actions : [];
   const cleaned = actions
     .map((a, i) => ({
@@ -2759,6 +2761,7 @@ function normalizeAnalysis(body) {
         ? a.involvedCharacterIds.map(value => String(value || '').trim()).filter(Boolean).slice(0, 12)
         : [],
       primaryCharacterLabel: String(a.primaryCharacterLabel || ''),
+      primaryCharacterId: String(a.primaryCharacterId || '').trim(),
       narrativeReason: String(a.narrativeReason || ''),
       sceneTitle: String(a.sceneTitle || ''),
       sceneGoal: String(a.sceneGoal || ''),
@@ -2834,7 +2837,8 @@ function normalizeAnalysis(body) {
       outcomeUnlockProgress: normalizeOutcomeUnlockProgress(a.outcomeUnlockProgress),
     }))
     .filter(a => Number.isFinite(a.startTime) && Number.isFinite(a.endTime) && a.endTime > a.startTime && a.sourceVerified)
-    .sort((a, b) => a.startTime - b.startTime);
+    .sort((a, b) => a.startTime - b.startTime)
+    .map(action => bindActionCharacter(action, storyContext));
 
   assignPositionOccurrenceIds(cleaned);
 
@@ -2852,7 +2856,7 @@ function normalizeAnalysis(body) {
     mainMaleTrackId: body?.mainMaleTrackId ?? null,
     semanticVideoMap: body?.semanticVideoMap ?? [],
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
-    storyContext: normalizeStoryContext(body?.storyContext || {}),
+    storyContext,
     actions: cleaned,
   };
 }

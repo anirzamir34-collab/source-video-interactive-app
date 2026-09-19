@@ -1,0 +1,97 @@
+// Names come from source evidence and explicit tracks, never appearance or a relationship guess.
+const text = value => String(value || '').trim().replace(/\s+/g, ' ');
+const nameKey = value => text(value).toLocaleLowerCase('tr-TR');
+const vaguePossessive = /\p{L}+(?:['’]|\s)?(?:n?[ıiuü]n)\s+(?:kadın|erkek|adam|partner)[\p{L}]*/iu;
+const roleWords = /(?:^|[^\p{L}])(?:kadın|kadını|erkek|adam|kişi|karakter|partner|anne|baba|kız|kızı|oğul|oğlu|kardeş|üvey|abla|ağabey|amca|dayı|hala|teyze|eş|eşi|karısı|kocası|woman|man|mother|father|daughter|son|wife|husband|unknown)(?:$|[^\p{L}])/iu;
+
+export function verifiedCharacterName(character) {
+  const name = text(character?.displayName);
+  const confidence = Number(character?.confidence);
+  if (!name || character.identityConflict || character.evidenceLevel !== 'fact' ||
+      !Number.isFinite(confidence) || confidence < 0.68 || !text(character.evidence) ||
+      /['’](?:n?[ıiuü]n|s)\s+/iu.test(name) ||
+      vaguePossessive.test(name) || roleWords.test(name) ||
+      nameKey(name) === nameKey(character.sourceRole || character.role)) return '';
+  return name;
+}
+
+export function mergeCharacterRecords(records = []) {
+  const out = [];
+  const byTrack = new Map();
+  for (const record of records) {
+    const key = text(record.participantTrackId || record.id);
+    // A name alone never proves two observations show the same person.
+    if (!key || !byTrack.has(key)) {
+      if (key) byTrack.set(key, out.length);
+      out.push({ ...record });
+      continue;
+    }
+    const index = byTrack.get(key);
+    const old = out[index];
+    const oldName = verifiedCharacterName(old);
+    const newName = verifiedCharacterName(record);
+    const conflict = old.identityConflict || record.identityConflict ||
+      (oldName && newName && nameKey(oldName) !== nameKey(newName));
+    const rank = value => verifiedCharacterName(value) ? 3 :
+      value.evidenceLevel === 'fact' && text(value.evidence) ? 2 : value.evidenceLevel === 'inference' ? 1 : 0;
+    const better = rank(record) > rank(old) ||
+      (rank(record) === rank(old) && Number(record.confidence) > Number(old.confidence));
+    const selected = better ? record : old;
+    const other = better ? old : record;
+    const merged = { ...other, ...Object.fromEntries(Object.entries(selected).filter(([, value]) => value !== '')) };
+    const aliases = [...new Set([old.id, record.id, ...(old.characterIds || []), ...(record.characterIds || [])].map(text).filter(Boolean))];
+    if (aliases.length > 1) merged.characterIds = aliases.slice(0, 24);
+    if (conflict) { merged.displayName = ''; merged.identityConflict = true; }
+    out[index] = merged;
+  }
+  return out;
+}
+
+function characterLookup(characters, id) {
+  const key = text(id);
+  if (!key) return null;
+  const matches = characters.filter(character =>
+    [character.id, character.participantTrackId, ...(character.characterIds || [])].includes(key));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function participantLabel(character) {
+  const id = text(character.participantTrackId || character.id);
+  if (id === 'MAIN_MALE') return 'Ana karakter';
+  return `Karakter ${id.replace(/^(?:PARTNER|CHARACTER|CHAR|PERSON)[_-]?/i, '') || '?'}`;
+}
+
+export function bindActionCharacter(action, context = {}) {
+  const characters = Array.isArray(context.characters) ? context.characters : [];
+  const lookup = id => characterLookup(characters, id);
+  const declared = [...new Set([...(action.involvedCharacterIds || []), ...(action.participantTrackIds || [])].map(text).filter(Boolean))];
+  const present = [...new Set(declared.map(lookup).filter(Boolean))];
+  let targetId = text(action.primaryCharacterId || action.partnerTrackId);
+  if (!targetId && present.length === 1 && declared.every(lookup)) targetId = present[0].participantTrackId || present[0].id;
+  if (!targetId && declared.every(lookup)) {
+    const subject = lookup(action.subjectTrackId);
+    const others = present.filter(character => character !== subject);
+    if (subject && present.includes(subject) && others.length === 1) targetId = others[0].participantTrackId || others[0].id;
+  }
+  const candidate = lookup(targetId);
+  const mismatch = Boolean(candidate && declared.length && !present.includes(candidate));
+  const target = mismatch ? null : candidate;
+  const result = { ...action };
+  if (target) {
+    result.primaryCharacterId = target.participantTrackId || target.id;
+    result.primaryCharacterLabel = verifiedCharacterName(target) || participantLabel(target);
+    result.identityResolution = target.identityConflict ? 'conflict' : verifiedCharacterName(target) ? 'verified' : 'unknown';
+  } else if (targetId || declared.length || vaguePossessive.test(text(action.primaryCharacterLabel))) {
+    result.primaryCharacterLabel = '';
+    result.identityResolution = mismatch ? 'conflict' : 'unknown';
+  }
+  if (action.partnerTrackId) {
+    const partner = lookup(action.partnerTrackId);
+    result.partnerLabel = partner && (!declared.length || present.includes(partner))
+      ? verifiedCharacterName(partner) || participantLabel(partner) : '';
+  }
+  // Reject an ambiguous possessive description without inventing a replacement action.
+  if (vaguePossessive.test(text(result.label))) result.label = 'Kesiti oynat';
+  if (vaguePossessive.test(text(result.narrativeChoiceLabel))) result.narrativeChoiceLabel = '';
+  return result;
+}
