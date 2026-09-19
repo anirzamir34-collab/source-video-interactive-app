@@ -1,3 +1,4 @@
+import { resolveLeadingCharacterReference, verifiedRoleNoun } from './character-reference.js';
 // Names come from source evidence and explicit tracks, never appearance or a relationship guess.
 const text = value => String(value || '').trim().replace(/\s+/g, ' ');
 const nameKey = value => text(value).toLocaleLowerCase('tr-TR');
@@ -39,6 +40,12 @@ export function mergeCharacterRecords(records = []) {
     const selected = better ? record : old;
     const other = better ? old : record;
     const merged = { ...other, ...Object.fromEntries(Object.entries(selected).filter(([, value]) => value !== '')) };
+    const supportedVoices = [old, record].filter(item => text(item.voiceMatchEvidence));
+    const speakerIds = [...new Set(supportedVoices.flatMap(item => item.speakerIds || []))];
+    if (speakerIds.length) {
+      merged.speakerIds = speakerIds.slice(0, 8);
+      merged.voiceMatchEvidence = [...new Set(supportedVoices.map(item => text(item.voiceMatchEvidence)))].join(' ').slice(0, 360);
+    }
     const aliases = [...new Set([old.id, record.id, ...(old.characterIds || []), ...(record.characterIds || [])].map(text).filter(Boolean))];
     if (aliases.length > 1) merged.characterIds = aliases.slice(0, 24);
     if (conflict) { merged.displayName = ''; merged.identityConflict = true; }
@@ -109,6 +116,7 @@ export function bindActionCharacter(action, context = {}) {
   result.relationshipResolution = 'unknown';
   result.characterPairLabel = '';
   result.characterPairResolution = 'unknown';
+  let targetRole = '';
   if (target) {
     result.primaryCharacterId = target.participantTrackId || target.id;
     result.primaryCharacterLabel = verifiedCharacterName(target) || participantLabel(target);
@@ -141,6 +149,7 @@ export function bindActionCharacter(action, context = {}) {
     }
     const relation = verifiedRelationship(context, subject, target);
     if (relation) {
+      targetRole = verifiedRoleNoun(relation.relation);
       result.relationshipDisplayLabel = subjectName
         ? `${subjectName} ile ilişkisi: ${text(relation.relation)}`
         : `İlişki: ${text(relation.relation)}`;
@@ -151,5 +160,11 @@ export function bindActionCharacter(action, context = {}) {
   // Reject an ambiguous possessive description without inventing a replacement action.
   if (vaguePossessive.test(text(result.label))) result.label = 'Kesiti oynat';
   if (vaguePossessive.test(text(result.narrativeChoiceLabel))) result.narrativeChoiceLabel = '';
+  if (target) {
+    const reference = { name: verifiedCharacterName(target), role: targetRole,
+      targetIds: [target.id, target.participantTrackId, ...(target.characterIds || [])] };
+    result.label = resolveLeadingCharacterReference(result.label, reference);
+    result.narrativeChoiceLabel = resolveLeadingCharacterReference(result.narrativeChoiceLabel, reference);
+  }
   return result;
 }

@@ -319,6 +319,25 @@ function runtimeFixture() {
   return f;
 }
 
+test('a grouped introduction card selects another existing clip on each click and keeps its own time bounds', async () => {
+  const f = runtimeFixture();
+  const intro = chapter('opening', 0, 'opening', 'foreplay');
+  intro.movements.forEach(item => { item.actionType = 'movement'; item.label = 'Patikada yürü'; });
+  f.state.adultScene.foreplay = [];
+  f.state.adultScene.positions = [intro, chapter('main', 60)];
+  f.renderAdultApproachChoices(f.state.adultScene);
+  const card = f.els.choices.children[1];
+  assert.equal(card.dataset.variantIds, 'opening-0,opening-1,opening-2');
+  assert.equal(f.state.adultApproachChoices[0].startTime, 0);
+  assert.equal(f.state.adultApproachChoices[0].endTime, 30);
+  card.dispatchEvent(new Event('click'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.state.activeMovementId, 'opening-0');
+  card.dispatchEvent(new Event('click'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.state.activeMovementId, 'opening-1');
+});
+
 test('forward control moves past a finished clip when its active id was cleared', () => {
   const f = runtimeFixture();
   const position = chapter('navigation', 30);

@@ -13,8 +13,8 @@ test('cards show the current source label and the selected next source label whe
   ];
   const choice = { label: 'Yürüyüş', variants, nextClip: variants[1] };
   assert.equal(sourceChoiceDisplayLabel(choice, variants[0]), 'Patikayı takip et');
-  assert.equal(sourceChoiceDisplayLabel(choice, null), 'Manzaraya bak · Sekans 2');
-  assert.equal(sourceChoiceDisplayLabel(choice, variants[1]), 'Manzaraya bak · Sekans 2');
+  assert.equal(sourceChoiceDisplayLabel(choice, null), 'Manzaraya bak');
+  assert.equal(sourceChoiceDisplayLabel(choice, variants[1]), 'Manzaraya bak');
   assert.equal(variants[1].label, 'Manzaraya bak · Sekans 2');
 });
 

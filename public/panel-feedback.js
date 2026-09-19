@@ -1,3 +1,4 @@
+import { sourceActionLabel } from './choice-groups.js';
 // Presentation helpers only: never seek, play, change speed or generate clips.
 import { cleanDisplayLabel, cleanPanelDisplayLabels } from './display-labels.js';
 
@@ -41,7 +42,7 @@ export function sourceChoiceDisplayLabel(choice, activeClip) {
   const active = variants.find(clip => clip.id === activeClip?.id);
   const next = variants.find(clip => clip.id === choice?.nextClip?.id);
   const label = [active?.label, next?.label, variants[0]?.label, choice?.label]
-    .map(value => cleanDisplayLabel(value).trim())
+    .map(value => sourceActionLabel(cleanDisplayLabel(value)))
     .find(Boolean);
   return label || 'Kesiti oynat';
 }

@@ -2070,9 +2070,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.video.muted = false;
   els.subtitleOverlay?.classList.add('hidden');
 
-  // Full audio extraction is an explicit subtitle/dubbing operation.
-  // Motion-only analysis stays visual and must not spend time or AI quota on audio.
-  if (modes.subtitles || modes.dubbing) {
+  // Dialogue also supplies source evidence for character identity. Reuse the
+  // same audio result across motion, subtitles and dubbing for this video.
+  session.audioContextStatus = session.dialogue ? 'ready' : 'pending';
+  if (modes.motion || modes.subtitles || modes.dubbing) {
     try {
       const remoteForDialogue = state.selectedRemoteVideo;
       if (!file && !selectedRemoteToken(remoteForDialogue)) {
@@ -2086,6 +2087,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       );
       session.dialogue = dialogue;
       state.dialogue = dialogue;
+      session.audioContextStatus = dialogue.segments.length ? 'ready' : 'no_speech';
 
       state.subtitlesEnabled = Boolean(modes.subtitles && dialogue.segments.length);
       els.subtitleToggleBtn.classList.toggle('hidden', !state.subtitlesEnabled);
@@ -2143,6 +2145,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         return;
       }
     } catch (error) {
+      session.audioContextStatus = 'unavailable';
+      logEngineEvent('AUDIO_CONTEXT_UNAVAILABLE', { message: String(error.message || error).slice(0, 300) });
       els.analysisState.textContent = 'DIALOGUE_ERROR';
       els.analysisOutput.textContent =
         `Diyalog analizi başarısız: ${error.message}`;
@@ -2202,6 +2206,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
     ].join('|');
     analysisModeKey = JSON.stringify({
+      pipelineVersion: 'source-context-2',
       motion: modes.motion,
       quality: modes.quality,
       subtitles: modes.subtitles,
@@ -2293,6 +2298,10 @@ els.analyzeBtn.addEventListener('click', async () => {
     );
 
     form.append('dialogueContext', JSON.stringify(chunkDialogue));
+    form.append('dialogueSpeakerContext', JSON.stringify((state.dialogue?.speakers || []).map(speaker => ({
+      speakerId: speaker.speakerId, speakerName: speaker.speakerName,
+      description: speaker.description
+    }))));
     const chunkSensoryAudio = (state.dialogue?.nonSpeechEvents || []).filter(event =>
       Number(event.endTime) >= chunkStart && Number(event.startTime) <= chunkEnd
     );
@@ -2537,9 +2546,10 @@ els.analyzeBtn.addEventListener('click', async () => {
         ].filter(Boolean).join('\n\n'),
         storyContext: mergedStoryContext,
         actions: mergedActions,
-        warnings: chunkResults.flatMap(result =>
+        warnings: [...(session.audioContextStatus === 'unavailable'
+          ? ['Konuşma analizi alınamadı; karakter bilgisi yalnızca görsel kanıta dayanıyor.'] : []), ...chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
-        ),
+        )],
         analysisGaps,
         analysisMode: 'MULTI_PASS_DEEP_HARDENED',
         chunkCount: completedResults.length,
@@ -2574,7 +2584,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       });
       const fallbackBody = await fallbackResponse.json();
       if (fallbackResponse.ok && fallbackBody?.available) {
-        body = { ...fallbackBody, analysisMode: 'EXTERNAL_FALLBACK' };
+        body = { ...fallbackBody, storyContext: mergeStoryContexts([body, fallbackBody]), analysisMode: 'EXTERNAL_FALLBACK' };
       }
     } catch (error) {
       console.warn('External fallback analysis failed:', error);
@@ -2918,6 +2928,7 @@ function normalizeAnalysis(body) {
     semanticVideoMap: body?.semanticVideoMap ?? [],
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
     storyContext,
+    warnings: Array.isArray(body?.warnings) ? body.warnings : [],
     actions: cleaned,
   };
 }
@@ -3182,6 +3193,12 @@ function prepareAdultScenes() {
       groupScene: action?.groupScene === true,
       partnerTrackId: String(action?.partnerTrackId || ''),
       partnerLabel: String(action?.partnerLabel || ''),
+      primaryCharacterId: String(action?.primaryCharacterId || ''),
+      primaryCharacterLabel: String(action?.primaryCharacterLabel || ''),
+      subjectTrackId: String(action?.subjectTrackId || ''),
+      involvedCharacterIds: [...(action?.involvedCharacterIds || [])],
+      identityResolution: String(action?.identityResolution || 'unknown'),
+      relationshipResolution: String(action?.relationshipResolution || 'unknown'),
       partnerSwitch: action?.partnerSwitch === true,
       actionType: String(action?.actionType || ''),
       movementType: String(action?.movementType || ''),
@@ -3202,11 +3219,17 @@ function prepareAdultScenes() {
   }));
   const traceByAction = new Map(actions.map((action, index) => [action, traceRows[index]]));
   state.adultAnalysisTrace = {
-    reportVersion: 1,
+    reportVersion: 2,
     generatedAt: new Date().toISOString(),
     engineVersion: ENGINE_VERSION,
     analysisFingerprint: state.analysisFingerprint || '',
     sourceActionCount: actions.length,
+    storyContext: state.analysis?.storyContext || null,
+    audioContext: {
+      status: state.analysisSession?.audioContextStatus || (state.dialogue ? 'ready' : 'unavailable'),
+      segmentCount: state.dialogue?.segments?.length || 0,
+      speakerCount: state.dialogue?.speakers?.length || 0
+    },
     actions: traceRows,
     graph: null,
     warnings: []
@@ -3620,7 +3643,8 @@ function prepareAdultScenes() {
       movementChoices: buildVerifiedMovementChoices(
         position.movements.filter(item => item.id !== position.entryMovementId),
         position.label,
-        5
+        5,
+        position
       )
     }));
 
@@ -3644,6 +3668,8 @@ function prepareAdultScenes() {
   const graph = summarizeAdultSceneGraph(state.adultScenes);
   state.adultAnalysisTrace.graph = graph;
   state.adultAnalysisTrace.warnings = [
+    ...(state.adultAnalysisTrace.audioContext.status === 'unavailable'
+      ? [{ code: 'AUDIO_CONTEXT_UNAVAILABLE', message: 'Karakter eşleştirmesi için konuşma verisi bulunmuyor.' }] : []),
     ...graph.duplicateFamilies.map(item => ({
       code: 'DUPLICATE_POSITION_FAMILY_TABS',
       message: `${item.familyId} aynı sahnede ${item.tabCount} ayrı sekmeye bölündü.`,
@@ -4114,16 +4140,18 @@ function renderAdultApproachChoices(scene) {
       playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
     })),
     ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
-      const occurrenceId = positionOccurrenceGroups(position)[0]?.id;
-      const movements = movementsForPositionOccurrence(position, occurrenceId);
-      const cards = buildVerifiedMovementChoices(movements, position.label, 4);
+      const firstCoreStart = Math.min(...(scene.positions || []).filter(item => !isWarmupPosition(item)).map(item => Number(item.startTime)));
+      const movements = (position.movements || []).filter(item =>
+        positionOccurrenceForMovement(position, item) && Number(item.loopEndTime) <= firstCoreStart + 0.05);
+      const cards = buildVerifiedMovementChoices(movements, position.label, 5, position);
       return cards.map((card, index) => ({
+        choiceId: card.id, variants: card.variants,
         kind: 'position', id: position.id,
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
         label: card?.variants?.[0]?.label || card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
-        startTime: Math.min(...(card?.variants || movements || []).map(item => Number(item.loopStartTime)).filter(Number.isFinite), Number(position.startTime)),
-        endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime)),
-        playCount: Math.max(0, ...((card?.variants || movements || []).map(item =>
+        startTime: Math.min(...card.variants.map(item => Number(item.loopStartTime))),
+        endTime: Math.max(...card.variants.map(item => Number(item.loopEndTime))),
+        playCount: Math.min(...(card.variants.map(item =>
           Number(state.adultMovementPlayCounts.get(item.id) || 0)
         )))
       }));
@@ -4134,6 +4162,7 @@ function renderAdultApproachChoices(scene) {
     limit: 5
   });
 
+  state.adultApproachChoices = candidates;
   els.choices.innerHTML = '';
   els.choices.classList.remove('hidden');
   const heading = document.createElement('div');
@@ -4150,12 +4179,18 @@ function renderAdultApproachChoices(scene) {
     button.type = 'button';
     button.className = 'choice-btn';
     button.dataset.clipId = choice.movementId || choice.id;
-    button.textContent = compactChoiceLabel(choice.label);
+    if (choice.choiceId) {
+      button.dataset.movementChoiceId = choice.choiceId;
+      button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
+    }
+    button.innerHTML = `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>`;
     button.addEventListener('click', () => {
       if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
       else {
         selectAdultPosition(choice.id, false);
-        if (choice.movementId) selectAdultMovement(choice.movementId, true);
+        const variants = (choice.variants || []).filter(item => Number(item.loopEndTime) > state.adultTimelineFloor + 0.05);
+        const next = pickNextVariant(variants, state.activeMovementId, state.adultMovementPlayCounts);
+        if (next) selectAdultMovement(next.id, true);
       }
     });
     els.choices.appendChild(button);
@@ -4714,7 +4749,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     [...verifiedMovements].sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0] || null;
   const entryMovementId = entryMovement?.id || '';
   const movementPool = verifiedMovements.filter(item => item.id !== entryMovementId);
-  const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5);
+  const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5, position);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
@@ -5333,6 +5368,18 @@ if (els.video?.requestVideoFrameCallback) {
   });
 }
 
+function isUnownedTimelineChoice(action) {
+  if (action?.sourceVerified !== true) return false;
+  const family = verifiedAdultPositionFamily(action);
+  if (family) {
+    const explicitContact = ['kiss', 'touch', 'clothing', 'body_transition'].includes(action.actionType);
+    if (!explicitContact || action.positionId || action.positionLabel) return false;
+  }
+  return !findAdultSceneForTimeline(state.adultScenes, {
+    action, completedSceneIds: state.completedAdultSceneIds
+  });
+}
+
 function futureActions() {
   const lookAheadSeconds = 45;
   const windowEnd = Math.min(
@@ -5345,7 +5392,7 @@ function futureActions() {
     a.startTime >= state.gameCursorTime - 0.001 &&
     a.startTime <= windowEnd &&
     !state.consumedActionIds.has(a.actionId) &&
-    !verifiedAdultPositionFamily(a)
+    isUnownedTimelineChoice(a)
   );
 
   const seenChoices = new Set();
@@ -5394,7 +5441,7 @@ function renderChoices() {
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
         !state.consumedActionIds.has(action.actionId) &&
-        !verifiedAdultPositionFamily(action)
+        isUnownedTimelineChoice(action)
       ), 3);
   }
 
@@ -5423,7 +5470,7 @@ function renderChoices() {
         index > state.currentActionIndex &&
         Number(action.startTime) >= state.gameCursorTime - 0.001 &&
         !state.consumedActionIds.has(action.actionId) &&
-        !verifiedAdultPositionFamily(action) &&
+        isUnownedTimelineChoice(action) &&
         !findAdultSceneForTimeline(state.adultScenes, {
           action,
           completedSceneIds: state.completedAdultSceneIds
@@ -5921,7 +5968,9 @@ attachPanelFeedback({
     return {
       scope: `${state.analysisFingerprint}:${state.adultScene?.id}:${state.activePositionId}:${state.activeAdultOccurrenceId}`,
       controlScope: `${state.analysisFingerprint}:${state.adultScene?.id}:${state.activePositionId}`,
-      choiceClips: (position?.activeMovementChoices || []).map(choice => ({
+      choiceClips: (state.adultMode && !state.adultSexUnlocked
+        ? (state.adultApproachChoices || []).filter(choice => choice.variants?.length).map(choice => ({ ...choice, id: choice.choiceId }))
+        : (position?.activeMovementChoices || [])).map(choice => ({
         ...choice,
         nextClip: pickNextVariant(choice.variants,
           choice.variants.some(item => item.id === state.activeMovementId) ? state.activeMovementId : null,

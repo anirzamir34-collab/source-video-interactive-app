@@ -1,3 +1,4 @@
+import { groupSourceChoiceCards, sourceActionLabel } from './choice-groups.js';
 import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
@@ -682,7 +683,11 @@ export function findAdultSceneForTimeline(
     const exact = available.find(scene =>
       scene.id === sceneId || (Array.isArray(scene.sourceSceneIds) && scene.sourceSceneIds.includes(sceneId))
     );
-    if (exact) return exact;
+    // Providers can reuse a scene ID before its first playable source clip.
+    // The ID alone must not swallow earlier, unowned timeline actions.
+    const start = Number(action?.startTime);
+    if (exact && Number.isFinite(start) && start >= Number(exact.startTime) - tolerance &&
+        start < Number(exact.endTime) - 0.01) return exact;
   }
 
   const hasExplicitTime = time !== null && time !== undefined && Number.isFinite(Number(time));
@@ -831,10 +836,7 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
   return consolidated.sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
-export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
-  // `maxChoices` remains part of the public API for older callers, but cards
-  // must never be capped: hiding verified source actions was the reason many
-  // scenes collapsed into one giant option. Each source action gets a card.
+export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 5, position = null) {
   const clean = value => String(value || '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
     .replace(/\s+sekansını oynat$/iu, ' oynat')
@@ -845,7 +847,8 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     .replace(/ü/g, 'u').replace(/ö/g, 'o')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const verified = (Array.isArray(movements) ? movements : [])
-    .filter(movement => movement?.sourceVerified === true && clipRange(movement))
+    .filter(movement => movement?.sourceVerified === true && clipRange(movement) &&
+      (!position || positionOccurrenceForMovement(position, movement)))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   if (!verified.length) return [];
 
@@ -863,40 +866,14 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     }
     return 'steady';
   };
-  const groups = new Map();
-  verified.forEach(item => {
-    const intensityBand = bandFor(item);
-    const sourceScope = String(item.sourcePositionId || item.positionOccurrenceId || 'position').trim();
-    const sourceLabel = clean(item.label || item.movementType || positionLabel) || positionLabel || 'Doğrulanmış hareket';
-    // Keep source label and occurrence in the key. Tempo is metadata on a
-    // card, never a reason to merge unrelated actions into one choice.
-    const key = `${sourceScope}::${normalize(sourceLabel)}::${intensityBand}`;
-    if (!groups.has(key)) groups.set(key, { sourceScope, sourceLabel, intensityBand, items: [] });
-    groups.get(key).items.push(item);
-  });
-  return [...groups.values()].sort((a, b) =>
-    Number(a.items[0]?.loopStartTime) - Number(b.items[0]?.loopStartTime)
-  ).map((group, index) => {
-    const variants = group.items.sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-    const singleLabel = variants.length === 1
-      ? clean(variants[0].label || variants[0].movementType || positionLabel)
-        .split('·')
-        .map(part => part.trim())
-        .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
-        .join(' · ')
-        .trim()
-      : '';
-    return {
-      id: `movement-choice:${encodeURIComponent(group.sourceScope)}:${index + 1}`,
-      label: singleLabel || group.sourceLabel,
-      tempo: group.intensityBand === 'slow' ? 'slow' : group.intensityBand === 'intense' ? 'fast' : 'moderate',
-      intensityBand: group.intensityBand,
-      hasTempoShift: false,
-      tempoVariants: [],
-      sourcePositionId: group.sourceScope,
-      variants,
-      displayIndex: index + 1
-    };
+  return groupSourceChoiceCards(verified, {
+    preferredCount: maxChoices,
+    contextFor: position ? item => positionOccurrenceForMovement(position, item)?.id || '' : undefined,
+    bandFor,
+    labelFor: item => sourceActionLabel(clean(item.label || item.movementType || positionLabel))
+      .split('·').map(part => part.trim())
+      .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
+      .join(' · ').trim()
   });
 }
 

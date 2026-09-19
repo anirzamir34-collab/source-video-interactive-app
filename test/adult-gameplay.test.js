@@ -626,14 +626,14 @@ test('builds tempo-consistent subchoices and keeps every clip in its energy pool
     { id: 'c', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 24, loopEndTime: 34, sourceVerified: true },
     { id: 'd', label: 'Öpüşerek devam', movementTempo: 'moderate', loopStartTime: 36, loopEndTime: 46, sourceVerified: true },
     { id: 'e', label: 'Temas değişimi', movementTempo: 'fast', loopStartTime: 48, loopEndTime: 58, sourceVerified: true }
-  ];
+  ].map(item => ({ ...item, sourcePositionId: 'observed-occurrence' }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 4);
+  assert.equal(choices.length, 3);
   const slow = choices.find(choice => choice.intensityBand === 'slow');
   const steady = choices.find(choice => choice.intensityBand === 'steady');
   const intense = choices.filter(choice => choice.intensityBand === 'intense');
-  assert.equal(slow.label, 'Kovboy Pozisyonu · Sekans 1');
+  assert.equal(slow.label, 'Kovboy Pozisyonu');
   assert.deepEqual(choices.filter(choice => choice.intensityBand === 'slow').flatMap(choice => choice.variants.map(item => item.id)), ['a', 'b']);
   assert.deepEqual(steady.variants.map(item => item.id), ['c', 'd']);
   assert.deepEqual(intense.flatMap(choice => choice.variants.map(item => item.id)), ['e']);
@@ -732,7 +732,8 @@ test('movement choice grouping retains every verified clip', () => {
     sourcePositionId: 'reverse-occurrence'
   }));
   const choices = buildVerifiedMovementChoices(movements, 'Ters Kovboy Pozisyonu', 4);
-  assert.ok(choices.length <= 4);
+  assert.ok(choices.length < movements.length);
+  assert.ok(choices.every(choice => choice.variants.length <= 6));
   assert.deepEqual(
     choices.flatMap(choice => choice.variants).map(item => item.id).sort(),
     movements.map(item => item.id).sort()
@@ -837,11 +838,11 @@ test('movement cards keep each occurrence separate instead of merging all clips'
   }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 2);
+  assert.equal(choices.length, 4);
   assert.equal(choices.flatMap(choice => choice.variants).length, 20);
   assert.deepEqual(
     choices.map(choice => [...new Set(choice.variants.map(item => item.sourcePositionId))]),
-    [['occurrence-a'], ['occurrence-b']]
+    [['occurrence-a'], ['occurrence-a'], ['occurrence-b'], ['occurrence-b']]
   );
 });
 

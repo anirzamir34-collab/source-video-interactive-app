@@ -303,6 +303,7 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
     req.body?.protagonistProfile || ''
   ).trim();
   const dialogueContext = String(req.body?.dialogueContext || '[]');
+  const dialogueSpeakerContext = String(req.body?.dialogueSpeakerContext || '[]').slice(0, 16000);
   const sensoryAudioContext = String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
   const qualityMode = String(req.body?.qualityMode || 'ultra');
   const reviewMode = String(req.body?.reviewMode || '') === '1';
@@ -355,11 +356,16 @@ DIALOGUE AND SCENE CONTEXT:
 Quality mode: ${qualityMode}
 Time-aligned dialogue segments:
 ${dialogueContext}
+Stable audio speaker registry (voice IDs are NOT visual character IDs):
+${dialogueSpeakerContext}
 Time-aligned non-speech audio observations:
 ${sensoryAudioContext}
 
 - Use dialogue only when its timestamp overlaps the visible scene.
 - Use verified spoken meaning to improve scene understanding and Turkish choice wording.
+- Distinguish the person speaking, the person being addressed, and an off-screen person being mentioned. Hearing a name does not name the speaker: an addressed name belongs to the addressee only when the visible interaction identifies that person.
+- Match a speakerId to a visual participantTrackId only with time-aligned visible speaking evidence. Never match by gender, list order, or the number of people. Record supported matches as speakerIds and voiceMatchEvidence on that character; otherwise leave speakerIds empty.
+- Explicit names and relationship statements in originalText may establish identity even when subtitles and dubbing are disabled. Preserve the exact quotation and source timestamp in evidence. Bind each relationship to both exact character IDs; a quote about someone off-screen must not be assigned to a visible person.
 - Dialogue never overrides contradictory visual evidence.
 - Non-speech audio may support intensity only when its timestamp overlaps the action. Audio alone never proves pain, pleasure, consent, a relationship or an internal feeling.
 - Never invent speech, responses or outcomes.
@@ -1871,6 +1877,7 @@ Rules:
 - Give every distinct speaker one stable Turkish speakerName and reuse it in every segment.
 - Keep people distinct with stable voice labels such as "Kadın sesi A", "Kadın sesi B", "Erkek sesi A" and "Erkek sesi B".
 - Never guess personal names or family roles from voice alone.
+- Preserve clearly spoken proper names and explicit relationship statements in originalText; do not replace them with generic speaker labels. Stable speakerName labels identify voices, not the people mentioned by those voices. Keep an addressed name separate from the identity of the speaker.
 - Do not reuse one speakerName for two different voices and do not change a person's name between segments.
 - Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
 - Transcribe speech faithfully without inventing words.

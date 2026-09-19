@@ -7,7 +7,7 @@ import { decisionBoundaryAfterDialogue, hasRemainingVideo, sceneExitTime, seekMe
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const names = ['finishAdultScene', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback', 'finishActionAfterDub', 'waitForDubEnd'];
+const names = ['isUnownedTimelineChoice', 'finishAdultScene', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback', 'finishActionAfterDub', 'waitForDubEnd'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} is present`);

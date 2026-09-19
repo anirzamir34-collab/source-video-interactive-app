@@ -47,6 +47,9 @@ export function normalizeStoryContext(input = {}) {
     .map(item => ({
       id: cleanText(item?.id, 80),
       participantTrackId: cleanText(item?.participantTrackId ?? item?.id, 80),
+      ...(Array.isArray(item?.speakerIds) && item.speakerIds.length && cleanText(item?.voiceMatchEvidence)
+        ? { speakerIds: [...new Set(item.speakerIds.map(id => cleanText(id, 80)).filter(Boolean))].slice(0, 8),
+          voiceMatchEvidence: cleanText(item.voiceMatchEvidence, 360) } : {}),
       ...(item?.identityConflict === true ? { identityConflict: true } : {}),
       ...(Array.isArray(item?.characterIds) && item.characterIds.length
         ? { characterIds: [...new Set(item.characterIds.map(id => cleanText(id, 80)).filter(Boolean))].slice(0, 24) } : {}),

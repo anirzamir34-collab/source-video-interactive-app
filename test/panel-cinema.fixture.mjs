@@ -5,9 +5,9 @@ const root = new URL('../public/', import.meta.url);
 const source = await fs.readFile(new URL('index.html', root), 'utf8');
 const css = (await Promise.all(['styles.css', 'player-controls.css', 'panel-cinema.css']
   .map(name => fs.readFile(new URL(name, root), 'utf8')))).join('\n');
-const feedback = (await Promise.all(['display-labels.js', 'panel-feedback.js']
+const feedback = (await Promise.all(['sequence-integrity.js', 'choice-groups.js', 'display-labels.js', 'panel-feedback.js']
   .map(name => fs.readFile(new URL(name, root), 'utf8')))).join('\n')
-  .replace(/^import .*;$/gm, '').replaceAll('export function', 'function');
+  .replace(/^import .*;$/gm, '').replace(/^export /gm, '');
 function setup() {
   document.querySelectorAll('main > :not(#playerSection)').forEach(el => el.remove());
   document.querySelector('#playerSection').classList.remove('hidden');
@@ -70,8 +70,8 @@ function setup() {
   };
 }
 const base = source.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<link[^>]*>/g, '')
-  .replace('</head>', `<style>${css.replaceAll(':fullscreen', '.fixture-fullscreen').replaceAll(':-webkit-full-screen', '.fixture-fullscreen')}\n.fixture-fullscreen { position:fixed!important; inset:0!important; width:100vw!important; height:100vh!important; margin:0!important; border-radius:0!important; }</style></head>`)
-  .replace('</body>', `<script>${feedback}\n(${setup.toString()})();</script></body>`);
+  .replace('</head>', () => `<style>${css.replaceAll(':fullscreen', '.fixture-fullscreen').replaceAll(':-webkit-full-screen', '.fixture-fullscreen')}\n.fixture-fullscreen { position:fixed!important; inset:0!important; width:100vw!important; height:100vh!important; margin:0!important; border-radius:0!important; }</style></head>`)
+  .replace('</body>', () => `<script>${feedback}\n(${setup.toString()})();</script></body>`);
 const escaped = base.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
 process.stdout.write(`<!doctype html><html><head><meta charset="utf-8"><title>Panel layout QA</title></head><body style="background:#10191e;color:white;font:16px sans-serif">
 <h1>Neutral panel layout QA</h1><p>Actual production CSS; fullscreen selectors mirrored within fixed-size frames.</p>
