@@ -66,13 +66,13 @@ export function resolveLeadingCharacterReference(label, { name = '', role = '', 
   }
   if (roleNoun && allowGeneric) {
     const genericForms = [
-      ['kadınla', 'erkekle', 'adamla', 'kızla', 'kişiyle'],
-      ['kadının', 'erkeğin', 'adamın', 'kızın', 'kişinin'],
-      ['kadından', 'erkekten', 'adamdan', 'kızdan', 'kişiden'],
-      ['kadında', 'erkekte', 'adamda', 'kızda', 'kişide'],
-      ['kadını', 'erkeği', 'adamı', 'kızı', 'kişiyi'],
-      ['kadına', 'erkeğe', 'adama', 'kıza', 'kişiye'],
-      ['kadın', 'erkek', 'adam', 'kız', 'kişi']
+      ['kadınla', 'erkekle', 'adamla', 'oğlanla', 'kızla', 'kişiyle'],
+      ['kadının', 'erkeğin', 'adamın', 'oğlanın', 'kızın', 'kişinin'],
+      ['kadından', 'erkekten', 'adamdan', 'oğlandan', 'kızdan', 'kişiden'],
+      ['kadında', 'erkekte', 'adamda', 'oğlanda', 'kızda', 'kişide'],
+      ['kadını', 'erkeği', 'adamı', 'oğlanı', 'kızı', 'kişiyi'],
+      ['kadına', 'erkeğe', 'adama', 'oğlana', 'kıza', 'kişiye'],
+      ['kadın', 'erkek', 'adam', 'oğlan', 'kız', 'kişi']
     ];
     const pronouns = ['Onunla', 'Onun', 'Ondan', 'Onda', 'Onu', 'Ona', 'O'];
     for (const [index, forms] of genericForms.entries()) {

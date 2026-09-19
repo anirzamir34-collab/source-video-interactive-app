@@ -182,7 +182,7 @@ test('unconfirmed names stay unconfirmed and possessive descriptions are not pro
   const action = bindActionCharacter({ label: 'Konuşmayı sürdür', narrativeChoiceLabel: "Danny’nin kadınıyla konuş", partnerTrackId: 'PARTNER_A' }, { ...cast, relationships: [] });
   assert.equal(storyChoiceLabelForAction(action), 'Konuşmayı sürdür · Meral');
   for (const label of ['Danny nin kadınıyla konuş', 'Dannynin kadınına bak']) {
-    assert.equal(bindActionCharacter({ label, partnerTrackId: 'PARTNER_A' }, cast).label, 'Kesiti oynat');
+    assert.equal(bindActionCharacter({ label, partnerTrackId: 'PARTNER_A' }, cast).label, 'Eşi · Kesiti oynat');
   }
 });
 
@@ -309,4 +309,24 @@ test('verified spouse and partner roles reach adult movement cards while family 
     positionId: 'position-2' }, family);
   assert.equal(familyAction.relationshipResolution, 'unknown');
   assert.equal(storyChoiceLabelForAction(familyAction), 'Kesiti oynat · Deniz');
+});
+
+test('ordinary protagonist choices recover an omitted subject track and keep the verified family role', () => {
+  const context = { characters: [named('GRANDFATHER', 'MAIN_MALE', 'Kemal'), named('GRANDCHILD', 'person-2', 'Deniz')],
+    relationships: [relationshipFact('GRANDFATHER', 'GRANDCHILD', 'torunu')] };
+  const action = bindActionCharacter({ label: 'Genç oğlan ile konuş', primaryCharacterId: 'GRANDCHILD',
+    involvedCharacterIds: ['GRANDCHILD'], adultScene: false }, context);
+  assert.equal(action.relationshipSubjectId, 'MAIN_MALE');
+  assert.equal(action.relationshipTargetId, 'person-2');
+  assert.equal(storyChoiceLabelForAction(action), 'Torunuyla konuş');
+});
+
+test('ordinary mother choices recover the same relation in main and bonus options without generic gender copy', () => {
+  const context = { characters: [named('MOTHER', 'MAIN_MALE', 'Meral'), named('DAUGHTER', 'person-2', 'Ayşe')],
+    relationships: [relationshipFact('MOTHER', 'DAUGHTER', 'kızı')] };
+  for (const actionLevel of ['main', 'bonus']) {
+    const action = bindActionCharacter({ label: 'Genç kadınla konuş', primaryCharacterId: 'DAUGHTER',
+      involvedCharacterIds: ['DAUGHTER'], actionLevel, adultScene: false }, context);
+    assert.equal(storyChoiceLabelForAction(action), 'Kızıyla konuş');
+  }
 });

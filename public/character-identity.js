@@ -162,6 +162,17 @@ export function bindActionCharacter(action, context = {}) {
     if (!action.subjectTrackId && present.length === 2 && declared.every(lookup) && present.includes(target)) {
       subject = present.find(character => character !== target);
     }
+    // Every selectable story action is from MAIN_MALE's point of view. Some
+    // provider responses omit him from involvedCharacterIds even though they
+    // correctly identify the addressee. In an ordinary non-group action, the
+    // unique locked protagonist is therefore the exact actor, not a guessed
+    // age/gender label.
+    if (!action.subjectTrackId && !subject && ordinaryRelationshipAction && action.groupScene !== true) {
+      const protagonists = characters.filter(character =>
+        canonicalCharacterId(character) === 'MAIN_MALE' && character !== target
+      );
+      if (protagonists.length === 1) subject = protagonists[0];
+    }
     const subjectName = verifiedCharacterName(subject);
     const targetName = verifiedCharacterName(target);
     if (ordinaryRelationshipAction && subject && subject !== target && subjectName && targetName &&
@@ -190,7 +201,8 @@ export function bindActionCharacter(action, context = {}) {
   if (target) {
     const reference = { name: verifiedCharacterName(target), role: targetRole,
       ownerName: result.relationshipOwnerLabel,
-      allowGeneric: Boolean(targetRole && present.length === 2 && declared.every(lookup)),
+      allowGeneric: Boolean(targetRole && action.groupScene !== true &&
+        result.relationshipSubjectId && result.relationshipTargetId),
       targetIds: [target.id, target.participantTrackId, ...(target.characterIds || [])] };
     result.label = relationshipChoiceLabel(resolveLeadingCharacterReference(result.label, reference), targetRole, result.relationshipOwnerLabel);
     result.narrativeChoiceLabel = relationshipChoiceLabel(resolveLeadingCharacterReference(result.narrativeChoiceLabel, reference), targetRole, result.relationshipOwnerLabel);

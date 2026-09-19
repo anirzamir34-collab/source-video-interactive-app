@@ -247,10 +247,15 @@ export function resolveVerifiedAdultPosition(action = {}) {
     ['oral', 'manual'].includes(idFamily)
     ? (activityIsVerified ? activityFamily : (labelFamily || idFamily))
     : '';
+  // An explicitly named action is direct evidence for that exact playable
+  // interval. A single contradictory posture field must not relabel it and
+  // send a Cowgirl card into a Missionary range. Structural inference remains
+  // the fallback when the interval itself does not name a position.
+  const explicitTextualFamily = explicitNamedActionPosition ? textualFamily : '';
   const correctedFromStructure = Boolean(
-    !protectedActivityFamily && structuralFamily && structuralFamily !== textualFamily
+    !protectedActivityFamily && !explicitTextualFamily && structuralFamily && structuralFamily !== textualFamily
   );
-  const family = protectedActivityFamily || structuralFamily || textualFamily;
+  const family = protectedActivityFamily || explicitTextualFamily || structuralFamily || textualFamily;
   return {
     family,
     correctedFromAction: Boolean(protectedActivityFamily && protectedActivityFamily !== declaredFamily) ||

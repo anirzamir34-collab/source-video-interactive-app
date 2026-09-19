@@ -704,6 +704,19 @@ test('direct body configuration corrects confused cowgirl and prone-bone metadat
   }), { family: 'cowgirl', correctedFromAction: true });
 });
 
+test('an explicitly named source interval cannot jump from cowgirl to missionary because of one conflicting posture field', () => {
+  const action = {
+    sourceVerified: true,
+    positionId: 'cowgirl', positionLabel: 'Kovboy Pozisyonu',
+    label: 'Cowgirl pozisyonunda ritmi sürdür', movementType: 'rhythmic',
+    receiverBodyOrientation: 'on_back', receiverSupport: 'back_flat',
+    positionConfigurationConfidence: 0.93, positionEvidence: 'receiver back touches the surface'
+  };
+  assert.deepEqual(resolveVerifiedAdultPosition(action), { family: 'cowgirl', correctedFromAction: false });
+  assert.equal(movementBelongsToVerifiedPosition(action, 'cowgirl'), false);
+  assert.equal(movementBelongsToVerifiedPosition(action, 'missionary'), false);
+});
+
 test('verified oral activity cannot be overwritten by missionary-like body support', () => {
   assert.deepEqual(resolveVerifiedAdultPosition({
     sourceVerified: true,
