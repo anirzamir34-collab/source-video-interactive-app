@@ -90,6 +90,7 @@ import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery
 
 import { createDubMixer, naturalDubRate, canFinishDubTail } from './dubbing-audio.js';
 import { createDubRequestQueue } from './dubbing-queue.js';
+import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -299,6 +300,9 @@ const els = {
   rhythmTapBtn: $('rhythmTapBtn'),
   rhythmTapLabel: $('rhythmTapLabel'),
   rhythmTapStatus: $('rhythmTapStatus'),
+  clipNavigator: $('clipNavigator'),
+  clipNavigatorSummary: $('clipNavigatorSummary'),
+  clipNavigatorList: $('clipNavigatorList'),
   outcomeSection: $('outcomeSection'),
   outcomeCount: $('outcomeCount'),
   outcomeChoices: $('outcomeChoices'),
@@ -4014,6 +4018,7 @@ function renderAdultWarmupChoices(scene) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'discovery-choice-card';
+    button.dataset.clipId = choice.id;
     button.dataset.discoveryId = choice.id;
     button.dataset.discoveryKind = choice.kind;
     button.innerHTML = `
@@ -4079,6 +4084,7 @@ function renderAdultApproachChoices(scene) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'choice-btn';
+    button.dataset.clipId = choice.movementId || choice.id;
     button.textContent = compactChoiceLabel(choice.label);
     button.addEventListener('click', () => {
       if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
@@ -4514,33 +4520,74 @@ function resetAdultTapRhythm() {
   if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Yalnızca hızlı, sert veya derin doğrulanmış kesitlerde açılır';
 }
 
+function remainingPositionControlClips(position, currentMovement = null) {
+  if (!position) return [];
+  // Preserve the existing source/occurrence/classification constraints. The
+  // completed clip ID is cleared at its end, so time must also exclude it.
+  return forwardVerifiedClips(
+    movementsForPositionOccurrence(position, state.activeAdultOccurrenceId)
+      .filter(item => isEnergeticSexMoment(item)),
+    {
+      currentId: currentMovement?.id || '',
+      after: Math.max(Number(state.adultTimelineFloor) || 0,
+        Number(els.video?.currentTime) || 0,
+        currentMovement ? Number(currentMovement.loopStartTime) + 0.04 : 0)
+    }
+  );
+}
+
 function nextEnergeticPositionMovement(position, currentMovement = null) {
-  const energetic = movementsForPositionOccurrence(position, state.activeAdultOccurrenceId)
-    .filter(item => isEnergeticSexMoment(item))
-    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-  if (!energetic.length) return null;
-  if (!currentMovement) return energetic[0];
-  const currentStart = Number(currentMovement.loopStartTime);
-  return energetic.find(item =>
-    item.id !== currentMovement.id && Number(item.loopStartTime) > currentStart + 0.04
-  ) || null;
+  return remainingPositionControlClips(position, currentMovement)[0] || null;
 }
 
 function updateRhythmControl(position) {
   const movement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
-  const nextEnergetic = nextEnergeticPositionMovement(position, movement);
+  const remaining = remainingPositionControlClips(position, movement);
+  const nextEnergetic = remaining[0];
   const eligible = Boolean(
     position && !isWarmupPosition(position) &&
     state.adultOutcomePhase === 'idle' &&
     nextEnergetic
   );
   els.rhythmControl?.classList.remove('hidden');
-  if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = !eligible;
+  if (els.rhythmTapBtn) {
+    els.rhythmTapBtn.disabled = !eligible;
+    els.rhythmTapBtn.setAttribute('aria-label', eligible
+      ? `Sonraki doğrulanmış kesiti oynat. ${remaining.length} kesit kaldı.`
+      : 'Bu bölümde ilerlenebilecek uygun kesit kalmadı.');
+  }
   if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? 'SEKS' : 'SEKS KAPALI';
   if (els.rhythmTapStatus) {
     els.rhythmTapStatus.textContent = eligible
-      ? 'Sonraki yoğun doğrulanmış kesit hazır — dokununca aynı pozisyonda ilerler'
-      : 'Bu pozisyonda ilerlenebilecek başka yoğun kesit yok';
+      ? `${remaining.length} kesit hazır · sonraki ${adultTimeLabel(nextEnergetic.loopStartTime)}`
+      : 'Bu bölümde ilerlenebilecek uygun kesit kalmadı';
+  }
+  if (els.clipNavigatorSummary) els.clipNavigatorSummary.textContent = `${eligible ? remaining.length : 0} kesiti gör`;
+  els.clipNavigator?.classList.toggle('hidden', !eligible);
+  if (els.clipNavigatorList) {
+    const renderedScene = state.adultScene;
+    const signature = `${renderedScene?.id}:${position?.id}:${state.activeAdultOccurrenceId}:${eligible}:` +
+      remaining.map(item => `${item.id}:${item.loopStartTime}:${item.loopEndTime}`).join('|');
+    if (els.clipNavigatorList.dataset.signature !== signature || els.clipNavigatorList.sourceScene !== renderedScene) {
+      els.clipNavigatorList.dataset.signature = signature;
+      els.clipNavigatorList.sourceScene = renderedScene;
+      els.clipNavigatorList.innerHTML = '';
+      if (eligible) remaining.forEach((item, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'clip-navigator-choice';
+        button.textContent = `${index + 1}. kesit · ${adultTimeLabel(item.loopStartTime)} – ${adultTimeLabel(item.loopEndTime)}`;
+        button.addEventListener('click', () => {
+          const current = position.movements.find(clip => clip.id === state.activeMovementId);
+          // A rendered menu is not playback authority: recheck on every tap.
+          if (state.adultScene !== renderedScene || state.activePositionId !== position.id || state.adultOutcomePhase !== 'idle' ||
+              !remainingPositionControlClips(position, current).some(clip => clip.id === item.id)) return;
+          selectAdultMovement(item.id, true, null, { awardProgress: false });
+          els.clipNavigator.open = false;
+        });
+        els.clipNavigatorList.appendChild(button);
+      });
+    }
   }
 }
 
@@ -4661,9 +4708,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
       const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
       if (!movement) return;
       state.activeMovementChoiceId = choice.id;
-      const selectedIndex = choice.variants.findIndex(item => item.id === movement.id);
-      const status = button.querySelector('[data-variant-status]');
-      if (status) status.textContent = `${selectedIndex + 1}/${choice.variants.length} kesit oynatılıyor`;
+      // Actual media readiness, not a click, drives the visible playing state.
       selectAdultMovement(movement.id, true);
     });
     wrapper.appendChild(button);
@@ -5826,6 +5871,20 @@ clearPreviousGameResidue();
 // FULLSCREEN GAME MODE
 const fullscreenBtn = document.getElementById('fullscreenBtn');
 const fullscreenStage = document.querySelector('.video-stage');
+
+attachPanelFeedback({
+  stage: fullscreenStage, panel: els.adultInteractionPanel, choices: els.choices, video: els.video,
+  getSnapshot: () => {
+    const position = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
+    const clip = position?.movements?.find(item => item.id === state.activeMovementId) ||
+      state.adultScene?.foreplay?.find(item => item.id === state.activeAdultPreludeId) || state.activeAction;
+    return {
+      scope: `${state.analysisFingerprint}:${state.adultScene?.id}:${state.activePositionId}:${state.activeAdultOccurrenceId}`,
+      clip, seeking: state.adultLoopSeeking || state.navigationSeeking,
+      buffering: Boolean(state.dubBuffer), failed: Boolean(els.panelPlaybackRecovery)
+    };
+  }
+});
 
 fullscreenBtn?.addEventListener('click', async () => {
   try {

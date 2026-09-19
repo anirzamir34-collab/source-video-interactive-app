@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 import * as gameplay from '../public/adult-gameplay.js';
 import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
+import { forwardVerifiedClips } from '../public/panel-feedback.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -261,7 +262,7 @@ const runtimeNames = [
   'selectAdultPosition', 'selectAdultMovement', 'refreshAdultCompactDock',
   'playAdultPrelude', 'applyAdultPreludeProgress', 'applyAdultSelectionProgress',
   'resetAdultTapRhythm', 'updateVariantButton', 'updateRhythmControl',
-  'nextEnergeticPositionMovement', 'selectMovementTempoVariant',
+  'nextEnergeticPositionMovement', 'remainingPositionControlClips', 'selectMovementTempoVariant',
   'triggerAdultOrgasmDecision', 'openAdultOrgasmDecision', 'continueAfterAdultOrgasm',
   'playAdultOutcome', 'resetAdultSceneGameplay', 'renderAdultPanel',
   'syncAdultPanelPlacement', 'setAdultPanelExpanded'
@@ -290,7 +291,7 @@ function chapter(id, start, family = id, role = 'core') {
 function runtimeFixture() {
   const f = fixture();
   Object.assign(f, gameplay, {
-    canPlayAction, advanceAdultPhase, queueMicrotask,
+    canPlayAction, advanceAdultPhase, queueMicrotask, forwardVerifiedClips,
     primeAdultPositionLanguage() {}, escapeHtml: String,
     normalizeAdultLabel: value => String(value || '').toLowerCase()
   });
@@ -317,6 +318,77 @@ function runtimeFixture() {
   vm.runInContext(runtimeHandlers, f);
   return f;
 }
+
+test('forward control moves past a finished clip when its active id was cleared', () => {
+  const f = runtimeFixture();
+  const position = chapter('navigation', 30);
+  f.isEnergeticSexMoment = () => true;
+  f.state.activeAdultOccurrenceId = 'source-navigation';
+  f.state.adultTimelineFloor = 40;
+  f.els.video.time = 40;
+  assert.equal(f.nextEnergeticPositionMovement(position, null)?.id, 'navigation-1');
+  assert.deepEqual(Array.from(f.remainingPositionControlClips(position), clip => clip.id),
+    ['navigation-1', 'navigation-2']);
+  f.els.video.time = 60;
+  assert.equal(f.nextEnergeticPositionMovement(position, null), null);
+});
+
+test('forward control never includes a disjoint return from another occurrence', () => {
+  const f = runtimeFixture();
+  const position = chapter('navigation', 30);
+  const later = chapter('return', 90);
+  position.sourceRanges.push(...later.sourceRanges);
+  position.movements.push(...later.movements);
+  f.isEnergeticSexMoment = () => true;
+  f.state.activeAdultOccurrenceId = 'source-navigation';
+  f.els.video.time = 45;
+  assert.deepEqual(Array.from(f.remainingPositionControlClips(position), clip => clip.id), ['navigation-2']);
+  f.els.video.time = 60;
+  assert.equal(f.nextEnergeticPositionMovement(position, null), null);
+});
+
+test('clip menu lists remaining verified clips and rechecks time at selection', () => {
+  const f = runtimeFixture();
+  const position = chapter('navigation', 30);
+  f.isEnergeticSexMoment = () => true;
+  f.state.activeAdultOccurrenceId = 'source-navigation';
+  f.state.activePositionId = position.id;
+  f.els.video.time = 40;
+  const selections = [];
+  f.selectAdultMovement = (id, seek, unused, options) => selections.push({ id, seek, options });
+  f.updateRhythmControl(position);
+  assert.equal(f.els.clipNavigatorList.children.length, 2);
+  assert.match(f.els.clipNavigatorSummary.textContent, /^2 /);
+  f.els.clipNavigator.open = true;
+  const [first, second] = f.els.clipNavigatorList.children;
+  first.dispatchEvent(new Event('click'));
+  assert.equal(selections[0].id, 'navigation-1');
+  assert.equal(selections[0].options.awardProgress, false);
+  assert.equal(f.els.clipNavigator.open, false);
+  f.els.video.time = 60;
+  second.dispatchEvent(new Event('click'));
+  assert.equal(selections.length, 1);
+});
+
+test('clip menu rebuilds for replacement scene objects and rejects old callbacks', () => {
+  const f = runtimeFixture();
+  const position = chapter('navigation', 30);
+  f.isEnergeticSexMoment = () => true;
+  f.state.activeAdultOccurrenceId = 'source-navigation';
+  f.state.activePositionId = position.id;
+  f.els.video.time = 40;
+  const selections = [];
+  f.selectAdultMovement = id => selections.push(id);
+  f.updateRhythmControl(position);
+  const oldButton = f.els.clipNavigatorList.children[0];
+  f.state.adultScene = { ...f.state.adultScene };
+  oldButton.dispatchEvent(new Event('click'));
+  assert.equal(selections.length, 0);
+  f.updateRhythmControl(position);
+  assert.notEqual(f.els.clipNavigatorList.children[0], oldButton);
+  f.els.clipNavigatorList.children[0].dispatchEvent(new Event('click'));
+  assert.deepEqual(selections, ['navigation-1']);
+});
 
 async function startFirstChapter(f) {
   f.addFemaleLust(35);
