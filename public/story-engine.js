@@ -134,6 +134,12 @@ export function storyChoiceLabelForAction(action = {}) {
   const narrative = cleanText(action.narrativeChoiceLabel, 180);
   const withCharacter = label => {
     let character = cleanText(action.primaryCharacterLabel, 100);
+    // Participant IDs are internal tracking data, not story copy. Keep the
+    // verified relationship below when a proper name is not yet established.
+    if (action.adultScene !== true &&
+        /^(?:karakter(?:\s+\S+)?|ana karakter|partner(?:\s+\S+)?|kadın|erkek|adam|kişi)$/iu.test(character)) {
+      character = '';
+    }
     if (action.adultScene === true && /\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(character)) {
       const partner = cleanText(action.partnerLabel, 100);
       character = partner && !/\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(partner)

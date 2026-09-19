@@ -55,6 +55,8 @@ test('family and relationship facts appear only in ordinary choices with exact I
 
 test('uncertain, unsupported and conflicting relationships stay out of choices', () => {
   for (const relationships of [
+    [{ ...cast.relationships[0], confidence: NaN }],
+    [{ ...cast.relationships[0], confidence: undefined }],
     [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'inference', confidence: 0.99, evidence: 'Yakın görünüyorlar.' }],
     [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'fact', confidence: 0.4, evidence: 'Belirsiz.' }],
     [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'fact', confidence: 0.9, evidence: '' }],
@@ -63,6 +65,37 @@ test('uncertain, unsupported and conflicting relationships stay out of choices',
     const action = bindActionCharacter({ label: 'Konuş', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'MERAL',
       involvedCharacterIds: ['DANNY', 'MERAL'] }, { ...cast, relationships });
     assert.equal(action.relationshipDisplayLabel, '');
+  }
+});
+
+test('ordinary dialogue shows an evidenced relationship without exposing unnamed tracks', () => {
+  const context = {
+    characters: cast.characters.slice(0, 2).map(character => ({ ...character, displayName: '', evidence: '' })),
+    relationships: [{ ...cast.relationships[0], relation: 'sevgilisi', evidence: 'Konuşmada sevgilisi olarak tanıtıyor.' }]
+  };
+  const action = bindActionCharacter({ label: 'Konuşmayı sürdür', subjectTrackId: 'MAIN_MALE',
+    primaryCharacterId: 'MERAL', involvedCharacterIds: ['DANNY', 'MERAL'], adultScene: false }, context);
+  assert.equal(action.primaryCharacterId, 'PARTNER_A');
+  assert.equal(storyChoiceLabelForAction(action), 'Konuşmayı sürdür · İlişki: sevgilisi');
+  const unknown = bindActionCharacter(action, { ...context, relationships: [] });
+  assert.equal(storyChoiceLabelForAction(unknown), 'Konuşmayı sürdür');
+});
+
+test('repeated relationship evidence using track aliases does not erase an ordinary dialogue fact', () => {
+  const action = { label: 'Cevabını dinle', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'MERAL' };
+  const context = { ...cast, relationships: [cast.relationships[0],
+    { ...cast.relationships[0], from: 'MAIN_MALE', to: 'PARTNER_A', confidence: 0.9 }] };
+  assert.equal(bindActionCharacter(action, context).relationshipResolution, 'verified');
+  const wrongPair = bindActionCharacter({ ...action, primaryCharacterId: 'DENIZ' }, context);
+  assert.equal(wrongPair.relationshipDisplayLabel, '');
+});
+
+test('participant placeholders are hidden in ordinary choice copy and are never treated as names', () => {
+  for (const primaryCharacterLabel of ['Karakter A', 'Karakter B', 'Ana karakter', 'kadın', 'erkek', 'Partner A']) {
+    assert.equal(storyChoiceLabelForAction({ label: 'Cevabını dinle', primaryCharacterLabel, adultScene: false }), 'Cevabını dinle');
+  }
+  for (const displayName of ['sevgilisi', 'kız arkadaşı', 'girlfriend']) {
+    assert.equal(verifiedCharacterName({ ...cast.characters[1], displayName }), '');
   }
 });
 

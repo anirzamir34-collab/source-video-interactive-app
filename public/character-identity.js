@@ -2,7 +2,7 @@
 const text = value => String(value || '').trim().replace(/\s+/g, ' ');
 const nameKey = value => text(value).toLocaleLowerCase('tr-TR');
 const vaguePossessive = /\p{L}+(?:['’]|\s)?(?:n?[ıiuü]n)\s+(?:kadın|erkek|adam|partner)[\p{L}]*/iu;
-const roleWords = /(?:^|[^\p{L}])(?:kadın|kadını|erkek|adam|kişi|karakter|partner|anne|baba|kız|kızı|oğul|oğlu|kardeş|üvey|abla|ağabey|amca|dayı|hala|teyze|eş|eşi|karısı|kocası|woman|man|mother|father|daughter|son|wife|husband|unknown)(?:$|[^\p{L}])/iu;
+const roleWords = /(?:^|[^\p{L}])(?:kadın|kadını|erkek|adam|kişi|karakter|partner|sevgili|sevgilisi|anne|baba|kız|kızı|oğul|oğlu|kardeş|üvey|abla|ağabey|amca|dayı|hala|teyze|eş|eşi|karısı|kocası|woman|man|mother|father|daughter|son|wife|husband|girlfriend|boyfriend|unknown)(?:$|[^\p{L}])/iu;
 
 export function verifiedCharacterName(character) {
   const name = text(character?.displayName);
@@ -64,14 +64,18 @@ function verifiedRelationship(context, subject, target) {
   const characters = Array.isArray(context.characters) ? context.characters : [];
   const lookup = id => characterLookup(characters, id);
   const matches = (Array.isArray(context.relationships) ? context.relationships : []).filter(item => {
-    if (item?.evidenceLevel !== 'fact' || Number(item.confidence) < 0.78 || !text(item.evidence) || !text(item.relation)) return false;
+    const confidence = Number(item?.confidence);
+    if (item?.evidenceLevel !== 'fact' || !Number.isFinite(confidence) || confidence < 0.78 ||
+        !text(item.evidence) || !text(item.relation)) return false;
     const from = lookup(item.from);
     const to = lookup(item.to);
     return canonicalCharacterId(from) === canonicalCharacterId(subject) &&
       canonicalCharacterId(to) === canonicalCharacterId(target);
   });
-  if (matches.length !== 1) return null;
-  return matches[0];
+  // Different chunks can record the same fact using an ID or its track alias.
+  // Repeated evidence is not a conflict; different roles still are.
+  if (new Set(matches.map(item => nameKey(item.relation))).size !== 1) return null;
+  return matches.reduce((best, item) => Number(item.confidence) > Number(best.confidence) ? item : best);
 }
 
 function participantLabel(character) {
@@ -115,8 +119,10 @@ export function bindActionCharacter(action, context = {}) {
     const subject = lookup(action.subjectTrackId || 'MAIN_MALE');
     const relation = verifiedRelationship(context, subject, target);
     if (relation) {
-      const subjectName = verifiedCharacterName(subject) || participantLabel(subject);
-      result.relationshipDisplayLabel = `${subjectName} ile ilişkisi: ${text(relation.relation)}`;
+      const subjectName = verifiedCharacterName(subject);
+      result.relationshipDisplayLabel = subjectName
+        ? `${subjectName} ile ilişkisi: ${text(relation.relation)}`
+        : `İlişki: ${text(relation.relation)}`;
       result.relationshipContext = result.relationshipDisplayLabel;
       result.relationshipResolution = 'verified';
     } else {

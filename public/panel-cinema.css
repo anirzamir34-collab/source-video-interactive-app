@@ -8,7 +8,7 @@
   background: rgba(8, 14, 17, .92);
 }
 .cinematic-ui .panel-playback-status {
-  display: block; color: #a8b8b4; font-size: 11px; margin-top: 4px;
+  display: block; color: #a8b8b4; font-size: 10px; margin-top: 2px;
 }
 .cinematic-ui.panel-playing .panel-playback-status { color: var(--panel-accent); }
 .cinematic-ui :is(.movement-choice-card, .discovery-choice-card, .choice-btn) {
@@ -21,8 +21,9 @@
   transform: scale(.985);
 }
 .cinematic-ui [data-playback-status] {
-  display: block; font-size: 10px; font-weight: 500; color: #a2b6af; margin-top: 6px;
+  display: block; font-size: 10px; font-weight: 500; color: #a2b6af; margin-top: 2px;
 }
+.cinematic-ui [data-playback="idle"] [data-playback-status] { display: none; }
 .cinematic-ui [data-playback="playing"] {
   border-color: var(--panel-accent) !important;
   box-shadow: inset 2px 0 var(--panel-accent);
@@ -43,23 +44,32 @@
 }
 .cinematic-ui .clip-navigator { margin-top: 6px; border-top: 1px solid var(--panel-line); }
 .cinematic-ui .clip-navigator summary {
-  min-height: 40px; padding: 10px 6px; cursor: pointer; font-size: 11px; color: #c8ded6;
+  min-height: 36px; padding: 8px 6px; cursor: pointer; font-size: 11px; color: #c8ded6;
 }
 .cinematic-ui .clip-navigator-list { display: grid; gap: 5px; max-height: 180px; overflow-y: auto; }
 .cinematic-ui .clip-navigator-choice {
-  min-height: 42px; padding: 8px; border: 1px solid var(--panel-line); border-radius: 9px;
+  min-height: 36px; padding: 7px; border: 1px solid var(--panel-line); border-radius: 9px;
   color: #d8eae4; background: #111d20; text-align: left; font-size: 11px;
 }
 
-/* Fullscreen reserves a side rail: the panel never sits on source pixels.
+/* Content-sized panels must not stretch between two absolute edges. */
+#playerSection .video-stage.scene-player.cinematic-ui :is(#adultInteractionPanel, #choices) {
+  top: auto !important; height: auto !important; min-height: 0 !important;
+  max-height: calc(100% - 56px) !important;
+  align-content: start !important; justify-content: start !important;
+  grid-auto-rows: max-content !important; gap: 4px !important;
+  scrollbar-width: thin; scrollbar-gutter: auto !important;
+}
+
+/* Fullscreen reserves a narrow side rail: the panel never sits on source pixels.
    Contain preserves the whole frame, including portrait and ultra-wide media. */
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) {
-  --rail: 0px; --footer: 0px; --panel-width: clamp(210px, 27vw, 300px);
+  --rail: 0px; --footer: 0px; --panel-width: clamp(168px, 21vw, 246px);
   background: #000 !important; padding: 0 !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel:not(.hidden)),
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#choices:not(.hidden):not(:empty)) {
-  --rail: calc(var(--panel-width) + 20px);
+  --rail: calc(var(--panel-width) + max(8px, env(safe-area-inset-right)) + 8px);
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #video,
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel:not(.hidden)) #video,
@@ -70,13 +80,13 @@
   object-fit: contain !important; object-position: center !important; transform: none !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) :is(#adultInteractionPanel, #choices) {
-  position: absolute !important; top: 62px !important;
+  position: absolute !important; top: auto !important;
   right: max(8px, env(safe-area-inset-right)) !important; bottom: max(8px, env(safe-area-inset-bottom)) !important;
   left: auto !important; transform: none !important;
   width: var(--panel-width) !important; max-width: var(--panel-width) !important;
-  height: auto !important; max-height: calc(100% - 70px) !important;
-  padding: 8px !important; overflow: auto !important; overscroll-behavior: contain;
-  border: 1px solid var(--panel-line) !important; border-radius: 16px !important;
+  height: auto !important; max-height: calc(100% - 56px - env(safe-area-inset-bottom)) !important;
+  padding: 5px !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain;
+  border: 1px solid var(--panel-line) !important; border-radius: 11px !important;
   background: linear-gradient(155deg, #142021, #080d11 65%) !important;
   box-shadow: none !important; backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -89,25 +99,28 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .adult-compact-dock {
   display: grid !important; grid-template-columns: minmax(0, 1fr) auto !important;
-  min-height: 64px !important; gap: 6px !important; padding: 7px !important;
+  min-height: 0 !important; gap: 4px !important; padding: 5px !important;
   background: rgba(0, 0, 0, .22) !important; border-radius: 11px !important;
   border: 1px solid var(--panel-line) !important; box-shadow: none !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #adultQuickChoices { display: none !important; }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #adultDockTitle {
-  display: block !important; font-size: 12px !important; line-height: 1.3 !important;
+  display: block !important; font-size: 11px !important; line-height: 1.3 !important;
   white-space: normal !important; font-weight: 650 !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #adultDockPhase { display: none !important; }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #adultDockMoreBtn {
-  min-width: 44px !important; min-height: 44px !important; padding: 5px !important;
+  min-width: 36px !important; min-height: 36px !important; padding: 4px !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-bars {
   grid-template-columns: repeat(2, 1fr) !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded .choice-section-heading {
   display: flex !important; flex-wrap: wrap; gap: 4px;
-  margin: 12px 2px 6px !important; font-size: 10px !important; color: #95aaa3;
+  margin: 6px 2px 4px !important; font-size: 10px !important; line-height: 1.3 !important; color: #95aaa3;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .choice-section-heading > * {
+  font-size: inherit !important; line-height: inherit !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.position-tabs, .category-tabs) {
   display: flex !important; flex-wrap: nowrap !important; overflow-x: auto !important;
@@ -115,7 +128,7 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .position-tab {
   flex: 0 0 auto !important; width: auto !important; max-width: 92% !important;
-  min-height: 42px !important; padding: 7px 10px !important; border-radius: 9px !important;
+  min-height: 36px !important; padding: 6px 8px !important; border-radius: 8px !important;
   font-size: 11px !important; line-height: 1.3 !important; scroll-snap-align: start;
   background: #142024 !important; color: #bacdc5 !important;
 }
@@ -124,32 +137,50 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.movement-choice-grid, .discovery-choice-grid) {
   display: grid !important; grid-template-columns: minmax(0, 1fr) !important;
-  overflow: visible !important; gap: 7px !important;
+  overflow: visible !important; gap: 4px !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .movement-choice-wrap {
   width: 100% !important; min-width: 0 !important; max-width: 100% !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.movement-choice-card, .discovery-choice-card),
-#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #choices .choice-btn {
-  width: 100% !important; min-height: 54px !important; padding: 10px !important;
-  border-radius: 11px !important; font-size: 12px !important; line-height: 1.35 !important;
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #choices :is(.choice, .choice-btn) {
+  width: 100% !important; min-height: 36px !important; margin: 0 !important; padding: 6px 8px !important;
+  border-radius: 8px !important; font-size: 11px !important; line-height: 1.3 !important;
   white-space: normal !important; overflow: hidden !important;
 }
-#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-variant-status {
-  display: block !important; margin-top: 5px; color: #8fa49b; font-size: 10px; line-height: 1.4;
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.movement-choice-card, .discovery-choice-card) :is(strong, span, small),
+#playerSection .video-stage.scene-player.cinematic-ui #choices :is(.choice-title, .choice-btn > span, .choice-btn > strong) {
+  font-size: inherit !important; line-height: inherit !important; font-family: inherit !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #choices .choice {
+  padding-right: 22px !important; box-shadow: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #choices .approach-status {
+  font-size: 10px !important; line-height: 1.3 !important; padding: 4px 6px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-choice-card .movement-variant-status {
+  display: block !important; margin-top: 2px !important; color: #8fa49b;
+  font-size: 10px !important; line-height: 1.3 !important; font-family: inherit !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#adultInteractionPanel, #choices) :is(.movement-choice-card, .discovery-choice-card, .choice-btn) [data-playback-status] {
+  font-size: 10px !important; line-height: 1.3 !important; font-family: inherit !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#adultInteractionPanel, #choices) [data-playback="idle"] [data-playback-status] {
+  display: none !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #rhythmControl {
   position: static !important; padding: 6px 0 !important; background: none !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #rhythmTapBtn {
-  min-height: 64px !important; padding: 12px !important; border-radius: 13px !important;
+  min-height: 40px !important; padding: 7px !important; border-radius: 9px !important;
   border: 1px solid #65bda0 !important; background: linear-gradient(115deg, #264b40, #122e27) !important;
   color: #c4ffe9 !important; box-shadow: none !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #rhythmTapBtn:disabled { opacity: .55 !important; }
-#playerSection .video-stage.scene-player.cinematic-ui #rhythmTapStatus { display: block !important; font-size: 11px !important; }
+#playerSection .video-stage.scene-player.cinematic-ui #rhythmTapLabel { font-size: 11px !important; }
+#playerSection .video-stage.scene-player.cinematic-ui #rhythmTapStatus { display: block !important; font-size: 10px !important; }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel #finishAdultSceneBtn {
-  position: static !important; min-height: 42px !important; margin-top: 8px !important;
+  position: static !important; min-height: 36px !important; margin-top: 4px !important;
   font-size: 11px !important; background: #0c1518 !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .subtitle-overlay {
@@ -159,17 +190,31 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .cinema-shade { display: none !important; }
 
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .fullscreen-btn {
+  min-height: 32px !important; padding: 6px 9px !important;
+  border-radius: 9px !important; font-size: 11px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .choice-navigation {
+  height: 32px !important; min-height: 32px !important; max-height: 32px !important; gap: 5px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .choice-navigation button {
+  flex: 0 1 auto !important; width: auto !important; min-width: 0 !important;
+  height: 32px !important; min-height: 32px !important; max-height: 32px !important;
+  padding: 4px 8px !important; font-size: 11px !important; border-radius: 9px !important;
+}
+
 @media (orientation: portrait) {
   #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel:not(.hidden)),
   #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#choices:not(.hidden):not(:empty)) {
-    --rail: 0px; --footer: 38dvh; --panel-width: calc(100vw - 16px);
+    --rail: 0px; --footer: min(30dvh, 250px);
+    --panel-width: calc(100vw - max(8px, env(safe-area-inset-left)) - max(8px, env(safe-area-inset-right)));
   }
   #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel.compact-collapsed:not(.hidden)) {
     --footer: 132px;
   }
   #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) :is(#adultInteractionPanel, #choices) {
-    top: auto !important; max-height: calc(var(--footer) - 8px) !important;
-    height: calc(var(--footer) - 8px) !important;
+    top: auto !important; max-height: calc(var(--footer) - max(8px, env(safe-area-inset-bottom))) !important;
+    height: auto !important;
   }
 }
 @media (prefers-reduced-motion: reduce) {
