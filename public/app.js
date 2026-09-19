@@ -4128,7 +4128,7 @@ function renderAdultApproachChoices(scene) {
         choiceId: card.id, variants: card.variants,
         kind: 'position', id: position.id,
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
-        label: card?.variants?.[0]?.label || card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
+        label: card?.label || card?.variants?.[0]?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
         startTime: Math.min(...card.variants.map(item => Number(item.loopStartTime))),
         endTime: Math.max(...card.variants.map(item => Number(item.loopEndTime))),
         playCount: Math.min(...(card.variants.map(item =>

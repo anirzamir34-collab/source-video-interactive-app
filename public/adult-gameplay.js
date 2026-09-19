@@ -1,4 +1,4 @@
-import { groupSourceChoiceCards, sourceActionLabel } from './choice-groups.js';
+import { groupSourceChoiceCards, sourceActionLabel, sourceIdentityLabel } from './choice-groups.js';
 import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
@@ -870,10 +870,10 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     preferredCount: maxChoices,
     contextFor: position ? item => positionOccurrenceForMovement(position, item)?.id || '' : undefined,
     bandFor,
-    labelFor: item => sourceActionLabel(clean(item.label || item.movementType || positionLabel))
+    labelFor: item => sourceIdentityLabel(sourceActionLabel(clean(item.label || item.movementType || positionLabel))
       .split('·').map(part => part.trim())
       .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
-      .join(' · ').trim()
+      .join(' · ').trim(), item)
   });
 }
 

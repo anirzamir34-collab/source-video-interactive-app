@@ -4,6 +4,17 @@ const text = value => String(value || '').trim();
 export const sourceActionLabel = value => text(value)
   .replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/iu, '').trim();
 
+export function sourceIdentityLabel(value, clip = {}) {
+  const label = sourceActionLabel(value);
+  if (!label || clip?.relationshipResolution === 'verified') return label;
+  const identity = clip?.identityResolution === 'verified'
+    ? text(clip.primaryCharacterLabel)
+    : '';
+  if (!identity || /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity) ||
+      label.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))) return label;
+  return `${label} · ${identity}`;
+}
+
 // Arrange existing clips only. These groups never join media ranges, create
 // actions, change playback rate or make uncertain clips selectable.
 export function groupSourceChoiceCards(clips, { preferredCount = 5, contextFor, bandFor, labelFor } = {}) {

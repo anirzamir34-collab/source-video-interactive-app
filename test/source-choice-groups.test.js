@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSourceChoiceCards } from '../public/choice-groups.js';
+import { groupSourceChoiceCards, sourceIdentityLabel } from '../public/choice-groups.js';
 import { buildVerifiedMovementChoices, findAdultSceneForTimeline } from '../public/adult-gameplay.js';
 
 const clip = (index, extra = {}) => ({ id: `clip-${index}`, sourceVerified: true,
@@ -55,4 +55,19 @@ test('unknown context does not merge independently observed actions on label sim
   const clips = [clip(0, { sourcePositionId: '' }), clip(1, { sourcePositionId: '' }),
     clip(2, { sourceVerified: false }), clip(3, { loopEndTime: null })];
   assert.deepEqual(groupSourceChoiceCards(clips).map(card => card.variants.map(item => item.id)), [['clip-0'], ['clip-1']]);
+});
+
+test('verified identity follows a source action into every adult card without exposing placeholders', () => {
+  const identified = clip(0, { label: 'Ritmi sürdür', identityResolution: 'verified', primaryCharacterLabel: 'Deniz' });
+  const cards = buildVerifiedMovementChoices([identified], 'Aynı Pozisyon', 5);
+  assert.equal(cards[0].label, 'Ritmi sürdür · Deniz');
+  assert.equal(sourceIdentityLabel('Ritmi sürdür', identified), 'Ritmi sürdür · Deniz');
+  assert.equal(sourceIdentityLabel('Ritmi sürdür · Deniz', identified), 'Ritmi sürdür · Deniz');
+  assert.equal(sourceIdentityLabel('Ritmi sürdür', { ...identified, primaryCharacterLabel: 'Karakter A' }), 'Ritmi sürdür');
+});
+
+test('an already verified adult partner relationship remains the card identity instead of duplicating the proper name', () => {
+  const spouse = clip(0, { label: 'Eşiyle ritmi sürdür', identityResolution: 'verified',
+    primaryCharacterLabel: 'Meral', relationshipResolution: 'verified', relationshipRoleLabel: 'eşi' });
+  assert.equal(buildVerifiedMovementChoices([spouse], 'Aynı Pozisyon', 5)[0].label, 'Eşiyle ritmi sürdür');
 });
