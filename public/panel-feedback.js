@@ -41,7 +41,7 @@ export function sourceChoiceDisplayLabel(choice, activeClip) {
   const active = variants.find(clip => clip.id === activeClip?.id);
   const next = variants.find(clip => clip.id === choice?.nextClip?.id);
   const label = [active?.label, next?.label, variants[0]?.label, choice?.label]
-    .map(value => cleanDisplayLabel(value).replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/iu, '').trim())
+    .map(value => cleanDisplayLabel(value).trim())
     .find(Boolean);
   return label || 'Kesiti oynat';
 }

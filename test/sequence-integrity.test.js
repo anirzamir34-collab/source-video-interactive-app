@@ -140,12 +140,13 @@ test('overlapping observations do not erase a distinct labelled interval', () =>
   assert.deepEqual(new Set(variants.map(v => v.derivedFromVerifiedSegment)), new Set(['first', 'second']));
 });
 
-test('unknown-tempo choices stay together and preserve every clip', () => {
+test('unknown-tempo source actions become separate cards and preserve every clip', () => {
   const source = Array.from({ length: 8 }, (_, i) => clip(String(i), i * 10, i * 10 + 5));
   const choices = buildVerifiedMovementChoices(source, 'Chapter', 3);
-  assert.deepEqual(choices.map(c => c.label), ['Ritmik hareketler']);
+  assert.deepEqual(choices.map(c => c.label), source.map(item => item.label));
   assert.equal(choices.flatMap(c => c.variants).length, source.length);
-  assert.deepEqual(choices[0].variants.map(v => v.id), ['0', '1', '2', '3', '4', '5', '6', '7']);
+  assert.deepEqual(choices.flatMap(choice => choice.variants).map(v => v.id), ['0', '1', '2', '3', '4', '5', '6', '7']);
+  assert.ok(choices.every(choice => choice.variants.length === 1));
 });
 
 test('central guard rejects gap-spanning, oversized-loop and unverified clips', () => {

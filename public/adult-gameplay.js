@@ -832,10 +832,11 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
 }
 
 export function buildVerifiedMovementChoices(movements = [], positionLabel = '', maxChoices = 4) {
-  const limit = Math.max(1, Math.min(16, Math.floor(Number(maxChoices) || 4)));
+  // `maxChoices` remains part of the public API for older callers, but cards
+  // must never be capped: hiding verified source actions was the reason many
+  // scenes collapsed into one giant option. Each source action gets a card.
   const clean = value => String(value || '')
     .replace(/\s+·\s+Gerçek sekans$/iu, '')
-    .replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')
     .replace(/\s+sekansını oynat$/iu, ' oynat')
     .trim();
   const normalize = value => clean(value).toLocaleLowerCase('tr-TR')
@@ -862,29 +863,23 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     }
     return 'steady';
   };
-  const definitions = [
-    { id: 'slow', label: 'Yavaş ve kontrollü hareketler', tempo: 'slow' },
-    { id: 'steady', label: 'Ritmik hareketler', tempo: 'moderate' },
-    { id: 'intense', label: 'Hızlı ve yoğun hareketler', tempo: 'fast' }
-  ];
-  const buckets = new Map(definitions.map(item => [item.id, []]));
-  verified.forEach(item => buckets.get(bandFor(item)).push(item));
-  const populated = definitions.filter(item => buckets.get(item.id).length);
-
-  // maxChoices is retained as an API safety bound. When callers request fewer
-  // than the three energy bands, merge only into an explicit mixed card.
-  const selected = populated.length <= limit ? populated : [
-    ...populated.slice(0, Math.max(0, limit - 1)),
-    { id: 'mixed', label: 'Diğer doğrulanmış hareketler', tempo: 'unclear',
-      merged: populated.slice(Math.max(0, limit - 1)).map(item => item.id) }
-  ];
-  return selected.map((definition, index) => {
-    const variants = (definition.merged
-      ? definition.merged.flatMap(id => buckets.get(id))
-      : buckets.get(definition.id))
-      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-    const singleLabel = populated.length === 1 && verified.length === 1
-      ? clean(variants[0].label)
+  const groups = new Map();
+  verified.forEach(item => {
+    const intensityBand = bandFor(item);
+    const sourceScope = String(item.sourcePositionId || item.positionOccurrenceId || 'position').trim();
+    const sourceLabel = clean(item.label || item.movementType || positionLabel) || positionLabel || 'Doğrulanmış hareket';
+    // Keep source label and occurrence in the key. Tempo is metadata on a
+    // card, never a reason to merge unrelated actions into one choice.
+    const key = `${sourceScope}::${normalize(sourceLabel)}::${intensityBand}`;
+    if (!groups.has(key)) groups.set(key, { sourceScope, sourceLabel, intensityBand, items: [] });
+    groups.get(key).items.push(item);
+  });
+  return [...groups.values()].sort((a, b) =>
+    Number(a.items[0]?.loopStartTime) - Number(b.items[0]?.loopStartTime)
+  ).map((group, index) => {
+    const variants = group.items.sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+    const singleLabel = variants.length === 1
+      ? clean(variants[0].label || variants[0].movementType || positionLabel)
         .split('·')
         .map(part => part.trim())
         .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
@@ -892,13 +887,13 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
         .trim()
       : '';
     return {
-      id: `movement-choice:energy:${definition.id}`,
-      label: singleLabel || definition.label,
-      tempo: definition.tempo,
-      intensityBand: definition.id,
+      id: `movement-choice:${encodeURIComponent(group.sourceScope)}:${index + 1}`,
+      label: singleLabel || group.sourceLabel,
+      tempo: group.intensityBand === 'slow' ? 'slow' : group.intensityBand === 'intense' ? 'fast' : 'moderate',
+      intensityBand: group.intensityBand,
       hasTempoShift: false,
       tempoVariants: [],
-      sourcePositionId: 'verified-position-ranges',
+      sourcePositionId: group.sourceScope,
       variants,
       displayIndex: index + 1
     };

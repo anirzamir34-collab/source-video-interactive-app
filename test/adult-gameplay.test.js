@@ -629,14 +629,14 @@ test('builds tempo-consistent subchoices and keeps every clip in its energy pool
   ];
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.ok(choices.length <= 4);
+  assert.equal(choices.length, 4);
   const slow = choices.find(choice => choice.intensityBand === 'slow');
   const steady = choices.find(choice => choice.intensityBand === 'steady');
-  const intense = choices.find(choice => choice.intensityBand === 'intense');
-  assert.equal(slow.label, 'Yavaş ve kontrollü hareketler');
-  assert.deepEqual(slow.variants.map(item => item.id), ['a', 'b']);
+  const intense = choices.filter(choice => choice.intensityBand === 'intense');
+  assert.equal(slow.label, 'Kovboy Pozisyonu · Sekans 1');
+  assert.deepEqual(choices.filter(choice => choice.intensityBand === 'slow').flatMap(choice => choice.variants.map(item => item.id)), ['a', 'b']);
   assert.deepEqual(steady.variants.map(item => item.id), ['c', 'd']);
-  assert.deepEqual(intense.variants.map(item => item.id), ['e']);
+  assert.deepEqual(intense.flatMap(choice => choice.variants.map(item => item.id)), ['e']);
   assert.ok(choices.every(choice => choice.hasTempoShift === false));
 });
 
@@ -753,10 +753,12 @@ test('tempo cards prioritize intensity evidence without mixing energy levels', (
       loopStartTime: 40, loopEndTime: 50, sourceVerified: true }
   ];
   const choices = buildVerifiedMovementChoices(movements, 'Aynı Pozisyon', 5);
-  assert.deepEqual(choices.map(choice => choice.intensityBand), ['slow', 'steady', 'intense']);
+  assert.deepEqual(choices.map(choice => choice.intensityBand), ['slow', 'steady', 'intense', 'intense', 'intense']);
   assert.deepEqual(choices[0].variants.map(item => item.id), ['slow']);
   assert.deepEqual(choices[1].variants.map(item => item.id), ['steady']);
-  assert.deepEqual(choices[2].variants.map(item => item.id), ['provider-moderate-fast', 'provider-moderate-deep', 'fast']);
+  assert.deepEqual(choices.slice(2).map(choice => choice.variants.map(item => item.id)), [
+    ['provider-moderate-fast'], ['provider-moderate-deep'], ['fast']
+  ]);
   assert.equal(new Set(choices.flatMap(choice => choice.variants).map(item => item.id)).size, movements.length);
 });
 
@@ -823,7 +825,7 @@ test('position-only evidence stays one honest playable card without generic cut 
 });
 
 
-test('one movement card retains matching clips from every occurrence', () => {
+test('movement cards keep each occurrence separate instead of merging all clips', () => {
   const movements = Array.from({ length: 20 }, (_, index) => ({
     id: `clip-${index}`,
     label: 'Kovboy Pozisyonu · Sekans 1',
@@ -835,15 +837,15 @@ test('one movement card retains matching clips from every occurrence', () => {
   }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 1);
+  assert.equal(choices.length, 2);
   assert.equal(choices.flatMap(choice => choice.variants).length, 20);
   assert.deepEqual(
-    [...new Set(choices[0].variants.map(item => item.sourcePositionId))],
-    ['occurrence-a', 'occurrence-b']
+    choices.map(choice => [...new Set(choice.variants.map(item => item.sourcePositionId))]),
+    [['occurrence-a'], ['occurrence-b']]
   );
 });
 
-test('movement coverage reports every verified variant under tempo cards', () => {
+test('movement coverage reports every verified variant across source action cards', () => {
   const movements = Array.from({ length: 26 }, (_, index) => ({
     id: `verified-${index + 1}`,
     label: `Observed action ${index + 1}`,
@@ -854,7 +856,7 @@ test('movement coverage reports every verified variant under tempo cards', () =>
   const choices = buildVerifiedMovementChoices(movements, 'Observed position', 3);
 
   assert.deepEqual(summarizeMovementChoiceCoverage(choices), {
-    choiceCount: 1,
+    choiceCount: 26,
     variantCount: 26,
     uniqueVariantCount: 26
   });
