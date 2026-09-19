@@ -55,6 +55,25 @@ function characterLookup(characters, id) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+function canonicalCharacterId(character) {
+  return text(character?.participantTrackId || character?.id);
+}
+
+function verifiedRelationship(context, subject, target) {
+  if (!subject || !target || subject === target) return null;
+  const characters = Array.isArray(context.characters) ? context.characters : [];
+  const lookup = id => characterLookup(characters, id);
+  const matches = (Array.isArray(context.relationships) ? context.relationships : []).filter(item => {
+    if (item?.evidenceLevel !== 'fact' || Number(item.confidence) < 0.78 || !text(item.evidence) || !text(item.relation)) return false;
+    const from = lookup(item.from);
+    const to = lookup(item.to);
+    return canonicalCharacterId(from) === canonicalCharacterId(subject) &&
+      canonicalCharacterId(to) === canonicalCharacterId(target);
+  });
+  if (matches.length !== 1) return null;
+  return matches[0];
+}
+
 function participantLabel(character) {
   const id = text(character.participantTrackId || character.id);
   if (id === 'MAIN_MALE') return 'Ana karakter';
@@ -89,6 +108,23 @@ export function bindActionCharacter(action, context = {}) {
     const partner = lookup(action.partnerTrackId);
     result.partnerLabel = partner && (!declared.length || present.includes(partner))
       ? verifiedCharacterName(partner) || participantLabel(partner) : '';
+  }
+  // Relationship labels are story context only. Intimate controls retain the
+  // verified name/track so a family role never becomes erotic UI wording.
+  if (target && action.adultScene !== true) {
+    const subject = lookup(action.subjectTrackId || 'MAIN_MALE');
+    const relation = verifiedRelationship(context, subject, target);
+    if (relation) {
+      const subjectName = verifiedCharacterName(subject) || participantLabel(subject);
+      result.relationshipDisplayLabel = `${subjectName} ile ilişkisi: ${text(relation.relation)}`;
+      result.relationshipContext = result.relationshipDisplayLabel;
+      result.relationshipResolution = 'verified';
+    } else {
+      result.relationshipDisplayLabel = '';
+      result.relationshipResolution = 'unknown';
+    }
+  } else {
+    result.relationshipDisplayLabel = '';
   }
   // Reject an ambiguous possessive description without inventing a replacement action.
   if (vaguePossessive.test(text(result.label))) result.label = 'Kesiti oynat';

@@ -11,6 +11,8 @@ const named = (id, participantTrackId, displayName) => ({
   evidence: `Diyalogda kendisini ${displayName} olarak tanıtıyor.`
 });
 const cast = { characters: [named('DANNY', 'MAIN_MALE', 'Danny'), named('MERAL', 'PARTNER_A', 'Meral'), named('DENIZ', 'PARTNER_B', 'Deniz')] };
+cast.relationships = [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'fact', confidence: 0.96,
+  evidence: 'Diyalogda Danny, Meral’i eşi olarak tanıtıyor.' }];
 
 test('a characters-only chunk is retained and later verified names replace vague early labels', () => {
   const first = { currentSceneTitle: 'Toplantı', characters: [{ id: 'early-a', participantTrackId: 'PARTNER_A', displayName: "Danny’nin kadını", evidenceLevel: 'unknown' }] };
@@ -33,7 +35,35 @@ test('two-person actions bind the counterparty by IDs instead of the generated l
   assert.equal(action.primaryCharacterLabel, 'Meral');
   assert.equal(action.partnerLabel, 'Meral');
   assert.equal(action.identityResolution, 'verified');
+  assert.equal(action.relationshipDisplayLabel, 'Danny ile ilişkisi: eşi');
+  assert.match(storyChoiceLabelForAction(action), /Danny ile ilişkisi: eşi/);
   assert.deepEqual([action.startTime, action.endTime, action.sourceVerified], [10, 14, true]);
+});
+
+test('family and relationship facts appear only in ordinary choices with exact IDs', () => {
+  const family = { ...cast, relationships: [
+    { from: 'DANNY', to: 'DENIZ', relation: 'kızı', evidenceLevel: 'fact', confidence: 0.93, evidence: 'Diyalogda açıkça kızı deniyor.' }
+  ] };
+  const ordinary = bindActionCharacter({ label: 'Soruyu sor', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'DENIZ',
+    involvedCharacterIds: ['DANNY', 'DENIZ'], adultScene: false }, family);
+  assert.equal(storyChoiceLabelForAction(ordinary), 'Soruyu sor · Deniz · Danny ile ilişkisi: kızı');
+  const intimate = bindActionCharacter({ label: 'Kesiti oynat', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'DENIZ',
+    partnerTrackId: 'PARTNER_B', involvedCharacterIds: ['DANNY', 'DENIZ'], adultScene: true }, family);
+  assert.equal(intimate.relationshipDisplayLabel, '');
+  assert.equal(storyChoiceLabelForAction(intimate), 'Kesiti oynat · Deniz');
+});
+
+test('uncertain, unsupported and conflicting relationships stay out of choices', () => {
+  for (const relationships of [
+    [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'inference', confidence: 0.99, evidence: 'Yakın görünüyorlar.' }],
+    [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'fact', confidence: 0.4, evidence: 'Belirsiz.' }],
+    [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'fact', confidence: 0.9, evidence: '' }],
+    [cast.relationships[0], { ...cast.relationships[0], relation: 'kardeşi' }]
+  ]) {
+    const action = bindActionCharacter({ label: 'Konuş', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'MERAL',
+      involvedCharacterIds: ['DANNY', 'MERAL'] }, { ...cast, relationships });
+    assert.equal(action.relationshipDisplayLabel, '');
+  }
 });
 
 test('an explicit addressed character is preserved in a group scene', () => {
@@ -70,7 +100,7 @@ test('unconfirmed names stay unconfirmed and possessive descriptions are not pro
     { ...cast.characters[1], evidence: '' },
     { ...cast.characters[1], displayName: "Danny’nin kadını" }
   ]) assert.equal(verifiedCharacterName(record), '');
-  const action = bindActionCharacter({ label: 'Konuşmayı sürdür', narrativeChoiceLabel: "Danny’nin kadınıyla konuş", partnerTrackId: 'PARTNER_A' }, cast);
+  const action = bindActionCharacter({ label: 'Konuşmayı sürdür', narrativeChoiceLabel: "Danny’nin kadınıyla konuş", partnerTrackId: 'PARTNER_A' }, { ...cast, relationships: [] });
   assert.equal(storyChoiceLabelForAction(action), 'Konuşmayı sürdür · Meral');
   for (const label of ['Danny nin kadınıyla konuş', 'Dannynin kadınına bak']) {
     assert.equal(bindActionCharacter({ label, partnerTrackId: 'PARTNER_A' }, cast).label, 'Kesiti oynat');

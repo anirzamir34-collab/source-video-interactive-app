@@ -140,10 +140,13 @@ export function storyChoiceLabelForAction(action = {}) {
         ? partner
         : cleanText(action.partnerTrackId, 80).replace(/^PARTNER[_-]?/i, 'Partner ');
     }
-    if (!character) return label;
+    const relationship = action.adultScene === true ? '' : cleanText(action.relationshipDisplayLabel, 140);
+    const withRelationship = value => relationship && !value.toLocaleLowerCase('tr-TR').includes(relationship.toLocaleLowerCase('tr-TR'))
+      ? `${value} · ${relationship}` : value;
+    if (!character) return withRelationship(label);
     const normalizedLabel = label.toLocaleLowerCase('tr-TR');
-    if (normalizedLabel.includes(character.toLocaleLowerCase('tr-TR'))) return label;
-    return `${label} · ${character}`;
+    if (normalizedLabel.includes(character.toLocaleLowerCase('tr-TR'))) return withRelationship(label);
+    return withRelationship(`${label} · ${character}`);
   };
   if (!narrative) return withCharacter(fallback);
 
