@@ -1788,7 +1788,7 @@ async function transcribeDialogueGemini35(ai, remoteFile) {
   return { transcriptText: String(interaction?.output_text || '').trim(), words, segments: groupTranscribeWords(words) };
 }
 
-function remoteDialogueFfmpegArgs(session, outputPath, duration = 0) {
+function remoteDialogueFfmpegArgs(session, outputPath, duration = 0, pipedInput = false) {
   const referer = String(session.referer || '');
   const headerLines = [
     `User-Agent: ${session.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36'}`,
@@ -1799,10 +1799,12 @@ function remoteDialogueFfmpegArgs(session, outputPath, duration = 0) {
   const safeDuration = Math.min(Math.max(0, Number(duration) || 0) + 5, 3 * 60 * 60);
   return [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
-    '-protocol_whitelist', 'http,https,tcp,tls,crypto',
-    '-rw_timeout', '45000000',
-    '-headers', headerLines,
-    '-i', session.sourceUrl,
+    ...(pipedInput ? [] : [
+      '-protocol_whitelist', 'http,https,tcp,tls,crypto',
+      '-rw_timeout', '45000000',
+      '-headers', headerLines
+    ]),
+    '-i', pipedInput ? 'pipe:0' : session.sourceUrl,
     ...(safeDuration > 5 ? ['-t', String(safeDuration)] : []),
     '-map', '0:a:0?', '-vn', '-ac', '1', '-ar', '16000',
     '-c:a', 'libmp3lame', '-b:a', '64k', '-map_metadata', '-1',
@@ -1824,24 +1826,62 @@ async function prepareRemoteDialogueAudio(remoteToken, duration = 0) {
   const tempDirectory = '/tmp/videoquest-dialogue';
   await fs.promises.mkdir(tempDirectory, { recursive: true });
   const outputPath = path.join(tempDirectory, `${crypto.randomUUID()}.mp3`);
-  const args = remoteDialogueFfmpegArgs(session, outputPath, duration);
+  const pipedInput = session.type !== 'hls' && !/\.m3u8(?:$|\?)/i.test(session.sourceUrl);
+  let upstreamStream = null;
+  if (pipedInput) {
+    const referer = String(session.referer || '');
+    const headers = {
+      'User-Agent': session.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+      Accept: 'video/*,audio/*,*/*;q=0.5'
+    };
+    if (referer) {
+      headers.Referer = referer;
+      headers.Origin = new URL(referer).origin;
+    }
+    if (session.cookie) headers.Cookie = session.cookie;
+    const { response } = await fetchPublicUrl(session.sourceUrl, { headers, timeoutMs: 0 });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      throw new Error(`REMOTE_AUDIO_SOURCE_HTTP_${response.status}`);
+    }
+    upstreamStream = Readable.fromWeb(response.body);
+  }
+  const args = remoteDialogueFfmpegArgs(session, outputPath, duration, pipedInput);
 
   try {
     await new Promise((resolve, reject) => {
-      const process = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const ffmpegProcess = spawn(ffmpegPath, args, { stdio: [pipedInput ? 'pipe' : 'ignore', 'ignore', 'pipe'] });
       let stderr = '';
+      let settled = false;
+      const finish = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        upstreamStream?.destroy();
+        if (error) reject(error);
+        else resolve();
+      };
       const timeout = setTimeout(() => {
-        process.kill('SIGTERM');
-        reject(new Error('REMOTE_AUDIO_PREPARATION_TIMEOUT'));
+        ffmpegProcess.kill('SIGTERM');
+        finish(new Error('REMOTE_AUDIO_PREPARATION_TIMEOUT'));
       }, 20 * 60 * 1000);
       timeout.unref();
-      process.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-3000); });
-      process.once('error', error => { clearTimeout(timeout); reject(error); });
-      process.once('close', code => {
-        clearTimeout(timeout);
-        if (code === 0) resolve();
-        else reject(new Error(`REMOTE_AUDIO_PREPARATION_FAILED:${stderr || `ffmpeg ${code}`}`));
+      ffmpegProcess.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-3000); });
+      ffmpegProcess.once('error', finish);
+      ffmpegProcess.once('close', (code, signal) => {
+        if (code === 0) finish();
+        else finish(new Error(`REMOTE_AUDIO_PREPARATION_FAILED:${stderr || `ffmpeg code=${code} signal=${signal || 'none'}`}`));
       });
+      if (upstreamStream) {
+        upstreamStream.once('error', error => {
+          ffmpegProcess.kill('SIGTERM');
+          finish(new Error(`REMOTE_AUDIO_SOURCE_STREAM_FAILED:${error?.message || error}`));
+        });
+        ffmpegProcess.stdin.once('error', error => {
+          if (error?.code !== 'EPIPE') finish(error);
+        });
+        upstreamStream.pipe(ffmpegProcess.stdin);
+      }
     });
     const stat = await fs.promises.stat(outputPath);
     if (!stat.size) throw new Error('REMOTE_AUDIO_EMPTY');

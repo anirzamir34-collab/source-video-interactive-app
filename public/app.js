@@ -1173,6 +1173,15 @@ async function analyzeSelectedDialogue(file, remoteVideo = null) {
     const body = await response.json().catch(() => ({}));
     recordAiUsage(body?.aiUsage);
     if (!response.ok || !body.available) {
+      const remotePreparationFailed = /REMOTE_AUDIO_(?:PREPARATION|SOURCE)/i.test(String(body.error || ''));
+      if (remotePreparationFailed) {
+        els.analysisTitle.textContent = 'Uyumlu ses yöntemi deneniyor';
+        els.analysisOutput.textContent =
+          'Kaynak sunucu doğrudan ses aktarımını kapattı.\n' +
+          'Analiz, cihazdaki güvenli yedek yöntemle otomatik sürdürülecek...';
+        const fallbackFile = await ensureSelectedRemoteFile();
+        return analyzeSelectedDialogue(fallbackFile, null);
+      }
       throw new Error(body.error || body.message || `HTTP ${response.status}`);
     }
     state.dialogue = {
