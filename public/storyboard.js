@@ -135,9 +135,20 @@ export function selectFocusedTimestamps(profile = [], duration = 0, limit = 0) {
   return selected.sort((a, b) => a - b).map(time => Number(time.toFixed(3)));
 }
 
-export async function extractStoryboard(source, onProgress = () => {}, signal) {
+export function shouldBufferStoryboardSource({ sourceBytes, seekAttempts, seekMs, remainingFrames } = {}) {
+  // Only replace demonstrably slow range access with one bounded, exact-byte
+  // download. Fast streams and large/unknown-size videos stay streamed.
+  const bytes = Number(sourceBytes) || 0;
+  if (bytes <= 0 || bytes > 128 * 1024 * 1024 || remainingFrames < 12) return false;
+  const averageMs = seekMs / Math.max(1, seekAttempts);
+  return seekMs >= 5000 && averageMs >= 1800 && averageMs * remainingFrames >= 30000;
+}
+
+export async function extractStoryboard(source, onProgress = () => {}, signal, options = {}) {
+  const startedAt = performance.now();
   const ownsObjectUrl = source instanceof Blob;
   const url = ownsObjectUrl ? URL.createObjectURL(source) : String(source || '');
+  const remoteSampling = options.remoteSampling ?? !ownsObjectUrl;
   if (!url) throw new Error('Video kaynağı bulunamadı.');
   const video = document.createElement('video');
   video.preload = 'auto';
@@ -145,6 +156,9 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
   video.playsInline = true;
   video.src = url;
   const capturedFrames = [];
+  let bufferedUrl = '';
+  let bufferAttempted = ownsObjectUrl;
+  const timings = { metadataMs: 0, seekMs: 0, maxSeekMs: 0, seekAttempts: 0, retries: 0, bufferMs: 0, encodeMs: 0, sourceMode: ownsObjectUrl ? 'local' : 'remote' };
 
   const wait = (event, timeoutMs = 15000, trigger = null) => new Promise((resolve, reject) => {
     let timer = null;
@@ -177,7 +191,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
     video.addEventListener('error', fail, { once: true });
     signal?.addEventListener('abort', abort, { once: true });
     timer = setTimeout(timeout, timeoutMs);
-    if (event === 'loadedmetadata' && video.readyState >= 1) return complete();
+    if (!trigger && event === 'loadedmetadata' && video.readyState >= 1) return complete();
     try {
       trigger?.();
     } catch (error) {
@@ -188,17 +202,77 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
 
   try {
     await wait('loadedmetadata', 30000);
+    timings.metadataMs = Math.round(performance.now() - startedAt);
 
     const duration = Number(video.duration);
     if (!Number.isFinite(duration) || duration <= 0) {
       throw new Error('Video süresi okunamadı.');
     }
 
-    const samplingPlan = storyboardSamplingPlan(duration, !ownsObjectUrl);
+    const samplingPlan = storyboardSamplingPlan(duration, remoteSampling);
     const targetFrameCount = samplingPlan.baseCount;
     const interval = Math.max(0.75, duration / targetFrameCount);
     const times = [];
     for (let time = 0; time < duration; time += interval) times.push(time);
+    let plannedFrames = times.length + samplingPlan.focusedCount;
+    const report = (progress, detail = {}) => onProgress(progress, {
+      captured: capturedFrames.length,
+      total: plannedFrames,
+      elapsedSeconds: (performance.now() - startedAt) / 1000,
+      sourceMode: timings.sourceMode,
+      phase: 'capture',
+      ...detail
+    });
+
+    const tryBufferedSource = async (progress, time) => {
+      if (bufferAttempted || typeof options.getLocalSource !== 'function' || !shouldBufferStoryboardSource({
+        sourceBytes: options.sourceBytes,
+        seekAttempts: timings.seekAttempts,
+        seekMs: timings.seekMs,
+        remainingFrames: plannedFrames - capturedFrames.length
+      })) return false;
+      bufferAttempted = true;
+      const bufferStartedAt = performance.now();
+      report(progress, { phase: 'buffering', time });
+      try {
+        const blob = await options.getLocalSource({
+          signal,
+          maxBytes: 128 * 1024 * 1024,
+          maxDurationMs: Math.min(45000, Math.max(15000,
+            timings.seekMs / Math.max(1, timings.seekAttempts) * (plannedFrames - capturedFrames.length) / 2)),
+          onProgress: transfer => report(progress, { phase: 'buffering', time, transfer })
+        });
+        if (signal?.aborted) throw new DOMException('İşlem iptal edildi', 'AbortError');
+        if (!(blob instanceof Blob) || !blob.size) throw new Error('Geçici video boş geldi.');
+        bufferedUrl = URL.createObjectURL(blob);
+        await wait('loadedmetadata', 30000, () => {
+          video.src = bufferedUrl;
+          video.preload = 'auto';
+          video.load();
+        });
+        // Switching transport must never switch the underlying timeline.
+        if (!Number.isFinite(Number(video.duration)) || Math.abs(Number(video.duration) - duration) > 0.1) throw new Error('Video süresi değişti.');
+        options.onBufferedSource?.(blob);
+        timings.sourceMode = 'buffered';
+        return true;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        timings.bufferFailure = String(error?.message || error);
+        if (bufferedUrl) {
+          await wait('loadedmetadata', 30000, () => {
+            video.src = url;
+            video.preload = 'auto';
+            video.load();
+          });
+          URL.revokeObjectURL(bufferedUrl);
+          bufferedUrl = '';
+        }
+        report(progress, { phase: 'capture', time, bufferingFailed: true });
+        return false;
+      } finally {
+        timings.bufferMs += Math.round(performance.now() - bufferStartedAt);
+      }
+    };
 
     const columns = 3;
     const rows = 4;
@@ -220,7 +294,9 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
 
     const finishSheet = async () => {
       if (!sheetFrame) return;
+      const encodeStartedAt = performance.now();
       const blob = await canvasBlob(canvas, { signal });
+      timings.encodeMs += performance.now() - encodeStartedAt;
       sheets.push(blob);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -236,13 +312,20 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
     const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
     if (!motionCtx) throw new Error('Hareket analizi başlatılamadı.');
     const skippedTimestamps = [];
-    const seekTimeoutMs = ownsObjectUrl ? 10000 : 15000;
 
     const captureFrame = async (time, progress) => {
       if (signal?.aborted) throw new DOMException('İşlem iptal edildi', 'AbortError');
 
       const safeTime = Math.min(time, Math.max(0, duration - 0.05));
-      await seekMediaTo(video, safeTime, { signal, timeoutMs: seekTimeoutMs });
+      const seekStartedAt = performance.now();
+      timings.seekAttempts += 1;
+      try {
+        await seekMediaTo(video, safeTime, { signal, timeoutMs: ownsObjectUrl || bufferedUrl ? 10000 : 15000 });
+      } finally {
+        const elapsed = performance.now() - seekStartedAt;
+        timings.seekMs += elapsed;
+        timings.maxSeekMs = Math.max(timings.maxSeekMs, elapsed);
+      }
 
       const snapshot = document.createElement('canvas');
       snapshot.width = cellWidth;
@@ -259,20 +342,22 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
           motionCtx.getImageData(0, 0, 64, 36).data
         )
       });
-      onProgress(Math.min(84, Math.max(1, Math.round(progress))));
+      report(Math.min(84, Math.max(1, Math.round(progress))), { time: safeTime });
     };
 
     let consecutiveFailures = 0;
     const captureFrameSafely = async (time, progress) => {
+      await tryBufferedSource(progress, time);
       const retryOffsets = [0, 0.12, -0.12];
       let lastError = null;
-      for (const offset of retryOffsets) {
+      for (let attempt = 0; attempt < retryOffsets.length; attempt += 1) {
+        const offset = retryOffsets[attempt];
         const retryTime = Math.min(
           Math.max(0, Number(time) + offset),
           Math.max(0, duration - 0.05)
         );
         try {
-          onProgress(Math.min(84, Math.max(1, Math.round(progress))), {
+          report(Math.min(84, Math.max(1, Math.round(progress))), {
             time: retryTime, retrying: offset !== 0
           });
           await captureFrame(retryTime, progress);
@@ -283,6 +368,11 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
           if (error?.name === 'SecurityError') throw error;
           if (video.error) throw new Error('Video kaynağı okunamıyor. Bağlantıyı veya dosya biçimini kontrol edip yeniden dene.');
           lastError = error;
+          timings.retries += 1;
+          if (await tryBufferedSource(progress, time)) {
+            // Retry the exact timestamp before applying any decode offsets.
+            retryOffsets.splice(attempt + 1, 0, 0);
+          }
         }
       }
       consecutiveFailures += 1;
@@ -296,7 +386,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       // A single undecodable/range-unavailable frame must not leave the whole
       // mobile analysis waiting forever. Progress still advances and the
       // remaining verified frames continue to the external analyzer.
-      onProgress(Math.min(84, Math.max(1, Math.round(progress))));
+      report(Math.min(84, Math.max(1, Math.round(progress))), { time });
       return false;
     };
 
@@ -342,6 +432,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       duration,
       samplingPlan.focusedCount
     );
+    plannedFrames = times.length + focusedTimes.length;
     for (let index = 0; index < focusedTimes.length; index += 1) {
       await captureFrameSafely(
         focusedTimes[index],
@@ -373,10 +464,11 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       sheetFrame += 1;
 
       if (sheetFrame === framesPerSheet) await finishSheet();
-      onProgress(84 + Math.round(((index + 1) / capturedFrames.length) * 16));
+      report(84 + Math.round(((index + 1) / capturedFrames.length) * 15), { phase: 'encoding' });
     }
 
     await finishSheet();
+    report(100, { phase: 'complete' });
 
     const effectiveInterval = Math.max(0.75, duration / Math.max(1, capturedFrames.length));
     const totalBytes = sheets.reduce((sum, blob) => sum + blob.size, 0);
@@ -389,7 +481,16 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
       totalBytes,
       motionProfile,
       sceneBoundaries,
-      skippedTimestamps
+      skippedTimestamps,
+      performance: {
+        ...timings,
+        seekMs: Math.round(timings.seekMs),
+        maxSeekMs: Math.round(timings.maxSeekMs),
+        encodeMs: Math.round(timings.encodeMs),
+        totalMs: Math.round(performance.now() - startedAt),
+        frames: capturedFrames.length,
+        skippedFrames: skippedTimestamps.length
+      }
     };
   } finally {
     for (const frame of capturedFrames) {
@@ -400,5 +501,6 @@ export async function extractStoryboard(source, onProgress = () => {}, signal) {
     video.removeAttribute('src');
     video.load();
     if (ownsObjectUrl) URL.revokeObjectURL(url);
+    if (bufferedUrl) URL.revokeObjectURL(bufferedUrl);
   }
 }

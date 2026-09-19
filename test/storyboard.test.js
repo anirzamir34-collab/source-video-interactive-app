@@ -5,6 +5,7 @@ import {
   detectSceneBoundaries,
   extractStoryboard,
   selectFocusedTimestamps,
+  shouldBufferStoryboardSource,
   sheetsPerAnalysisChunk,
   storyboardSamplingPlan
 } from '../public/storyboard.js';
@@ -97,12 +98,12 @@ test('focuses extra remote samples around motion without duplicating base times'
   assert.ok(focused.some(time => time > 4 && time < 8));
   assert.ok(focused.every(time => profile.every(item => Math.abs(item.time - time) >= 0.3)));
 });
-async function withMediaFixture(run, { encodeFails = false } = {}) {
+async function withMediaFixture(run, { encodeFails = false, duration = 3, onSeek = () => {}, onLoad = () => {} } = {}) {
   const originalDocument = globalThis.document;
   const canvases = [];
   let capturedBeforeDecode = false;
   class Video extends EventTarget {
-    duration = 3;
+    duration = duration;
     readyState = 1;
     videoWidth = 320;
     videoHeight = 180;
@@ -111,6 +112,7 @@ async function withMediaFixture(run, { encodeFails = false } = {}) {
     unloaded = false;
     get currentTime() { return this.time; }
     set currentTime(value) {
+      onSeek(value, this);
       this.time = value;
       this.seeking = true;
       queueMicrotask(() => {
@@ -122,7 +124,13 @@ async function withMediaFixture(run, { encodeFails = false } = {}) {
     }
     pause() {}
     removeAttribute() { this.unloaded = true; }
-    load() {}
+    load() {
+      if (this.unloaded) return;
+      this.time = 0;
+      this.readyState = 1;
+      onLoad(this);
+      queueMicrotask(() => this.dispatchEvent(new Event('loadedmetadata')));
+    }
   }
   const video = new Video();
   globalThis.document = { createElement(tag) {
@@ -173,4 +181,101 @@ test('cancelled frame preparation closes its video source', async () => {
     await assert.rejects(extractStoryboard(new Blob(['video']), () => {}, controller.signal), { name: 'AbortError' });
     assert.equal(fixture.video.unloaded, true);
   });
+});
+
+test('buffering is restricted to slow streams of known bounded size with enough work remaining', () => {
+  const slow = { sourceBytes: 20 * 1024 * 1024, seekAttempts: 2, seekMs: 6000, remainingFrames: 40 };
+  assert.equal(shouldBufferStoryboardSource(slow), true);
+  for (const change of [{ sourceBytes: 0 }, { sourceBytes: 129 * 1024 * 1024 }, { seekMs: 100 }, { remainingFrames: 3 }]) {
+    assert.equal(shouldBufferStoryboardSource({ ...slow, ...change }), false);
+  }
+});
+
+test('retrying from a cached download preserves the remote sampling plan', async () => {
+  let baseline;
+  await withMediaFixture(async () => { baseline = await extractStoryboard('/proxy'); }, { duration: 120 });
+  await withMediaFixture(async () => {
+    const result = await extractStoryboard(new Blob(['cached-video']), () => {}, undefined, { remoteSampling: true });
+    assert.deepEqual(result.timestamps, baseline.timestamps);
+    assert.deepEqual(result.motionProfile, baseline.motionProfile);
+  }, { duration: 120 });
+});
+
+test('slow remote seeks switch once to identical local bytes without recapturing or dropping timestamps', async t => {
+  let baseline;
+  await withMediaFixture(async () => { baseline = await extractStoryboard('/proxy'); }, { duration: 120 });
+  let clock = 0;
+  let downloads = 0;
+  const seeks = [];
+  const progress = [];
+  t.mock.method(performance, 'now', () => clock);
+  await withMediaFixture(async fixture => {
+    const result = await extractStoryboard('/proxy', (percent, detail) => progress.push({ percent, detail }), undefined, {
+      sourceBytes: 100,
+      getLocalSource: async () => { downloads++; clock += 100; return new Blob(['video']); }
+    });
+    assert.equal(downloads, 1);
+    assert.equal(result.performance.sourceMode, 'buffered');
+    assert.equal(result.performance.bufferMs, 100);
+    assert.deepEqual(result.timestamps, baseline.timestamps);
+    assert.deepEqual(result.motionProfile, baseline.motionProfile);
+    assert.equal(result.sheets.length, baseline.sheets.length);
+    assert.equal(result.skippedTimestamps.length, 0);
+    assert.equal(seeks.length, result.timestamps.length);
+    assert.equal(seeks.filter(item => item.src === '/proxy').length, 2);
+    assert.ok(progress.some(item => item.detail.phase === 'buffering' && item.detail.captured === 2));
+    assert.equal(progress.at(-1).percent, 100);
+    assert.equal(fixture.video.unloaded, true);
+  }, { duration: 120, onSeek(time, video) { seeks.push({ time, src: video.src }); clock += video.src === '/proxy' ? 2500 : 1; } });
+});
+
+test('failed buffering is attempted once and all remote frames still complete', async t => {
+  let clock = 0;
+  let downloads = 0;
+  t.mock.method(performance, 'now', () => clock);
+  await withMediaFixture(async () => {
+    const result = await extractStoryboard('/proxy', () => {}, undefined, {
+      sourceBytes: 100,
+      getLocalSource: async () => { downloads++; throw new Error('Transfer deadline'); }
+    });
+    assert.equal(downloads, 1);
+    assert.equal(result.performance.sourceMode, 'remote');
+    assert.equal(result.skippedTimestamps.length, 0);
+    assert.ok(result.timestamps.length >= 36);
+    assert.match(result.performance.bufferFailure, /Transfer deadline/);
+  }, { duration: 120, onSeek() { clock += 2500; } });
+});
+
+test('changed media duration rolls back to the remote source and preserves completed frames', async t => {
+  let clock = 0;
+  const switched = [];
+  t.mock.method(performance, 'now', () => clock);
+  await withMediaFixture(async () => {
+    const result = await extractStoryboard('/proxy', () => {}, undefined, {
+      sourceBytes: 100,
+      getLocalSource: async () => new Blob(['different-video'])
+    });
+    assert.equal(result.performance.sourceMode, 'remote');
+    assert.equal(result.skippedTimestamps.length, 0);
+    assert.equal(result.duration, 120);
+    assert.equal(switched.length, 2);
+    assert.equal(switched.at(-1), '/proxy');
+    assert.match(result.performance.bufferFailure, /süresi değişti/);
+  }, {
+    duration: 120, onSeek() { clock += 2500; },
+    onLoad(video) { switched.push(video.src); video.duration = video.src === '/proxy' ? 120 : 121; }
+  });
+});
+
+test('cancelling a buffer transfer stops extraction and releases the source', async t => {
+  let clock = 0;
+  t.mock.method(performance, 'now', () => clock);
+  await withMediaFixture(async fixture => {
+    const controller = new AbortController();
+    await assert.rejects(extractStoryboard('/proxy', () => {}, controller.signal, {
+      sourceBytes: 100,
+      getLocalSource: async ({ signal }) => { controller.abort(); throw signal.reason; }
+    }), { name: 'AbortError' });
+    assert.equal(fixture.video.unloaded, true);
+  }, { duration: 120, onSeek() { clock += 2500; } });
 });

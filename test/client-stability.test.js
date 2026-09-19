@@ -382,3 +382,45 @@ test('normal download returns exact bytes and releases its reader', async () => 
   assert.equal(await blob.text(), 'test-video-bytes');
   assert.equal(blob.type, 'video/mp4');
 });
+
+test('storyboard transfer enforces its smaller limit and reports bytes without changing URL status', async () => {
+  const progress = [];
+  const f = fixture(functions('downloadUrlVideo'), {
+    setUrlStatus() { assert.fail('storyboard owns transfer progress'); },
+    fetch: async () => new Response('exact-video-bytes', { headers: { 'content-type': 'video/mp4', 'content-length': '17' } })
+  });
+  const blob = await f.scope.downloadUrlVideo('/proxy', '', { maxBytes: 128, onProgress: detail => progress.push(detail) });
+  assert.equal(await blob.text(), 'exact-video-bytes');
+  assert.equal(progress.at(-1).loaded, 17);
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', '', { maxBytes: 8 }), /indirme sınırını/);
+});
+
+test('storyboard transfer has an overall deadline even when waiting for response headers', async () => {
+  let signal;
+  const f = fixture(functions('downloadUrlVideo'), {
+    fetch: (_url, options) => new Promise((_resolve, reject) => {
+      signal = options.signal;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    })
+  });
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', '', { maxDurationMs: 5 }), /aktarımı durdu/);
+  assert.equal(signal.aborted, true);
+});
+
+test('cancelling storyboard transfer aborts and releases its active reader', async () => {
+  const controller = new AbortController();
+  let cancelled = false;
+  let released = false;
+  const f = fixture(functions('downloadUrlVideo'), {
+    fetch: async (_url, { signal }) => ({ ok: true, headers: new Headers(), body: { getReader: () => ({
+      read: () => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        controller.abort();
+      }),
+      cancel: async () => { cancelled = true; }, releaseLock() { released = true; }
+    }) } })
+  });
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', '', { signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(cancelled, true);
+  assert.equal(released, true);
+});

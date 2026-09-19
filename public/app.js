@@ -1959,6 +1959,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   try {
   els.analyzeBtn.disabled = true;
   els.videoInput.disabled = true;
+  els.video.pause();
   if (videoUrlInput) videoUrlInput.disabled = true;
   if (resolveUrlBtn) resolveUrlBtn.disabled = true;
   els.analysisCard.classList.remove('hidden');
@@ -2104,15 +2105,47 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisTitle.textContent = 'Yerel storyboard hazırlanıyor';
   els.analysisState.textContent = 'LOCAL_PROCESSING';
 
-  const storyboardSource = file || state.selectedRemoteVideo?.proxyUrl;
+  const remoteStoryboardSource = state.selectedRemoteVideo;
+  // A dialogue fallback may already have downloaded the video since `file`
+  // was read. Reuse those bytes instead of seeking the remote source again.
+  const storyboardSource = file || state.selectedFile || session.storyboardFile || remoteStoryboardSource?.proxyUrl;
   const storyboard = session.storyboard || await extractStoryboard(storyboardSource, (progress, detail) => {
-    els.analysisTitle.textContent = state.selectedRemoteVideo && !file
-      ? `Video akışından kareler hazırlanıyor: %${progress}`
-      : `Video telefonda hazırlanıyor: %${progress}`;
-    if (detail) els.analysisOutput.textContent =
-      `${detail.time.toFixed(1)} saniyedeki görüntü ${detail.retrying ? 'yeniden yükleniyor' : 'hazırlanıyor'}…`;
+    const count = detail ? `${detail.captured}/${detail.total} kare · ` : '';
+    els.analysisTitle.textContent = detail?.phase === 'buffering'
+      ? 'Yavaş video kaynağı hızlandırılıyor'
+      : `Kareler hazırlanıyor: ${count}%${Math.round(progress)}`;
+    if (!detail) return;
+    const elapsed = `${Math.round(detail.elapsedSeconds)} sn geçti`;
+    if (detail.phase === 'buffering') {
+      const transfer = detail.transfer;
+      els.analysisOutput.textContent = [
+        'Kalan kareler için video bir kez geçici olarak alınıyor. Hazır kareler korunuyor.',
+        transfer ? `${(transfer.loaded / 1024 / 1024).toFixed(1)} / ${((transfer.total || remoteStoryboardSource?.size || 0) / 1024 / 1024).toFixed(1)} MB` : '',
+        elapsed
+      ].filter(Boolean).join('\n');
+    } else {
+      els.analysisOutput.textContent = [
+        Number.isFinite(detail.time) ? `Videodaki konum: ${detail.time.toFixed(1)} sn${detail.retrying ? ' · yeniden deneniyor' : ''}` : 'Kareler analiz için birleştiriliyor…',
+        elapsed,
+        detail.bufferingFailed ? 'Geçici aktarım tamamlanamadı; kaynak akışından devam ediliyor.' : ''
+      ].filter(Boolean).join('\n');
+    }
+  }, undefined, {
+    sourceBytes: remoteStoryboardSource?.size || 0,
+    remoteSampling: Boolean(remoteStoryboardSource && !file),
+    getLocalSource: remoteStoryboardSource ? async transferOptions => {
+      if (session.storyboardFile) return session.storyboardFile;
+      const blob = await downloadUrlVideo(remoteStoryboardSource.proxyUrl, remoteStoryboardSource.sourceUrl, transferOptions);
+      if (remoteStoryboardSource.size && blob.size !== remoteStoryboardSource.size) {
+        throw new Error('Video boyutu değişti; kaynak akışından devam edilecek.');
+      }
+      return blob;
+    } : undefined,
+    onBufferedSource: blob => { session.storyboardFile = blob; }
   });
   session.storyboard = storyboard;
+  session.storyboardFile = null;
+  if (storyboard.performance) logEngineEvent('STORYBOARD_PREPARED', storyboard.performance);
 
   const skippedFrameCount = Array.isArray(storyboard.skippedTimestamps)
     ? storyboard.skippedTimestamps.length
@@ -5937,17 +5970,23 @@ function setUrlStatus(message, type = '') {
   urlStatus.className = `url-status ${type}`.trim();
 }
 
-async function downloadUrlVideo(proxyUrl, sourceUrl) {
+async function downloadUrlVideo(proxyUrl, sourceUrl, options = {}) {
   const controller = new AbortController();
-  const maxBytes = 600 * 1024 * 1024;
+  const maxBytes = Math.min(600 * 1024 * 1024, Math.max(1, Number(options.maxBytes) || 600 * 1024 * 1024));
+  const maxMB = Math.round(maxBytes / 1024 / 1024);
   let reader;
   let idleTimer;
+  let totalTimer;
+  const onAbort = () => controller.abort(options.signal?.reason);
   const refreshDeadline = () => {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => controller.abort(), 45000);
   };
   refreshDeadline();
   try {
+  if (options.signal?.aborted) onAbort();
+  options.signal?.addEventListener('abort', onAbort, { once: true });
+  if (options.maxDurationMs > 0) totalTimer = setTimeout(() => controller.abort(), options.maxDurationMs);
   const response = await fetch(proxyUrl, { signal: controller.signal });
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
@@ -5956,7 +5995,7 @@ async function downloadUrlVideo(proxyUrl, sourceUrl) {
 
   const total = Number(response.headers.get('content-length')) || 0;
   const contentType = response.headers.get('content-type') || 'video/mp4';
-  if (total > maxBytes) throw new Error('Video 600 MB indirme sınırını aşıyor. Daha küçük bir dosya seç.');
+  if (total > maxBytes) throw new Error(`Video ${maxMB} MB indirme sınırını aşıyor. Daha küçük bir dosya seç.`);
   reader = response.body?.getReader();
 
   if (!reader) throw new Error('Tarayıcı video akışını okuyamadı. Güncel bir tarayıcıyla tekrar dene.');
@@ -5968,21 +6007,25 @@ async function downloadUrlVideo(proxyUrl, sourceUrl) {
     const { done, value } = await reader.read();
     if (done) break;
     received += value.length;
-    if (received > maxBytes) throw new Error('Video 600 MB indirme sınırını aşıyor. Daha küçük bir dosya seç.');
+    if (received > maxBytes) throw new Error(`Video ${maxMB} MB indirme sınırını aşıyor. Daha küçük bir dosya seç.`);
     chunks.push(value);
     refreshDeadline();
 
     const receivedMB = (received / 1024 / 1024).toFixed(1);
     const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
-    setUrlStatus(`Video hazırlanıyor: ${receivedMB} MB${totalText}`);
+    if (typeof options.onProgress === 'function') options.onProgress({ loaded: received, total });
+    else setUrlStatus(`Video hazırlanıyor: ${receivedMB} MB${totalText}`);
   }
 
   return new Blob(chunks, { type: contentType });
   } catch (error) {
+    if (options.signal?.aborted) throw options.signal.reason || error;
     if (controller.signal.aborted) throw new Error('Video aktarımı durdu. Bağlantını kontrol edip tekrar dene.');
     throw error;
   } finally {
     clearTimeout(idleTimer);
+    clearTimeout(totalTimer);
+    options.signal?.removeEventListener('abort', onAbort);
     controller.abort();
     try { await reader?.cancel(); } catch {}
     reader?.releaseLock();
