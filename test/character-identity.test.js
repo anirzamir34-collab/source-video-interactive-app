@@ -295,3 +295,18 @@ test('non-story position metadata prevents an ordinary relationship label even w
   assert.equal(action.relationshipResolution, 'unknown');
   assert.equal(storyChoiceLabelForAction(action), 'Kesiti oynat · Ayşe');
 });
+
+test('verified spouse and partner roles reach adult movement cards while family roles remain neutral context', () => {
+  const spouse = bindActionCharacter({ label: 'Onunla ritmi sürdür', subjectTrackId: 'MAIN_MALE',
+    primaryCharacterId: 'MERAL', involvedCharacterIds: ['DANNY', 'MERAL'], adultScene: true,
+    positionId: 'position-1' }, cast);
+  assert.equal(spouse.relationshipRoleLabel, 'eşi');
+  assert.equal(storyChoiceLabelForAction(spouse), 'Eşiyle ritmi sürdür');
+
+  const family = { ...cast, relationships: [relationshipFact('DANNY', 'DENIZ', 'kızı')] };
+  const familyAction = bindActionCharacter({ label: 'Kesiti oynat', subjectTrackId: 'MAIN_MALE',
+    primaryCharacterId: 'DENIZ', involvedCharacterIds: ['DANNY', 'DENIZ'], adultScene: true,
+    positionId: 'position-2' }, family);
+  assert.equal(familyAction.relationshipResolution, 'unknown');
+  assert.equal(storyChoiceLabelForAction(familyAction), 'Kesiti oynat · Deniz');
+});

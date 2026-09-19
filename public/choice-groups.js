@@ -11,7 +11,6 @@ export function groupSourceChoiceCards(clips, { preferredCount = 5, contextFor, 
     .filter(clip => clip?.sourceVerified === true && clip.id && clipRange(clip))
     .sort((a, b) => clipRange(a).startTime - clipRange(b).startTime || String(a.id).localeCompare(String(b.id)));
   const target = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
-  const capacity = Math.max(3, Math.min(6, Math.ceil(source.length / target)));
   const groups = new Map();
   for (const clip of source) {
     const label = sourceActionLabel(labelFor?.(clip) || clip.label);
@@ -19,8 +18,10 @@ export function groupSourceChoiceCards(clips, { preferredCount = 5, contextFor, 
     const occurrence = text(contextFor?.(clip));
     const declaredScope = [text(clip.adultSceneId), text(clip.sourcePositionId), text(clip.positionOccurrenceId)];
     const hasScope = Boolean(occurrence || declaredScope.some(Boolean));
-    const type = text(clip.actionType).toLowerCase();
-    const kind = ['position', 'tempo_change', 'movement'].includes(type) ? 'movement' : type;
+    const rawType = text(clip.actionType || clip.movementType).toLocaleLowerCase('tr-TR');
+    const kind = !rawType ? ''
+      : /(?:position|tempo|movement|rhythm|thrust|ritim|hareket)/u.test(rawType) ? 'movement'
+        : 'contact';
     const key = JSON.stringify([
       occurrence || declaredScope,
       text(clip.partnerTrackId), text(clip.subjectTrackId), text(clip.primaryCharacterId),
@@ -37,6 +38,9 @@ export function groupSourceChoiceCards(clips, { preferredCount = 5, contextFor, 
   }
   const cards = [];
   for (const group of groups.values()) {
+    const groupSize = [...group.packets.values()].reduce((sum, packet) => sum + packet.length, 0);
+    const proportionalCards = Math.max(1, Math.round(target * groupSize / Math.max(1, source.length)));
+    const capacity = groupSize <= 2 ? groupSize : Math.max(3, Math.min(6, Math.ceil(groupSize / proportionalCards)));
     let pending = [];
     const flush = () => {
       if (!pending.length) return;

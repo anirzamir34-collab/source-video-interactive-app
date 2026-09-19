@@ -138,7 +138,7 @@ export function storyChoiceLabelForAction(action = {}) {
   const fallback = cleanText(action.label, 180) || 'Devam et';
   const narrative = cleanText(action.narrativeChoiceLabel, 180);
   const withCharacter = label => {
-    if (isOrdinaryRelationshipAction(action) && action.relationshipResolution === 'verified' &&
+    if (action.relationshipResolution === 'verified' &&
         action.relationshipSubjectId && action.relationshipTargetId &&
         verifiedRoleNoun(action.relationshipRoleLabel)) {
       return relationshipChoiceLabel(label, action.relationshipRoleLabel, action.relationshipOwnerLabel);

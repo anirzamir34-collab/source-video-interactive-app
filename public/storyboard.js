@@ -44,8 +44,15 @@ export function sheetsPerAnalysisChunk(qualityMode = 'ultra', remote = false) {
 export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityMode = 'ultra') {
   const sheets = Math.max(1, Math.floor(Number(sheetCount) || 1));
   const seconds = Math.max(1, Number(duration) || 1);
-  const targetSeconds = String(qualityMode || 'ultra').toLowerCase() === 'fast' ? 85 : 50;
-  const desiredChunks = Math.min(15, Math.max(1, Math.ceil(seconds / targetSeconds)));
+  const fast = String(qualityMode || 'ultra').toLowerCase() === 'fast';
+  // Model calls scale with the source duration, not with a dense patch of
+  // focused frames. Short videos should never pay the fifteen-call ceiling.
+  const targetSeconds = fast ? 125 : 95;
+  const durationCeiling = seconds <= 180 ? 3
+    : seconds <= 480 ? 6
+      : seconds <= 900 ? 10
+        : seconds <= 1800 ? 12 : 15;
+  const desiredChunks = Math.min(durationCeiling, Math.max(1, Math.ceil(seconds / targetSeconds)));
   const sheetsPerChunk = Math.max(1, Math.ceil(sheets / desiredChunks));
   return { sheetsPerChunk, chunkCount: Math.ceil(sheets / sheetsPerChunk) };
 }

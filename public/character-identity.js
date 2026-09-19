@@ -1,5 +1,5 @@
 import { resolveLeadingCharacterReference, verifiedRoleNoun, relationshipChoiceLabel } from './character-reference.js';
-import { inverseRelationshipRole, isOrdinaryRelationshipAction } from './relationship-roles.js';
+import { inverseRelationshipRole, isAdultSocialRelationshipRole, isOrdinaryRelationshipAction } from './relationship-roles.js';
 // Names come from source evidence and explicit tracks, never appearance or a relationship guess.
 const text = value => String(value || '').trim().replace(/\s+/g, ' ');
 const nameKey = value => text(value).toLocaleLowerCase('tr-TR');
@@ -153,7 +153,8 @@ export function bindActionCharacter(action, context = {}) {
   }
   // Relationship labels are story context only. Intimate controls retain the
   // verified name/track so a family role never becomes erotic UI wording.
-  if (target && isOrdinaryRelationshipAction(action)) {
+  if (target) {
+    const ordinaryRelationshipAction = isOrdinaryRelationshipAction(action);
     let subject = lookup(action.subjectTrackId);
     if (declared.length && !present.includes(subject)) subject = null;
     // A group has no implicit actor. Only an exact two-person scene can supply
@@ -163,13 +164,14 @@ export function bindActionCharacter(action, context = {}) {
     }
     const subjectName = verifiedCharacterName(subject);
     const targetName = verifiedCharacterName(target);
-    if (subject && subject !== target && subjectName && targetName &&
+    if (ordinaryRelationshipAction && subject && subject !== target && subjectName && targetName &&
         (action.groupScene === true || present.length > 2)) {
       result.characterPairLabel = `${subjectName} → ${targetName}`;
       result.characterPairResolution = 'verified';
     }
     const relation = verifiedRelationship(context, subject, target);
-    if (relation) {
+    const canShowRelationship = relation && (ordinaryRelationshipAction || isAdultSocialRelationshipRole(relation.relation));
+    if (canShowRelationship) {
       targetRole = verifiedRoleNoun(relation.relation);
       result.relationshipRoleLabel = targetRole;
       result.relationshipOwnerLabel = action.groupScene === true || present.length > 2 ? subjectName : '';

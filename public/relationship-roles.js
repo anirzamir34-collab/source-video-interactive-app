@@ -65,6 +65,15 @@ export function inverseRelationshipRole(value) {
   return inverse.get(relationshipRoleNoun(value)) || '';
 }
 
+const adultSocialRoles = new Set([
+  'eşi', 'karısı', 'kocası', 'sevgilisi', 'kız arkadaşı', 'erkek arkadaşı',
+  'arkadaşı', 'dostu', 'yakın arkadaşı', 'eski eşi', 'eski sevgilisi'
+]);
+
+export function isAdultSocialRelationshipRole(value) {
+  return adultSocialRoles.has(relationshipRoleNoun(value));
+}
+
 export function isOrdinaryRelationshipAction(action = {}) {
   return action.adultScene !== true && !action.positionId && !action.positionLabel &&
     !['oral', 'manual', 'vaginal', 'anal'].includes(String(action.activityType || '').toLowerCase());

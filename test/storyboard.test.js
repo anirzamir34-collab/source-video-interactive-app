@@ -12,14 +12,16 @@ import {
 
 test('analysis chunks scale with video length and stay capped at fifteen', () => {
   assert.deepEqual(adaptiveAnalysisChunkPlan(12, 578, 'ultra'), {
-    sheetsPerChunk: 1,
-    chunkCount: 12
+    sheetsPerChunk: 2,
+    chunkCount: 6
   });
   assert.deepEqual(adaptiveAnalysisChunkPlan(40, 3600, 'ultra'), {
     sheetsPerChunk: 3,
     chunkCount: 14
   });
   assert.equal(adaptiveAnalysisChunkPlan(2, 45, 'ultra').chunkCount, 1);
+  assert.ok(adaptiveAnalysisChunkPlan(30, 180, 'ultra').chunkCount <= 3);
+  assert.ok(adaptiveAnalysisChunkPlan(40, 773, 'ultra').chunkCount <= 10);
 });
 
 test('analysis chunk planning reduces calls without dropping storyboard frames', () => {
