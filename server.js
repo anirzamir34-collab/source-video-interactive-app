@@ -1176,6 +1176,21 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
+function registerResolvedVideoSession(resolved) {
+  const token = crypto.randomBytes(18).toString('hex');
+  resolvedVideoSessions.set(token, {
+    sourceUrl: resolved.sourceUrl,
+    referer: resolved.pageUrl || resolved.sourceUrl,
+    cookie: resolved.cookie || '',
+    type: resolved.type || 'video',
+    userAgent: resolved.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+    extractor: resolved.extractor || 'direct',
+    // Analysis and later gameplay may share this source for a long mobile run.
+    expiresAt: Date.now() + 4 * 60 * 60 * 1000
+  });
+  return token;
+}
+
 async function resolvePublicVideoPage(startUrl) {
   const queue = [{ url: startUrl, depth: 0, referer: startUrl, cookie: '' }];
   const visited = new Set();
@@ -1326,11 +1341,17 @@ app.post('/api/resolve-video-url', async (req, res) => {
 
     if (/\.(mp4|webm|m4v|mov|m3u8)$/.test(pathname)) {
       await validatePublicUrl(normalizedUrl);
+      const type = pathname.endsWith('.m3u8') ? 'hls' : 'video';
+      const token = registerResolvedVideoSession({
+        sourceUrl: normalizedUrl,
+        pageUrl: normalizedUrl,
+        type
+      });
       return res.json({
         ok: true,
-        type: pathname.endsWith('.m3u8') ? 'hls' : 'video',
+        type,
         sourceUrl: normalizedUrl,
-        proxyUrl: `/api/video-proxy?url=${encodeURIComponent(normalizedUrl)}`
+        proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`
       });
     }
 
@@ -1382,18 +1403,7 @@ app.post('/api/resolve-video-url', async (req, res) => {
       });
     }
 
-    const token = crypto.randomBytes(18).toString('hex');
-    resolvedVideoSessions.set(token, {
-      sourceUrl: resolved.sourceUrl,
-      referer: resolved.pageUrl,
-      cookie: resolved.cookie,
-      type: resolved.type,
-      userAgent: resolved.userAgent,
-      extractor: resolved.extractor,
-      // Stream-first analysis seeks through this proxy throughout analysis and
-      // later gameplay, so the source session must outlive a long mobile run.
-      expiresAt: Date.now() + 4 * 60 * 60 * 1000
-    });
+    const token = registerResolvedVideoSession(resolved);
 
     res.json({
       ok: true,
@@ -1778,6 +1788,75 @@ async function transcribeDialogueGemini35(ai, remoteFile) {
   return { transcriptText: String(interaction?.output_text || '').trim(), words, segments: groupTranscribeWords(words) };
 }
 
+function remoteDialogueFfmpegArgs(session, outputPath, duration = 0) {
+  const referer = String(session.referer || '');
+  const headerLines = [
+    `User-Agent: ${session.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36'}`,
+    referer ? `Referer: ${referer}` : '',
+    referer ? `Origin: ${new URL(referer).origin}` : '',
+    session.cookie ? `Cookie: ${session.cookie}` : ''
+  ].filter(Boolean).join('\r\n') + '\r\n';
+  const safeDuration = Math.min(Math.max(0, Number(duration) || 0) + 5, 3 * 60 * 60);
+  return [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-protocol_whitelist', 'http,https,tcp,tls,crypto',
+    '-rw_timeout', '45000000',
+    '-headers', headerLines,
+    '-i', session.sourceUrl,
+    ...(safeDuration > 5 ? ['-t', String(safeDuration)] : []),
+    '-map', '0:a:0?', '-vn', '-ac', '1', '-ar', '16000',
+    '-c:a', 'libmp3lame', '-b:a', '64k', '-map_metadata', '-1',
+    outputPath
+  ];
+}
+
+async function prepareRemoteDialogueAudio(remoteToken, duration = 0) {
+  const session = resolvedVideoSessions.get(String(remoteToken || ''));
+  if (!session || session.expiresAt <= Date.now()) {
+    if (remoteToken) resolvedVideoSessions.delete(String(remoteToken));
+    const error = new Error('VIDEO_SESSION_EXPIRED');
+    error.status = 410;
+    throw error;
+  }
+  await validatePublicUrl(session.sourceUrl);
+  if (session.referer) await validatePublicUrl(session.referer);
+
+  const tempDirectory = '/tmp/videoquest-dialogue';
+  await fs.promises.mkdir(tempDirectory, { recursive: true });
+  const outputPath = path.join(tempDirectory, `${crypto.randomUUID()}.mp3`);
+  const args = remoteDialogueFfmpegArgs(session, outputPath, duration);
+
+  try {
+    await new Promise((resolve, reject) => {
+      const process = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      const timeout = setTimeout(() => {
+        process.kill('SIGTERM');
+        reject(new Error('REMOTE_AUDIO_PREPARATION_TIMEOUT'));
+      }, 20 * 60 * 1000);
+      timeout.unref();
+      process.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-3000); });
+      process.once('error', error => { clearTimeout(timeout); reject(error); });
+      process.once('close', code => {
+        clearTimeout(timeout);
+        if (code === 0) resolve();
+        else reject(new Error(`REMOTE_AUDIO_PREPARATION_FAILED:${stderr || `ffmpeg ${code}`}`));
+      });
+    });
+    const stat = await fs.promises.stat(outputPath);
+    if (!stat.size) throw new Error('REMOTE_AUDIO_EMPTY');
+    return {
+      path: outputPath,
+      originalname: 'url-dialogue.mp3',
+      mimetype: 'audio/mpeg',
+      size: stat.size
+    };
+  } catch (error) {
+    try { await fs.promises.unlink(outputPath); } catch {}
+    throw error;
+  }
+}
+
 app.post(
   '/api/gemini-dialogue-analyze',
   dialogueUpload.single('video'),
@@ -1806,7 +1885,7 @@ app.post(
     }
 
     const apiKey = resolveGeminiApiKey(req);
-    const tempPath = req.file?.path;
+    let tempPath = req.file?.path;
     let uploadedFile = null;
 
     try {
@@ -1816,6 +1895,12 @@ app.post(
           reason: 'GEMINI_NOT_CONFIGURED',
           message: 'Gemini API anahtarı yapılandırılmamış.'
         });
+      }
+
+      const remoteToken = String(req.body?.remoteToken || '').trim();
+      if (!req.file && remoteToken) {
+        req.file = await prepareRemoteDialogueAudio(remoteToken, req.body?.duration);
+        tempPath = req.file.path;
       }
 
       if (!req.file || !tempPath) {
@@ -2209,6 +2294,13 @@ Rules:
     } catch (error) {
       console.error('Dialogue analysis failed:', error);
       const details = String(error?.message || error);
+      if (details.includes('VIDEO_SESSION_EXPIRED')) {
+        return res.status(410).json({
+          available: false,
+          reason: 'VIDEO_SESSION_EXPIRED',
+          message: 'Video bağlantısının süresi doldu. Bağlantıyı yeniden aç.'
+        });
+      }
       if (details.includes('RESOURCE_EXHAUSTED') || details.includes('429') || details.includes('quota')) {
         dialogueQuotaBlockedUntil = Date.now() + (ttsQuotaRetrySeconds(details) || 3600) * 1000;
       }
@@ -2511,7 +2603,7 @@ function elevenV3DeliveryTag(emotion = '') {
   return '';
 }
 
-async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotion = '', previousText = '', nextText = '' }) {
+async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotion = '' }) {
   const voiceSet = await elevenLabsVoices(apiKey);
   const requested = String(voiceId || '').trim();
   const voice = voiceSet.voices.find(item => item.voice_id === requested) ||
@@ -2527,8 +2619,6 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
         text: [elevenV3DeliveryTag(emotion), text].filter(Boolean).join(' '),
         model_id: 'eleven_v3',
         language_code: 'tr',
-        previous_text: String(previousText || '').slice(-600) || undefined,
-        next_text: String(nextText || '').slice(0, 600) || undefined,
         voice_settings: {
           // Eleven v3 Natural mode: expressive without the hallucination risk
           // of Creative or the mechanical delivery of Robust.

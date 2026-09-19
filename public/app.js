@@ -1142,10 +1142,48 @@ async function uploadDialogueWithProgress(
   };
 }
 
-async function analyzeSelectedDialogue(file) {
+function selectedRemoteToken(remoteVideo) {
+  try {
+    return new URL(remoteVideo?.proxyUrl || '', location.origin).searchParams.get('token') || '';
+  } catch {
+    return '';
+  }
+}
+
+async function analyzeSelectedDialogue(file, remoteVideo = null) {
   els.analysisCard.classList.remove('hidden');
   els.analysisTitle.textContent = 'Video diyaloğu analiz ediliyor';
   els.analysisState.textContent = 'AUDIO_ANALYSIS';
+
+  const remoteToken = !file ? selectedRemoteToken(remoteVideo) : '';
+  if (remoteToken) {
+    els.analysisTitle.textContent = 'Render konuşma sesini hazırlıyor';
+    els.analysisOutput.textContent =
+      'Video telefona yeniden indirilmeden kaynaktan işleniyor.\n' +
+      'Ses, konuşma kalitesi korunarak küçük MP3 biçimine dönüştürülüyor...';
+    const form = new FormData();
+    form.append('remoteToken', remoteToken);
+    form.append('duration', String(Number(els.video.duration) || 0));
+    form.append('protagonistProfile', String(els.protagonistInput?.value || '').trim());
+    const response = await fetch('/api/gemini-dialogue-analyze', {
+      method: 'POST',
+      headers: geminiRequestHeaders(),
+      body: form
+    });
+    const body = await response.json().catch(() => ({}));
+    recordAiUsage(body?.aiUsage);
+    if (!response.ok || !body.available) {
+      throw new Error(body.error || body.message || `HTTP ${response.status}`);
+    }
+    state.dialogue = {
+      ...body,
+      segments: Array.isArray(body.segments) ? body.segments : [],
+      dubSegments: buildDubBlocks(Array.isArray(body.segments) ? body.segments : [])
+    };
+    return state.dialogue;
+  }
+
+  if (!file) throw new Error('Diyalog analizi için video bulunamadı.');
   els.analysisOutput.textContent =
     `Konuşma sesi hazırlanıyor...\n` +
     `${(file.size / 1024 / 1024).toFixed(1)} MB`;
@@ -1957,12 +1995,13 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Motion-only analysis stays visual and must not spend time or AI quota on audio.
   if (modes.subtitles || modes.dubbing) {
     try {
-      if (!file) {
+      const remoteForDialogue = !file ? state.selectedRemoteVideo : null;
+      if (!file && !selectedRemoteToken(remoteForDialogue)) {
         els.analysisTitle.textContent = 'Ses analizi için video indiriliyor';
         file = await ensureSelectedRemoteFile();
         session.file = file;
       }
-      const dialogue = session.dialogue || await analyzeSelectedDialogue(file);
+      const dialogue = session.dialogue || await analyzeSelectedDialogue(file, remoteForDialogue);
       session.dialogue = dialogue;
       state.dialogue = dialogue;
 

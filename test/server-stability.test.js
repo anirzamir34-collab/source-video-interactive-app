@@ -70,7 +70,23 @@ test('Eleven v3 delivery keeps neutral lines clean and maps grounded emotion con
   assert.equal(f.scope.elevenV3DeliveryTag('unrecognized-state'), '');
   assert.match(source, /model_id:\s*'eleven_v3'/);
   assert.match(source, /stability:\s*0\.5/);
+  assert.doesNotMatch(section('async function elevenLabsSynthesize(', '\n\nfunction elevenLabsErrorResponse('), /previous_text|next_text/);
   assert.doesNotMatch(source, /model_id:\s*'eleven_multilingual_v2'/);
+});
+
+test('remote dialogue audio uses compact speech-optimized MP3 settings', () => {
+  const f = fixture(section('function remoteDialogueFfmpegArgs(', '\n\nasync function prepareRemoteDialogueAudio('));
+  const args = f.scope.remoteDialogueFfmpegArgs({
+    sourceUrl: 'https://example.com/video.mp4',
+    referer: 'https://example.com/watch',
+    userAgent: 'test-agent'
+  }, '/tmp/dialogue.mp3', 600);
+  assert.deepEqual(Array.from(args.slice(args.indexOf('-map'))), [
+    '-map', '0:a:0?', '-vn', '-ac', '1', '-ar', '16000',
+    '-c:a', 'libmp3lame', '-b:a', '64k', '-map_metadata', '-1',
+    '/tmp/dialogue.mp3'
+  ]);
+  assert.ok(args.includes('605'));
 });
 
 test('expired video token returns 410 without contacting any upstream', async () => {
