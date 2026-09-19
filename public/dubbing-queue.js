@@ -1,24 +1,27 @@
-// One provider request at a time, but the current line takes precedence over
-// speculative preload work. Keys deduplicate requests and can be promoted.
-export function createDubRequestQueue() {
+// A small bounded provider pool keeps preparation moving without creating a
+// rate-limit burst. The current line still takes precedence over speculative
+// preload work; keys remain deduplicated and promotable.
+export function createDubRequestQueue(maxConcurrent = 1) {
   const pending = new Map();
-  let active = false;
+  const limit = Math.max(1, Math.min(2, Math.floor(Number(maxConcurrent) || 1)));
+  let activeCount = 0;
   let scheduled = false;
   let sequence = 0;
 
   function schedule() {
-    if (active || scheduled || !pending.size) return;
+    if (activeCount >= limit || scheduled || !pending.size) return;
     scheduled = true;
     Promise.resolve().then(async () => {
       scheduled = false;
-      if (active || !pending.size) return;
+      if (activeCount >= limit || !pending.size) return;
       const job = [...pending.values()].sort((a, b) =>
         b.priority - a.priority || a.sequence - b.sequence)[0];
       pending.delete(job.key);
-      active = true;
+      activeCount += 1;
+      schedule();
       try { job.resolve(await job.run()); }
       catch (error) { job.reject(error); }
-      finally { active = false; schedule(); }
+      finally { activeCount -= 1; schedule(); }
     });
   }
 

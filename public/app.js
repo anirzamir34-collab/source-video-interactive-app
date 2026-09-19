@@ -119,7 +119,7 @@ const state = {
   dubUnavailableUntil: 0,
   dubFailureReason: '',
   dubProviderLock: '',
-  dubQueue: createDubRequestQueue(),
+  dubQueue: createDubRequestQueue(2),
   dubBuffer: null,
   dubVoiceIds: { female: '', male: '' },
   dubStableSpeakerGenders: new Map(),
@@ -1667,7 +1667,7 @@ function resetDubState() {
   state.dubFailureReason = '';
   state.dubProviderLock = '';
   state.dubQueue.clear();
-  state.dubQueue = createDubRequestQueue();
+  state.dubQueue = createDubRequestQueue(2);
   state.dubStableSpeakerGenders.clear();
   state.dubPlayedSegmentIds.clear();
   state.dubVoiceIds = { female: '', male: '' };
@@ -1972,6 +1972,22 @@ els.analyzeBtn.addEventListener('click', async () => {
     : `remote:${state.selectedRemoteVideo?.sourceUrl || state.selectedRemoteVideo?.proxyUrl || ''}`;
   const requestedProtagonist = String(els.protagonistInput?.value || '').trim();
   let analysisModeKey = '';
+  let dubPreparation = null;
+  let dubPreparationPlan = null;
+  const finishCompleteDub = async () => {
+    if (!dubPreparation || !dubPreparationPlan) return;
+    const { dialogue, dubSegments } = dubPreparationPlan;
+    const ready = await dubPreparation;
+    if (ready !== dubSegments.length) {
+      const reason = state.dubFailureReason ? ` (${state.dubFailureReason})` : '';
+      throw new Error(`Dublaj eksik kaldı: ${ready}/${dubSegments.length} blok hazır${reason}. Video dublajsız başlatılmadı.`);
+    }
+    dialogue.dubCoverage = { ready, total: dubSegments.length, complete: true };
+    const initialSegments = nextDialogueSegments(dubSegments, 0, 2);
+    await Promise.all(initialSegments.map(segment => prepareDubAudio(segment)));
+    dubPreparation = null;
+    dubPreparationPlan = null;
+  };
   const reusableSession = state.analysisSession?.sourceKey === sourceKey;
   const session = reusableSession ? state.analysisSession : {
     sourceKey, file: file || null, dialogue: null, storyboard: null,
@@ -2035,17 +2051,20 @@ els.analyzeBtn.addEventListener('click', async () => {
         els.analysisTitle.textContent = 'Türkçe dublajın tamamı hazırlanıyor';
         els.analysisOutput.textContent = `0/${dubSegments.length} konuşma bloğu hazır…`;
         if (!state.dubVoiceIds.female || !state.dubVoiceIds.male) await testElevenLabsKey();
-        const ready = await prepareCompleteDubTimeline(dubSegments, 1, (completed, total) => {
-          els.analysisOutput.textContent = `${completed}/${total} konuşma bloğu ElevenLabs ile hazırlandı…`;
+        let completedDubBlocks = 0;
+        dubPreparationPlan = { dialogue, dubSegments };
+        dubPreparation = prepareCompleteDubTimeline(dubSegments, 2, (completed, total) => {
+          completedDubBlocks = completed;
+          if (!modes.motion) {
+            els.analysisOutput.textContent = `${completed}/${total} konuşma bloğu ElevenLabs ile hazırlandı…`;
+          }
         });
-        if (ready !== dubSegments.length) {
-          const reason = state.dubFailureReason ? ` (${state.dubFailureReason})` : '';
-          throw new Error(`Dublaj eksik kaldı: ${ready}/${dubSegments.length} blok hazır${reason}. Video dublajsız başlatılmadı.`);
+        if (!modes.motion) {
+          await finishCompleteDub();
+          els.analysisOutput.textContent = `${dialogue.dubCoverage.ready}/${dubSegments.length} konuşma bloğunun tamamı Türkçe dublaja hazır.`;
+        } else {
+          logEngineEvent('DUB_PREPARATION_OVERLAPPED', { total: dubSegments.length, completed: completedDubBlocks });
         }
-        dialogue.dubCoverage = { ready, total: dubSegments.length, complete: true };
-        const initialSegments = nextDialogueSegments(dubSegments, 0, 2);
-        for (const segment of initialSegments) await prepareDubAudio(segment);
-        els.analysisOutput.textContent = `${ready}/${dubSegments.length} konuşma bloğunun tamamı Türkçe dublaja hazır.`;
       }
 
       if (!modes.motion) {
@@ -2529,6 +2548,13 @@ els.analyzeBtn.addEventListener('click', async () => {
     setGameState('ERROR');
     renderDebug({ lastAnalyzeBody: body });
     return;
+  }
+
+  if (dubPreparation) {
+    els.analysisState.textContent = 'FINALIZING_DUB';
+    els.analysisTitle.textContent = 'Görsel analiz hazır · dublaj tamamlanıyor';
+    els.analysisOutput.textContent = 'Görsel analiz sürerken hazırlanan Türkçe seslerin son kontrolü yapılıyor…';
+    await finishCompleteDub();
   }
 
   let normalized = normalizeAnalysis(body);

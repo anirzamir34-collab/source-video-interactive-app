@@ -19,6 +19,30 @@ test('equal-priority jobs stay serial and stable; a failed job does not stall th
   assert.deepEqual(results.map(item => item.status), ['fulfilled', 'rejected', 'fulfilled']);
 });
 
+test('bounded preparation mode runs two provider jobs without starting a third', async () => {
+  const queue = createDubRequestQueue(2);
+  const releases = [];
+  let active = 0;
+  let peak = 0;
+  const job = id => () => new Promise(resolve => {
+    active += 1;
+    peak = Math.max(peak, active);
+    releases.push(() => { active -= 1; resolve(id); });
+  });
+  const pending = ['one', 'two', 'three'].map(id => queue.enqueue(id, job(id)));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(active, 2);
+  assert.equal(releases.length, 2);
+  releases.shift()();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(active, 2);
+  assert.equal(peak, 2);
+  while (releases.length) releases.shift()();
+  await Promise.all(pending);
+});
+
 test('a seek demotes old urgent work and the next selected timestamp gets priority', async () => {
   const queue = createDubRequestQueue();
   const calls = [];
