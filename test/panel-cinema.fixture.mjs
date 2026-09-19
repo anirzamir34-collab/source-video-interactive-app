@@ -5,7 +5,7 @@ const root = new URL('../public/', import.meta.url);
 const source = await fs.readFile(new URL('index.html', root), 'utf8');
 const css = (await Promise.all(['styles.css', 'player-controls.css', 'panel-cinema.css']
   .map(name => fs.readFile(new URL(name, root), 'utf8')))).join('\n');
-const feedback = (await Promise.all(['display-labels.js', 'clip-details.js', 'panel-feedback.js']
+const feedback = (await Promise.all(['display-labels.js', 'panel-feedback.js']
   .map(name => fs.readFile(new URL(name, root), 'utf8')))).join('\n')
   .replace(/^import .*;$/gm, '').replaceAll('export function', 'function');
 function setup() {
@@ -27,13 +27,9 @@ function setup() {
   document.getElementById('positionTabs').innerHTML = ['Orman yolu', 'Nehir kıyısı', 'Kamp alanı'].map((label, i) =>
     `<button type="button" class="position-tab ${i ? '' : 'active'}">${label}</button>`).join('');
   document.getElementById('movementChoices').innerHTML = ['Patikayı takip et', 'Manzaraya bak', 'Yürüyüşe devam et'].map((label, i) =>
-    `<div class="movement-choice-wrap"><button type="button" class="movement-choice-card" data-movement-choice-id="choice-${i}" data-variant-ids="clip-${i}"><span>${label}</span><small class="movement-variant-status" data-variant-status>Kesitler</small></button></div>`).join('');
+    `<div class="movement-choice-wrap"><button type="button" class="movement-choice-card" data-movement-choice-id="choice-${i}" data-variant-ids="clip-${i}"><span data-choice-label>${label}</span><small class="movement-variant-status" data-variant-status>Kesitler</small></button></div>`).join('');
   document.getElementById('rhythmTapLabel').textContent = 'DEVAM ET';
-  document.getElementById('rhythmTapStatus').textContent = '4 kesit hazır · sonraki 0:20';
-  document.getElementById('clipNavigatorSummary').textContent = '4 kesiti gör';
-  document.getElementById('clipNavigator').classList.remove('hidden');
-  document.getElementById('clipNavigatorList').innerHTML = ['0:20 – 0:30', '0:30 – 0:40', '0:40 – 0:50', '0:50 – 1:00'].map((t, i) =>
-    `<button class="clip-navigator-choice">${i + 1}. kesit · ${t}</button>`).join('');
+  document.getElementById('rhythmTapStatus').textContent = 'Hazır';
   document.getElementById('choices').classList.add('hidden');
   const video = document.getElementById('video');
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#182a33"/><path d="M0 720L400 280L690 520L930 190L1280 650V720" fill="#385c5c"/><circle cx="240" cy="180" r="70" fill="#cfb785"/><g fill="#e8f6f0" font-family="sans-serif" font-size="32"><text x="24" y="48">1</text><text x="1220" y="48">2</text><text x="24" y="695">3</text><text x="1220" y="695">4</text><text x="410" y="140">SOURCE FRAME · 16:9</text></g></svg>';
@@ -41,11 +37,12 @@ function setup() {
   const media = { currentTime: 15, paused: false, seeking: false };
   const choiceClips = [18, 4, 1].map((count, i) => ({ id: `choice-${i}`,
     variants: Array.from({ length: count }, (_, j) => ({ id: `clip-${i}-${j}`, sourceVerified: true,
+      label: ['Patikayı takip et', 'Manzaraya bak', 'Yürüyüşe devam et'][i],
       loopStartTime: 10 + j * 8, loopEndTime: 18 + j * 8 })) }));
   document.querySelectorAll('[data-movement-choice-id]').forEach((card, i) => {
     card.dataset.variantIds = choiceClips[i].variants.map(item => item.id).join(',');
   });
-  const snapshot = { scope: 'scene-a', choiceClips, clip: { id: 'clip-0-0', startTime: 10, endTime: 18 } };
+  const snapshot = { scope: 'scene-a', controlScope: 'scene-a', choiceClips, clip: choiceClips[0].variants[0] };
   for (const key of ['currentTime', 'paused', 'seeking']) Object.defineProperty(video, key, { get: () => media[key] });
   attachPanelFeedback({ stage, panel, video, choices: document.getElementById('choices'), getSnapshot: () => snapshot });
   document.getElementById('fullscreenBtn').onclick = () => stage.requestFullscreen();
@@ -54,7 +51,7 @@ function setup() {
   };
   const test = document.createElement('button');
   test.textContent = 'Durum testi'; test.id = 'fixtureStateTest';
-  test.style.cssText = 'position:absolute;top:10px;left:200px;z-index:9999';
+  test.style.cssText = 'position:absolute;top:80px;left:52px;z-index:9999';
   stage.append(test);
   test.onclick = () => {
     media.seeking = !media.seeking;
@@ -62,7 +59,7 @@ function setup() {
   };
   const choiceToggle = document.createElement('button');
   choiceToggle.textContent = 'Seçim ekranı'; choiceToggle.id = 'fixtureChoiceToggle';
-  choiceToggle.style.cssText = 'position:absolute;top:10px;left:310px;z-index:9999';
+  choiceToggle.style.cssText = 'position:absolute;top:118px;left:52px;z-index:9999';
   stage.append(choiceToggle);
   const choices = document.getElementById('choices');
   choices.innerHTML = `<div class="approach-status"><strong>Seçimler</strong></div>` +

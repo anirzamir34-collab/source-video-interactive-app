@@ -302,9 +302,6 @@ const els = {
   rhythmTapBtn: $('rhythmTapBtn'),
   rhythmTapLabel: $('rhythmTapLabel'),
   rhythmTapStatus: $('rhythmTapStatus'),
-  clipNavigator: $('clipNavigator'),
-  clipNavigatorSummary: $('clipNavigatorSummary'),
-  clipNavigatorList: $('clipNavigatorList'),
   outcomeSection: $('outcomeSection'),
   outcomeCount: $('outcomeCount'),
   outcomeChoices: $('outcomeChoices'),
@@ -4123,7 +4120,7 @@ function renderAdultApproachChoices(scene) {
       return cards.map((card, index) => ({
         kind: 'position', id: position.id,
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
-        label: card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
+        label: card?.variants?.[0]?.label || card?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
         startTime: Math.min(...(card?.variants || movements || []).map(item => Number(item.loopStartTime)).filter(Number.isFinite), Number(position.startTime)),
         endTime: Math.max(...(card?.variants || movements || []).map(item => Number(item.loopEndTime)).filter(Number.isFinite), Number(position.endTime)),
         playCount: Math.max(0, ...((card?.variants || movements || []).map(item =>
@@ -4617,7 +4614,7 @@ function updateRhythmControl(position) {
     state.adultOutcomePhase === 'idle' &&
     nextEnergetic
   );
-  els.rhythmControl?.classList.remove('hidden');
+  els.rhythmControl?.classList.toggle('hidden', !eligible);
   if (els.rhythmTapBtn) {
     els.rhythmTapBtn.disabled = !eligible;
     els.rhythmTapBtn.setAttribute('aria-label', eligible
@@ -4627,35 +4624,8 @@ function updateRhythmControl(position) {
   if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? 'SEKS' : 'SEKS KAPALI';
   if (els.rhythmTapStatus) {
     els.rhythmTapStatus.textContent = eligible
-      ? `${remaining.length} kesit hazır · sonraki ${adultTimeLabel(nextEnergetic.loopStartTime)}`
+      ? 'Hazır'
       : 'Bu bölümde ilerlenebilecek uygun kesit kalmadı';
-  }
-  if (els.clipNavigatorSummary) els.clipNavigatorSummary.textContent = `${eligible ? remaining.length : 0} kesiti gör`;
-  els.clipNavigator?.classList.toggle('hidden', !eligible);
-  if (els.clipNavigatorList) {
-    const renderedScene = state.adultScene;
-    const signature = `${renderedScene?.id}:${position?.id}:${state.activeAdultOccurrenceId}:${eligible}:` +
-      remaining.map(item => `${item.id}:${item.loopStartTime}:${item.loopEndTime}`).join('|');
-    if (els.clipNavigatorList.dataset.signature !== signature || els.clipNavigatorList.sourceScene !== renderedScene) {
-      els.clipNavigatorList.dataset.signature = signature;
-      els.clipNavigatorList.sourceScene = renderedScene;
-      els.clipNavigatorList.innerHTML = '';
-      if (eligible) remaining.forEach((item, index) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'clip-navigator-choice';
-        button.textContent = `${index + 1}. kesit · ${adultTimeLabel(item.loopStartTime)} – ${adultTimeLabel(item.loopEndTime)}`;
-        button.addEventListener('click', () => {
-          const current = position.movements.find(clip => clip.id === state.activeMovementId);
-          // A rendered menu is not playback authority: recheck on every tap.
-          if (state.adultScene !== renderedScene || state.activePositionId !== position.id || state.adultOutcomePhase !== 'idle' ||
-              !remainingPositionControlClips(position, current).some(clip => clip.id === item.id)) return;
-          selectAdultMovement(item.id, true, null, { awardProgress: false });
-          els.clipNavigator.open = false;
-        });
-        els.clipNavigatorList.appendChild(button);
-      });
-    }
   }
 }
 
@@ -4768,7 +4738,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     const tempoSummary = choice.hasTempoShift && choice.tempoVariants?.length
       ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
       : '';
-    button.innerHTML = `<span>${escapeHtml(choice.label)}</span>${variantStatus}${tempoSummary}`;
+    button.innerHTML = `<span data-choice-label>${escapeHtml(choice.label)}</span>${variantStatus}${tempoSummary}`;
     button.addEventListener('click', () => {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
@@ -5950,7 +5920,13 @@ attachPanelFeedback({
       state.adultScene?.foreplay?.find(item => item.id === state.activeAdultPreludeId) || state.activeAction;
     return {
       scope: `${state.analysisFingerprint}:${state.adultScene?.id}:${state.activePositionId}:${state.activeAdultOccurrenceId}`,
-      choiceClips: position?.activeMovementChoices || [],
+      controlScope: `${state.analysisFingerprint}:${state.adultScene?.id}:${state.activePositionId}`,
+      choiceClips: (position?.activeMovementChoices || []).map(choice => ({
+        ...choice,
+        nextClip: pickNextVariant(choice.variants,
+          choice.variants.some(item => item.id === state.activeMovementId) ? state.activeMovementId : null,
+          state.adultMovementPlayCounts)
+      })),
       clip, seeking: state.adultLoopSeeking || state.navigationSeeking,
       buffering: Boolean(state.dubBuffer), failed: Boolean(els.panelPlaybackRecovery)
     };
@@ -5978,18 +5954,26 @@ function keepGameVideoControlsHidden() {
 
 keepGameVideoControlsHidden();
 
+function updateFullscreenButton() {
+  if (!fullscreenBtn) return;
+  const active = document.fullscreenElement === fullscreenStage || document.webkitFullscreenElement === fullscreenStage;
+  const label = active ? 'Tam ekrandan çık' : 'Tam ekranı aç';
+  fullscreenBtn.setAttribute('aria-label', label);
+  fullscreenBtn.setAttribute('title', label);
+  fullscreenBtn.setAttribute('aria-pressed', String(active));
+}
+
+updateFullscreenButton();
+
 document.addEventListener('fullscreenchange', () => {
   keepGameVideoControlsHidden();
   syncAdultPanelPlacement(fullscreenStage);
-  if (fullscreenBtn) {
-    fullscreenBtn.textContent = document.fullscreenElement
-      ? '✕ TAM EKRANDAN ÇIK'
-      : '⛶ OYUN MODU';
-  }
+  updateFullscreenButton();
 });
 
 document.addEventListener('webkitfullscreenchange', () => {
   syncAdultPanelPlacement(fullscreenStage);
+  updateFullscreenButton();
 });
 
 

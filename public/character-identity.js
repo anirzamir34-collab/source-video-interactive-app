@@ -97,9 +97,18 @@ export function bindActionCharacter(action, context = {}) {
     if (subject && present.includes(subject) && others.length === 1) targetId = others[0].participantTrackId || others[0].id;
   }
   const candidate = lookup(targetId);
-  const mismatch = Boolean(candidate && declared.length && !present.includes(candidate));
+  const partnerCandidate = lookup(action.partnerTrackId);
+  const conflictingTargets = Boolean(action.primaryCharacterId && action.partnerTrackId && candidate &&
+    partnerCandidate && canonicalCharacterId(candidate) !== canonicalCharacterId(partnerCandidate));
+  const mismatch = conflictingTargets || Boolean(candidate && declared.length && !present.includes(candidate));
   const target = mismatch ? null : candidate;
   const result = { ...action };
+  // Derived labels must be rebuilt when a scene changes, never carried over.
+  result.relationshipDisplayLabel = '';
+  result.relationshipContext = '';
+  result.relationshipResolution = 'unknown';
+  result.characterPairLabel = '';
+  result.characterPairResolution = 'unknown';
   if (target) {
     result.primaryCharacterId = target.participantTrackId || target.id;
     result.primaryCharacterLabel = verifiedCharacterName(target) || participantLabel(target);
@@ -110,27 +119,34 @@ export function bindActionCharacter(action, context = {}) {
   }
   if (action.partnerTrackId) {
     const partner = lookup(action.partnerTrackId);
-    result.partnerLabel = partner && (!declared.length || present.includes(partner))
+    result.partnerLabel = !mismatch && partner && (!declared.length || present.includes(partner))
       ? verifiedCharacterName(partner) || participantLabel(partner) : '';
   }
   // Relationship labels are story context only. Intimate controls retain the
   // verified name/track so a family role never becomes erotic UI wording.
   if (target && action.adultScene !== true) {
-    const subject = lookup(action.subjectTrackId || 'MAIN_MALE');
+    let subject = lookup(action.subjectTrackId);
+    if (declared.length && !present.includes(subject)) subject = null;
+    // A group has no implicit actor. Only an exact two-person scene can supply
+    // the missing subject; an explicit but unresolved subject is not replaced.
+    if (!action.subjectTrackId && present.length === 2 && declared.every(lookup) && present.includes(target)) {
+      subject = present.find(character => character !== target);
+    }
+    const subjectName = verifiedCharacterName(subject);
+    const targetName = verifiedCharacterName(target);
+    if (subject && subject !== target && subjectName && targetName &&
+        (action.groupScene === true || present.length > 2)) {
+      result.characterPairLabel = `${subjectName} → ${targetName}`;
+      result.characterPairResolution = 'verified';
+    }
     const relation = verifiedRelationship(context, subject, target);
     if (relation) {
-      const subjectName = verifiedCharacterName(subject);
       result.relationshipDisplayLabel = subjectName
         ? `${subjectName} ile ilişkisi: ${text(relation.relation)}`
         : `İlişki: ${text(relation.relation)}`;
       result.relationshipContext = result.relationshipDisplayLabel;
       result.relationshipResolution = 'verified';
-    } else {
-      result.relationshipDisplayLabel = '';
-      result.relationshipResolution = 'unknown';
     }
-  } else {
-    result.relationshipDisplayLabel = '';
   }
   // Reject an ambiguous possessive description without inventing a replacement action.
   if (vaguePossessive.test(text(result.label))) result.label = 'Kesiti oynat';

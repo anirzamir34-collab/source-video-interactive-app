@@ -134,6 +134,9 @@ export function storyChoiceLabelForAction(action = {}) {
   const narrative = cleanText(action.narrativeChoiceLabel, 180);
   const withCharacter = label => {
     let character = cleanText(action.primaryCharacterLabel, 100);
+    if (action.adultScene !== true && action.characterPairResolution === 'verified') {
+      character = cleanText(action.characterPairLabel, 160) || character;
+    }
     // Participant IDs are internal tracking data, not story copy. Keep the
     // verified relationship below when a proper name is not yet established.
     if (action.adultScene !== true &&

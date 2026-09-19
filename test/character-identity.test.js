@@ -105,6 +105,52 @@ test('an explicit addressed character is preserved in a group scene', () => {
   assert.equal(action.primaryCharacterId, 'PARTNER_B');
 });
 
+test('four-person dialogue follows the actual speaker and target when the pair changes', () => {
+  const context = { characters: [
+    named('ALI', 'MAIN_MALE', 'Ali'), named('ECE', 'PARTNER_A', 'Ece'),
+    named('BERK', 'PARTNER_B', 'Berk'), named('DERYA', 'PARTNER_C', 'Derya')
+  ], relationships: [
+    { from: 'ALI', to: 'ECE', relation: 'eşi', evidenceLevel: 'fact', confidence: .95, evidence: 'Ali, Ece’yi eşi olarak tanıtıyor.' },
+    { from: 'BERK', to: 'DERYA', relation: 'eşi', evidenceLevel: 'fact', confidence: .95, evidence: 'Berk, Derya’yı eşi olarak tanıtıyor.' }
+  ] };
+  const action = { label: 'Soruyu sor', groupScene: true, adultScene: false,
+    involvedCharacterIds: ['ALI', 'ECE', 'BERK', 'DERYA'] };
+  const first = bindActionCharacter({ ...action, subjectTrackId: 'PARTNER_B', primaryCharacterId: 'DERYA', partnerTrackId: 'PARTNER_C' }, context);
+  assert.equal(first.characterPairLabel, 'Berk → Derya');
+  assert.equal(first.relationshipDisplayLabel, 'Berk ile ilişkisi: eşi');
+  assert.match(storyChoiceLabelForAction(first), /Berk → Derya/);
+  const second = bindActionCharacter({ ...first, subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'ECE', partnerTrackId: 'PARTNER_A' }, context);
+  assert.equal(second.characterPairLabel, 'Ali → Ece');
+  assert.equal(second.relationshipDisplayLabel, 'Ali ile ilişkisi: eşi');
+  assert.doesNotMatch(storyChoiceLabelForAction(second), /Berk|Derya/);
+});
+
+test('a group with no identified speaker never defaults to the first actor or retains stale relationships', () => {
+  const result = bindActionCharacter({ label: 'Konuşmayı sürdür', primaryCharacterId: 'MERAL',
+    involvedCharacterIds: ['DANNY', 'MERAL', 'DENIZ'], groupScene: true,
+    relationshipContext: 'Eski ilişki', relationshipDisplayLabel: 'Eski ilişki', characterPairLabel: 'Eski çift' }, cast);
+  assert.equal(result.primaryCharacterLabel, 'Meral');
+  assert.equal(result.relationshipDisplayLabel, '');
+  assert.equal(result.relationshipContext, '');
+  assert.equal(result.characterPairLabel, '');
+});
+
+test('a speaker absent from this action cannot contribute relationship copy', () => {
+  const result = bindActionCharacter({ label: 'Soruyu dinle', subjectTrackId: 'MAIN_MALE',
+    primaryCharacterId: 'MERAL', involvedCharacterIds: ['MERAL', 'DENIZ'] }, cast);
+  assert.equal(result.primaryCharacterLabel, 'Meral');
+  assert.equal(result.relationshipDisplayLabel, '');
+});
+
+test('conflicting primary and partner tracks do not produce two different names for one target', () => {
+  const result = bindActionCharacter({ label: 'Soruyu dinle', primaryCharacterId: 'MERAL', partnerTrackId: 'PARTNER_B',
+    involvedCharacterIds: ['DANNY', 'MERAL', 'DENIZ'] }, cast);
+  assert.equal(result.identityResolution, 'conflict');
+  assert.equal(result.primaryCharacterLabel, '');
+  assert.equal(result.partnerLabel, '');
+  assert.equal(result.characterPairLabel, '');
+});
+
 test('same names never merge distinct tracks and contradictory names do not silently replace each other', () => {
   const merged = mergeStoryContexts([{ characters: [cast.characters[1], named('OTHER_MERAL', 'PARTNER_B', 'Meral')] },
     { characters: [named('MERAL', 'PARTNER_A', 'Leyla')] }]);

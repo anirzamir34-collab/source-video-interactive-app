@@ -347,47 +347,25 @@ test('forward control never includes a disjoint return from another occurrence',
   assert.equal(f.nextEnergeticPositionMovement(position, null), null);
 });
 
-test('clip menu lists remaining verified clips and rechecks time at selection', () => {
+test('the scene control occupies space only while an existing clip is available', () => {
   const f = runtimeFixture();
   const position = chapter('navigation', 30);
   f.isEnergeticSexMoment = () => true;
   f.state.activeAdultOccurrenceId = 'source-navigation';
   f.state.activePositionId = position.id;
   f.els.video.time = 40;
-  const selections = [];
-  f.selectAdultMovement = (id, seek, unused, options) => selections.push({ id, seek, options });
   f.updateRhythmControl(position);
-  assert.equal(f.els.clipNavigatorList.children.length, 2);
-  assert.match(f.els.clipNavigatorSummary.textContent, /^2 /);
-  f.els.clipNavigator.open = true;
-  const [first, second] = f.els.clipNavigatorList.children;
-  first.dispatchEvent(new Event('click'));
-  assert.equal(selections[0].id, 'navigation-1');
-  assert.equal(selections[0].options.awardProgress, false);
-  assert.equal(f.els.clipNavigator.open, false);
+  assert.equal(f.els.rhythmControl.classes.has('hidden'), false);
+  assert.equal(f.els.rhythmTapBtn.disabled, false);
+  assert.equal(f.els.rhythmTapStatus.textContent, 'Hazır');
   f.els.video.time = 60;
-  second.dispatchEvent(new Event('click'));
-  assert.equal(selections.length, 1);
-});
-
-test('clip menu rebuilds for replacement scene objects and rejects old callbacks', () => {
-  const f = runtimeFixture();
-  const position = chapter('navigation', 30);
-  f.isEnergeticSexMoment = () => true;
-  f.state.activeAdultOccurrenceId = 'source-navigation';
-  f.state.activePositionId = position.id;
-  f.els.video.time = 40;
-  const selections = [];
-  f.selectAdultMovement = id => selections.push(id);
   f.updateRhythmControl(position);
-  const oldButton = f.els.clipNavigatorList.children[0];
-  f.state.adultScene = { ...f.state.adultScene };
-  oldButton.dispatchEvent(new Event('click'));
-  assert.equal(selections.length, 0);
-  f.updateRhythmControl(position);
-  assert.notEqual(f.els.clipNavigatorList.children[0], oldButton);
-  f.els.clipNavigatorList.children[0].dispatchEvent(new Event('click'));
-  assert.deepEqual(selections, ['navigation-1']);
+  assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
+  assert.equal(f.els.rhythmTapBtn.disabled, true);
+  f.updateRhythmControl(null);
+  assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
+  assert.equal(f.els.video.currentTime, 60);
+  assert.equal(f.els.video.playCalls, 0);
 });
 
 async function startFirstChapter(f) {

@@ -1,9 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forwardVerifiedClips, clipPlaybackFeedback } from '../public/panel-feedback.js';
+import { forwardVerifiedClips, clipPlaybackFeedback, sourceChoiceDisplayLabel, retainControlDismissal } from '../public/panel-feedback.js';
 
 const clip = (id, start, end, verified = true) => ({
   id, loopStartTime: start, loopEndTime: end, sourceVerified: verified
+});
+
+test('cards show the current source label and the selected next source label when idle', () => {
+  const variants = [
+    { ...clip('one', 10, 20), label: 'Patikayı takip et' },
+    { ...clip('two', 30, 40), label: 'Manzaraya bak · Sekans 2' }
+  ];
+  const choice = { label: 'Yürüyüş', variants, nextClip: variants[1] };
+  assert.equal(sourceChoiceDisplayLabel(choice, variants[0]), 'Patikayı takip et');
+  assert.equal(sourceChoiceDisplayLabel(choice, null), 'Manzaraya bak');
+  assert.equal(sourceChoiceDisplayLabel(choice, variants[1]), 'Manzaraya bak');
+  assert.equal(variants[1].label, 'Manzaraya bak · Sekans 2');
+});
+
+test('card labels reject foreign and unverified variants and hide internal tracking text', () => {
+  const valid = { ...clip('one', 10, 20), label: "Partner A'yı dinle" };
+  const invalid = { ...clip('two', 20, 30, false), label: 'Yanlış kesit' };
+  const choice = { label: 'Konuşma', variants: [invalid, valid], nextClip: invalid };
+  assert.equal(sourceChoiceDisplayLabel(choice, invalid), 'Onu dinle');
+  assert.equal(sourceChoiceDisplayLabel(choice, { id: 'foreign', label: 'Başka sahne' }), 'Onu dinle');
+  assert.equal(sourceChoiceDisplayLabel({ label: 'Konuşma', variants: [invalid] }), 'Konuşma');
+});
+
+test('a used control stays dismissed during loading and playback, then returns on completion, failure or a new scene', () => {
+  let dismissed = true;
+  for (const playbackState of ['loading', 'playing', 'paused', 'loading', 'playing']) {
+    dismissed = retainControlDismissal(dismissed, { scopeChanged: false, playbackState });
+    assert.equal(dismissed, true);
+  }
+  for (const playbackState of ['complete', 'error']) {
+    assert.equal(retainControlDismissal(true, { scopeChanged: false, playbackState }), false);
+  }
+  assert.equal(retainControlDismissal(true, { scopeChanged: true, playbackState: 'playing' }), false);
+  assert.equal(retainControlDismissal(false, { scopeChanged: false, playbackState: 'playing' }), false);
 });
 
 test('ending a clip cannot send forward navigation back to the first clip', () => {

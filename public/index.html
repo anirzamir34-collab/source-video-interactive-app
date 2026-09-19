@@ -189,7 +189,9 @@
             <span id="subtitleSpeaker" class="subtitle-speaker"></span>
             <span id="subtitleText" class="subtitle-text"></span>
           </div>
-          <button id="fullscreenBtn" class="fullscreen-btn" type="button">⛶ OYUN MODU</button>
+          <button id="fullscreenBtn" class="fullscreen-btn" type="button" aria-label="Tam ekranı aç" title="Tam ekranı aç" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>
+          </button>
           <button id="subtitleToggleBtn" class="subtitle-toggle-btn hidden" type="button">
             TR ALTYAZI: AÇIK
           </button>
@@ -200,8 +202,8 @@
             SEÇİMLER
           </button>
           <div class="choice-navigation" aria-label="Seçim navigasyonu">
-            <button id="prevChoiceBtn" type="button">⏮ Önceki seçim</button>
-            <button id="nextChoiceBtn" type="button">Sonraki seçim ⏭</button>
+            <button id="prevChoiceBtn" type="button" aria-label="Önceki seçim" title="Önceki seçim"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m14 6-6 6 6 6"/></svg></button>
+            <button id="nextChoiceBtn" type="button" aria-label="Sonraki seçim" title="Sonraki seçim"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m10 6 6 6-6 6"/></svg></button>
           </div>
 
           <section id="adultInteractionPanel" class="adult-interaction-panel scene-controls hidden" aria-label="Kademeli sahne seçimleri">
@@ -296,10 +298,6 @@
                   <span id="rhythmTapLabel">RİTİMİ BAŞLAT</span>
                   <small id="rhythmTapStatus">Hızını algılamak için ritimli dokun</small>
                 </button>
-                <details id="clipNavigator" class="clip-navigator hidden">
-                  <summary id="clipNavigatorSummary">Kesitleri gör</summary>
-                  <div id="clipNavigatorList" class="clip-navigator-list" aria-label="Aynı bölüme bağlı kesitler"></div>
-                </details>
               </div>
               <div class="adult-variant-toolbar">
                 <button id="nextVariantBtn" class="next-variant-btn hidden" type="button">↻ Sonraki gerçek varyasyon</button>

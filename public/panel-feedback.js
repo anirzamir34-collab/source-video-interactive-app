@@ -1,6 +1,5 @@
 // Presentation helpers only: never seek, play, change speed or generate clips.
-import { cleanPanelDisplayLabels } from './display-labels.js';
-import { createClipDetails } from './clip-details.js';
+import { cleanDisplayLabel, cleanPanelDisplayLabels } from './display-labels.js';
 
 const timeNumber = value => value === null || value === '' || typeof value === 'boolean'
   ? NaN : Number(value);
@@ -36,6 +35,21 @@ export function clipPlaybackFeedback(clip, media = {}) {
   return { state: 'playing', label: 'Oynuyor', progress };
 }
 
+// Display existing source text; never invent actions or borrow another choice's clip.
+export function sourceChoiceDisplayLabel(choice, activeClip) {
+  const variants = (choice?.variants || []).filter(clip => clip.sourceVerified === true);
+  const active = variants.find(clip => clip.id === activeClip?.id);
+  const next = variants.find(clip => clip.id === choice?.nextClip?.id);
+  const label = [active?.label, next?.label, variants[0]?.label, choice?.label]
+    .map(value => cleanDisplayLabel(value).replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/iu, '').trim())
+    .find(Boolean);
+  return label || 'Kesiti oynat';
+}
+
+export function retainControlDismissal(dismissed, { scopeChanged, playbackState }) {
+  return dismissed && !scopeChanged && !['complete', 'error'].includes(playbackState);
+}
+
 export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot }) {
   if (!stage || !panel || !video) return () => {};
   const doc = stage.ownerDocument;
@@ -44,7 +58,9 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   let waiting = false;
   let lastClip = null;
   let lastScope = null;
-  const detailViews = new WeakMap();
+  let controlScope = null;
+  let controlDismissed = false;
+  const controlButton = doc.getElementById('rhythmTapBtn');
   const text = (element, value) => {
     if (element && element.textContent !== value) element.textContent = value;
   };
@@ -62,6 +78,11 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
       waiting: waiting || snapshot.buffering,
       seeking: video.seeking || snapshot.seeking, failed: snapshot.failed
     });
+    controlDismissed = retainControlDismissal(controlDismissed, {
+      scopeChanged: controlScope !== snapshot.controlScope, playbackState: feedback.state
+    });
+    controlScope = snapshot.controlScope;
+    stage.classList.toggle('scene-control-dismissed', controlDismissed);
     // No active clip means playback status may only retain a completed clip.
     const visible = snapshot.clip || feedback.state === 'complete';
     const label = visible ? feedback.label : 'Seçimini yap';
@@ -77,15 +98,8 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
           : `${ids.length} kesit`);
         if (card.dataset.movementChoiceId) {
           const choice = snapshot.choiceClips?.find(item => item.id === card.dataset.movementChoiceId);
-          const old = detailViews.get(card);
-          if (old?.choice !== choice) {
-            old?.element?.remove();
-            const element = choice ? createClipDetails(doc, choice.variants) : null;
-            const wrapper = card.closest('.movement-choice-wrap');
-            wrapper?.classList.toggle('has-clip-details', Boolean(element));
-            if (element) wrapper?.appendChild(element);
-            detailViews.set(card, { choice, element });
-          }
+          if (choice) text(card.querySelector('[data-choice-label]'),
+            sourceChoiceDisplayLabel(choice, active && feedback.state !== 'complete' ? clip : null));
         }
         let status = card.querySelector('[data-playback-status]');
         if (!status) {
@@ -104,9 +118,17 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   const onMedia = event => {
     if (event.type === 'waiting' || event.type === 'stalled') waiting = true;
     if (['playing', 'canplay', 'loadeddata', 'emptied'].includes(event.type)) waiting = false;
-    if (event.type === 'emptied') { lastClip = null; lastScope = null; }
+    if (event.type === 'emptied') { lastClip = null; lastScope = null; controlDismissed = false; }
     schedule();
   };
+  const dismissControl = () => {
+    if (controlButton.disabled) return;
+    controlScope = getSnapshot().controlScope;
+    controlDismissed = true;
+    stage.classList.add('scene-control-dismissed');
+    schedule();
+  };
+  controlButton?.addEventListener('click', dismissControl, true);
   const events = ['timeupdate', 'playing', 'pause', 'waiting', 'stalled', 'canplay',
     'seeking', 'seeked', 'ended', 'loadeddata', 'emptied', 'error'];
   events.forEach(event => video.addEventListener(event, onMedia));
@@ -127,6 +149,7 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   schedule();
   return () => {
     observer.disconnect();
+    controlButton?.removeEventListener('click', dismissControl, true);
     events.forEach(event => video.removeEventListener(event, onMedia));
     if (frame !== null) win.cancelAnimationFrame(frame);
   };
