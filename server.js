@@ -95,6 +95,23 @@ function addGeminiUsage(total, metadata = {}) {
   return total;
 }
 
+async function mapWithConcurrency(items, concurrency, worker) {
+  const values = Array.isArray(items) ? items : [];
+  const results = new Array(values.length);
+  let cursor = 0;
+  const run = async () => {
+    while (cursor < values.length) {
+      const index = cursor++;
+      results[index] = await worker(values[index], index);
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, Number(concurrency) || 1), Math.max(1, values.length)) },
+    () => run()
+  ));
+  return results;
+}
+
 app.get('/login', (req, res) => {
   if (isAuthenticated(req)) return res.redirect('/');
   const failed = req.query.error === '1';
@@ -1702,6 +1719,7 @@ app.post(
   '/api/gemini-dialogue-analyze',
   dialogueUpload.single('video'),
   async (req, res) => {
+    const dialogueStartedAt = Date.now();
     const dialogueUsage = emptyGeminiUsage();
     const uploadId = String(req.body?.uploadId || '');
     const uploadSession = dialogueUploadSessions.get(uploadId);
@@ -1933,9 +1951,11 @@ Rules:
       if (!parsed && asr?.segments?.length) {
         console.warn('[gemini-dialogue-fallback] switching to text-only Turkish translation');
         const translationInput = asr.segments.map(({ segmentId, originalText }) => ({ segmentId, originalText }));
-        const translatedSegments = [];
+        const translationBatches = [];
         for (let offset = 0; offset < translationInput.length; offset += 30) {
-          const batch = translationInput.slice(offset, offset + 30);
+          translationBatches.push(translationInput.slice(offset, offset + 30));
+        }
+        const translatedBatchResults = await mapWithConcurrency(translationBatches, 2, async (batch, batchIndex) => {
           let translatedBatch = null;
           for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
@@ -1951,13 +1971,14 @@ Rules:
               break;
             } catch (error) {
               lastDialogueError = error;
-              console.warn(`[gemini-dialogue-text-fallback-retry] batch ${offset / 30 + 1}, attempt ${attempt}/3: ${error?.message || error}`);
+              console.warn(`[gemini-dialogue-text-fallback-retry] batch ${batchIndex + 1}, attempt ${attempt}/3: ${error?.message || error}`);
               if (attempt < 3) await wait(attempt * 1200);
             }
           }
           if (!translatedBatch?.segments?.length) throw lastDialogueError || new Error('GEMINI_TRANSLATION_BATCH_FAILED');
-          translatedSegments.push(...translatedBatch.segments);
-        }
+          return translatedBatch.segments;
+        });
+        const translatedSegments = translatedBatchResults.flat();
         parsed = { hasDialogue: true, segments: translatedSegments, fallbackMode: 'asr-text-translation' };
       }
 
@@ -1975,9 +1996,13 @@ Rules:
 
         // Translate omitted ASR lines in small batches. This prevents a long
         // JSON response from silently dropping speech near the end of a video.
+        const missingBatches = [];
         for (let offset = 0; offset < missingTranslations.length; offset += 40) {
-          const batch = missingTranslations.slice(offset, offset + 40)
-            .map(({ segmentId, originalText }) => ({ segmentId, originalText }));
+          missingBatches.push(missingTranslations.slice(offset, offset + 40)
+            .map(({ segmentId, originalText }) => ({ segmentId, originalText })));
+        }
+        const recoveredBatches = await mapWithConcurrency(missingBatches, 2, async (batch, batchIndex) => {
+          let recoveredSegments = [];
           for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
               const response = await ai.models.generateContent({
@@ -1987,16 +2012,18 @@ Rules:
               });
               addGeminiUsage(dialogueUsage, response?.usageMetadata);
               const recovered = JSON.parse(String(response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
-              for (const item of recovered.segments || []) {
-                const id = String(item.segmentId || '');
-                if (id) enriched.set(id, { ...(enriched.get(id) || {}), ...item });
-              }
+              recoveredSegments = recovered.segments || [];
               break;
             } catch (error) {
-              console.warn(`[missing-subtitle-translation-retry] batch ${offset / 40 + 1}, attempt ${attempt}: ${error?.message || error}`);
+              console.warn(`[missing-subtitle-translation-retry] batch ${batchIndex + 1}, attempt ${attempt}: ${error?.message || error}`);
               if (attempt < 3) await wait(attempt * 900);
             }
           }
+          return recoveredSegments;
+        });
+        for (const item of recoveredBatches.flat()) {
+          const id = String(item.segmentId || '');
+          if (id) enriched.set(id, { ...(enriched.get(id) || {}), ...item });
         }
 
         const untranslated = asr.segments.filter(grounded =>
@@ -2118,6 +2145,14 @@ Rules:
 
       dialogueLastSuccessAt = Date.now();
       dialogueQuotaBlockedUntil = 0;
+      const processingMs = Date.now() - dialogueStartedAt;
+      console.info('[dialogue-analysis-ok]', JSON.stringify({
+        processingMs,
+        segments: segments.length,
+        speakers: speakerProfiles.size,
+        source: req.body?.remoteToken ? 'remote-audio' : 'upload',
+        aiRequests: dialogueUsage.requests
+      }));
       return res.json({
         available: true,
         hasDialogue: segments.length > 0,
@@ -2130,7 +2165,8 @@ Rules:
         transcriptionEngine: String(parsed.transcriptionEngine || 'gemini-3.8-flash-fallback'),
         translationEngine: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
         dubbingEngine: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
-        aiUsage: dialogueUsage
+        aiUsage: dialogueUsage,
+        performance: { processingMs }
       });
     } catch (error) {
       console.error('Dialogue analysis failed:', error);
@@ -2344,6 +2380,19 @@ app.post('/api/gemini-dub-segment', async (req, res) => {
 });
 
 const elevenLabsVoiceCache = new Map();
+const elevenLabsAudioCache = new Map();
+const elevenLabsAudioInflight = new Map();
+const ELEVENLABS_AUDIO_CACHE_TTL_MS = 30 * 60 * 1000;
+const ELEVENLABS_AUDIO_CACHE_LIMIT = 72;
+
+function pruneElevenLabsAudioCache(now = Date.now()) {
+  for (const [key, entry] of elevenLabsAudioCache) {
+    if (entry.expiresAt <= now) elevenLabsAudioCache.delete(key);
+  }
+  while (elevenLabsAudioCache.size > ELEVENLABS_AUDIO_CACHE_LIMIT) {
+    elevenLabsAudioCache.delete(elevenLabsAudioCache.keys().next().value);
+  }
+}
 
 async function elevenLabsRequest(apiKey, path, options = {}) {
   const response = await fetch(`https://api.elevenlabs.io${path}`, {
@@ -2450,31 +2499,48 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
   const voice = voiceSet.voices.find(item => item.voice_id === requested) ||
     (gender === 'male' ? voiceSet.male : voiceSet.female || voiceSet.male);
   if (!voice?.voice_id) throw new Error('ELEVENLABS_VOICE_MISSING');
-  const response = await elevenLabsRequest(
-    apiKey,
-    `/v1/text-to-speech/${encodeURIComponent(voice.voice_id)}?output_format=mp3_44100_128`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
-      body: JSON.stringify({
-        text: [elevenV3DeliveryTag(emotion), text].filter(Boolean).join(' '),
-        model_id: 'eleven_v3',
-        language_code: 'tr',
-        voice_settings: {
-          // Eleven v3 Natural mode: expressive without the hallucination risk
-          // of Creative or the mechanical delivery of Robust.
-          stability: 0.5,
-          similarity_boost: 0.82,
-          use_speaker_boost: true
-        }
-      })
-    }
-  );
-  return {
-    voiceId: voice.voice_id,
-    voiceName: voice.name || (gender === 'male' ? 'Erkek sesi' : 'Kadın sesi'),
-    audioBase64: Buffer.from(await response.arrayBuffer()).toString('base64')
-  };
+  const deliveryText = [elevenV3DeliveryTag(emotion), text].filter(Boolean).join(' ');
+  const accountHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
+  const cacheKey = crypto.createHash('sha256')
+    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128']))
+    .digest('hex');
+  pruneElevenLabsAudioCache();
+  const cached = elevenLabsAudioCache.get(cacheKey);
+  if (cached?.expiresAt > Date.now()) {
+    elevenLabsAudioCache.delete(cacheKey);
+    elevenLabsAudioCache.set(cacheKey, cached);
+    return { ...cached.value, cacheHit: true };
+  }
+  if (elevenLabsAudioInflight.has(cacheKey)) {
+    return { ...(await elevenLabsAudioInflight.get(cacheKey)), cacheHit: true };
+  }
+  const synthesis = (async () => {
+    const response = await elevenLabsRequest(
+      apiKey,
+      `/v1/text-to-speech/${encodeURIComponent(voice.voice_id)}?output_format=mp3_44100_128`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+        body: JSON.stringify({
+          text: deliveryText,
+          model_id: 'eleven_v3',
+          language_code: 'tr',
+          voice_settings: { stability: 0.5, similarity_boost: 0.82, use_speaker_boost: true }
+        })
+      }
+    );
+    const value = {
+      voiceId: voice.voice_id,
+      voiceName: voice.name || (gender === 'male' ? 'Erkek sesi' : 'Kadın sesi'),
+      audioBase64: Buffer.from(await response.arrayBuffer()).toString('base64')
+    };
+    elevenLabsAudioCache.set(cacheKey, { value, expiresAt: Date.now() + ELEVENLABS_AUDIO_CACHE_TTL_MS });
+    pruneElevenLabsAudioCache();
+    return value;
+  })();
+  elevenLabsAudioInflight.set(cacheKey, synthesis);
+  try { return await synthesis; }
+  finally { elevenLabsAudioInflight.delete(cacheKey); }
 }
 
 function elevenLabsErrorResponse(error, fallbackMessage) {
@@ -2546,7 +2612,8 @@ app.post('/api/elevenlabs-dub-segment', async (req, res) => {
       speakerId: speakerId.slice(0, 80),
       gender,
       characters: text.length,
-      voiceId: audio.voiceId
+      voiceId: audio.voiceId,
+      cacheHit: Boolean(audio.cacheHit)
     }));
     return res.json({
       available: true,
