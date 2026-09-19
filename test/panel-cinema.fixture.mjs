@@ -5,7 +5,9 @@ const root = new URL('../public/', import.meta.url);
 const source = await fs.readFile(new URL('index.html', root), 'utf8');
 const css = (await Promise.all(['styles.css', 'player-controls.css', 'panel-cinema.css']
   .map(name => fs.readFile(new URL(name, root), 'utf8')))).join('\n');
-const feedback = (await fs.readFile(new URL('panel-feedback.js', root), 'utf8')).replaceAll('export function', 'function');
+const feedback = (await Promise.all(['display-labels.js', 'panel-feedback.js']
+  .map(name => fs.readFile(new URL(name, root), 'utf8')))).join('\n')
+  .replace(/^import .*;$/gm, '').replaceAll('export function', 'function');
 function setup() {
   document.querySelectorAll('main > :not(#playerSection)').forEach(el => el.remove());
   document.querySelector('#playerSection').classList.remove('hidden');
@@ -51,6 +53,17 @@ function setup() {
   test.onclick = () => {
     media.seeking = !media.seeking;
     video.dispatchEvent(new Event(media.seeking ? 'seeking' : 'seeked'));
+  };
+  const choiceToggle = document.createElement('button');
+  choiceToggle.textContent = 'Seçim ekranı'; choiceToggle.id = 'fixtureChoiceToggle';
+  choiceToggle.style.cssText = 'position:absolute;top:10px;left:310px;z-index:9999';
+  stage.append(choiceToggle);
+  const choices = document.getElementById('choices');
+  choices.innerHTML = `<div class="approach-status"><strong>Seçimler</strong></div>` +
+    ["Partner A'yı dinle", 'Karakter B ile konuş', 'Manzaraya bak · İntim karakter'].map((label, i) =>
+      `<button class="choice-btn" data-clip-id="clip-${i}">${label}</button>`).join('');
+  choiceToggle.onclick = () => {
+    panel.classList.toggle('hidden'); choices.classList.toggle('hidden');
   };
 }
 const base = source.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<link[^>]*>/g, '')

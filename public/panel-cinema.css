@@ -61,36 +61,57 @@
   scrollbar-width: thin; scrollbar-gutter: auto !important;
 }
 
-/* Fullscreen reserves a narrow side rail: the panel never sits on source pixels.
-   Contain preserves the whole frame, including portrait and ultra-wide media. */
+/* Controls overlay the source. Opening a panel must never resize the video. */
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) {
-  --rail: 0px; --footer: 0px; --panel-width: clamp(168px, 21vw, 246px);
+  --panel-width: clamp(160px, 21vw, 230px);
   background: #000 !important; padding: 0 !important;
 }
-#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel:not(.hidden)),
-#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#choices:not(.hidden):not(:empty)) {
-  --rail: calc(var(--panel-width) + max(8px, env(safe-area-inset-right)) + 8px);
-}
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #video,
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#choices:not(.hidden):not(:empty)) #video,
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel:not(.hidden)) #video,
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel:not(.hidden):not(.fullscreen-collapsed)) #video {
-  position: absolute !important; inset: 0 auto auto 0 !important;
-  width: calc(100% - var(--rail)) !important; max-width: calc(100% - var(--rail)) !important;
-  height: calc(100% - var(--footer)) !important; max-height: calc(100% - var(--footer)) !important;
+  position: absolute !important; inset: 0 !important;
+  width: 100% !important; max-width: 100% !important;
+  height: 100% !important; max-height: 100% !important;
   object-fit: contain !important; object-position: center !important; transform: none !important;
 }
-#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) :is(#adultInteractionPanel, #choices) {
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel {
+  background: rgba(4, 10, 12, .18) !important;
+  border-color: rgba(220, 245, 237, .12) !important;
+  box-shadow: none !important; backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel {
   position: absolute !important; top: auto !important;
   right: max(8px, env(safe-area-inset-right)) !important; bottom: max(8px, env(safe-area-inset-bottom)) !important;
   left: auto !important; transform: none !important;
   width: var(--panel-width) !important; max-width: var(--panel-width) !important;
-  height: auto !important; max-height: calc(100% - 56px - env(safe-area-inset-bottom)) !important;
+  height: auto !important; max-height: min(64%, 360px) !important;
   padding: 5px !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain;
   border: 1px solid var(--panel-line) !important; border-radius: 11px !important;
-  background: linear-gradient(155deg, #142021, #080d11 65%) !important;
+  background: rgba(4, 10, 12, .18) !important;
   box-shadow: none !important; backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* The normal and introductory choice screens share a small centered stack.
+   Only the controls catch taps; the surrounding video remains accessible. */
+#playerSection .video-stage.scene-player.cinematic-ui #choices {
+  position: absolute !important; top: 50% !important; left: 50% !important;
+  right: auto !important; bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(300px, 60%) !important; max-width: calc(100% - 32px) !important;
+  height: auto !important; min-height: 0 !important; max-height: min(42%, 240px) !important;
+  margin: 0 !important; padding: 2px !important; gap: 4px !important;
+  border: 0 !important; border-radius: 8px !important;
+  background: transparent !important; box-shadow: none !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  overflow-x: hidden !important; overflow-y: auto !important;
+  overscroll-behavior: contain; pointer-events: none;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices::before,
+#playerSection .video-stage.scene-player.cinematic-ui #choices::after { content: none !important; }
+#playerSection .video-stage.scene-player.cinematic-ui #choices > * { pointer-events: auto; }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-collapsed {
   top: auto !important; max-height: 124px !important;
 }
@@ -100,7 +121,7 @@
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .adult-compact-dock {
   display: grid !important; grid-template-columns: minmax(0, 1fr) auto !important;
   min-height: 0 !important; gap: 4px !important; padding: 5px !important;
-  background: rgba(0, 0, 0, .22) !important; border-radius: 11px !important;
+  background: rgba(0, 0, 0, .16) !important; border-radius: 11px !important;
   border: 1px solid var(--panel-line) !important; box-shadow: none !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #adultQuickChoices { display: none !important; }
@@ -130,10 +151,10 @@
   flex: 0 0 auto !important; width: auto !important; max-width: 92% !important;
   min-height: 36px !important; padding: 6px 8px !important; border-radius: 8px !important;
   font-size: 11px !important; line-height: 1.3 !important; scroll-snap-align: start;
-  background: #142024 !important; color: #bacdc5 !important;
+  background: rgba(6, 15, 17, .44) !important; color: #e4f7ef !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .position-tab.active {
-  background: #254239 !important; color: #b0ffe3 !important; border-color: #589f88 !important;
+  background: rgba(24, 67, 52, .60) !important; color: #b0ffe3 !important; border-color: #589f88 !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.movement-choice-grid, .discovery-choice-grid) {
   display: grid !important; grid-template-columns: minmax(0, 1fr) !important;
@@ -155,8 +176,19 @@
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #choices .choice {
   padding-right: 22px !important; box-shadow: none !important;
 }
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.movement-choice-card, .discovery-choice-card),
+#playerSection .video-stage.scene-player.cinematic-ui #choices :is(.choice, .choice-btn) {
+  background: rgba(4, 10, 12, .52) !important; color: #f0fff9 !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .8) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices :is(.choice, .choice-btn) {
+  width: 100% !important; min-height: 34px !important; margin: 0 !important;
+  padding: 5px 8px !important; font-size: 11px !important; line-height: 1.3 !important;
+  border-radius: 8px !important; box-shadow: none !important;
+}
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #choices .approach-status {
-  font-size: 10px !important; line-height: 1.3 !important; padding: 4px 6px !important;
+  font-size: 10px !important; line-height: 1.3 !important; padding: 3px 6px !important;
+  background: rgba(4, 10, 12, .3) !important; border: 0 !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-choice-card .movement-variant-status {
   display: block !important; margin-top: 2px !important; color: #8fa49b;
@@ -173,7 +205,7 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #rhythmTapBtn {
   min-height: 40px !important; padding: 7px !important; border-radius: 9px !important;
-  border: 1px solid #65bda0 !important; background: linear-gradient(115deg, #264b40, #122e27) !important;
+  border: 1px solid #65bda0 !important; background: rgba(18, 46, 39, .55) !important;
   color: #c4ffe9 !important; box-shadow: none !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #rhythmTapBtn:disabled { opacity: .55 !important; }
@@ -181,12 +213,11 @@
 #playerSection .video-stage.scene-player.cinematic-ui #rhythmTapStatus { display: block !important; font-size: 10px !important; }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel #finishAdultSceneBtn {
   position: static !important; min-height: 36px !important; margin-top: 4px !important;
-  font-size: 11px !important; background: #0c1518 !important;
+  font-size: 11px !important; background: rgba(4, 10, 12, .4) !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .subtitle-overlay {
-  max-width: calc(100% - var(--rail) - 24px) !important;
-  left: calc((100% - var(--rail)) / 2) !important;
-  bottom: calc(var(--footer) + 48px) !important;
+  max-width: calc(100% - 24px) !important;
+  left: 50% !important; bottom: 48px !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .cinema-shade { display: none !important; }
 
@@ -204,17 +235,14 @@
 }
 
 @media (orientation: portrait) {
-  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel:not(.hidden)),
-  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#choices:not(.hidden):not(:empty)) {
-    --rail: 0px; --footer: min(30dvh, 250px);
-    --panel-width: calc(100vw - max(8px, env(safe-area-inset-left)) - max(8px, env(safe-area-inset-right)));
+  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) {
+    --panel-width: min(220px, 56vw);
   }
-  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(#adultInteractionPanel.compact-collapsed:not(.hidden)) {
-    --footer: 132px;
+  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel {
+    max-height: min(32dvh, 280px) !important;
   }
-  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) :is(#adultInteractionPanel, #choices) {
-    top: auto !important; max-height: calc(var(--footer) - max(8px, env(safe-area-inset-bottom))) !important;
-    height: auto !important;
+  #playerSection .video-stage.scene-player.cinematic-ui #choices {
+    width: min(280px, 84%) !important;
   }
 }
 @media (prefers-reduced-motion: reduce) {

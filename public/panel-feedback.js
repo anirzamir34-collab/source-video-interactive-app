@@ -1,4 +1,6 @@
 // Presentation helpers only: never seek, play, change speed or generate clips.
+import { cleanPanelDisplayLabels } from './display-labels.js';
+
 const timeNumber = value => value === null || value === '' || typeof value === 'boolean'
   ? NaN : Number(value);
 
@@ -90,10 +92,20 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   const events = ['timeupdate', 'playing', 'pause', 'waiting', 'stalled', 'canplay',
     'seeking', 'seeked', 'ended', 'loadeddata', 'emptied', 'error'];
   events.forEach(event => video.addEventListener(event, onMedia));
-  const observer = new win.MutationObserver(schedule);
+  const cleanLabels = () => {
+    cleanPanelDisplayLabels(panel);
+    cleanPanelDisplayLabels(choices);
+  };
+  const observer = new win.MutationObserver(() => {
+    // Rendering textContent/innerHTML must not reintroduce tracking labels.
+    // Clean text nodes before paint without replacing buttons or listeners.
+    cleanLabels();
+    schedule();
+  });
   // Observe structure, not our own progress/style updates.
   observer.observe(panel, { childList: true, subtree: true });
   if (choices) observer.observe(choices, { childList: true, subtree: true });
+  cleanLabels();
   schedule();
   return () => {
     observer.disconnect();
