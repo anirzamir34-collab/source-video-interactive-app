@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bindActionCharacter } from '../public/character-identity.js';
-import { resolveLeadingCharacterReference } from '../public/character-reference.js';
+import { resolveLeadingCharacterReference, relationshipChoiceLabel } from '../public/character-reference.js';
+import { relationshipRoleNoun, inverseRelationshipRole } from '../public/relationship-roles.js';
 import { mergeStoryContexts } from '../public/story-engine.js';
 
 test('verified references use the appropriate Turkish grammatical case without changing the action', () => {
@@ -44,4 +45,46 @@ test('supported speaker mappings survive a later visual-only chunk without turni
   const merged = mergeStoryContexts([first, next]);
   assert.deepEqual(merged.characters[0].speakerIds, ['speaker-2']);
   assert.equal(merged.characters[0].displayName, 'Meral');
+});
+
+test('verified family roles replace generic age descriptions and proper-name references with correct case', () => {
+  const daughter = { name: 'Ayşe', role: 'kızı', allowGeneric: true };
+  for (const source of ['Genç kadınla sohbet et', 'Ayşe ile sohbet et', "Ayşe'yle sohbet et", 'Onunla sohbet et']) {
+    assert.equal(resolveLeadingCharacterReference(source, daughter), 'Kızıyla sohbet et');
+  }
+  assert.equal(resolveLeadingCharacterReference('Genç erkeğin cevabını dinle', { role: 'torunu', allowGeneric: true }), 'Torununun cevabını dinle');
+  assert.equal(resolveLeadingCharacterReference('Genç erkekle spor yap', { role: 'torunu', allowGeneric: true }), 'Torunuyla spor yap');
+  assert.equal(resolveLeadingCharacterReference("Meral'e kitabı ver", { name: 'Meral', role: 'annesi' }), 'Annesine kitabı ver');
+  assert.equal(resolveLeadingCharacterReference('Onu dinle', { role: 'dedesi' }), 'Dedesini dinle');
+});
+
+test('group roles preserve owner context without duplicating it on repeated rendering', () => {
+  const context = { name: 'Derya', role: 'eşi', ownerName: 'Berk' };
+  assert.equal(resolveLeadingCharacterReference('Onunla konuş', context), "Berk'in eşiyle konuş");
+  const label = relationshipChoiceLabel('Eşiyle konuş', 'eşi', 'Berk');
+  assert.equal(label, "Berk'in eşiyle konuş");
+  assert.equal(relationshipChoiceLabel(label, 'eşi', 'Berk'), label);
+  assert.equal(relationshipChoiceLabel('Kızıl çantayı uzat', 'kızı'), 'Kızı · Kızıl çantayı uzat');
+});
+
+test('the observed spoken name and other characters are not rewritten as roles', () => {
+  const context = { name: 'Ayşe', role: 'kızı', targetIds: ['person-2'] };
+  assert.equal(resolveLeadingCharacterReference('Ayşe diye seslen', context), 'Ayşe diye seslen');
+  assert.equal(resolveLeadingCharacterReference("Deniz'in kitabını göster", context), "Deniz'in kitabını göster");
+  assert.equal(resolveLeadingCharacterReference('Genç kadınla konuş', context), 'Genç kadınla konuş');
+});
+
+test('kinship, friendship and spouse vocabulary stays evidence-independent and inverse roles stay conservative', () => {
+  for (const [input, expected] of [
+    ['dede', 'dedesi'], ['torun', 'torunu'], ['kuzen', 'kuzeni'], ['dost', 'dostu'],
+    ['eş', 'eşi'], ['anneanne', 'anneannesi'], ['babaanne', 'babaannesi'],
+    ['hala', 'halası'], ['dayı', 'dayısı'], ['kayınvalide', 'kayınvalidesi'],
+    ['iş arkadaşı', 'iş arkadaşı'], ['friend', 'arkadaşı'], ['grandson', 'torunu']
+  ]) assert.equal(relationshipRoleNoun(input), expected);
+  assert.equal(relationshipRoleNoun('uncle'), '');
+  assert.equal(relationshipRoleNoun('aunt'), '');
+  assert.equal(inverseRelationshipRole('dedesi'), 'torunu');
+  assert.equal(inverseRelationshipRole('kızı'), 'ebeveyni');
+  assert.equal(inverseRelationshipRole('torunu'), '');
+  assert.equal(inverseRelationshipRole('yeğeni'), '');
 });

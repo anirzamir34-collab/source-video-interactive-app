@@ -36,7 +36,7 @@ test('two-person actions bind the counterparty by IDs instead of the generated l
   assert.equal(action.partnerLabel, 'Meral');
   assert.equal(action.identityResolution, 'verified');
   assert.equal(action.relationshipDisplayLabel, 'Danny ile ilişkisi: eşi');
-  assert.match(storyChoiceLabelForAction(action), /Danny ile ilişkisi: eşi/);
+  assert.equal(storyChoiceLabelForAction(action), 'Eşi · Dosyayı uzat');
   assert.deepEqual([action.startTime, action.endTime, action.sourceVerified], [10, 14, true]);
 });
 
@@ -46,7 +46,7 @@ test('family and relationship facts appear only in ordinary choices with exact I
   ] };
   const ordinary = bindActionCharacter({ label: 'Soruyu sor', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'DENIZ',
     involvedCharacterIds: ['DANNY', 'DENIZ'], adultScene: false }, family);
-  assert.equal(storyChoiceLabelForAction(ordinary), 'Soruyu sor · Deniz · Danny ile ilişkisi: kızı');
+  assert.equal(storyChoiceLabelForAction(ordinary), 'Kızı · Soruyu sor');
   const intimate = bindActionCharacter({ label: 'Kesiti oynat', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'DENIZ',
     partnerTrackId: 'PARTNER_B', involvedCharacterIds: ['DANNY', 'DENIZ'], adultScene: true }, family);
   assert.equal(intimate.relationshipDisplayLabel, '');
@@ -76,7 +76,7 @@ test('ordinary dialogue shows an evidenced relationship without exposing unnamed
   const action = bindActionCharacter({ label: 'Konuşmayı sürdür', subjectTrackId: 'MAIN_MALE',
     primaryCharacterId: 'MERAL', involvedCharacterIds: ['DANNY', 'MERAL'], adultScene: false }, context);
   assert.equal(action.primaryCharacterId, 'PARTNER_A');
-  assert.equal(storyChoiceLabelForAction(action), 'Konuşmayı sürdür · İlişki: sevgilisi');
+  assert.equal(storyChoiceLabelForAction(action), 'Sevgilisi · Konuşmayı sürdür');
   const unknown = bindActionCharacter(action, { ...context, relationships: [] });
   assert.equal(storyChoiceLabelForAction(unknown), 'Konuşmayı sürdür');
 });
@@ -118,7 +118,7 @@ test('four-person dialogue follows the actual speaker and target when the pair c
   const first = bindActionCharacter({ ...action, subjectTrackId: 'PARTNER_B', primaryCharacterId: 'DERYA', partnerTrackId: 'PARTNER_C' }, context);
   assert.equal(first.characterPairLabel, 'Berk → Derya');
   assert.equal(first.relationshipDisplayLabel, 'Berk ile ilişkisi: eşi');
-  assert.match(storyChoiceLabelForAction(first), /Berk → Derya/);
+  assert.equal(storyChoiceLabelForAction(first), "Berk'in eşi · Soruyu sor");
   const second = bindActionCharacter({ ...first, subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'ECE', partnerTrackId: 'PARTNER_A' }, context);
   assert.equal(second.characterPairLabel, 'Ali → Ece');
   assert.equal(second.relationshipDisplayLabel, 'Ali ile ilişkisi: eşi');
@@ -201,6 +201,9 @@ test('real analysis normalization applies stable character mapping to main and e
   })) });
   assert.equal(analysis.actions.length, 2);
   for (const action of analysis.actions) assert.equal(action.primaryCharacterLabel, 'Meral');
+  for (const action of analysis.actions) assert.equal(storyChoiceLabelForAction(action), 'Eşi · Cevabı dinle');
+  const normalizedAgain = scope.normalizeAnalysis(JSON.parse(JSON.stringify(analysis)));
+  for (const action of normalizedAgain.actions) assert.equal(storyChoiceLabelForAction(action), 'Eşi · Cevabı dinle');
 });
 
 test('a partial second-pass review cannot erase the first-pass character registry', () => {
@@ -209,4 +212,86 @@ test('a partial second-pass review cannot erase the first-pass character registr
     { storyContext: {}, actions: [action] }, [action]);
   assert.equal(merged.storyContext.characters.length, 3);
   assert.equal(bindActionCharacter(merged.actions[0], merged.storyContext).primaryCharacterLabel, 'Meral');
+});
+
+const relationshipFact = (from, to, relation) => ({ from, to, relation, evidenceLevel: 'fact', confidence: .95,
+  evidence: 'Diyalog bu iki kişi arasındaki ilişkiyi açıkça belirtiyor.' });
+const familyCast = { characters: [named('MOTHER', 'person-1', 'Meral'), named('DAUGHTER', 'person-2', 'Ayşe'),
+  named('GRANDFATHER', 'person-3', 'Kemal'), named('GRANDCHILD', 'person-4', 'Deniz')],
+  relationships: [relationshipFact('MOTHER', 'DAUGHTER', 'kızı'), relationshipFact('DAUGHTER', 'MOTHER', 'annesi'),
+    relationshipFact('GRANDFATHER', 'GRANDCHILD', 'torunu'), relationshipFact('GRANDCHILD', 'GRANDFATHER', 'dedesi')] };
+
+test('mother/daughter and grandfather/grandchild choices use the target role in both directions', () => {
+  for (const [subject, target, label, expected] of [
+    ['MOTHER', 'DAUGHTER', 'Genç kadınla sohbet et', 'Kızıyla sohbet et'],
+    ['DAUGHTER', 'MOTHER', 'Meral ile sohbet et', 'Annesiyle sohbet et'],
+    ['GRANDFATHER', 'GRANDCHILD', 'Genç erkekle spor yap', 'Torunuyla spor yap'],
+    ['GRANDCHILD', 'GRANDFATHER', 'Kemal ile spor yap', 'Dedesiyle spor yap']
+  ]) {
+    for (const actionLevel of ['main', 'bonus']) {
+      const source = { actionId: 'observed-1', label, narrativeChoiceLabel: label, actionLevel,
+        subjectTrackId: subject, primaryCharacterId: target, involvedCharacterIds: [subject, target],
+        startTime: 30, endTime: 37, sourceVerified: true, sourceSegmentId: 'source-1' };
+      const bound = bindActionCharacter(source, familyCast);
+      assert.equal(storyChoiceLabelForAction(bound), expected);
+      assert.equal(bound.label, expected);
+      assert.equal(bound.narrativeChoiceLabel, expected);
+      for (const key of ['actionId', 'actionLevel', 'startTime', 'endTime', 'sourceVerified', 'sourceSegmentId']) {
+        assert.equal(bound[key], source[key]);
+      }
+      assert.equal(storyChoiceLabelForAction(bindActionCharacter(bound, familyCast)), expected);
+    }
+  }
+});
+
+test('verified reverse evidence is used only when it establishes an unambiguous target role', () => {
+  const reverseOnly = { ...familyCast, relationships: [relationshipFact('GRANDCHILD', 'GRANDFATHER', 'grandfather')] };
+  const action = { label: 'Onunla spor yap', subjectTrackId: 'GRANDFATHER', primaryCharacterId: 'GRANDCHILD',
+    involvedCharacterIds: ['GRANDFATHER', 'GRANDCHILD'] };
+  assert.equal(storyChoiceLabelForAction(bindActionCharacter(action, reverseOnly)), 'Torunuyla spor yap');
+  const unsupportedReverse = { ...familyCast, relationships: [relationshipFact('GRANDFATHER', 'GRANDCHILD', 'torunu')] };
+  assert.equal(bindActionCharacter({ ...action, subjectTrackId: 'GRANDCHILD', primaryCharacterId: 'GRANDFATHER' }, unsupportedReverse).relationshipResolution, 'unknown');
+});
+
+test('equivalent role aliases do not create a false conflict', () => {
+  const context = { ...familyCast, relationships: [relationshipFact('MOTHER', 'DAUGHTER', 'kızı'),
+    relationshipFact('person-1', 'person-2', 'daughter')] };
+  const action = bindActionCharacter({ label: 'Onunla sohbet et', subjectTrackId: 'MOTHER', primaryCharacterId: 'DAUGHTER',
+    involvedCharacterIds: ['MOTHER', 'DAUGHTER'] }, context);
+  assert.equal(storyChoiceLabelForAction(action), 'Kızıyla sohbet et');
+});
+
+test('changing the speaker changes the same target from daughter to cousin without retaining a stale role', () => {
+  const context = { ...familyCast, relationships: [...familyCast.relationships, relationshipFact('GRANDCHILD', 'DAUGHTER', 'kuzeni')] };
+  const first = bindActionCharacter({ label: 'Onunla konuş', groupScene: true,
+    subjectTrackId: 'MOTHER', primaryCharacterId: 'DAUGHTER',
+    involvedCharacterIds: ['MOTHER', 'DAUGHTER', 'GRANDCHILD'] }, context);
+  assert.equal(storyChoiceLabelForAction(first), "Meral'in kızıyla konuş");
+  const second = bindActionCharacter({ ...first, subjectTrackId: 'GRANDCHILD' }, context);
+  assert.equal(storyChoiceLabelForAction(second), "Deniz'in kuzeniyle konuş");
+  const noEvidence = bindActionCharacter(second, { ...context, relationships: [] });
+  assert.equal(noEvidence.label, "Ayşe'yle konuş");
+  assert.doesNotMatch(storyChoiceLabelForAction(noEvidence), /kızı|kuzeni/);
+});
+
+test('verified social roles work without a proper name while unsupported relationships never become facts', () => {
+  const unknownNames = { ...familyCast, characters: familyCast.characters.map(person => ({ ...person, displayName: '' })) };
+  const action = { label: 'Onunla sohbet et', subjectTrackId: 'MOTHER', primaryCharacterId: 'DAUGHTER',
+    involvedCharacterIds: ['MOTHER', 'DAUGHTER'] };
+  for (const [relation, expected] of [['dostu', 'Dostuyla sohbet et'], ['arkadaşı', 'Arkadaşıyla sohbet et'],
+    ['iş arkadaşı', 'İş arkadaşıyla sohbet et'], ['eşi', 'Eşiyle sohbet et'], ['akrabası', 'Akrabasıyla sohbet et']]) {
+    assert.equal(storyChoiceLabelForAction(bindActionCharacter(action, { ...unknownNames,
+      relationships: [relationshipFact('MOTHER', 'DAUGHTER', relation)] })), expected);
+  }
+  const uncertain = bindActionCharacter(action, { ...familyCast,
+    relationships: [{ ...familyCast.relationships[0], evidenceLevel: 'inference' }] });
+  assert.equal(uncertain.relationshipResolution, 'unknown');
+  assert.equal(uncertain.label, "Ayşe'yle sohbet et");
+});
+
+test('non-story position metadata prevents an ordinary relationship label even when the scene flag is missing', () => {
+  const action = bindActionCharacter({ label: 'Kesiti oynat', subjectTrackId: 'MOTHER', primaryCharacterId: 'DAUGHTER',
+    involvedCharacterIds: ['MOTHER', 'DAUGHTER'], positionId: 'position-1' }, familyCast);
+  assert.equal(action.relationshipResolution, 'unknown');
+  assert.equal(storyChoiceLabelForAction(action), 'Kesiti oynat · Ayşe');
 });

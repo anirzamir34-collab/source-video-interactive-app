@@ -1,14 +1,11 @@
+import { relationshipRoleNoun } from './relationship-roles.js';
 // Inflect an already verified target reference; never infer a person or action.
 const cases = {
   onun: 'genitive', onu: 'accusative', ona: 'dative', onunla: 'instrumental',
   onda: 'locative', ondan: 'ablative', o: 'plain'
 };
-const roleNouns = new Set(['sevgilisi', 'kız arkadaşı', 'erkek arkadaşı', 'eşi', 'karısı', 'kocası',
-  'annesi', 'babası', 'kızı', 'oğlu', 'kardeşi', 'ablası', 'ağabeyi', 'amcası', 'dayısı', 'halası', 'teyzesi']);
-
 export function verifiedRoleNoun(value) {
-  const role = String(value || '').trim().toLocaleLowerCase('tr-TR');
-  return roleNouns.has(role) ? role : '';
+  return relationshipRoleNoun(value);
 }
 
 function inflect(reference, grammaticalCase, isRole) {
@@ -37,13 +34,15 @@ function inflect(reference, grammaticalCase, isRole) {
   return `${reference}${isRole ? '' : "'"}${endings[grammaticalCase] || ''}`;
 }
 
-export function resolveLeadingCharacterReference(label, { name = '', role = '', targetIds = [] } = {}) {
+export function resolveLeadingCharacterReference(label, { name = '', role = '', ownerName = '', targetIds = [], allowGeneric = false } = {}) {
   const source = String(label || '').trim();
-  const reference = verifiedRoleNoun(role) || String(name || '').trim();
+  const roleNoun = verifiedRoleNoun(role);
+  const owner = roleNoun && ownerName ? inflect(ownerName, 'genitive', false) : '';
+  const reference = roleNoun ? `${owner ? `${owner} ` : ''}${roleNoun}` : String(name || '').trim();
   if (!source || !reference) return source;
   const isRole = Boolean(verifiedRoleNoun(role));
   let value = source;
-  for (const rawId of targetIds) {
+  for (const rawId of [...targetIds, ...(roleNoun && name ? [name] : [])]) {
     const id = String(rawId || '').trim();
     if (!id) continue;
     const aliases = [id, id.replace(/_/g, ' ')];
@@ -51,7 +50,11 @@ export function resolveLeadingCharacterReference(label, { name = '', role = '', 
     if (partner) aliases.push(`Karakter ${partner[1]}`, `Partner ${partner[1]}`);
     for (const alias of aliases) {
       const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      value = value.replace(new RegExp(`^${escaped}(?:['’](n?[ıiuü]n|y?[ıiuü]|[ny]?[ae]|[ny]?l[ae]|n?d[ae]n?))?(?=\\s|$)`, 'iu'), (_, suffix) => {
+      // A spoken name is part of the observed action, not a replaceable target
+      // reference (for example "Ayşe diye seslen").
+      if (alias === name && new RegExp(`^${escaped}\\s+(?:diye|olarak|adıyla)(?=\\s|$)`, 'iu').test(value)) continue;
+      value = value.replace(new RegExp(`^${escaped}(?:['’](n?[ıiuü]n|y?[ıiuü]|[ny]?[ae]|[ny]?l[ae]|n?d[ae]n?)|\\s+(ile))?(?=\\s|$)`, 'iu'), (_, suffix, withWord) => {
+        if (withWord) return 'Onunla';
         if (!suffix) return 'O';
         if (/n$/iu.test(suffix) && !/d[ae]n$/iu.test(suffix)) return 'Onun';
         if (/l[ae]$/iu.test(suffix)) return 'Onunla';
@@ -61,8 +64,44 @@ export function resolveLeadingCharacterReference(label, { name = '', role = '', 
       });
     }
   }
+  if (roleNoun && allowGeneric) {
+    const genericForms = [
+      ['kadınla', 'erkekle', 'adamla', 'kızla', 'kişiyle'],
+      ['kadının', 'erkeğin', 'adamın', 'kızın', 'kişinin'],
+      ['kadından', 'erkekten', 'adamdan', 'kızdan', 'kişiden'],
+      ['kadında', 'erkekte', 'adamda', 'kızda', 'kişide'],
+      ['kadını', 'erkeği', 'adamı', 'kızı', 'kişiyi'],
+      ['kadına', 'erkeğe', 'adama', 'kıza', 'kişiye'],
+      ['kadın', 'erkek', 'adam', 'kız', 'kişi']
+    ];
+    const pronouns = ['Onunla', 'Onun', 'Ondan', 'Onda', 'Onu', 'Ona', 'O'];
+    for (const [index, forms] of genericForms.entries()) {
+      value = value.replace(new RegExp(`^(?:(?:genç|yaşlı|olgun|yetişkin)\\s+)?(?:${forms.join('|')})(?:\\s+(ile))?(?=\\s|$)`, 'iu'),
+        (_, withWord) => withWord ? 'Onunla' : pronouns[index]);
+    }
+  }
   return value.replace(/^(Onunla|Onun|Ondan|Onda|Onu|Ona|O)(?=\s|$)/iu, word => {
     const result = inflect(reference, cases[word.toLocaleLowerCase('tr-TR')], isRole);
     return result ? (isRole ? result[0].toLocaleUpperCase('tr-TR') + result.slice(1) : result) : word;
   });
+}
+
+export function relationshipChoiceLabel(label, role, ownerName = '') {
+  const noun = verifiedRoleNoun(role);
+  const value = String(label || '').trim();
+  if (!noun || !value) return value;
+  const owner = ownerName ? inflect(ownerName, 'genitive', false) : '';
+  const escaped = noun.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const normalizedValue = value.toLocaleLowerCase('tr-TR');
+  const rolePresent = new RegExp(`(?<![\\p{L}])${escaped}(?:n(?:[ıiuü]n|[ıiuü]|[ae]|d[ae]n?)|yl[ae])?(?![\\p{L}])`, 'u').test(normalizedValue);
+  if (rolePresent) {
+    if (!owner || normalizedValue.includes(`${owner} ${noun}`.toLocaleLowerCase('tr-TR'))) return value;
+    // Group choices need the reference person even when the model has already
+    // supplied an unqualified role such as "Eşiyle konuş".
+    if (new RegExp(`^${escaped}(?:n(?:[ıiuü]n|[ıiuü]|[ae]|d[ae]n?)|yl[ae])?(?![\\p{L}])`, 'u').test(normalizedValue)) {
+      return `${owner} ${value[0].toLocaleLowerCase('tr-TR')}${value.slice(1)}`;
+    }
+  }
+  const reference = owner ? `${owner} ${noun}` : noun[0].toLocaleUpperCase('tr-TR') + noun.slice(1);
+  return `${reference} · ${value}`;
 }

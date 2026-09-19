@@ -2803,6 +2803,8 @@ function normalizeAnalysis(body) {
       actionId: String(a.actionId ?? a.id ?? `ACTION_${String(i + 1).padStart(3, '0')}`),
       label: String(a.label ?? a.action ?? 'Unnamed action'),
       narrativeChoiceLabel: String(a.narrativeChoiceLabel || ''),
+      characterSourceLabel: String(a.characterSourceLabel ?? a.label ?? a.action ?? 'Unnamed action'),
+      characterSourceNarrativeLabel: String(a.characterSourceNarrativeLabel ?? a.narrativeChoiceLabel ?? ''),
       involvedCharacterIds: Array.isArray(a.involvedCharacterIds)
         ? a.involvedCharacterIds.map(value => String(value || '').trim()).filter(Boolean).slice(0, 12)
         : [],
@@ -3174,6 +3176,9 @@ function prepareAdultScenes() {
       involvedCharacterIds: [...(action?.involvedCharacterIds || [])],
       identityResolution: String(action?.identityResolution || 'unknown'),
       relationshipResolution: String(action?.relationshipResolution || 'unknown'),
+      relationshipRoleLabel: String(action?.relationshipRoleLabel || ''),
+      relationshipSubjectId: String(action?.relationshipSubjectId || ''),
+      relationshipTargetId: String(action?.relationshipTargetId || ''),
       partnerSwitch: action?.partnerSwitch === true,
       actionType: String(action?.actionType || ''),
       movementType: String(action?.movementType || ''),

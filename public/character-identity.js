@@ -1,4 +1,5 @@
-import { resolveLeadingCharacterReference, verifiedRoleNoun } from './character-reference.js';
+import { resolveLeadingCharacterReference, verifiedRoleNoun, relationshipChoiceLabel } from './character-reference.js';
+import { inverseRelationshipRole, isOrdinaryRelationshipAction } from './relationship-roles.js';
 // Names come from source evidence and explicit tracks, never appearance or a relationship guess.
 const text = value => String(value || '').trim().replace(/\s+/g, ' ');
 const nameKey = value => text(value).toLocaleLowerCase('tr-TR');
@@ -11,7 +12,7 @@ export function verifiedCharacterName(character) {
   if (!name || character.identityConflict || character.evidenceLevel !== 'fact' ||
       !Number.isFinite(confidence) || confidence < 0.68 || !text(character.evidence) ||
       /['’](?:n?[ıiuü]n|s)\s+/iu.test(name) ||
-      vaguePossessive.test(name) || roleWords.test(name) ||
+      vaguePossessive.test(name) || roleWords.test(name) || verifiedRoleNoun(name) ||
       nameKey(name) === nameKey(character.sourceRole || character.role)) return '';
   return name;
 }
@@ -70,18 +71,27 @@ function verifiedRelationship(context, subject, target) {
   if (!subject || !target || subject === target) return null;
   const characters = Array.isArray(context.characters) ? context.characters : [];
   const lookup = id => characterLookup(characters, id);
-  const matches = (Array.isArray(context.relationships) ? context.relationships : []).filter(item => {
+  const supported = (Array.isArray(context.relationships) ? context.relationships : []).filter(item => {
     const confidence = Number(item?.confidence);
     if (item?.evidenceLevel !== 'fact' || !Number.isFinite(confidence) || confidence < 0.78 ||
         !text(item.evidence) || !text(item.relation)) return false;
+    return lookup(item.from) && lookup(item.to);
+  });
+  const direct = supported.filter(item => {
     const from = lookup(item.from);
     const to = lookup(item.to);
     return canonicalCharacterId(from) === canonicalCharacterId(subject) &&
       canonicalCharacterId(to) === canonicalCharacterId(target);
   });
+  const matches = direct.length ? direct : supported.flatMap(item => {
+    if (canonicalCharacterId(lookup(item.to)) !== canonicalCharacterId(subject) ||
+        canonicalCharacterId(lookup(item.from)) !== canonicalCharacterId(target)) return [];
+    const relation = inverseRelationshipRole(item.relation);
+    return relation ? [{ ...item, from: item.to, to: item.from, relation }] : [];
+  });
   // Different chunks can record the same fact using an ID or its track alias.
   // Repeated evidence is not a conflict; different roles still are.
-  if (new Set(matches.map(item => nameKey(item.relation))).size !== 1) return null;
+  if (new Set(matches.map(item => verifiedRoleNoun(item.relation) || nameKey(item.relation))).size !== 1) return null;
   return matches.reduce((best, item) => Number(item.confidence) > Number(best.confidence) ? item : best);
 }
 
@@ -109,11 +119,22 @@ export function bindActionCharacter(action, context = {}) {
     partnerCandidate && canonicalCharacterId(candidate) !== canonicalCharacterId(partnerCandidate));
   const mismatch = conflictingTargets || Boolean(candidate && declared.length && !present.includes(candidate));
   const target = mismatch ? null : candidate;
-  const result = { ...action };
+  const result = { ...action,
+    characterSourceLabel: String(action.characterSourceLabel ?? action.label ?? ''),
+    characterSourceNarrativeLabel: String(action.characterSourceNarrativeLabel ?? action.narrativeChoiceLabel ?? '')
+  };
+  // Rebinding another pair must start from the source wording, not a role or
+  // proper name inserted for the previously selected pair.
+  result.label = result.characterSourceLabel;
+  result.narrativeChoiceLabel = result.characterSourceNarrativeLabel;
   // Derived labels must be rebuilt when a scene changes, never carried over.
   result.relationshipDisplayLabel = '';
   result.relationshipContext = '';
   result.relationshipResolution = 'unknown';
+  result.relationshipRoleLabel = '';
+  result.relationshipOwnerLabel = '';
+  result.relationshipSubjectId = '';
+  result.relationshipTargetId = '';
   result.characterPairLabel = '';
   result.characterPairResolution = 'unknown';
   let targetRole = '';
@@ -132,7 +153,7 @@ export function bindActionCharacter(action, context = {}) {
   }
   // Relationship labels are story context only. Intimate controls retain the
   // verified name/track so a family role never becomes erotic UI wording.
-  if (target && action.adultScene !== true) {
+  if (target && isOrdinaryRelationshipAction(action)) {
     let subject = lookup(action.subjectTrackId);
     if (declared.length && !present.includes(subject)) subject = null;
     // A group has no implicit actor. Only an exact two-person scene can supply
@@ -150,6 +171,10 @@ export function bindActionCharacter(action, context = {}) {
     const relation = verifiedRelationship(context, subject, target);
     if (relation) {
       targetRole = verifiedRoleNoun(relation.relation);
+      result.relationshipRoleLabel = targetRole;
+      result.relationshipOwnerLabel = action.groupScene === true || present.length > 2 ? subjectName : '';
+      result.relationshipSubjectId = canonicalCharacterId(subject);
+      result.relationshipTargetId = canonicalCharacterId(target);
       result.relationshipDisplayLabel = subjectName
         ? `${subjectName} ile ilişkisi: ${text(relation.relation)}`
         : `İlişki: ${text(relation.relation)}`;
@@ -162,9 +187,11 @@ export function bindActionCharacter(action, context = {}) {
   if (vaguePossessive.test(text(result.narrativeChoiceLabel))) result.narrativeChoiceLabel = '';
   if (target) {
     const reference = { name: verifiedCharacterName(target), role: targetRole,
+      ownerName: result.relationshipOwnerLabel,
+      allowGeneric: Boolean(targetRole && present.length === 2 && declared.every(lookup)),
       targetIds: [target.id, target.participantTrackId, ...(target.characterIds || [])] };
-    result.label = resolveLeadingCharacterReference(result.label, reference);
-    result.narrativeChoiceLabel = resolveLeadingCharacterReference(result.narrativeChoiceLabel, reference);
+    result.label = relationshipChoiceLabel(resolveLeadingCharacterReference(result.label, reference), targetRole, result.relationshipOwnerLabel);
+    result.narrativeChoiceLabel = relationshipChoiceLabel(resolveLeadingCharacterReference(result.narrativeChoiceLabel, reference), targetRole, result.relationshipOwnerLabel);
   }
   return result;
 }

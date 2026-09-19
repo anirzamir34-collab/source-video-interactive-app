@@ -394,6 +394,10 @@ ${storyContextMemory}
 - narrativeChoiceLabel, label and every BONUS/extra option must explicitly identify the involved recurring character through primaryCharacterLabel whenever more than one character exists in the video. Do not fall back to generic 'kadın', 'erkek', 'genç kız', 'olgun adam', 'biri' or 'partner' when a verified stable identity is available.
 - Return top-level storyContext with synopsisTr, currentSceneTitle, currentSceneGoal, setting, emotionalTone, characters[], relationships[], facts[], inferences[], unknowns[].
 - Every relationship entry must contain from, to, relation, evidenceLevel, confidence and evidence.
+- Relationship direction is explicit: from is the reference person, to is the related person, and relation describes TO's role relative to FROM. A mother addressing her daughter is {from: motherId, to: daughterId, relation: "kızı"}; the reverse is {from: daughterId, to: motherId, relation: "annesi"}. Return both directions when both roles are established by the source. Do not infer the sex or maternal/paternal branch of an unnamed relative.
+- For ordinary, non-intimate story choices, prefer the exact verified relationship over a proper name or age/gender description, in both main and extra options. Examples: "Kızıyla sohbet et", "Torunuyla spor yap", "Dostuyla konuş", "Eşini dinle" only when that exact action and pair are present. Preserve proper names separately in the character registry.
+- Include source-supported grandparents, grandchildren, parents, children, siblings, aunts/uncles, cousins, nieces/nephews, spouses, in-laws, step-relatives, friends and other social relationships. A list of possible roles is not evidence that any one applies.
+- Return subjectTrackId for the exact actor and primaryCharacterId for the exact addressee in every ordinary story action. In a group, resolve the relationship for that pair only. Qualify it with the reference person's verified name when otherwise ambiguous, without changing the source action.
 - Every returned action must additionally contain narrativeChoiceLabel, narrativeReason, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence.
 - narrativeChoiceLabel is the player-facing Turkish story choice. It must describe the meaning of the REAL playable action in context, not invent a branch.
 - narrativeChoiceLabel must still map to that action's exact startTime/endTime. Never write a choice whose promised consequence is absent from that exact source segment.
@@ -488,6 +492,7 @@ Return ONLY valid JSON with this exact shape:
       "partnerLabel": "",
       "involvedCharacterIds": [],
       "primaryCharacterId": "",
+      "subjectTrackId": "",
       "primaryCharacterLabel": "",
       "partnerEvidence": "",
       "partnerSwitch": false,
@@ -852,6 +857,7 @@ Rules:
             : [],
           primaryCharacterLabel: String(action.primaryCharacterLabel || '').trim(),
           primaryCharacterId: String(action.primaryCharacterId || '').trim(),
+          subjectTrackId: String(action.subjectTrackId || '').trim(),
           partnerEvidence: String(action.partnerEvidence || '').trim(),
           partnerSwitch: action.partnerSwitch === true,
           previousPartnerTrackId: String(action.previousPartnerTrackId || '').trim(),

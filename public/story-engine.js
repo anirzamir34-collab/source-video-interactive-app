@@ -1,4 +1,6 @@
 import { mergeCharacterRecords } from './character-identity.js';
+import { relationshipChoiceLabel, verifiedRoleNoun } from './character-reference.js';
+import { isOrdinaryRelationshipAction } from './relationship-roles.js';
 
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, Number(value) || 0));
 
@@ -136,6 +138,11 @@ export function storyChoiceLabelForAction(action = {}) {
   const fallback = cleanText(action.label, 180) || 'Devam et';
   const narrative = cleanText(action.narrativeChoiceLabel, 180);
   const withCharacter = label => {
+    if (isOrdinaryRelationshipAction(action) && action.relationshipResolution === 'verified' &&
+        action.relationshipSubjectId && action.relationshipTargetId &&
+        verifiedRoleNoun(action.relationshipRoleLabel)) {
+      return relationshipChoiceLabel(label, action.relationshipRoleLabel, action.relationshipOwnerLabel);
+    }
     let character = cleanText(action.primaryCharacterLabel, 100);
     if (action.adultScene !== true && action.characterPairResolution === 'verified') {
       character = cleanText(action.characterPairLabel, 160) || character;
