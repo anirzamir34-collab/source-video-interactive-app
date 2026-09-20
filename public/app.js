@@ -92,6 +92,10 @@ import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery
 import { createDubMixer, naturalDubRate, canFinishDubTail } from './dubbing-audio.js';
 import { createDubRequestQueue } from './dubbing-queue.js';
 import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
+import { mountSavedGames } from './saved-games-ui.js';
+import { validateGame } from './saved-games.js';
+
+let savedGames;
 
 const $ = (id) => document.getElementById(id);
 
@@ -99,6 +103,11 @@ const state = {
   serviceConnected: false,
   serviceCapabilities: null,
   selectedFile: null,
+  selectedSourceKind: 'file',
+  activeSavedGameId: null,
+  savedGameReady: false,
+  savedGameBusy: false,
+  savedPlaybackOnly: false,
   selectedRemoteVideo: null,
   remoteFileDownload: null,
   videoObjectUrl: '',
@@ -749,7 +758,12 @@ function updateAnalysisModesUI() {
 
 function updateAnalyzeAvailability() {
   const hasMode = updateAnalysisModesUI();
-  els.analyzeBtn.disabled = state.analysisInProgress || state.urlResolutionInProgress || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
+  const busy = state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy;
+  els.analyzeBtn.disabled = busy || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
+  els.videoInput.disabled = busy;
+  $('videoUrl').disabled = busy;
+  $('resolveUrlBtn').disabled = busy;
+  savedGames?.refreshControls();
 }
 
 [
@@ -785,10 +799,11 @@ function releaseVideoObjectUrl() {
 }
 
 els.videoInput.addEventListener('change', () => {
-  if (state.analysisInProgress || state.urlResolutionInProgress) return;
+  if (state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
   const file = els.videoInput.files?.[0] || null;
   clearPreviousGameResidue();
   state.selectedFile = file;
+  state.selectedSourceKind = 'file';
   state.selectedRemoteVideo = null;
   state.analysisSession = null;
   if (file) {
@@ -1511,6 +1526,7 @@ async function ensureDubSegment(segment, priority = 0) {
   const segmentId = getDubSegmentId(segment);
   if (!segmentId) return null;
   if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
+  if (state.savedPlaybackOnly) return null;
   if (state.dubRequests.has(segmentId)) {
     state.dubQueue.promote(segmentId, priority);
     return state.dubRequests.get(segmentId);
@@ -1981,9 +1997,11 @@ async function prepareStoryboardSource(session, file) {
 }
 
 els.analyzeBtn.addEventListener('click', async () => {
-  if (state.analysisInProgress || state.urlResolutionInProgress) return;
+  if (state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
   state.analysisInProgress = true;
+  state.savedGameReady = false;
+  state.savedPlaybackOnly = false;
   try {
   els.analyzeBtn.disabled = true;
   els.videoInput.disabled = true;
@@ -2117,6 +2135,9 @@ els.analyzeBtn.addEventListener('click', async () => {
             : 'Türkçe altyazılar kullanıma hazır.'
         ].join('\n');
         setGameState('DIALOGUE_READY');
+        state.analysis = null;
+        state.savedGameReady = true;
+        await savedGames?.saveCurrent(true);
         return;
       }
     } catch (error) {
@@ -2670,6 +2691,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Yeniden analiz, yalnız geçici hata veren eksik bölümleri dener.' : 'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
+  state.savedGameReady = true;
+  await savedGames?.saveCurrent(true);
   } catch (error) {
     console.error('Analysis failed:', error);
     els.analysisState.textContent = 'ANALYSIS_ERROR';
@@ -5879,6 +5902,10 @@ setInterval(checkAiUsageStatus, 60 * 1000);
 renderDebug();
 
 function clearPreviousGameResidue() {
+  state.activeSavedGameId = null;
+  state.savedGameReady = false;
+  state.savedPlaybackOnly = false;
+  savedGames?.resetCurrent();
   state.remoteFileDownload?.controller.abort();
   state.remoteFileDownload = null;
   cancelTimelineNavigation();
@@ -6140,7 +6167,7 @@ async function ensureSelectedRemoteFile({ onProgress } = {}) {
 }
 
 async function resolveVideoUrl() {
-  if (state.urlResolutionInProgress || state.analysisInProgress) return;
+  if (state.urlResolutionInProgress || state.analysisInProgress || state.savedGameBusy) return;
   const pageUrl = videoUrlInput?.value.trim();
   if (!pageUrl) {
     setUrlStatus('Lütfen video sayfasının bağlantısını gir.', 'error');
@@ -6180,6 +6207,7 @@ async function resolveVideoUrl() {
       if (probe.seekable) {
         clearPreviousGameResidue();
         state.selectedFile = null;
+        state.selectedSourceKind = 'url';
         state.selectedRemoteVideo = {
           proxyUrl: result.proxyUrl,
           sourceUrl: result.sourceUrl,
@@ -6210,6 +6238,7 @@ async function resolveVideoUrl() {
 
     clearPreviousGameResidue();
     state.selectedFile = file;
+    state.selectedSourceKind = 'url';
     state.selectedRemoteVideo = null;
     state.analysisSession = null;
     state.videoObjectUrl = objectUrl;
@@ -6234,4 +6263,108 @@ async function resolveVideoUrl() {
 resolveUrlBtn?.addEventListener('click', resolveVideoUrl);
 videoUrlInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') resolveVideoUrl();
+});
+
+function captureSavedGame() {
+  const video = state.selectedFile || state.analysisSession?.file;
+  if (!state.savedGameReady || !(video instanceof Blob) || !video.size) return null;
+  return {
+    id: state.activeSavedGameId,
+    title: video.name || 'Kayıtlı oyun',
+    fileName: video.name || 'video.mp4',
+    sourceKind: state.selectedSourceKind,
+    duration: Number(els.video.duration) || Number(state.analysis?.videoDuration),
+    video,
+    payload: {
+      analysis: state.analysis,
+      dialogue: state.dialogue,
+      dubCache: [...state.dubCache],
+      dubVoiceIds: { ...state.dubVoiceIds },
+      dubStableSpeakerGenders: [...state.dubStableSpeakerGenders],
+      subtitlesEnabled: state.subtitlesEnabled,
+      dubbingEnabled: state.dubbingEnabled,
+      keepOriginalAudioEnabled: state.keepOriginalAudioEnabled
+    }
+  };
+}
+
+async function openSavedGame(game) {
+  validateGame(game);
+  if (game.payload.analysis?.schemaVersion > ANALYSIS_SCHEMA_VERSION) {
+    throw new Error('Bu kayıt daha yeni bir uygulama sürümüyle oluşturulmuş. Sayfayı yenile.');
+  }
+  // Validate media before replacing the current game. No source URL is needed.
+  const file = new File([game.video], game.fileName, { type: game.video.type || 'video/mp4' });
+  const url = URL.createObjectURL(file);
+  const probe = document.createElement('video');
+  probe.preload = 'metadata';
+  try {
+    await new Promise((resolve, reject) => {
+      const finish = error => {
+        clearTimeout(timer);
+        probe.onloadedmetadata = null;
+        probe.onerror = null;
+        error ? reject(error) : resolve();
+      };
+      const timer = setTimeout(() => finish(new Error('Kayıtlı video açılamadı; kayıt silinmedi.')), 20000);
+      probe.onloadedmetadata = () => {
+        const difference = Math.abs(probe.duration - game.duration);
+        finish(!Number.isFinite(probe.duration) || difference > Math.max(2, game.duration * 0.01)
+          ? new Error('Kayıtlı video ile analiz süresi uyuşmuyor; kayıt silinmedi.') : null);
+      };
+      probe.onerror = () => finish(new Error('Bu tarayıcı kayıtlı videonun biçimini oynatamıyor; kayıt silinmedi.'));
+      probe.src = url;
+    });
+  } catch (error) { URL.revokeObjectURL(url); throw error; }
+  finally { probe.removeAttribute('src'); probe.load(); }
+
+  clearPreviousGameResidue();
+  state.selectedFile = file;
+  state.selectedRemoteVideo = null;
+  state.selectedSourceKind = game.sourceKind;
+  state.analysisSession = null;
+  state.videoObjectUrl = url;
+  state.analysis = game.payload.analysis;
+  state.dialogue = game.payload.dialogue;
+  state.dubCache = new Map(game.payload.dubCache || []);
+  state.dubVoiceIds = game.payload.dubVoiceIds || { female: '', male: '' };
+  state.dubStableSpeakerGenders = new Map(game.payload.dubStableSpeakerGenders || []);
+  state.subtitlesEnabled = Boolean(game.payload.subtitlesEnabled);
+  state.dubbingEnabled = Boolean(game.payload.dubbingEnabled && state.dubCache.size);
+  state.keepOriginalAudioEnabled = game.payload.keepOriginalAudioEnabled !== false;
+  state.activeSavedGameId = game.id;
+  state.savedGameReady = true;
+  state.savedPlaybackOnly = true;
+  els.videoInput.value = '';
+  videoUrlInput.value = '';
+  setUrlStatus('');
+  els.video.src = url;
+  els.video.load();
+  els.fileMeta.textContent = `${game.title} · kayıtlı video · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
+  els.subtitleToggleBtn.classList.toggle('hidden', !state.dialogue?.segments?.length);
+  els.subtitleToggleBtn.textContent = `TR ALTYAZI: ${state.subtitlesEnabled ? 'AÇIK' : 'KAPALI'}`;
+  els.dubToggleBtn.classList.toggle('hidden', !state.dubCache.size);
+  delete els.dubToggleBtn.dataset.unavailable;
+  els.dubToggleBtn.title = '';
+  els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
+  updateDubMix();
+  if (state.analysis) initializeInteractive(state.analysis);
+  else {
+    els.playerSection.classList.remove('hidden');
+    setGameState('DIALOGUE_READY');
+  }
+  els.analysisCard.classList.remove('hidden');
+  els.analysisState.textContent = 'SAVED_GAME_READY';
+  els.analysisTitle.textContent = game.title;
+  els.analysisOutput.textContent = 'Kayıtlı video ve analiz açıldı. Yeni analiz veya video indirmesi yapılmadı.';
+  renderDebug();
+  els.playerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+savedGames = mountSavedGames({
+  root: $('savedGames'), capture: captureSavedGame, openGame: openSavedGame,
+  isBusy: () => state.analysisInProgress || state.urlResolutionInProgress,
+  onBusy: busy => { state.savedGameBusy = busy; updateAnalyzeAvailability(); },
+  onSaved: record => { state.activeSavedGameId = record.id; },
+  onDeleted: id => { if (state.activeSavedGameId === id) state.activeSavedGameId = null; }
 });

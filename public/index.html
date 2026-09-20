@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/player-controls.css" />
   <link rel="stylesheet" href="/panel-cinema.css" />
+  <link rel="stylesheet" href="/saved-games.css" />
 </head>
 <body>
   <main class="shell">
@@ -40,6 +41,23 @@
         <button id="healthBtn" class="ghost-btn">Yeniden test et</button>
       </div>
       <div id="serviceMeta" class="meta"></div>
+    </section>
+
+    <section id="savedGames" class="saved-games" aria-labelledby="savedGamesTitle">
+      <div class="saved-games-head">
+        <h2 id="savedGamesTitle">Kayıtlı oyunlar <span data-games-count>0</span></h2>
+        <button type="button" data-games-import-button>Yedek yükle</button>
+        <input type="file" data-games-import accept=".vqgame" hidden />
+      </div>
+      <p>Video, analiz, altyazı ve hazır dublaj bu cihazdaki tarayıcıda kalır. Uygulama kayıtları otomatik silmez. Tarayıcı verilerini silmeden veya cihaz değiştirmeden önce yedek indir.</p>
+      <div class="saved-games-current">
+        <input type="text" data-game-title aria-label="Kayıt adı" placeholder="Oyun adı (isteğe bağlı)" maxlength="120" />
+        <button type="button" data-game-save disabled>Şimdi kaydet</button>
+        <button type="button" data-game-export-current disabled>Yedek indir</button>
+      </div>
+      <p data-games-status role="status" aria-live="polite"></p>
+      <div data-games-list class="saved-games-list"></div>
+      <p data-games-storage></p>
     </section>
 
     <section class="upload-card">

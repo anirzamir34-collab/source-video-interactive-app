@@ -34,7 +34,7 @@ function fixture(code, overrides = {}) {
   const scope = vm.createContext({
     AbortController, AbortSignal, URL, Blob, File, FormData, performance, setTimeout, clearTimeout,
     console: { error: (...args) => errors.push(args), warn() {} },
-    els: elements(), state: {}, updateDubMix() {}, ...overrides
+    els: elements(), state: {}, savedGames: null, $: () => new Element(), updateDubMix() {}, ...overrides
   });
   vm.runInContext(code, scope);
   return { scope, errors };
@@ -51,7 +51,7 @@ test('blocked storage property and removeItem failures do not stop startup clean
 test('availability refreshes cannot reenable analysis during analysis or URL import', () => {
   const f = fixture(section('function updateAnalyzeAvailability()', '\n[\n  els.qualityMode'), { updateAnalysisModesUI: () => true });
   f.scope.state.selectedFile = { name: 'clip.mp4' };
-  for (const busy of ['analysisInProgress', 'urlResolutionInProgress']) {
+  for (const busy of ['analysisInProgress', 'urlResolutionInProgress', 'savedGameBusy']) {
     f.scope.state[busy] = true;
     f.scope.updateAnalyzeAvailability();
     assert.equal(f.scope.els.analyzeBtn.disabled, true);
@@ -233,6 +233,18 @@ test('cached speech remains playable during a provider cooldown', async () => {
   f.state.dubCache.set('cached', 'cached-audio');
   f.state.dubUnavailableUntil = Date.now() + 120000;
   assert.equal(await f.scope.ensureDubSegment(segment, 100), 'cached-audio');
+  assert.equal(f.pending.length, 0);
+});
+
+test('saved-game replay uses stored audio and never synthesizes missing audio', async () => {
+  const f = dubbingFixture();
+  const cached = { id: 'saved', turkishText: 'Merhaba' };
+  const missing = { id: 'missing', turkishText: 'Görüşürüz' };
+  f.state.dialogue.segments = [cached, missing];
+  f.state.savedPlaybackOnly = true;
+  f.state.dubCache.set('saved', 'saved-audio');
+  assert.equal(await f.scope.ensureDubSegment(cached), 'saved-audio');
+  assert.equal(await f.scope.ensureDubSegment(missing), null);
   assert.equal(f.pending.length, 0);
 });
 
