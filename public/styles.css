@@ -2311,6 +2311,39 @@ pre {
   line-height: 1.2;
 }
 
+.movement-energy-badge {
+  display: inline-flex !important;
+  width: max-content;
+  margin: 0 0 5px !important;
+  padding: 3px 6px;
+  border: 1px solid rgba(85,238,194,.32);
+  border-radius: 999px;
+  color: #83f5d2 !important;
+  background: rgba(35,132,104,.18);
+  font: 850 .54rem/1 monospace !important;
+  letter-spacing: .08em;
+}
+
+.movement-energy-badge[data-energy='fast'],
+.movement-energy-badge[data-energy='hard'],
+.movement-energy-badge[data-energy='intense'] {
+  border-color: rgba(255,121,99,.38);
+  color: #ffb19f !important;
+  background: rgba(151,48,33,.20);
+}
+
+.movement-energy-badge[data-energy='deep'] {
+  border-color: rgba(160,126,255,.42);
+  color: #cbb9ff !important;
+  background: rgba(83,53,161,.22);
+}
+
+.movement-energy-badge[data-energy='slow'] {
+  border-color: rgba(95,178,255,.34);
+  color: #a9d8ff !important;
+  background: rgba(36,91,145,.19);
+}
+
 .movement-tempo-btn {
   width: 100%;
   min-height: 30px;

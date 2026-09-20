@@ -17,15 +17,29 @@ export function sourceIdentityLabel(value, clip = {}) {
 
 // Arrange existing clips only. These groups never join media ranges, create
 // actions, change playback rate or make uncertain clips selectable.
-export function groupSourceChoiceCards(clips, { preferredCount = 5, contextFor, bandFor, labelFor } = {}) {
+export function groupSourceChoiceCards(clips, {
+  preferredCount = 5,
+  contextFor,
+  bandFor,
+  labelFor,
+  mergeWithinContext = false
+} = {}) {
   const source = (Array.isArray(clips) ? clips : [])
     .filter(clip => clip?.sourceVerified === true && clip.id && clipRange(clip))
     .sort((a, b) => clipRange(a).startTime - clipRange(b).startTime || String(a.id).localeCompare(String(b.id)));
-  const target = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
+  const requestedTarget = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
+  // preferredCount is a ceiling, not a demand. Roughly four verified
+  // movements per card keeps rich scenes compact without stuffing a whole
+  // occurrence into one option.
+  const target = Math.min(requestedTarget, Math.max(1, Math.ceil(source.length / 4)));
   const groups = new Map();
   for (const clip of source) {
     const label = sourceActionLabel(labelFor?.(clip) || clip.label);
-    const band = bandFor?.(clip) || text(clip.movementTempo) || 'unclear';
+    const rawProfile = bandFor?.(clip) || text(clip.movementTempo) || 'unclear';
+    const profile = rawProfile && typeof rawProfile === 'object'
+      ? rawProfile
+      : { key: text(rawProfile) || 'unclear', intensityBand: text(rawProfile) || 'unclear' };
+    const band = text(profile.key) || 'unclear';
     const occurrence = text(contextFor?.(clip));
     const declaredScope = [text(clip.adultSceneId), text(clip.sourcePositionId), text(clip.positionOccurrenceId)];
     const hasScope = Boolean(occurrence || declaredScope.some(Boolean));
@@ -33,15 +47,20 @@ export function groupSourceChoiceCards(clips, { preferredCount = 5, contextFor, 
     const kind = !rawType ? ''
       : /(?:position|tempo|movement|rhythm|thrust|ritim|hareket)/u.test(rawType) ? 'movement'
         : 'contact';
+    const stableContext = mergeWithinContext && occurrence;
     const key = JSON.stringify([
       occurrence || declaredScope,
-      text(clip.partnerTrackId), text(clip.subjectTrackId), text(clip.primaryCharacterId),
-      [...(clip.participantTrackIds || [])].map(text).sort(),
-      text(clip.receiverBodyOrientation), text(clip.receiverSupport), band,
-      hasScope && kind && kind !== 'other' ? kind : label.toLocaleLowerCase('tr-TR'),
+      stableContext ? '' : text(clip.partnerTrackId),
+      stableContext ? '' : text(clip.subjectTrackId),
+      stableContext ? '' : text(clip.primaryCharacterId),
+      stableContext ? [] : [...(clip.participantTrackIds || [])].map(text).sort(),
+      stableContext ? '' : text(clip.receiverBodyOrientation),
+      stableContext ? '' : text(clip.receiverSupport), band,
+      stableContext ? 'verified-position-movement'
+        : hasScope && kind && kind !== 'other' ? kind : label.toLocaleLowerCase('tr-TR'),
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);
-    if (!groups.has(key)) groups.set(key, { key, band, occurrence, packets: new Map() });
+    if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence, packets: new Map() });
     const group = groups.get(key);
     const origin = text(clip.derivedFromVerifiedSegment || clip.id);
     if (!group.packets.has(origin)) group.packets.set(origin, []);
@@ -60,8 +79,12 @@ export function groupSourceChoiceCards(clips, { preferredCount = 5, contextFor, 
       cards.push({
         id: `movement-choice:${encodeURIComponent(JSON.stringify([group.key, first.id, range.startTime]))}`,
         label: sourceActionLabel(labelFor?.(first) || first.label) || 'Kesiti oynat',
-        tempo: group.band === 'slow' ? 'slow' : group.band === 'intense' ? 'fast' : 'moderate',
-        intensityBand: group.band, hasTempoShift: false, tempoVariants: [],
+        tempo: group.profile.tempo || (group.profile.intensityBand === 'slow' ? 'slow'
+          : group.profile.intensityBand === 'intense' ? 'fast' : 'moderate'),
+        intensityBand: group.profile.intensityBand || group.band,
+        energyFlavor: group.profile.energyFlavor || group.profile.intensityBand || group.band,
+        energyLabel: group.profile.energyLabel || '',
+        hasTempoShift: false, tempoVariants: [],
         sourcePositionId: text(first.sourcePositionId), occurrenceId: group.occurrence,
         variants: pending
       });

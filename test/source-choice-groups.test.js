@@ -43,6 +43,37 @@ test('an explicit parent cannot group across an unverified gap even if the provi
   assert.deepEqual(buildVerifiedMovementChoices([invalid], 'Yürüyüş', 5, parent), []);
 });
 
+test('a rich verified occurrence forms truthful tempo cards with three or four movements each', () => {
+  const specs = [
+    ...Array.from({ length: 4 }, () => ({ label: 'Yavaşça devam et', movementTempo: 'slow' })),
+    ...Array.from({ length: 4 }, () => ({ label: 'Ritmik hareketi sürdür', movementTempo: 'moderate' })),
+    ...Array.from({ length: 3 }, () => ({ label: 'Derin hareketi sürdür', movementTempo: 'moderate' })),
+    ...Array.from({ length: 3 }, () => ({ label: 'Hızlı hareketlerle devam et', movementTempo: 'fast' }))
+  ];
+  const movements = specs.map((spec, index) => clip(index, {
+    ...spec,
+    sourcePositionId: 'same-occurrence',
+    receiverBodyOrientation: index % 2 ? 'camera-left' : 'camera-right',
+    receiverSupport: index % 3 ? 'supported' : 'unknown',
+    partnerTrackId: index % 2 ? 'partner-a' : '',
+    subjectTrackId: index % 2 ? 'subject-a' : '',
+    loopStartTime: index * 6,
+    loopEndTime: index * 6 + 5
+  }));
+  const position = {
+    id: 'position:cowgirl:partner-a', occurrenceId: 'cowgirl:partner-a', partnerTrackId: 'partner-a',
+    startTime: 0, endTime: 84, movements,
+    sourceRanges: [{ id: 'same-occurrence', startTime: 0, endTime: 84 }]
+  };
+
+  const cards = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 5, position);
+  assert.deepEqual(cards.map(card => card.energyFlavor), ['slow', 'steady', 'deep', 'fast']);
+  assert.deepEqual(cards.map(card => card.energyLabel), ['YAVAŞ', 'RİTMİK', 'DERİN', 'HIZLI']);
+  assert.deepEqual(cards.map(card => card.variants.length), [4, 4, 3, 3]);
+  assert.equal(cards.flatMap(card => card.variants).length, movements.length);
+  assert.ok(cards.every(card => new Set(card.variants.map(item => item.sourcePositionId)).size === 1));
+});
+
 test('an earlier source action is not owned solely by a reused scene ID', () => {
   const scene = { id: 'section-a', sourceSceneIds: ['provider-a'], startTime: 100, endTime: 150 };
   for (const adultSceneId of ['section-a', 'provider-a']) {

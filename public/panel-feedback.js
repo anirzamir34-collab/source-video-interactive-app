@@ -96,8 +96,8 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
         const active = visible && clip && ids.includes(String(clip.id || clip.actionId));
         const variantStatus = card.querySelector('[data-variant-status]');
         if (variantStatus) text(variantStatus, active
-          ? `${ids.indexOf(String(clip.id || clip.actionId)) + 1}/${ids.length} kesit`
-          : `${ids.length} kesit`);
+          ? `${ids.indexOf(String(clip.id || clip.actionId)) + 1}/${ids.length} hareket`
+          : `${ids.length} hareket`);
         if (card.dataset.movementChoiceId) {
           const choice = snapshot.choiceClips?.find(item => item.id === card.dataset.movementChoiceId);
           if (choice) text(card.querySelector('[data-choice-label]'),

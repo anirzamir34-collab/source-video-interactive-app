@@ -4783,7 +4783,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
   if (els.movementCount) {
-    els.movementCount.textContent = `${movementCoverage.variantCount} doğrulanmış kesit · ${movementCoverage.choiceCount} seçenek`;
+    els.movementCount.textContent = `${movementCoverage.variantCount} gerçek hareket · ${movementCoverage.choiceCount} seçenek`;
   }
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   els.movementSection?.classList.remove('hidden');
@@ -4796,13 +4796,16 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     button.className = 'movement-choice-card';
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
+    const energyBadge = choice.energyLabel
+      ? `<small class="movement-energy-badge" data-energy="${escapeHtml(choice.energyFlavor)}">${escapeHtml(choice.energyLabel)}</small>`
+      : '';
     const variantStatus = choice.variants.length > 1
-      ? `<small class="movement-variant-status" data-variant-status>${choice.variants.length} kesit · dönüşümlü oynatılır</small>`
-      : '<small class="movement-variant-status" data-variant-status>1 kesit</small>';
+      ? `<small class="movement-variant-status" data-variant-status>${choice.variants.length} hareket · dönüşümlü oynatılır</small>`
+      : '<small class="movement-variant-status" data-variant-status>1 gerçek hareket</small>';
     const tempoSummary = choice.hasTempoShift && choice.tempoVariants?.length
       ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
       : '';
-    button.innerHTML = `<span data-choice-label>${escapeHtml(choice.label)}</span>${variantStatus}${tempoSummary}`;
+    button.innerHTML = `${energyBadge}<span data-choice-label>${escapeHtml(choice.label)}</span>${variantStatus}${tempoSummary}`;
     button.addEventListener('click', () => {
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId

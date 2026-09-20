@@ -851,8 +851,14 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     .replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g')
     .replace(/ü/g, 'u').replace(/ö/g, 'o')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const isPositionTransition = movement => {
+    const type = normalize([movement?.actionType, movement?.movementType].filter(Boolean).join(' '));
+    const label = normalize(movement?.label);
+    return /\b(position_transition|partner_transition|scene_transition|transition|gecis)\b/u.test(type) ||
+      /\b(?:baska|yeni)\s+pozisyona\s+gec(?:is)?\b|\bpozisyon\s+degistir\b|\bpartner\s+degistir\b/u.test(label);
+  };
   const verified = (Array.isArray(movements) ? movements : [])
-    .filter(movement => movement?.sourceVerified === true && clipRange(movement) &&
+    .filter(movement => movement?.sourceVerified === true && !isPositionTransition(movement) && clipRange(movement) &&
       (!position || positionOccurrenceForMovement(position, movement)))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
   if (!verified.length) return [];
@@ -861,20 +867,45 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     const tempo = normalizeMovementTempo(movement.movementTempo);
     const text = normalize([
       movement.label, movement.movementType,
-      movement.activityEvidence, movement.sensoryEvidence
+      movement.activityEvidence
     ].filter(Boolean).join(' '));
-    if (tempo === 'fast' || /\b(hizli|hizlan\w*|sert|derin|guclu|yogun|zirve|deep|hard|fast|intense|thrust)\b/u.test(text)) {
-      return 'intense';
-    }
-    if (tempo === 'slow' || /\b(yavas|sakin|nazik|kontrollu|soft|gentle|slow)\b/u.test(text)) {
-      return 'slow';
-    }
-    return 'steady';
+    const explicitSlow = tempo === 'slow' || /\b(yavas|sakin|nazik|kontrollu|soft|gentle|slow)\b/u.test(text);
+    const explicitDeep = /\b(derin|deep)\b/u.test(text);
+    const explicitHard = /\b(sert|hard|guclu)\b/u.test(text);
+    const explicitFast = tempo === 'fast' || /\b(hizli|hizlan\w*|fast|thrust)\b/u.test(text);
+    const explicitIntense = /\b(yogun|zirve|intense)\b/u.test(text);
+    const energyFlavor = explicitDeep ? 'deep'
+      : explicitHard ? 'hard'
+        : explicitFast ? 'fast'
+          : explicitIntense ? 'intense'
+            : explicitSlow ? 'slow' : 'steady';
+    const resolvedTempo = tempo !== 'unclear' ? tempo
+      : energyFlavor === 'slow' ? 'slow'
+        : ['deep', 'hard', 'fast', 'intense'].includes(energyFlavor) ? 'fast' : 'moderate';
+    const intensityBand = energyFlavor === 'slow' ? 'slow'
+      : ['deep', 'hard', 'fast', 'intense'].includes(energyFlavor) ? 'intense' : 'steady';
+    const energyLabel = {
+      slow: 'YAVAŞ', steady: 'RİTMİK', fast: 'HIZLI',
+      deep: 'DERİN', hard: 'SERT', intense: 'YOĞUN'
+    }[energyFlavor];
+    return {
+      key: `${resolvedTempo}:${energyFlavor}`,
+      tempo: resolvedTempo,
+      intensityBand,
+      energyFlavor,
+      energyLabel
+    };
   };
   return groupSourceChoiceCards(verified, {
     preferredCount: maxChoices,
-    contextFor: position ? item => positionOccurrenceForMovement(position, item)?.id || '' : undefined,
+    contextFor: position ? item => {
+      const occurrence = positionOccurrenceForMovement(position, item);
+      return occurrence
+        ? [position.occurrenceId || position.id, occurrence.id, position.partnerTrackId || 'partner'].join('::')
+        : '';
+    } : undefined,
     bandFor,
+    mergeWithinContext: Boolean(position),
     labelFor: item => sourceIdentityLabel(sourceActionLabel(clean(item.label || item.movementType || positionLabel))
       .split('·').map(part => part.trim())
       .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))

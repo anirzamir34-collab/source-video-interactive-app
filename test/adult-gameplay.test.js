@@ -782,8 +782,10 @@ test('a transition label cannot be hidden inside a tempo card', () => {
       loopStartTime: 10, loopEndTime: 20, sourceVerified: true },
     { id: 'transition', label: 'Başka pozisyona geçiş', movementType: 'transition', movementTempo: 'fast',
       loopStartTime: 20, loopEndTime: 30, sourceVerified: true }
-  ].filter(item => movementBelongsToVerifiedPosition(item, 'cowgirl'));
-  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 5);
+  ].map(item => ({ ...item, sourcePositionId: 'cowgirl-occurrence' }));
+  const position = { id: 'cowgirl', occurrenceId: 'cowgirl-occurrence', startTime: 10, endTime: 30,
+    sourceRanges: [{ id: 'cowgirl-occurrence', startTime: 10, endTime: 30 }], movements };
+  const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 5, position);
   assert.deepEqual(choices.flatMap(choice => choice.variants).map(item => item.id), ['local']);
 });
 
