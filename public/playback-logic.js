@@ -13,6 +13,29 @@ export function hasRemainingVideo(currentTime, duration) {
   return Number.isFinite(end) && end > 0 && Number(currentTime) < end - 0.05;
 }
 
+// A failed analysis interval has no safe interactive choices. Keep the source
+// video moving through that interval and hand control back at the first later
+// verified route. Returning the media duration lets playback finish normally
+// when the failed interval is followed by no more verified routes.
+export function analysisGapBridgeTarget(gaps, currentTime, routeTimes, duration) {
+  const cursor = Math.max(0, Number(currentTime) || 0);
+  const mediaEnd = Number(duration);
+  const routes = (Array.isArray(routeTimes) ? routeTimes : [])
+    .map(Number)
+    .filter(time => Number.isFinite(time) && time > cursor + 0.05)
+    .sort((left, right) => left - right);
+  const target = routes[0] ?? (Number.isFinite(mediaEnd) && mediaEnd > cursor + 0.05 ? mediaEnd : null);
+  if (target === null) return null;
+
+  const crossesGap = (Array.isArray(gaps) ? gaps : []).some(gap => {
+    const start = Number(gap?.startTime);
+    const end = Number(gap?.endTime);
+    return Number.isFinite(start) && Number.isFinite(end) && end > start &&
+      end > cursor + 0.05 && start < target + 0.05;
+  });
+  return crossesGap ? target : null;
+}
+
 export function seekMediaTo(video, requestedTime, { signal, timeoutMs = 8000 } = {}) {
   const target = sceneExitTime(requestedTime, video.duration);
   return new Promise((resolve, reject) => {

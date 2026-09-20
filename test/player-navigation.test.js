@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { decisionBoundaryAfterDialogue, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import { analysisGapBridgeTarget, decisionBoundaryAfterDialogue, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const names = ['isUnownedTimelineChoice', 'finishAdultScene', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback', 'finishActionAfterDub', 'waitForDubEnd'];
+const names = ['isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback', 'finishActionAfterDub', 'waitForDubEnd'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} is present`);
@@ -63,7 +63,7 @@ function fixture() {
   };
   const els = new Proxy({ video: new Media() }, { get(target, key) { return target[key] ||= new Element(); } });
   const scope = vm.createContext({ state, els, AbortController, DOMException,
-    hasRemainingVideo, sceneExitTime, seekMediaTo, decisionBoundaryAfterDialogue,
+    analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo, decisionBoundaryAfterDialogue,
     setTimeout, clearTimeout, dubChannels: new Map(),
     guardPlayable: () => ({ allowed: true }),
     finishAction: action => { state.finishedAction = action; },
@@ -72,7 +72,8 @@ function fixture() {
     setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, persistRuntimeSnapshot() {}, renderDebug() {},
     orderedLockedAdultPositions: () => [], findAdultSceneAt: () => null,
     futureActions: () => [], selectDiverseStoryActions: list => list, findAdultSceneForTimeline: () => null,
-    verifiedAdultPositionFamily: () => null
+    verifiedAdultPositionFamily: () => null, storyChoiceLabelForAction: action => action.label,
+    escapeHtml: value => String(value)
   });
   vm.runInContext(handlers, scope);
   // Mirror the application's play guard: an incorrect state silently pauses.
@@ -90,6 +91,61 @@ test('scene exit resumes adjacent source footage when no choices remain', async 
   assert.equal(f.els.video.paused, false);
   assert.equal(f.state.gameState, 'SEGMENT_PLAYING');
   assert.equal(f.state.navigationSeeking, false);
+});
+
+test('partial analysis plays through a failed range and restores the next verified choice', async () => {
+  const f = fixture();
+  f.state.analysis = {
+    partial: true, videoDuration: 100,
+    analysisGaps: [{ startTime: 10, endTime: 20 }],
+    actions: [{ actionId: 'verified-next', label: 'Kapıyı aç', startTime: 30, endTime: 35, sourceVerified: true }]
+  };
+  f.state.gameCursorTime = 10;
+  f.renderChoices();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.state.gameState, 'SEGMENT_PLAYING');
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.els.choices.classes.has('hidden'), true);
+  f.els.video.time = 30;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.gameCursorTime, 30);
+  assert.equal(f.state.gameState, 'DECISION_PENDING');
+  assert.equal(f.els.choices.children.length, 1);
+});
+
+test('a final failed range continues to the real media end instead of waiting forever', async () => {
+  const f = fixture();
+  f.state.analysis = {
+    partial: true, videoDuration: 100,
+    analysisGaps: [{ startTime: 10, endTime: 100 }],
+    actions: [{ actionId: 'completed', label: 'Tamamlandı', startTime: 0, endTime: 10, sourceVerified: true }]
+  };
+  f.state.currentActionIndex = 0;
+  f.state.consumedActionIds.add('completed');
+  f.state.gameCursorTime = 10;
+  f.renderChoices();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.paused, false);
+  f.els.video.time = 100;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameState, 'ENDED');
+  assert.equal(f.els.video.paused, true);
+});
+
+test('blocked gap playback exposes a usable continue control', async () => {
+  const f = fixture();
+  f.els.video.mode = 'blocked';
+  f.state.analysis = {
+    partial: true, videoDuration: 100,
+    analysisGaps: [{ startTime: 10, endTime: 20 }],
+    actions: [{ actionId: 'verified-next', label: 'Devam', startTime: 30, endTime: 35, sourceVerified: true }]
+  };
+  f.state.gameCursorTime = 10;
+  f.renderChoices();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.state.gameState, 'DECISION_PENDING');
+  assert.equal(f.els.choices.children[1].dataset.playbackRecovery, 'continue');
 });
 
 test('failed navigation exposes retry; new seek cancels pending navigation', async () => {

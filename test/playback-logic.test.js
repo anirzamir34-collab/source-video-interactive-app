@@ -13,6 +13,7 @@ import {
   dubSegmentKey,
   fittedDubPlaybackRate,
   hasRemainingVideo,
+  analysisGapBridgeTarget,
   isCompleteChunkAnalysis,
   isDubStartTimely,
   mapVideoTimeToDubTime,
@@ -106,6 +107,16 @@ test('partial chunk analysis is never considered complete', () => {
   assert.equal(isCompleteChunkAnalysis({ completedChunkCount: 2, expectedChunkCount: 10 }), false);
   assert.equal(isCompleteChunkAnalysis({ completedChunkCount: 10, expectedChunkCount: 10, failed: true }), false);
   assert.equal(isCompleteChunkAnalysis({ completedChunkCount: 10, expectedChunkCount: 10 }), true);
+});
+
+test('failed analysis ranges bridge to the next verified route or media end', () => {
+  const gaps = [{ startTime: 12, endTime: 20 }];
+  assert.equal(analysisGapBridgeTarget(gaps, 10, [11, 30], 100), null);
+  assert.equal(analysisGapBridgeTarget(gaps, 11, [30, 60], 100), 30);
+  assert.equal(analysisGapBridgeTarget(gaps, 15, [30], 100), 30);
+  assert.equal(analysisGapBridgeTarget(gaps, 11, [], 100), 100);
+  assert.equal(analysisGapBridgeTarget(gaps, 21, [30], 100), null);
+  assert.equal(analysisGapBridgeTarget([], 11, [30], 100), null);
 });
 
 test('line-level dub gender overrides stale speaker memory', () => {

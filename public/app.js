@@ -51,6 +51,7 @@ import {
   dubMasterClockCorrection,
   dubSegmentKey,
   fittedDubPlaybackRate,
+  analysisGapBridgeTarget,
   hasRemainingVideo,
   isCompleteChunkAnalysis,
   mapVideoTimeToDubTime,
@@ -5414,6 +5415,69 @@ function futureActions() {
   return selectDiverseStoryActions(unique, 3);
 }
 
+function nextVerifiedRouteTime() {
+  const cursor = Number(state.gameCursorTime) || 0;
+  const actionTimes = (state.analysis?.actions || [])
+    .filter((action, index) =>
+      index > state.currentActionIndex &&
+      action?.sourceVerified === true &&
+      !state.consumedActionIds.has(action.actionId) &&
+      Number(action.startTime) > cursor + 0.05
+    )
+    .map(action => Number(action.startTime));
+  const sceneTimes = (state.adultScenes || [])
+    .filter(scene =>
+      !state.completedAdultSceneIds?.has(scene.id) &&
+      Number(scene.startTime) > cursor + 0.05
+    )
+    .map(scene => Number(scene.startTime));
+  const routes = [...actionTimes, ...sceneTimes].filter(Number.isFinite);
+  return routes.length ? Math.min(...routes) : null;
+}
+
+async function resumeAnalysisGap(target) {
+  if (state.navigationSeeking || state.adultMode || state.activeAction) return;
+  const generation = state.playbackGeneration;
+  const bridgeTarget = Math.max(Number(state.gameCursorTime) || 0, Number(target) || 0);
+  if (state.stopListener) {
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+  }
+  els.choices.classList.add('hidden');
+  setGameState('SEGMENT_PLAYING');
+  logEngineEvent('ANALYSIS_GAP_PLAYBACK_STARTED', {
+    from: Number(state.gameCursorTime) || 0,
+    to: bridgeTarget
+  });
+  state.stopListener = () => {
+    if (generation !== state.playbackGeneration || Number(els.video.currentTime) < bridgeTarget - 0.04) return;
+    els.video.pause();
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+    state.gameCursorTime = Math.min(
+      bridgeTarget,
+      Number(els.video.duration) || Number(state.analysis?.videoDuration) || bridgeTarget
+    );
+    logEngineEvent('ANALYSIS_GAP_PLAYBACK_COMPLETED', { at: state.gameCursorTime });
+    setGameState('DECISION_PENDING');
+    renderChoices();
+  };
+  els.video.addEventListener('timeupdate', state.stopListener);
+  try {
+    await els.video.play();
+  } catch {
+    if (generation !== state.playbackGeneration) return;
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
+    setGameState('DECISION_PENDING');
+    showPlaybackRecovery(
+      'Analiz edilemeyen bölüm kaynak videodan oynatılacak.',
+      () => void resumeAnalysisGap(bridgeTarget),
+      'Videoya devam et'
+    );
+  }
+}
+
 function renderChoices() {
   if (
     state.adultMode &&
@@ -5425,6 +5489,20 @@ function renderChoices() {
     document.querySelector('.choice-navigation')?.classList.add('hidden');
     renderAdultPanel(state.adultScene);
     setGameState('SEGMENT_PLAYING');
+    return;
+  }
+
+  const routeTime = nextVerifiedRouteTime();
+  const gapTarget = state.analysis?.partial === true
+    ? analysisGapBridgeTarget(
+        state.analysis.analysisGaps,
+        state.gameCursorTime,
+        routeTime === null ? [] : [routeTime],
+        Number(els.video.duration) || Number(state.analysis.videoDuration)
+      )
+    : null;
+  if (gapTarget !== null) {
+    void resumeAnalysisGap(gapTarget);
     return;
   }
 
