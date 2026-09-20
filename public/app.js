@@ -95,6 +95,11 @@ import { createDubRequestQueue } from './dubbing-queue.js';
 import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
 import { validateGame } from './saved-games.js';
+import {
+  attachHoldReleaseControl,
+  attachTactileSurface,
+  createTactileEngine
+} from './tactile-controls.js';
 
 let savedGames;
 
@@ -275,6 +280,7 @@ const els = {
   adultDockLustValue: $('adultDockLustValue'),
   adultDockMaleValue: $('adultDockMaleValue'),
   adultQuickChoices: $('adultQuickChoices'),
+  adultFeelToggle: $('adultFeelToggle'),
   adultDockMoreBtn: $('adultDockMoreBtn'),
   adultSceneTitle: $('adultSceneTitle'),
   adultSceneTime: $('adultSceneTime'),
@@ -317,6 +323,19 @@ const els = {
   outcomeChoices: $('outcomeChoices'),
   finishAdultSceneBtn: $('finishAdultSceneBtn'),
 };
+
+const tactile = createTactileEngine();
+
+function renderTactileToggle() {
+  if (!els.adultFeelToggle) return;
+  const enabled = tactile.enabled;
+  els.adultFeelToggle.classList.toggle('active', enabled);
+  els.adultFeelToggle.setAttribute('aria-pressed', String(enabled));
+  els.adultFeelToggle.setAttribute('aria-label', `Dokunsal geri bildirim ${enabled ? 'açık' : 'kapalı'}`);
+  els.adultFeelToggle.title = tactile.supported
+    ? `Dokunsal geri bildirim ${enabled ? 'açık' : 'kapalı'}`
+    : 'Bu tarayıcı titreşimi desteklemiyor; görsel geri bildirim açık';
+}
 
 function setServiceStatus(kind, label, meta = '') {
   els.serviceStatus.className = `status ${kind}`;
@@ -4660,7 +4679,13 @@ function updateRhythmControl(position) {
       ? `Sonraki doğrulanmış kesiti oynat. ${remaining.length} kesit kaldı.`
       : 'Bu bölümde ilerlenebilecek uygun kesit kalmadı.');
   }
-  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? 'SEKS' : 'SEKS KAPALI';
+  const nextLabel = String(nextEnergetic?.label || '').trim();
+  const nextTempo = String(nextEnergetic?.movementTempo || '').toLowerCase();
+  let controlLabel = 'RİTMİ SÜRDÜR';
+  if (/derin/i.test(nextLabel)) controlLabel = 'DERİN DEVAM ET';
+  else if (/hızlı|sert|yoğun/i.test(nextLabel) || nextTempo === 'fast') controlLabel = 'DAHA YOĞUN';
+  else if (nextTempo === 'moderate') controlLabel = 'RİTMİ KORU';
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? controlLabel : 'SEKS KAPALI';
   if (els.rhythmTapStatus) {
     els.rhythmTapStatus.textContent = eligible
       ? 'Hazır'
@@ -4671,14 +4696,14 @@ function updateRhythmControl(position) {
 function handleAdultRhythmTap(timestamp = performance.now()) {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const currentMovement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
-  if (!position || state.adultOutcomePhase !== 'idle') return;
+  if (!position || state.adultOutcomePhase !== 'idle') return false;
 
   els.rhythmTapBtn?.classList.remove('tap-pulse');
   requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
   const next = nextEnergeticPositionMovement(position, currentMovement);
   if (!next) {
     updateRhythmControl(position);
-    return;
+    return false;
   }
   if (next) {
     selectAdultMovement(next.id, true, null, { awardProgress: false });
@@ -4690,7 +4715,7 @@ function handleAdultRhythmTap(timestamp = performance.now()) {
     advanced: true,
     timestamp: Number(timestamp) || performance.now()
   });
-  if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([12, 18, 20]);
+  return true;
 }
 
 function playNextAdultVariant() {
@@ -5345,16 +5370,19 @@ if (els.nextVariantBtn) {
   els.nextVariantBtn.addEventListener('click', playNextAdultVariant);
 }
 
-els.rhythmTapBtn?.addEventListener('pointerdown', event => {
-  event.preventDefault();
-  handleAdultRhythmTap(event.timeStamp);
+attachHoldReleaseControl({
+  button: els.rhythmTapBtn,
+  engine: tactile,
+  onActivate: ({ timestamp }) => handleAdultRhythmTap(timestamp)
 });
 
-els.rhythmTapBtn?.addEventListener('keydown', event => {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  event.preventDefault();
-  handleAdultRhythmTap(performance.now());
+attachTactileSurface({ root: els.adultInteractionPanel, engine: tactile });
+
+els.adultFeelToggle?.addEventListener('click', () => {
+  tactile.toggle();
+  renderTactileToggle();
 });
+renderTactileToggle();
 
 els.adultPanelToggleBtn?.addEventListener('click', () => {
   setAdultPanelExpanded(!els.adultInteractionPanel?.classList.contains('compact-expanded'));
