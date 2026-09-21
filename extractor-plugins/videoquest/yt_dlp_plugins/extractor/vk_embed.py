@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 from yt_dlp.extractor.vk import VKIE
-from yt_dlp.utils import ExtractorError
+from yt_dlp.utils import ExtractorError, clean_html
 
 
 class _Frames(HTMLParser):
@@ -46,8 +46,13 @@ def external_players(payload, base_url):
         urls.extend(parser.urls)
     result = []
     for value in urls:
-        target = urljoin(base_url, html.unescape(value).replace('\\/', '/'))
-        parts = urlsplit(target)
+        if any(char in value for char in ('\r', '\n', '\0')):
+            continue
+        try:
+            target = urljoin(base_url, html.unescape(value).replace('\\/', '/'))
+            parts = urlsplit(target)
+        except ValueError:
+            continue
         host = (parts.hostname or '').lower()
         if parts.scheme not in ('http', 'https') or not host or parts.username or parts.password:
             continue
@@ -83,11 +88,18 @@ class VKExternalEmbedIE(VKIE, plugin_name='videoquest'):
             if error.args != ('params',):
                 raise
             payload = self._videoquest_payload
+            opts = payload[-1] if isinstance(payload, list) and payload and isinstance(payload[-1], dict) else {}
+            if opts.get('player_unavailable'):
+                page = payload[1] if len(payload) > 1 and isinstance(payload[1], str) else ''
+                message = re.search(r'''(?is)<div\b[^>]*(?:class|id)=["'][^"']*\b(?:video_layer_message|video_ext_msg|mv_error|video_error|video_unavailable)\b[^"']*["'][^>]*>(.*?)</div>''', page)
+                reason = (clean_html(message.group(1)) or '')[:240] if message else ''
+                # Respect a declared unavailable player instead of following
+                # unrelated frames from the error page.
+                raise ExtractorError('VK_PLAYER_UNAVAILABLE' + (': ' + reason if reason else ''), expected=True) from error
             for candidate in external_players(payload, url):
                 if _public_player(candidate):
                     return self.url_result(candidate)
             # Keys and types only: no private link, title, token or media URL.
-            opts = payload[-1] if isinstance(payload, list) and payload and isinstance(payload[-1], dict) else {}
             player = opts.get('player') or {}
             shape = {
                 'options': sorted(opts.keys())[:40],

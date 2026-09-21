@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { discoverVideoSources, mediaResponseType, selectExtractorSource, videoResolutionFailure, videoErrorDetail, videoErrorDiagnostic, resolveVideoPage, resolveVideoUrl, probeVideoSource } from '../lib/video-url.js';
 
+test('VK source-unavailable response is distinguished from a broken URL or extractor crash', () => {
+  const result = videoResolutionFailure('VIDEO_EXTRACTOR_PROCESS_FAILED; ERROR VK_PLAYER_UNAVAILABLE');
+  assert.equal(result.reason, 'VIDEO_SOURCE_UNAVAILABLE');
+  assert.match(result.message, /VK/);
+  assert.equal(videoResolutionFailure('VIDEO_EXTRACTOR_PROCESS_FAILED; VK_PLAYER_METADATA_MISSING').reason, 'VIDEO_EXTRACTOR_FAILED');
+});
+
 test('video discovery keeps media sources and embedded player pages separate', () => {
   const result = discoverVideoSources(`
     <video><source src="/media/clip.mp4" type="video/mp4"></video>

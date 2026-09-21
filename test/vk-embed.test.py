@@ -46,6 +46,19 @@ class VKEmbedTests(unittest.TestCase):
             with self.assertRaisesRegex(module.ExtractorError, 'Login required'):
                 module.VKExternalEmbedIE()._real_extract('https://vk.com/video-1_2')
 
+    def test_unavailable_flag_preserves_source_error_and_ignores_other_frames(self):
+        def native(instance, url):
+            instance._videoquest_payload = [None, '<div class="video_layer_message">Video is not available</div><iframe src="https://ads.example/embed"></iframe>', {'player_unavailable': True}]
+            raise KeyError('params')
+        with patch.object(module.VKIE, '_real_extract', native), patch.object(module, '_public_player') as public:
+            with self.assertRaisesRegex(module.ExtractorError, 'VK_PLAYER_UNAVAILABLE: Video is not available'):
+                module.VKExternalEmbedIE()._real_extract('https://vk.com/video-1_2')
+            public.assert_not_called()
+
+    def test_malformed_frame_does_not_hide_a_valid_sibling(self):
+        payload = [None, '<iframe src="https://[invalid"></iframe><iframe src="https://player.example/embed"></iframe>', {}]
+        self.assertEqual(module.external_players(payload, 'https://vk.com/video-1_2'), ['https://player.example/embed'])
+
     def test_diagnostic_has_structure_without_private_values(self):
         def native(instance, url):
             instance._videoquest_payload = [None, '', {'player': {'secret': 'PRIVATE'}, 'mvData': {'title': 'PRIVATE'}}]
