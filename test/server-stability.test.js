@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
+import { dialogueUploadLimit, MAX_VIDEO_BYTES } from '../public/media-limits.js';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable, pipeline } from 'node:stream';
 import { selectExtractorSource, videoErrorDiagnostic } from '../lib/video-url.js';
@@ -352,4 +353,28 @@ test('external analysis streams the temporary upload and removes it after succes
     assert.equal(res.statusCode, fail ? 503 : 200);
     assert.equal(fs.existsSync(file), false);
   }
+});
+
+
+test('chunked video upload accepts up to 2 GiB but rejects oversized audio and video before disk creation', async () => {
+  const sessions = new Map();
+  let writes = 0;
+  const f = fixture(section("app.post('/api/dialogue-upload/start'", "app.post(\n  '/api/dialogue-upload/:uploadId/chunk'"), {
+    dialogueUploadLimit, crypto: { randomUUID: () => 'large-video' }, dialogueUploadSessions: sessions,
+    fs: { promises: { async mkdir() {}, async writeFile() { writes++; } } }
+  });
+  const handler = f.routes.get('/api/dialogue-upload/start');
+  for (const size of [700 * 1024 * 1024, MAX_VIDEO_BYTES]) {
+    const res = new ResponseStream();
+    await handler({ body: { totalSize: size, mimeType: 'video/mp4', fileName: 'large.mp4' } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(sessions.get('large-video').totalSize, size);
+  }
+  assert.equal(writes, 2);
+  for (const [mimeType, totalSize] of [['video/mp4', MAX_VIDEO_BYTES + 1], ['audio/wav', 251 * 1024 * 1024], ['text/html', 20]]) {
+    const res = new ResponseStream();
+    await handler({ body: { mimeType, totalSize } }, res);
+    assert.equal(res.statusCode, 400);
+  }
+  assert.equal(writes, 2);
 });

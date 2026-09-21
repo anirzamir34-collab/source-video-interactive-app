@@ -101,6 +101,10 @@ import {
   createTactileEngine
 } from './tactile-controls.js';
 
+import { createVideoDownloader } from './video-download.js';
+import { canDecodeDialogueLocally } from './media-limits.js';
+
+const videoDownloads = createVideoDownloader();
 let savedGames;
 
 const $ = (id) => document.getElementById(id);
@@ -1182,6 +1186,11 @@ async function uploadDialogueWithProgress(
 
 async function prepareDialoguePayload(file, session = state.analysisSession) {
   if (session?.audioSource === file && session.audioFile instanceof Blob) return session.audioFile;
+  const duration = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
+  if (!canDecodeDialogueLocally(file, duration)) {
+    els.analysisOutput.textContent = 'Büyük video parçalar halinde gönderilecek; konuşma sesi sunucuda dosyadan hazırlanacak.';
+    return file;
+  }
   try {
     const audioFile = await extractDialogueAudio(file);
     if (session) {
@@ -6066,6 +6075,8 @@ function clearPreviousGameResidue() {
     els.video.removeAttribute('src');
     els.video.load();
   }
+  void videoDownloads.release(state.selectedFile);
+  if (state.analysisSession?.file !== state.selectedFile) void videoDownloads.release(state.analysisSession?.file);
   resetDubState();
   setGameState('IDLE');
 }
@@ -6156,65 +6167,13 @@ function setUrlStatus(message, type = '') {
 }
 
 async function downloadUrlVideo(proxyUrl, sourceUrl, options = {}) {
-  const controller = new AbortController();
-  const maxBytes = Math.min(600 * 1024 * 1024, Math.max(1, Number(options.maxBytes) || 600 * 1024 * 1024));
-  const maxMB = Math.round(maxBytes / 1024 / 1024);
-  let reader;
-  let idleTimer;
-  let totalTimer;
-  const onAbort = () => controller.abort(options.signal?.reason);
-  const refreshDeadline = () => {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => controller.abort(), 45000);
-  };
-  refreshDeadline();
-  try {
-  if (options.signal?.aborted) onAbort();
-  options.signal?.addEventListener('abort', onAbort, { once: true });
-  if (options.maxDurationMs > 0) totalTimer = setTimeout(() => controller.abort(), options.maxDurationMs);
-  const response = await fetch(proxyUrl, { signal: controller.signal });
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    throw new Error(errorBody.message || `Video indirilemedi (${response.status}).`);
-  }
-
-  const total = Number(response.headers.get('content-length')) || 0;
-  const contentType = response.headers.get('content-type') || 'video/mp4';
-  if (total > maxBytes) throw new Error(`Video ${maxMB} MB indirme sınırını aşıyor. Daha küçük bir dosya seç.`);
-  reader = response.body?.getReader();
-
-  if (!reader) throw new Error('Tarayıcı video akışını okuyamadı. Güncel bir tarayıcıyla tekrar dene.');
-
-  const chunks = [];
-  let received = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.length;
-    if (received > maxBytes) throw new Error(`Video ${maxMB} MB indirme sınırını aşıyor. Daha küçük bir dosya seç.`);
-    chunks.push(value);
-    refreshDeadline();
-
-    const receivedMB = (received / 1024 / 1024).toFixed(1);
-    const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
-    if (typeof options.onProgress === 'function') options.onProgress({ loaded: received, total });
-    else setUrlStatus(`Video hazırlanıyor: ${receivedMB} MB${totalText}`);
-  }
-
-  return new Blob(chunks, { type: contentType });
-  } catch (error) {
-    if (options.signal?.aborted) throw options.signal.reason || error;
-    if (controller.signal.aborted) throw new Error('Video aktarımı durdu. Bağlantını kontrol edip tekrar dene.');
-    throw error;
-  } finally {
-    clearTimeout(idleTimer);
-    clearTimeout(totalTimer);
-    options.signal?.removeEventListener('abort', onAbort);
-    controller.abort();
-    try { await reader?.cancel(); } catch {}
-    reader?.releaseLock();
-  }
+  return videoDownloads.download(proxyUrl, {
+    ...options,
+    onProgress: options.onProgress || (({ loaded, total }) => {
+      const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
+      setUrlStatus(`Video hazırlanıyor: ${(loaded / 1024 / 1024).toFixed(1)} MB${totalText}`);
+    })
+  });
 }
 
 async function probeSeekableVideo(proxyUrl) {
@@ -6264,14 +6223,17 @@ async function ensureSelectedRemoteFile({ onProgress } = {}) {
         else setUrlStatus(`Video hazırlanıyor: ${(progress.loaded / 1024 / 1024).toFixed(1)} MB`);
       }
     });
-    if (remote !== state.selectedRemoteVideo || task.controller.signal.aborted) throw new Error('Video kaynağı değişti. Yeni kaynağı tekrar analiz et.');
-    if (!blob.size) throw new Error('Video boş geldi.');
-    if (remote.size && blob.size !== remote.size) throw new Error('Video aktarımı eksik veya kaynak boyutu değişti. Bağlantıyı yeniden açıp tekrar dene.');
-    const file = new File([blob], remote.fileName, { type: blob.type || remote.contentType || 'video/mp4' });
-    state.selectedFile = file;
-    state.selectedRemoteVideo = { ...remote, size: blob.size, contentType: file.type };
-    els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • Cihazda hazır`;
-    return file;
+    try {
+      if (remote !== state.selectedRemoteVideo || task.controller.signal.aborted) throw new Error('Video kaynağı değişti. Yeni kaynağı tekrar analiz et.');
+      if (!blob.size) throw new Error('Video boş geldi.');
+      if (remote.size && blob.size !== remote.size) throw new Error('Video aktarımı eksik veya kaynak boyutu değişti. Bağlantıyı yeniden açıp tekrar dene.');
+      const file = new File([blob], remote.fileName, { type: blob.type || remote.contentType || 'video/mp4' });
+      videoDownloads.adopt(blob, file);
+      state.selectedFile = file;
+      state.selectedRemoteVideo = { ...remote, size: blob.size, contentType: file.type };
+      els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • Cihazda hazır`;
+      return file;
+    } finally { await videoDownloads.release(blob); }
   })().finally(() => {
     if (state.remoteFileDownload === task) state.remoteFileDownload = null;
   });
@@ -6294,6 +6256,7 @@ async function resolveVideoUrl() {
   updateAnalyzeAvailability();
   setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor...');
   const resolveStartedAt = performance.now();
+  let pendingBlob;
 
   try {
     const resolveResponse = await fetch('/api/resolve-video-url', {
@@ -6343,7 +6306,7 @@ async function resolveVideoUrl() {
     setUrlStatus(['hls', 'dash'].includes(result.type)
       ? `${result.type.toUpperCase()} akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
       : `Kaynak ileri sarmayı desteklemiyor. Video cihaza hazırlanıyor...`);
-    const blob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
+    const blob = pendingBlob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
 
     if (!blob.size) throw new Error('Video boş geldi.');
 
@@ -6351,6 +6314,8 @@ async function resolveVideoUrl() {
     const objectUrl = URL.createObjectURL(file);
 
     clearPreviousGameResidue();
+    videoDownloads.adopt(blob, file);
+    pendingBlob = null;
     state.selectedFile = file;
     state.selectedSourceKind = 'url';
     state.selectedRemoteVideo = null;
@@ -6366,6 +6331,7 @@ async function resolveVideoUrl() {
   } catch (error) {
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
   } finally {
+    await videoDownloads.release(pendingBlob);
     state.urlResolutionInProgress = false;
     resolveUrlBtn.disabled = false;
     els.videoInput.disabled = false;

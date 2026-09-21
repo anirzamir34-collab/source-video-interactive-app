@@ -65,9 +65,9 @@ Canlı ortam teşhisi için `VIDEO_RESOLUTION_PROBE_URL` ve en fazla 15 dakika i
 ## Aktarım ve yeniden deneme sınırları
 
 - Harici analiz yüklemesi: 250 MiB; geçici disk dosyasından iletilir ve işlem sonunda temizlenir.
-- Diyalog dosyası yüklemesi: 600 MiB. Parçalı ses yüklemesi: toplam 250 MiB, tek parça en çok 10 MiB.
+- Diyalog için video yüklemesi: 2 GiB; parça aktarımı kullanılır. Ses yüklemesi: toplam 250 MiB, tek parça en çok 10 MiB. 128 MiB üzerinde veya 15 dakikadan uzun video tarayıcıda bütünüyle çözülmez; sunucudaki geçici dosyadan analiz için MP3 hazırlanır. Oynatılan kaynak video yeniden kodlanmaz.
 - Storyboard: en çok 20 dosya, her biri en çok 2 MiB.
-- Tarayıcıya tam indirme: en çok 600 MiB; içerik uzunluğu bildirilmediğinde de sınır uygulanır.
+- Tarayıcıya tam indirme: OPFS ve Web Locks destekleyen tarayıcılarda 2 GiB. Parçalar bekletilmeden cihaz depolamasına yazılır; içerik uzunluğu bildirilmediğinde de sınır uygulanır. Boş alan ve aktarım bütünlüğü kontrol edilir. Destek yoksa bellekte indirme sınırı 600 MiB olarak korunur. İptal/hata ve kaynak değişiminde geçici dosyalar temizlenir; kapanmış sekmelerin geçici dosyaları sonraki indirmede temizlenir. Aktif sekmelerin videoları ve IndexedDB içindeki kayıtlı oyunlar silinmez. Kalıcı kayıt ek depolama alanı gerektirebilir. OPFS davranışı: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system
 - Video proxy yanıt başlığı bekleme süresi: 30 saniye. Aktarım hareketsizliği: 45 saniye. HLS/DASH aktarım üst süresi: 30 dakika.
 - ElevenLabs sunucu istek süresi: 60 saniye. İstemci dublaj isteği: 70 saniye.
 

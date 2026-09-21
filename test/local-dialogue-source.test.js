@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { canDecodeDialogueLocally } from '../public/media-limits.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const start = source.indexOf('async function prepareDialoguePayload(');
@@ -18,7 +19,7 @@ function fixture({ decodeFails = false, uploadFails = false } = {}) {
   const element = () => ({ textContent: '', classList: { remove() {} } });
   const els = { analysisCard: element(), analysisTitle: element(), analysisOutput: element(),
     analysisState: element(), video: { duration: NaN }, protagonistInput: { value: '' } };
-  const scope = vm.createContext({ File, Blob, FormData, performance, els,
+  const scope = vm.createContext({ canDecodeDialogueLocally, File, Blob, FormData, performance, els,
     state: { analysisSession: session, selectedRemoteVideo: { proxyUrl: '/proxy?token=old-token' } },
     console: { warn() {} }, localStorage: { removeItem() {} }, recordAiUsage() {},
     buildDubBlocks: segments => segments,

@@ -12,6 +12,8 @@ import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
+import { MAX_VIDEO_BYTES, dialogueUploadLimit } from './public/media-limits.js';
+import { prepareLocalDialogueAudio } from './lib/dialogue-media.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1400,7 +1402,7 @@ app.get('/api/video-proxy', async (req, res) => {
 const dialogueUpload = multer({
   dest: '/tmp/videoquest-dialogue',
   limits: {
-    fileSize: 600 * 1024 * 1024,
+    fileSize: MAX_VIDEO_BYTES,
     files: 1,
     fields: 5
   },
@@ -1422,16 +1424,17 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
     const fileName = String(req.body?.fileName || 'dialogue.wav')
       .replace(/[^a-zA-Z0-9._-]/g, '_');
     const mimeType = String(req.body?.mimeType || 'audio/wav');
+    const maxSize = dialogueUploadLimit(mimeType);
 
     if (
       !Number.isSafeInteger(totalSize) ||
       totalSize <= 0 ||
-      totalSize > 250 * 1024 * 1024
+      !maxSize || totalSize > maxSize
     ) {
       return res.status(400).json({
         available: false,
         reason: 'INVALID_AUDIO_SIZE',
-        message: 'Ses dosyası boyutu geçersiz.'
+        message: maxSize ? `Dosya boyutu geçersiz; bu biçim için sınır ${Math.round(maxSize / 1024 / 1024)} MB.` : 'Ses veya video biçimi desteklenmiyor.'
       });
     }
 
@@ -1765,7 +1768,11 @@ app.post(
 
     const apiKey = resolveGeminiApiKey(req);
     let tempPath = req.file?.path;
+    let originalVideoPath;
     let uploadedFile = null;
+    const preparationController = new AbortController();
+    const stopPreparation = () => { if (!res.writableEnded) preparationController.abort(); };
+    res.once('close', stopPreparation);
 
     try {
       if (!apiKey) {
@@ -1788,6 +1795,15 @@ app.post(
           reason: 'VIDEO_REQUIRED',
           message: 'Diyalog analizi için video gerekli.'
         });
+      }
+
+      if (req.file.mimetype.startsWith('video/')) {
+        originalVideoPath = tempPath;
+        req.file = await prepareLocalDialogueAudio(req.file, {
+          ffmpegPath, signal: preparationController.signal
+        });
+        tempPath = req.file.path;
+        await fs.promises.unlink(originalVideoPath).catch(() => {});
       }
 
       const ai = new GoogleGenAI({ apiKey });
@@ -2211,6 +2227,8 @@ Rules:
         error: error?.message || String(error)
       });
     } finally {
+      res.removeListener('close', stopPreparation);
+      if (originalVideoPath) await fs.promises.unlink(originalVideoPath).catch(() => {});
       if (tempPath) {
         try {
           if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);

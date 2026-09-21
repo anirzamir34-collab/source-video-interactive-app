@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createVideoDownloader } from '../public/video-download.js';
+import { canDecodeDialogueLocally } from '../public/media-limits.js';
 import { createDubRequestQueue } from '../public/dubbing-queue.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -36,6 +38,8 @@ function fixture(code, overrides = {}) {
     console: { error: (...args) => errors.push(args), warn() {} },
     els: elements(), state: {}, savedGames: null, $: () => new Element(), updateDubMix() {}, ...overrides
   });
+  scope.videoDownloads ||= createVideoDownloader({ fetch: (...args) => scope.fetch(...args), storage: null, locks: null });
+  scope.canDecodeDialogueLocally = canDecodeDialogueLocally;
   vm.runInContext(code, scope);
   return { scope, errors };
 }
@@ -550,4 +554,16 @@ test('a stale transfer or incomplete file cannot replace the current source', as
   incomplete.scope.state.selectedRemoteVideo.size = 100;
   await assert.rejects(incomplete.scope.ensureSelectedRemoteFile(), /aktarım.*eksik/);
   assert.equal(incomplete.scope.state.selectedFile, null);
+});
+
+
+test('large or long videos skip full browser decoding before chunked upload', async () => {
+  const f = fixture(functions('prepareDialoguePayload'), {
+    extractDialogueAudio() { assert.fail('large source must not be read into an ArrayBuffer'); }
+  });
+  for (const [size, duration] of [[700 * 1024 * 1024, 300], [10 * 1024 * 1024, 1800]]) {
+    const file = { size };
+    f.scope.els.video.duration = duration;
+    assert.equal(await f.scope.prepareDialoguePayload(file), file);
+  }
 });
