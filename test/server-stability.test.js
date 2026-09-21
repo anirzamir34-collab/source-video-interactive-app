@@ -464,3 +464,14 @@ test('overlapping word annotations preserve separate sentences while consecutive
   ]);
   assert.equal(turns.length, 3);
 });
+
+test('a long same-speaker sentence is not chopped at the former seven second boundary', () => {
+  const f = fixture(section('function groupTranscribeWords(', '\nasync function transcribeDialogueGemini35('));
+  const words = Array.from({ length: 12 }, (_, index) => ({
+    speakerId: 'a', text: index === 11 ? 'bitiyor.' : `kelime${index}`,
+    startTime: index * 0.75, endTime: index * 0.75 + 0.45
+  }));
+  const groups = f.scope.groupTranscribeWords(words);
+  assert.equal(groups.length, 1);
+  assert.match(groups[0].originalText, /bitiyor\.$/);
+});

@@ -1,6 +1,21 @@
 const clean = value => String(value || '').trim().replace(/\s+/g, ' ');
 const textKey = value => clean(value).normalize('NFKC').toLocaleLowerCase('tr-TR').replace(/[\p{P}\p{S}]/gu, '').trim();
 
+// Speech recognition occasionally returns the English interjection "ah" as a
+// standalone Turkish letter ("A evet"). ElevenLabs then reads that as the
+// letter name, which sounds robotic and can be especially distracting in a
+// rapid exchange. Keep the spoken meaning while making only this narrowly
+// defined transcription artefact pronounceable. Also collapse an immediately
+// duplicated short interjection inside one model segment; repetitions at
+// different source times remain untouched.
+export function naturalizeTurkishSpeech(value) {
+  let text = clean(value);
+  if (!text) return '';
+  text = text.replace(/\ba\s+(?=evet\b)/giu, 'Ah, ');
+  text = text.replace(/\b(ah[,!]?\s+evet[.!]?)(?:\s+\1){1,3}/giu, '$1');
+  return text;
+}
+
 // Only collapse duplicate observations of the same speaker at the same time.
 // Repeated words later in the video and simultaneous different voices survive.
 export function uniqueTimedSpeech(rows = [], { textField = 'originalText', tolerance = 0.12 } = {}) {
@@ -37,6 +52,11 @@ export function normalizeDialogueSegments(rows = [], duration = Infinity) {
       while (seenIds.has(segmentId)) segmentId = `${base}:${suffix++}`;
     }
     seenIds.add(segmentId);
-    return { ...row, segmentId, endTime: Math.min(limit, row.endTime) };
+    return {
+      ...row,
+      segmentId,
+      turkishText: naturalizeTurkishSpeech(row.turkishText),
+      endTime: Math.min(limit, row.endTime)
+    };
   });
 }

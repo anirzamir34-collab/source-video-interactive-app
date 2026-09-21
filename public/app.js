@@ -1304,7 +1304,14 @@ async function analyzeSelectedDialogue(file) {
   state.dialogue = {
     ...body,
     segments,
-    dubSegments: buildDubBlocks(segments)
+    // Captions remain individually timed, while adjacent pieces of the same
+    // spoken sentence become one TTS utterance. This prevents a voice from
+    // stopping between subtitle rows or restarting with a clipped syllable.
+    dubSegments: buildDubBlocks(segments, {
+      mergeAdjacent: true,
+      maxGap: 0.5,
+      maxDuration: 18
+    })
   };
 
   try {

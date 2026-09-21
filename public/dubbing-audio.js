@@ -68,8 +68,8 @@ export function canFinishDubTail(audio, nextSegment, videoTime) {
   // starting the next speaker, but never accumulate an unbounded speech queue.
   const remaining = (Number(audio.duration) - Number(audio.currentTime)) / Math.max(0.25, audio.playbackRate || 1);
   const boundary = Number(nextSegment?.startTime ?? audio._vqSegment?.endTime);
-  return Number.isFinite(remaining) && remaining >= 0 && remaining <= 0.55 &&
-    (!Number.isFinite(boundary) || Number(videoTime) - boundary <= 0.55);
+  return Number.isFinite(remaining) && remaining >= 0 && remaining <= 1.1 &&
+    (!Number.isFinite(boundary) || Number(videoTime) - boundary <= 1.1);
 }
 
 // Follow the rate actually used by this utterance, not a different linear

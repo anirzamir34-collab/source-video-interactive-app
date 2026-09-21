@@ -1608,8 +1608,14 @@ function groupTranscribeWords(words) {
       (previousWord.startTime < last.endTime - 0.04 || previousWord.endTime > word.startTime + 0.04);
     const turnChanged = last && groups.at(-1) !== last && !interleavedOverlap;
     const gap = last ? Math.max(0, word.startTime - last.endTime) : 0;
-    const tooLong = last ? word.endTime - last.startTime >= 7 : false;
-    if (!last || turnChanged || gap > 1.15 || tooLong) {
+    const previousText = String(last?.words?.at(-1) || '');
+    const sentenceEnded = /[.!?…]["')\]]?$/.test(previousText);
+    // Subtitle rows may be short, but cutting a speaker every seven seconds
+    // also cuts TTS in the middle of a sentence. Prefer real turn/silence and
+    // punctuation boundaries; retain a generous hard cap for runaway ASR.
+    const clauseComplete = sentenceEnded && last && word.endTime - last.startTime >= 3.5;
+    const tooLong = last ? word.endTime - last.startTime >= 16 : false;
+    if (!last || turnChanged || gap > 1.15 || clauseComplete || tooLong) {
       const group = { speakerId: word.speakerId, startTime: word.startTime, endTime: word.endTime, words: [word.text] };
       groups.push(group);
       bySpeaker.set(word.speakerId, group);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { uniqueTimedSpeech, normalizeDialogueSegments } from '../public/dialogue-integrity.js';
+import { uniqueTimedSpeech, normalizeDialogueSegments, naturalizeTurkishSpeech } from '../public/dialogue-integrity.js';
 import { buildDubBlocks } from '../public/playback-logic.js';
 
 const line = (extra = {}) => ({ segmentId: 'one', speakerId: 'speaker-a', startTime: 1, endTime: 2,
@@ -37,4 +37,25 @@ test('explicit legacy merging cannot combine contradictory speaker annotations',
   const blocks = buildDubBlocks([line({ gender: 'female' }),
     line({ segmentId: 'two', startTime: 2, endTime: 3, gender: 'male' })], { mergeAdjacent: true });
   assert.equal(blocks.length, 2);
+});
+
+test('Turkish dub text repairs the isolated A/ah artefact without deleting timed repetitions', () => {
+  assert.equal(naturalizeTurkishSpeech('A evet A evet'), 'Ah, evet');
+  assert.equal(naturalizeTurkishSpeech('Tamam, evet.'), 'Tamam, evet.');
+  const rows = normalizeDialogueSegments([
+    line({ segmentId: 'a', startTime: 1, endTime: 2, turkishText: 'A evet' }),
+    line({ segmentId: 'b', startTime: 4, endTime: 5, turkishText: 'A evet' })
+  ]);
+  assert.deepEqual(rows.map(row => row.turkishText), ['Ah, evet', 'Ah, evet']);
+});
+
+test('adjacent subtitle rows from one speaker form a complete dub utterance', () => {
+  const blocks = buildDubBlocks([
+    line({ segmentId: 'a', startTime: 1, endTime: 3, turkishText: 'Bu cümle' }),
+    line({ segmentId: 'b', startTime: 3.2, endTime: 5, turkishText: 'burada bitiyor.' }),
+    line({ segmentId: 'c', speakerId: 'speaker-b', startTime: 5.1, endTime: 6, turkishText: 'Yanıt.' })
+  ], { mergeAdjacent: true, maxGap: 0.5, maxDuration: 18 });
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].turkishText, 'Bu cümle burada bitiyor.');
+  assert.deepEqual(blocks[0].sourceSegmentIds, ['a', 'b']);
 });
