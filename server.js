@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
 import youtubedl from 'youtube-dl-exec';
-import { resolveVideoPage, probeVideoSource, selectExtractorSource, videoResolutionFailure } from './lib/video-url.js';
+import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure } from './lib/video-url.js';
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
@@ -1151,20 +1151,22 @@ function registerResolvedVideoSession(resolved) {
 }
 
 async function resolvePublicVideoPage(startUrl) {
-  return resolveVideoPage(startUrl, { fetchPublicUrl });
+  return resolveVideoUrl(startUrl, { fetchPublicUrl, extractPage: resolveWithSiteExtractor });
 }
 
-async function resolveWithSiteExtractor(rawUrl) {
+async function resolveWithSiteExtractor(rawUrl, { referer = rawUrl, signal = AbortSignal.timeout(20000) } = {}) {
   await validatePublicUrl(rawUrl);
+  await validatePublicUrl(referer);
+  signal.throwIfAborted();
   const userAgent = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36';
   const baseOptions = {
     dumpSingleJson: true, skipDownload: true, noWarnings: true,
-    noPlaylist: true, socketTimeout: 15, retries: 1, extractorRetries: 1,
-    userAgent, referer: rawUrl,
-    format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best[ext=mp4]/best'
+    noPlaylist: true, playlistEnd: 5, socketTimeout: 10, retries: 1, extractorRetries: 1,
+    userAgent, referer,
+    format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best/best*'
   };
   const run = options => youtubedl(rawUrl, options, {
-    timeout: 30000, killSignal: 'SIGKILL', signal: AbortSignal.timeout(30000),
+    timeout: 20000, killSignal: 'SIGKILL', signal,
     maxBuffer: 16 * 1024 * 1024
   });
   let output;
@@ -1174,7 +1176,7 @@ async function resolveWithSiteExtractor(rawUrl) {
     const detail = String(error?.stderr || error?.message || error);
     // Retry only a missing local capability, not a site's access denial.
     const missingCapability = /impersonat.*(?:not available|unavailable|not installed|not supported)|no such option.*impersonate/i.test(detail);
-    if (!missingCapability || /403|captcha|cloudflare/i.test(detail)) throw error;
+    if (signal.aborted || !missingCapability || /403|captcha|cloudflare/i.test(detail)) throw error;
     output = await run(baseOptions);
   }
   const selected = selectExtractorSource(output, rawUrl);
@@ -1216,14 +1218,7 @@ app.post('/api/resolve-video-url', async (req, res) => {
           // Standard public pages/direct media should not wait for a subprocess.
           try { candidate = await resolvePublicVideoPage(normalizedUrl); }
           catch (error) { errors.push(String(error?.message || error)); }
-          if (!candidate) {
-            try { candidate = await resolveWithSiteExtractor(normalizedUrl); }
-            catch (error) {
-              const detail = String(error?.stderr || error?.message || error).slice(0, 900);
-              errors.push(detail);
-              console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, videoResolutionFailure(detail).reason);
-            }
-          }
+          if (!candidate) console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, videoResolutionFailure(errors.join('; ')).reason);
           if (candidate) {
             resolvedVideoCache.set(normalizedUrl, { resolved: candidate, expiresAt: Date.now() + VIDEO_RESOLUTION_CACHE_MS });
           }
@@ -1285,7 +1280,7 @@ app.get('/api/video-proxy', async (req, res) => {
     const referer = String(session?.referer || req.query.referer || '');
     if (!sourceUrl) return res.status(400).json({ ok: false, message: 'Video URL’si gerekli.' });
 
-    if (session?.type === 'hls' || /\.m3u8(?:$|\?)/i.test(sourceUrl)) {
+    if (['hls', 'dash'].includes(session?.type) || /\.(?:m3u8|mpd)(?:$|[?#])/i.test(sourceUrl)) {
       await validatePublicUrl(sourceUrl);
       if (referer) await validatePublicUrl(referer);
       controller.signal.throwIfAborted();
@@ -1301,7 +1296,9 @@ app.get('/api/video-proxy', async (req, res) => {
         '-rw_timeout', '45000000',
         '-headers', headerLines,
         '-i', sourceUrl,
-        '-map', '0:v:0?', '-map', '0:a:0?',
+        // Automatic selection keeps the highest-resolution representation;
+        // stream 0 in adaptive manifests is often the lowest quality.
+        '-sn', '-dn',
         '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov',
         '-f', 'mp4', 'pipe:1'
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1316,9 +1313,9 @@ app.get('/api/video-proxy', async (req, res) => {
       let stderr = '';
       ffmpeg.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
       ffmpeg.on('error', error => {
-        console.error('HLS ffmpeg start error:', error?.message || error);
+        console.error('Stream ffmpeg start error:', error?.message || error);
         if (res.destroyed) return;
-        if (!res.headersSent) res.status(502).json({ ok: false, message: 'HLS dönüştürücü başlatılamadı.' });
+        if (!res.headersSent) res.status(502).json({ ok: false, message: 'Video akışı hazırlanamadı.' });
         else res.destroy(error);
       });
       ffmpeg.on('close', code => {
@@ -1326,8 +1323,8 @@ app.get('/api/video-proxy', async (req, res) => {
         clearTimeout(conversionTimer);
         clearTimeout(forceKillTimer);
         if (code && !res.writableEnded && !controller.signal.aborted) {
-          console.error('HLS ffmpeg error:', stderr || `exit ${code}`);
-          res.destroy(new Error('HLS_VIDEO_CONVERSION_FAILED'));
+          console.error('Stream ffmpeg error:', stderr || `exit ${code}`);
+          res.destroy(new Error('VIDEO_STREAM_CONVERSION_FAILED'));
         }
       });
       conversionTimer = setTimeout(() => { controller.abort(); res.destroy(); }, 30 * 60 * 1000);
@@ -1397,7 +1394,7 @@ const dialogueUpload = multer({
     fields: 5
   },
   fileFilter: (_req, file, callback) => {
-    const allowed = /^video\/(mp4|quicktime|webm|x-m4v)$/i.test(file.mimetype);
+    const allowed = /^video\/(mp4|quicktime|webm|x-m4v|ogg|3gpp|3gpp2)$/i.test(file.mimetype);
     callback(allowed ? null : new Error('UNSUPPORTED_VIDEO_FORMAT'), allowed);
   }
 });
@@ -1656,7 +1653,7 @@ async function prepareRemoteDialogueAudio(remoteToken, duration = 0) {
   const tempDirectory = '/tmp/videoquest-dialogue';
   await fs.promises.mkdir(tempDirectory, { recursive: true });
   const outputPath = path.join(tempDirectory, `${crypto.randomUUID()}.mp3`);
-  const pipedInput = session.type !== 'hls' && !/\.m3u8(?:$|\?)/i.test(session.sourceUrl);
+  const pipedInput = !['hls', 'dash'].includes(session.type) && !/\.(?:m3u8|mpd)(?:$|[?#])/i.test(session.sourceUrl);
   let upstreamStream = null;
   if (pipedInput) {
     const referer = String(session.referer || '');

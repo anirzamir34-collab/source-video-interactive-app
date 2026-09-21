@@ -6239,9 +6239,11 @@ function remoteVideoFileName(sourceUrl, contentType = '') {
   const sourcePath = new URL(sourceUrl).pathname;
   let sourceName = sourcePath.split('/').pop() || '';
   try { sourceName = decodeURIComponent(sourceName); } catch {}
-  const extension = sourceName.match(/\.(mp4|webm|m4v|mov)$/i)?.[0] ||
-    (contentType.includes('webm') ? '.webm' : '.mp4');
-  return sourceName || `url-video${extension}`;
+  const extension = sourceName.match(/\.(mp4|webm|m4v|mov|ogv|3gp|3g2)$/i)?.[0] ||
+    (contentType.includes('webm') ? '.webm' : contentType.includes('ogg') ? '.ogv' : '.mp4');
+  if (!sourceName) return `url-video${extension}`;
+  if (/\.(?:mpd|m3u8)$/i.test(sourceName)) return sourceName.replace(/\.[^.]+$/, '.mp4');
+  return /\.(mp4|webm|m4v|mov|ogv|3gp|3g2)$/i.test(sourceName) ? sourceName : `${sourceName}${extension}`;
 }
 
 async function ensureSelectedRemoteFile({ onProgress } = {}) {
@@ -6309,10 +6311,11 @@ async function resolveVideoUrl() {
     }
 
     const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
-    const fileName = remoteVideoFileName(result.sourceUrl);
+    let fileName = remoteVideoFileName(result.sourceUrl);
     if (result.type === 'video') {
       setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Akış desteği kontrol ediliyor...`);
       const probe = await probeSeekableVideo(result.proxyUrl);
+      fileName = remoteVideoFileName(result.sourceUrl, probe.contentType || '');
       if (probe.seekable) {
         clearPreviousGameResidue();
         state.selectedFile = null;
@@ -6335,14 +6338,14 @@ async function resolveVideoUrl() {
       }
     }
 
-    setUrlStatus(result.type === 'hls'
-      ? `HLS akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
+    setUrlStatus(['hls', 'dash'].includes(result.type)
+      ? `${result.type.toUpperCase()} akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
       : `Kaynak ileri sarmayı desteklemiyor. Video cihaza hazırlanıyor...`);
     const blob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
 
     if (!blob.size) throw new Error('Video boş geldi.');
 
-    const file = new File([blob], fileName, { type: blob.type || 'video/mp4' });
+    const file = new File([blob], remoteVideoFileName(result.sourceUrl, blob.type), { type: blob.type || 'video/mp4' });
     const objectUrl = URL.createObjectURL(file);
 
     clearPreviousGameResidue();

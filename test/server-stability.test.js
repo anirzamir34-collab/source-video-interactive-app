@@ -6,6 +6,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable, pipeline } from 'node:stream';
+import { selectExtractorSource } from '../lib/video-url.js';
 
 // Execute the production handlers with real streams and temporary files;
 // upstream providers and the transcoder are replaced to avoid paid calls.
@@ -181,6 +182,42 @@ test('HLS rejects an invalid source before spawning any process', async () => {
   f.req.query.url = 'http://localhost/private.m3u8';
   await f.run(); await tick();
   assert.equal(f.res.statusCode, 502);
+});
+
+test('site extractor keeps the embedding referer and cancellation signal across capability fallback', async () => {
+  const calls = [];
+  const f = fixture(section('async function resolveWithSiteExtractor(', "\napp.post('/api/resolve-video-url'"), {
+    selectExtractorSource,
+    youtubedl: async (url, options, processOptions) => {
+      calls.push({ url, options, processOptions });
+      if (calls.length === 1) throw Error('Impersonation target not available');
+      return { url: 'https://cdn.test/video.mp4', vcodec: 'h264', acodec: 'aac' };
+    }
+  });
+  const signal = new AbortController().signal;
+  const result = await f.scope.resolveWithSiteExtractor('https://vk.com/video_ext.php?oid=-1&id=2', {
+    referer: 'https://site.test/watch', signal
+  });
+  assert.equal(result.sourceUrl, 'https://cdn.test/video.mp4');
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.options.referer, 'https://site.test/watch');
+    assert.equal(call.processOptions.signal, signal);
+    assert.equal(call.options.playlistEnd, 5);
+  }
+});
+
+test('site extractor does not retry a denied source or run on a private URL', async () => {
+  let calls = 0;
+  const code = section('async function resolveWithSiteExtractor(', "\napp.post('/api/resolve-video-url'");
+  const f = fixture(code, { selectExtractorSource, youtubedl: async () => { calls++; throw Error('HTTP 403 forbidden'); } });
+  await assert.rejects(f.scope.resolveWithSiteExtractor('https://site.test/watch'), /403/);
+  assert.equal(calls, 1);
+  const blocked = fixture(code, {
+    validatePublicUrl: async () => { throw Error('private address'); },
+    youtubedl: () => assert.fail('must not start')
+  });
+  await assert.rejects(blocked.scope.resolveWithSiteExtractor('http://localhost/video'), /private address/);
 });
 
 test('redirect responses are cancelled and caller cancellation survives redirects', async () => {

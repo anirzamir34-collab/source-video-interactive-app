@@ -46,13 +46,21 @@ Gemini konuşma çözümleme, Türkçe çeviri ve satır duygusu için; ElevenLa
 
 Tarayıcıdan girilen sağlayıcı anahtarları oturum depolamasında tutulur. Depolamayı engelleyen bir tarayıcı uygulamayı açabilir, ancak bu anahtarları saklayamaz.
 
+## Video URL desteği
+
+URL çözümleme HTML video/source öğelerini, iç içe iframe ve srcdoc oynatıcılarını, object/embed öğelerini, JSON-LD ve oynatıcı yapılandırmalarını tarar. Bulunan kaynaklar HTTP yanıtıyla doğrulanır. Genel tarama sonuç vermezse yt-dlp hem gömülü oynatıcı adreslerinde (VK dahil) hem asıl sayfada denenir; özgün referer ve imzalı sorgu parametreleri korunur.
+
+MP4, WebM, MOV/M4V, OGV ve 3GP kaynakları ile HLS ve korumasız DASH akışları tanınır. HLS/DASH, uyumlu kodeklerle yeniden kodlama yapmadan MP4 olarak aktarılır; video ve ses birlikte korunur. Tarayıcının kodek desteği hâlâ geçerlidir. Özel/oturum gerektiren, DRM korumalı veya kaynak sunucunun engellediği videolar için evrensel erişim garantisi yoktur.
+
+Tarama en çok 12 sayfa ve 4 gömülme seviyesiyle sınırlıdır. Genel tarama bütçesi 20 saniye, site çıkarıcı denemesi başına bütçe 20 saniye ve toplam çözümleme bütçesi 85 saniyedir. Aynı anda gelen aynı URL istekleri birleştirilir; önbellekteki kaynak yeniden doğrulanır. `test/video-manifest.test.js`, FFmpeg ve FFprobe mevcutsa yerel üretilmiş DASH örneğini gerçek proxy üzerinden MP4'e aktararak ses, görüntü ve çözünürlüğü denetler.
+
 ## Aktarım ve yeniden deneme sınırları
 
 - Harici analiz yüklemesi: 250 MiB; geçici disk dosyasından iletilir ve işlem sonunda temizlenir.
 - Diyalog dosyası yüklemesi: 600 MiB. Parçalı ses yüklemesi: toplam 250 MiB, tek parça en çok 10 MiB.
 - Storyboard: en çok 20 dosya, her biri en çok 2 MiB.
 - Tarayıcıya tam indirme: en çok 600 MiB; içerik uzunluğu bildirilmediğinde de sınır uygulanır.
-- Video proxy yanıt başlığı bekleme süresi: 30 saniye. Aktarım hareketsizliği: 45 saniye. HLS dönüşüm üst süresi: 30 dakika.
+- Video proxy yanıt başlığı bekleme süresi: 30 saniye. Aktarım hareketsizliği: 45 saniye. HLS/DASH aktarım üst süresi: 30 dakika.
 - ElevenLabs sunucu istek süresi: 60 saniye. İstemci dublaj isteği: 70 saniye.
 
 Tamamlanan analiz bölümleri aynı sekmede yeniden kullanılabilir. Okunamayan bölümler doğrulanmış içerik olarak gösterilmez. Analiz oturumları, video bağlantı belirteçleri ve yükleme oturumları kalıcı bir veritabanında tutulmaz; sayfa yenileme veya sunucu yeniden başlatma sonrasında devam garantisi yoktur.
