@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
 import { runVideoExtractor } from './lib/video-extractor.js';
-import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure, videoErrorDetail } from './lib/video-url.js';
+import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure, videoErrorDetail, videoErrorDiagnostic } from './lib/video-url.js';
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
@@ -1167,7 +1167,12 @@ async function resolveWithSiteExtractor(rawUrl, { referer = rawUrl, timeoutMs = 
   };
   // Use the installed extractor's normal transport. Forcing Chrome required
   // optional Python dependencies that the standard Render install lacks.
-  const output = await runVideoExtractor(rawUrl, baseOptions, { signal, timeoutMs });
+  let output;
+  try { output = await runVideoExtractor(rawUrl, baseOptions, { signal, timeoutMs }); }
+  catch (error) {
+    console.warn('[video-extractor-detail]', new URL(rawUrl).hostname, videoErrorDiagnostic(error));
+    throw error;
+  }
   const selected = selectExtractorSource(output, rawUrl);
   await validatePublicUrl(selected.sourceUrl);
   await validatePublicUrl(selected.pageUrl);
@@ -2766,7 +2771,27 @@ app.use((_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+async function runConfiguredVideoProbe() {
+  const url = String(process.env.VIDEO_RESOLUTION_PROBE_URL || '');
+  const until = Number(process.env.VIDEO_RESOLUTION_PROBE_UNTIL || 0);
+  delete process.env.VIDEO_RESOLUTION_PROBE_URL;
+  delete process.env.VIDEO_RESOLUTION_PROBE_UNTIL;
+  if (!url || !Number.isFinite(until) || until <= Date.now() || until > Date.now() + 15 * 60 * 1000) return;
+  const started = Date.now();
+  try {
+    await validatePublicUrl(url);
+    const result = await resolvePublicVideoPage(url);
+    console.log('[video-resolution-probe]', JSON.stringify({
+      host: new URL(url).hostname, ok: Boolean(result), type: result?.type,
+      elapsedMs: Date.now() - started
+    }));
+  } catch (error) {
+    console.warn('[video-resolution-probe]', videoErrorDiagnostic(error));
+  }
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Source Video Interactive listening on ${PORT}`);
   console.log(`External analysis endpoint: ${EXTERNAL_ANALYSIS_URL}`);
+  void runConfiguredVideoProbe();
 });

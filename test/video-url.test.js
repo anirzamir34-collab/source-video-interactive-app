@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverVideoSources, mediaResponseType, selectExtractorSource, videoResolutionFailure, videoErrorDetail, resolveVideoPage, resolveVideoUrl, probeVideoSource } from '../lib/video-url.js';
+import { discoverVideoSources, mediaResponseType, selectExtractorSource, videoResolutionFailure, videoErrorDetail, videoErrorDiagnostic, resolveVideoPage, resolveVideoUrl, probeVideoSource } from '../lib/video-url.js';
 
 test('video discovery keeps media sources and embedded player pages separate', () => {
   const result = discoverVideoSources(`
@@ -233,4 +233,12 @@ test('empty-stderr kills and missing Python are not classified as hidden video',
   assert.equal(videoResolutionFailure(videoErrorDetail({ signalCode: 'SIGKILL', stderr: '' })).reason, 'VIDEO_RESOLUTION_TIMEOUT');
   assert.equal(videoResolutionFailure('/usr/bin/env: python3: No such file or directory').reason, 'VIDEO_EXTRACTOR_UNAVAILABLE');
   assert.equal(videoResolutionFailure('HTTP Error 503: Service Unavailable').reason, 'VIDEO_SOURCE_TEMPORARY_ERROR');
+});
+
+test('extractor diagnostics retain the cause without signed links or credential headers', () => {
+  const diagnostic = videoErrorDiagnostic(Object.assign(new Error('VIDEO_EXTRACTOR_PROCESS_FAILED'), {
+    stderr: 'ERROR: Unable to extract metadata from https://site.test/video?list=secret&token=private\nCookie: session=private-session\nAuthorization: Bearer private-bearer\nHTTP Error 502: Bad Gateway'
+  }));
+  assert.match(diagnostic, /HTTP Error 502/);
+  assert.doesNotMatch(diagnostic, /site\.test|secret|private|Bearer|session=/);
 });

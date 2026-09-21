@@ -56,6 +56,8 @@ Tarama en çok 12 sayfa ve 4 gömülme seviyesiyle sınırlıdır. Genel tarama 
 
 Çıkarıcı süreçleri stdout/stderr sınırı, iptal ve süre aşımıyla yönetilir; eksik çalıştırılabilir dosya, süre aşımı ve kaynak HTTP 5xx hataları "video bulunamadı" olarak gösterilmez. İsteğe bağlı Python Chrome impersonation bağımlılığı zorunlu tutulmaz. Sunucu kayıtları imzalı URL veya çerez yerine hata sınıfı, HTTP durumları ve geçen süreyi içerir. `test/video-extractor.test.js` bu hata yollarını gerçek alt süreçlerle; `test/video-manifest.test.js` ise FFmpeg ve FFprobe mevcutsa gerçek DASH → MP4 aktarımında ses, görüntü ve çözünürlüğü denetler.
 
+Canlı ortam teşhisi için `VIDEO_RESOLUTION_PROBE_URL` ve en fazla 15 dakika ileride bir epoch-milisaniye değeri olan `VIDEO_RESOLUTION_PROBE_UNTIL` birlikte ayarlanabilir. Başlangıçta bir kez, normal URL doğrulamasıyla çalışır; sunucunun açılmasını bekletmez. Teşhis sonrasında bu geçici ayarlar temizlenmelidir. Hata ayrıntılarında kaynak URL'leri ve kimlik bilgileri maskelenir; yeni bir HTTP erişim ucu açılmaz.
+
 ## Aktarım ve yeniden deneme sınırları
 
 - Harici analiz yüklemesi: 250 MiB; geçici disk dosyasından iletilir ve işlem sonunda temizlenir.

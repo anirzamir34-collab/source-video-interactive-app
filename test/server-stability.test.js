@@ -6,7 +6,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable, pipeline } from 'node:stream';
-import { selectExtractorSource } from '../lib/video-url.js';
+import { selectExtractorSource, videoErrorDiagnostic } from '../lib/video-url.js';
 
 // Execute the production handlers with real streams and temporary files;
 // upstream providers and the transcoder are replaced to avoid paid calls.
@@ -41,7 +41,7 @@ function fixture(code, overrides = {}) {
     app: { get: (url, ...handlers) => routes.set(url, handlers.at(-1)), post: (url, ...handlers) => routes.set(url, handlers.at(-1)) },
     setTimeout: (callback, ms) => { const timer = { callback, ms, unref() {} }; timers.add(timer); return timer; },
     clearTimeout: timer => timers.delete(timer),
-    console: { error: (...args) => errors.push(args) },
+    console: { error: (...args) => errors.push(args), warn: (...args) => errors.push(args) },
     validatePublicUrl: async value => new URL(value),
     ...overrides
   });
@@ -211,7 +211,7 @@ test('site extractor keeps referer, provider budget and cancellation without req
 test('site extractor does not retry a denied source or run on a private URL', async () => {
   let calls = 0;
   const code = section('async function resolveWithSiteExtractor(', "\napp.post('/api/resolve-video-url'");
-  const f = fixture(code, { selectExtractorSource, runVideoExtractor: async () => { calls++; throw Error('HTTP 403 forbidden'); } });
+  const f = fixture(code, { selectExtractorSource, videoErrorDiagnostic, runVideoExtractor: async () => { calls++; throw Error('HTTP 403 forbidden'); } });
   await assert.rejects(f.scope.resolveWithSiteExtractor('https://site.test/watch'), /403/);
   assert.equal(calls, 1);
   const blocked = fixture(code, {
@@ -219,6 +219,30 @@ test('site extractor does not retry a denied source or run on a private URL', as
     runVideoExtractor: () => assert.fail('must not start')
   });
   await assert.rejects(blocked.scope.resolveWithSiteExtractor('http://localhost/video'), /private address/);
+});
+
+test('configured source probe is opt-in, time-limited, validated and does not log its URL', async () => {
+  const code = section('async function runConfiguredVideoProbe()', '\napp.listen(');
+  for (const until of [undefined, '0', String(Date.now() - 1000), String(Date.now() + 3600000)]) {
+    const process = { env: { VIDEO_RESOLUTION_PROBE_URL: 'https://site.test/video?list=private', VIDEO_RESOLUTION_PROBE_UNTIL: until } };
+    const f = fixture(code, { process, resolvePublicVideoPage: () => assert.fail('disabled probe must not run') });
+    await f.scope.runConfiguredVideoProbe();
+    assert.equal(process.env.VIDEO_RESOLUTION_PROBE_URL, undefined);
+  }
+  const messages = [];
+  let validations = 0, calls = 0;
+  const process = { env: { VIDEO_RESOLUTION_PROBE_URL: 'https://site.test/video?list=private', VIDEO_RESOLUTION_PROBE_UNTIL: String(Date.now() + 60000) } };
+  const f = fixture(code, {
+    process, videoErrorDiagnostic,
+    validatePublicUrl: async () => { validations++; },
+    resolvePublicVideoPage: async () => { calls++; return { type: 'video' }; },
+    console: { log: (...args) => messages.push(args), warn: (...args) => messages.push(args) }
+  });
+  await f.scope.runConfiguredVideoProbe();
+  await f.scope.runConfiguredVideoProbe();
+  assert.equal(validations, 1);
+  assert.equal(calls, 1);
+  assert.doesNotMatch(JSON.stringify(messages), /private|https:|list=/);
 });
 
 test('redirect responses are cancelled and caller cancellation survives redirects', async () => {
