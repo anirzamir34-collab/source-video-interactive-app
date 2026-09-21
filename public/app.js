@@ -102,7 +102,7 @@ import {
 } from './tactile-controls.js';
 
 import { createVideoDownloader } from './video-download.js';
-import { canDecodeDialogueLocally } from './media-limits.js';
+import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
 
 const videoDownloads = createVideoDownloader();
 let savedGames;
@@ -1091,7 +1091,7 @@ async function uploadDialogueWithProgress(
     body: JSON.stringify({
       totalSize: file.size,
       fileName: file.name || 'dialogue.wav',
-      mimeType: file.type || 'audio/wav'
+      mimeType: dialogueUploadMimeType(file)
     })
   });
 

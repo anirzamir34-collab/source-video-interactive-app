@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createVideoDownloader } from '../public/video-download.js';
-import { MAX_VIDEO_BYTES, MAX_MEMORY_VIDEO_BYTES, dialogueUploadLimit } from '../public/media-limits.js';
+import { MAX_VIDEO_BYTES, MAX_MEMORY_VIDEO_BYTES, dialogueUploadLimit, dialogueUploadMimeType } from '../public/media-limits.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function diskFixture({ quota = 10 * MAX_VIDEO_BYTES, writeError, closeError, writable = true } = {}) {
@@ -175,4 +175,14 @@ test('video and audio upload limits remain separate and unknown MIME types are r
   assert.equal(dialogueUploadLimit('video/mp4'), MAX_VIDEO_BYTES);
   assert.equal(dialogueUploadLimit('audio/wav'), 250 * 1024 * 1024);
   assert.equal(dialogueUploadLimit('text/html'), 0);
+});
+
+test('large CDN and local files with generic or missing MIME types retain their video upload allowance', () => {
+  for (const type of ['', 'application/octet-stream', 'binary/octet-stream']) {
+    for (const name of ['download.mp4', 'source.WEBM', 'local.MOV']) {
+      assert.equal(dialogueUploadLimit(dialogueUploadMimeType({ type, name })), MAX_VIDEO_BYTES);
+    }
+  }
+  assert.equal(dialogueUploadMimeType({ name: 'wrong.mp4', type: 'text/html' }), 'text/html');
+  assert.equal(dialogueUploadMimeType({ name: 'speech.wav', type: 'audio/wav' }), 'audio/wav');
 });
