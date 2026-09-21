@@ -102,8 +102,13 @@ class VKExternalEmbedIE(VKIE, plugin_name='videoquest'):
             # Keys and types only: no private link, title, token or media URL.
             player = opts.get('player') or {}
             shape = {
-                'options': sorted(opts.keys())[:40],
                 'player': sorted(player.keys())[:40] if isinstance(player, dict) else type(player).__name__,
-                'pageType': type(payload[1]).__name__ if isinstance(payload, list) and len(payload) > 1 else 'missing',
+                'isVkPlayer': bool(opts.get('is_vk_player')),
+                'unavailable': bool(opts.get('player_unavailable')),
             }
+            for key in ('mvData', 'videoModalInfoData'):
+                value = opts.get(key)
+                shape[key] = {k: (list(v.keys())[:12] if isinstance(v, dict) else type(v).__name__) for k, v in list(value.items())[:25]} if isinstance(value, dict) else type(value).__name__
+            page = payload[1] if isinstance(payload, list) and len(payload) > 1 and isinstance(payload[1], str) else ''
+            shape['page'] = {'length': len(page), 'tags': sorted(set(re.findall(r'<([a-zA-Z]+)\b', page)))[:15], 'frames': len(re.findall(r'iframe', page, re.I)), 'hosts': sorted(set(re.findall(r'https?:(?:/|\\/){2}([\w.-]+)', page)))[:8]}
             raise ExtractorError('VK_PLAYER_METADATA_MISSING ' + json.dumps(shape), expected=True) from error
