@@ -1,4 +1,5 @@
 import { MAX_VIDEO_BYTES, MAX_MEMORY_VIDEO_BYTES } from './media-limits.js';
+import { openVideoDownload } from './video-range-stream.js';
 
 const DIRECTORY = 'videoquest-temporary-downloads';
 const WRITE_BATCH_BYTES = 1024 * 1024;
@@ -70,6 +71,9 @@ export function createVideoDownloader({
     let idleTimer, totalTimer, headerTimer;
     let stage = 'network';
     let writeMs = 0;
+    let networkReceived = 0;
+    let connections = 1;
+    let reportProgress = () => {};
     let retained = false;
     const abort = () => controller.abort(options.signal?.reason);
     const checkpoint = () => controller.signal.throwIfAborted();
@@ -92,8 +96,16 @@ export function createVideoDownloader({
       checkpoint();
       const headerWait = options.directOnly ? 12000 : 4000;
       if (options.direct) headerTimer = setTimeout(() => controller.abort(), Math.min(headerWait, options.directHeaderTimeoutMs || headerWait));
-      response = await fetchVideo(url, { signal: controller.signal,
-        ...(options.direct ? { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' } : {}) });
+      response = await openVideoDownload(url, { fetchVideo, signal: controller.signal,
+        parallel: options.parallel === true, maxBytes: requestedLimit,
+        requestOptions: options.direct ? { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' } : {},
+        onNetwork: progress => {
+          networkReceived = progress.loaded;
+          connections = progress.connections;
+          refreshDeadline();
+          reportProgress();
+        }
+      });
       clearTimeout(headerTimer);
       if (!response.ok) {
         if (options.direct) throw new Error(`Doğrudan video aktarımı kullanılamıyor (${response.status}).`);
@@ -162,9 +174,10 @@ export function createVideoDownloader({
         const now = Date.now();
         if (force || now - lastReport >= 200) {
           lastReport = now;
-          options.onProgress?.({ loaded: received, total, transport: options.direct ? 'direct' : 'proxy', writeMs });
+          options.onProgress?.({ loaded: Math.max(received, networkReceived), total, transport: options.direct ? 'direct' : 'proxy', connections, writeMs });
         }
       };
+      reportProgress = report;
       while (true) {
         checkpoint();
         stage = 'network';
@@ -227,6 +240,26 @@ export function createVideoDownloader({
       if (!retained) await dispose();
     }
   }
+  async function attempt(url, options) {
+    const started = Date.now();
+    try { return await transfer(url, options); }
+    catch (error) {
+      if (!error.retrySerial || options.signal?.aborted || !options.parallel) throw error;
+      const waitMs = Number(error.retryAfterMs) || 0;
+      if (waitMs > 30000 || (options.maxDurationMs > 0 && Date.now() - started + waitMs >= options.maxDurationMs)) throw error;
+      if (waitMs) await new Promise((resolve, reject) => {
+        const finish = () => { options.signal?.removeEventListener('abort', abort); resolve(); };
+        const timer = setTimeout(finish, waitMs);
+        const abort = () => { clearTimeout(timer); reject(options.signal.reason); };
+        if (options.signal?.aborted) abort();
+        else options.signal?.addEventListener('abort', abort, { once: true });
+      });
+      options.onProgress?.({ loaded: 0, total: options.expectedSize || 0,
+        transport: options.direct ? 'direct' : 'proxy', connections: 1, writeMs: 0 });
+      return transfer(url, { ...options, parallel: false,
+        maxDurationMs: options.maxDurationMs > 0 ? Math.max(1, options.maxDurationMs - (Date.now() - started)) : 0 });
+    }
+  }
   async function download(url, options = {}) {
     const started = Date.now();
     let directUrl;
@@ -237,7 +270,7 @@ export function createVideoDownloader({
     } catch {}
     if (options.directOnly && !directUrl) throw directError();
     if (directUrl) {
-      try { return await transfer(directUrl, { ...options, direct: true }); }
+      try { return await attempt(directUrl, { ...options, direct: true }); }
       catch (error) {
         if (options.signal?.aborted || !error.retryViaProxy) throw error;
         if (options.directOnly) throw directError();
@@ -245,7 +278,7 @@ export function createVideoDownloader({
         options.onProgress?.({ loaded: 0, total: options.expectedSize || 0, transport: 'proxy', writeMs: 0 });
       }
     }
-    return transfer(url, { ...options, direct: false,
+    return attempt(url, { ...options, direct: false,
       maxDurationMs: options.maxDurationMs > 0 ? Math.max(1, options.maxDurationMs - (Date.now() - started)) : 0 });
   }
   return { download, adopt, release };

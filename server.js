@@ -1356,6 +1356,8 @@ app.get('/api/video-proxy', async (req, res) => {
       'User-Agent': session?.userAgent || 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36'
     };
     if (req.headers.range) headers.Range = req.headers.range;
+    if (req.headers['if-range']) headers['If-Range'] = req.headers['if-range'];
+    headers['Accept-Encoding'] = 'identity';
     if (referer) {
       await validatePublicUrl(referer);
       headers.Referer = referer;
@@ -1370,6 +1372,8 @@ app.get('/api/video-proxy', async (req, res) => {
       return;
     }
     if (!response.ok && response.status !== 206) {
+      const retryAfter = response.headers.get('retry-after');
+      if (retryAfter) res.setHeader('Retry-After', retryAfter);
       await response.body?.cancel();
       return res.status(response.status).json({ ok: false, message: `Video sunucusu ${response.status} yanıtı verdi.` });
     }

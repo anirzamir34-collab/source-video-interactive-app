@@ -180,9 +180,12 @@ test('video header deadline returns a retryable HTTP gateway timeout', async () 
 test('range response keeps its status and bytes, and releases its deadline', async () => {
   const f = proxyFixture({ fetchPublicUrl: async (_url, options) => {
     assert.equal(options.headers.Range, 'bytes=2-4');
+    assert.equal(options.headers['If-Range'], '"same-version"');
+    assert.equal(options.headers['Accept-Encoding'], 'identity');
     return { response: new Response('cde', { status: 206, headers: { 'content-range': 'bytes 2-4/10', 'content-length': '3' } }) };
   } });
   f.req.headers.range = 'bytes=2-4';
+  f.req.headers['if-range'] = '"same-version"';
   await f.run(); await tick();
   assert.equal(f.res.statusCode, 206);
   assert.equal(f.res.headers['content-range'], 'bytes 2-4/10');

@@ -2020,7 +2020,7 @@ async function prepareStoryboardSource(session, file) {
     els.video.load();
     const startedAt = performance.now();
     try {
-      localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total }) => {
+      localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total, transport, connections }) => {
         const knownTotal = total || remote.size || 0;
         const elapsed = Math.max(0.1, (performance.now() - startedAt) / 1000);
         const percent = knownTotal ? ` · %${Math.min(100, Math.round(loaded / knownTotal * 100))}` : '';
@@ -2028,7 +2028,7 @@ async function prepareStoryboardSource(session, file) {
         els.analysisOutput.textContent = [
           `${(loaded / 1024 / 1024).toFixed(1)}${knownTotal ? ` / ${(knownTotal / 1024 / 1024).toFixed(1)}` : ''} MB`,
           `${(loaded / 1024 / 1024 / elapsed).toFixed(2)} MB/sn · ${Math.round(elapsed)} sn geçti`,
-          'Doğrudan kaynaktan telefona indiriliyor.',
+          `${transport === 'direct' ? 'Doğrudan kaynaktan' : 'Sunucu üzerinden'} indiriliyor${connections > 1 ? ` · ${connections} paralel bağlantı` : ''}.`,
           'İndirme bitince ses ve kareler aynı dosyadan hazırlanacak.'
         ].join('\n');
       } });
@@ -6223,14 +6223,18 @@ document.getElementById('chooseDownloadedVideoBtn')?.addEventListener('click', (
   if (!state.analysisInProgress && !state.urlResolutionInProgress && !state.savedGameBusy) els.videoInput.click();
 });
 
-async function downloadUrlVideo(_proxyUrl, sourceUrl, options = {}) {
-  return videoDownloads.download('', {
+async function downloadUrlVideo(proxyUrl, sourceUrl, options = {}) {
+  const startedAt = performance.now();
+  return videoDownloads.download(proxyUrl, {
+    parallel: options.allowDirect !== false,
     ...options,
-    directUrl: sourceUrl,
-    directOnly: true,
-    onProgress: options.onProgress || (({ loaded, total }) => {
-      const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
-      setUrlStatus(`Video doğrudan cihaza indiriliyor: ${(loaded / 1024 / 1024).toFixed(1)} MB${totalText}`);
+    directUrl: options.allowDirect === false ? '' : sourceUrl,
+    directOnly: false,
+    onProgress: options.onProgress || (({ loaded, total, transport, connections }) => {
+      const elapsed = Math.max(0.1, (performance.now() - startedAt) / 1000);
+      const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)}` : '';
+      const route = transport === 'direct' ? 'Doğrudan kaynaktan' : 'Sunucu üzerinden';
+      setUrlStatus(`${route} indiriliyor: ${(loaded / 1024 / 1024).toFixed(1)}${totalText} MB · ${(loaded / 1024 / 1024 / elapsed).toFixed(2)} MB/sn${connections > 1 ? ` · ${connections} paralel bağlantı` : ''}`);
     })
   });
 }
@@ -6255,6 +6259,7 @@ async function ensureSelectedRemoteFile({ onProgress } = {}) {
   const task = { remote, controller: new AbortController(), promise: null };
   task.promise = (async () => {
     const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl, {
+      allowDirect: !['hls', 'dash'].includes(remote.type),
       signal: task.controller.signal,
       expectedSize: remote.size || 0,
       onProgress: progress => {
@@ -6318,12 +6323,11 @@ async function resolveVideoUrl() {
     }
 
     resolved = result;
-    if (result.type !== 'video') {
-      throw Object.assign(new Error('Bu kaynak parçalı video akışı kullanıyor. Kaynak sayfanın indirme seçeneğiyle videoyu cihazına kaydet, ardından dosyayı seç.'), { code: 'DIRECT_VIDEO_BLOCKED' });
-    }
     const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
-    setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Doğrudan cihaza indiriliyor...`);
-    const blob = pendingBlob = await downloadUrlVideo('', result.sourceUrl);
+    setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Cihaza indiriliyor...`);
+    const blob = pendingBlob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl, {
+      allowDirect: result.type === 'video'
+    });
 
     if (!blob.size) throw new Error('Video boş geldi.');
 
@@ -6347,7 +6351,9 @@ async function resolveVideoUrl() {
     setUrlStatus('Video cihazda hazır. “Seçili analizleri başlat” ile devam et.', 'success');
   } catch (error) {
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
-    if (error.code === 'DIRECT_VIDEO_BLOCKED') showBrowserDownloadHelp(resolved?.type === 'video' ? resolved.sourceUrl : '', resolved?.pageUrl || pageUrl);
+    if (resolved && !['VIDEO_SIZE_LIMIT', 'VIDEO_STORAGE_FULL'].includes(error.code)) {
+      showBrowserDownloadHelp(resolved.type === 'video' ? resolved.sourceUrl : '', resolved.pageUrl || pageUrl);
+    }
   } finally {
     await videoDownloads.release(pendingBlob);
     state.urlResolutionInProgress = false;

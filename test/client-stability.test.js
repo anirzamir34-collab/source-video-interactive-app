@@ -385,7 +385,7 @@ test('URL import downloads the complete source directly before enabling a local 
       type: 'video', sourceUrl, proxyUrl: '/api/video-proxy?token=never', directDownload: false }) };
     assert.equal(url, sourceUrl);
     assert.equal(options.credentials, 'omit');
-    assert.equal(options.headers, undefined);
+    assert.equal(options.headers.Range, 'bytes=0-0');
     return gate.promise;
   }, { clearPreviousGameResidue() { cleared++; } });
   vm.runInContext(functions('downloadUrlVideo', 'remoteVideoFileName'), f.scope);
@@ -411,7 +411,7 @@ test('URL import downloads the complete source directly before enabling a local 
   } finally { URL.revokeObjectURL(f.scope.state.videoObjectUrl); }
 });
 
-test('blocked browser downloads and manifests show manual import without transferring via Render', async () => {
+test('blocked browser downloads and manifests automatically download via Render before local playback', async () => {
   for (const type of ['video', 'hls', 'dash']) {
     const sourceUrl = 'https://cdn.example.com/video.' + (type === 'video' ? 'mp4' : type === 'hls' ? 'm3u8' : 'mpd');
     const pageUrl = 'https://example.com/watch';
@@ -421,18 +421,39 @@ test('blocked browser downloads and manifests show manual import without transfe
       requests.push(url);
       if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
         type, sourceUrl, pageUrl, proxyUrl: '/api/video-proxy?token=never' }) };
-      assert.equal(url, sourceUrl);
-      throw new TypeError('CORS denied');
-    }, { showBrowserDownloadHelp: (...args) => help.push(args) });
+      if (url === sourceUrl) throw new TypeError('CORS denied');
+      assert.equal(url, '/api/video-proxy?token=never');
+      return new Response('original video bytes', { headers: { 'content-type': 'video/mp4' } });
+    }, { clearPreviousGameResidue() {}, showBrowserDownloadHelp: (...args) => help.push(args) });
     vm.runInContext(functions('downloadUrlVideo', 'remoteVideoFileName'), f.scope);
     const oldFile = f.scope.state.selectedFile;
     await f.scope.resolveVideoUrl();
-    assert.deepEqual(requests, type === 'video' ? ['/api/resolve-video-url', sourceUrl] : ['/api/resolve-video-url']);
-    assert.deepEqual(help, [[type === 'video' ? sourceUrl : '', pageUrl]]);
-    assert.equal(f.scope.state.selectedFile, oldFile);
-    assert.equal(f.scope.els.video.src, undefined);
+    assert.deepEqual(requests, ['/api/resolve-video-url', ...(type === 'video' ? [sourceUrl] : []), '/api/video-proxy?token=never']);
+    assert.deepEqual(help, []);
+    assert.notEqual(f.scope.state.selectedFile, oldFile);
+    assert.equal(await f.scope.state.selectedFile.text(), 'original video bytes');
+    assert.match(f.scope.els.video.src, /^blob:/);
     assert.equal(f.scope.els.videoInput.disabled, false);
+    URL.revokeObjectURL(f.scope.state.videoObjectUrl);
   }
+});
+
+test('failure of both download routes offers manual import and preserves the previous video', async () => {
+  const requests = [];
+  const help = [];
+  const f = urlFixture(async url => {
+    requests.push(url);
+    if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
+      type: 'video', sourceUrl: 'https://cdn.example.com/a.mp4', pageUrl: 'https://example.com/watch', proxyUrl: '/proxy' }) };
+    if (url === '/proxy') return new Response(JSON.stringify({ message: 'source unavailable' }), { status: 502 });
+    throw new TypeError('CORS denied');
+  }, { showBrowserDownloadHelp: (...args) => help.push(args) });
+  vm.runInContext(functions('downloadUrlVideo', 'remoteVideoFileName'), f.scope);
+  const oldFile = f.scope.state.selectedFile;
+  await f.scope.resolveVideoUrl();
+  assert.deepEqual(requests, ['/api/resolve-video-url', 'https://cdn.example.com/a.mp4', '/proxy']);
+  assert.equal(f.scope.state.selectedFile, oldFile);
+  assert.deepEqual(help, [['https://cdn.example.com/a.mp4', 'https://example.com/watch']]);
 });
 
 test('manual download links reject executable URLs and discard stale source links', () => {
@@ -513,7 +534,7 @@ test('storyboard transfer has an overall deadline even when waiting for response
       signal.addEventListener('abort', () => reject(signal.reason), { once: true });
     })
   });
-  await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4', { maxDurationMs: 5 }), { code: 'DIRECT_VIDEO_BLOCKED' });
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4', { maxDurationMs: 5 }), /aktarımı durdu/);
   assert.equal(signal.aborted, true);
 });
 

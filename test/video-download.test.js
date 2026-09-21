@@ -210,6 +210,25 @@ test('small network packets use bounded batched disk writes and preserve every b
 });
 
 const directUrl = 'https://cdn.example.com/source.mp4';
+test('failed parallel ranges delete the partial disk file before retaining one serial replacement', async () => {
+  const disk = diskFixture();
+  const downloads = createVideoDownloader({ ...disk, fetch: async (_url, options) => {
+    if (!options.headers) return new Response('complete replacement', { headers: { 'content-type': 'video/mp4' } });
+    if (options.headers.Range === 'bytes=0-0') return new Response(new Uint8Array([1]), { status: 206,
+      headers: { 'content-type': 'video/mp4', 'content-range': 'bytes 0-0/12582912', 'content-length': '1', etag: '"original"' } });
+    return new Response('changed file', { status: 200 });
+  } });
+  const file = await downloads.download('/video', { parallel: true });
+  assert.equal(await file.text(), 'complete replacement');
+  assert.equal(disk.files.size, 1);
+  assert.equal(disk.held.size, 1);
+  assert.equal(disk.events.filter(event => event === 'abort').length, 1);
+  assert.equal(disk.events.filter(event => event === 'remove').length, 1);
+  await downloads.release(file);
+  assert.equal(disk.files.size, 0);
+  assert.equal(disk.held.size, 0);
+});
+
 test('permitted direct media needs one source request, no proxy and no credentials', async () => {
   const disk = diskFixture();
   const calls = [];
