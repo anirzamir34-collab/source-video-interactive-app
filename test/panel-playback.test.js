@@ -6,6 +6,7 @@ import { sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 import * as gameplay from '../public/adult-gameplay.js';
 import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
 import { forwardVerifiedClips } from '../public/panel-feedback.js';
+import { sourcePositionAtTime } from '../public/scene-entry.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -291,7 +292,7 @@ function chapter(id, start, family = id, role = 'core') {
 function runtimeFixture() {
   const f = fixture();
   Object.assign(f, gameplay, {
-    canPlayAction, advanceAdultPhase, queueMicrotask, forwardVerifiedClips,
+    canPlayAction, advanceAdultPhase, queueMicrotask, forwardVerifiedClips, sourcePositionAtTime,
     primeAdultPositionLanguage() {}, escapeHtml: String,
     normalizeAdultLabel: value => String(value || '').toLowerCase()
   });
@@ -423,6 +424,38 @@ test('an introduction without warmup-position metadata still keeps the gate clos
   f.renderAdultPanel(f.state.adultScene);
   assert.equal(f.state.adultSexUnlocked, false);
   assert.equal(f.state.adultUnlockedPositionIds.size, 0);
+});
+
+test('natural playback reaching a verified chapter opens its panel despite a short introduction without seeking', () => {
+  const f = runtimeFixture();
+  f.state.femaleSceneProgress = 5;
+  f.els.video.time = 25;
+  f.els.video.paused = false;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.adultSexUnlocked, true);
+  assert.equal(f.state.activePositionId, 'one');
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-one');
+  assert.equal(f.els.video.currentTime, 25);
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
+});
+
+test('entry during a disjoint return binds that occurrence and a parent gap never opens the panel', () => {
+  for (const time of [75, 125]) {
+    const f = runtimeFixture();
+    const position = chapter('one', 20);
+    const later = chapter('return', 120);
+    position.sourceRanges.push(...later.sourceRanges);
+    position.movements.push(...later.movements);
+    f.state.adultScene.positions = [position];
+    f.els.video.time = time;
+    f.renderAdultProgressiveUI(true);
+    assert.equal(f.state.adultSexUnlocked, time === 125);
+    assert.equal(f.els.video.currentTime, time);
+    assert.equal(f.els.video.playCalls, 0);
+    if (time === 125) assert.equal(f.state.activeAdultOccurrenceId, 'source-return');
+  }
 });
 
 test('later thresholds unlock exactly one next chapter without switching playback', async () => {

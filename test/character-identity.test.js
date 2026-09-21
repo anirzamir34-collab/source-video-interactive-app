@@ -221,6 +221,19 @@ const familyCast = { characters: [named('MOTHER', 'person-1', 'Meral'), named('D
   relationships: [relationshipFact('MOTHER', 'DAUGHTER', 'kızı'), relationshipFact('DAUGHTER', 'MOTHER', 'annesi'),
     relationshipFact('GRANDFATHER', 'GRANDCHILD', 'torunu'), relationshipFact('GRANDCHILD', 'GRANDFATHER', 'dedesi')] };
 
+test('ordinary dialogue recognizes evidenced in-law spelling variants for the exact speaker-target pair', () => {
+  for (const [alias, expected] of [['kayın baba', 'Kayınpederiyle konuş'], ['kayınbaba', 'Kayınpederiyle konuş'],
+    ['kaynana', 'Kayınvalidesiyle konuş'], ['kayın valide', 'Kayınvalidesiyle konuş']]) {
+    const context = { characters: [named('A', 'a', 'Deniz'), named('B', 'b', 'Meral'), named('C', 'c', 'Can')],
+      relationships: [relationshipFact('A', 'B', alias)] };
+    const action = { label: 'Onunla konuş', subjectTrackId: 'a', primaryCharacterId: 'B',
+      involvedCharacterIds: ['A', 'B'], adultScene: false };
+    assert.equal(storyChoiceLabelForAction(bindActionCharacter(action, context)), expected);
+    const other = bindActionCharacter({ ...action, subjectTrackId: 'c', involvedCharacterIds: ['C', 'B'] }, context);
+    assert.equal(other.relationshipResolution, 'unknown');
+  }
+});
+
 test('mother/daughter and grandfather/grandchild choices use the target role in both directions', () => {
   for (const [subject, target, label, expected] of [
     ['MOTHER', 'DAUGHTER', 'Genç kadınla sohbet et', 'Kızıyla sohbet et'],

@@ -15,6 +15,16 @@ test('every existing canonical identifier round-trips without inventing another 
   for (const id of POSITION_IDS) assert.equal(adultPositionFamily(id), id);
 });
 
+test('an independently verified activity class is not rejected by the support/posture dimension', () => {
+  for (const id of ['oral', 'manual']) {
+    const action = classified('activity', { positionId: id, positionLabel: id, label: 'Recorded activity',
+      movementType: 'Observed movement', receiverBodyOrientation: 'on_back', receiverSupport: 'back_flat' });
+    assert.equal(movementBelongsToVerifiedPosition(action, id), true);
+    assert.equal(movementBelongsToVerifiedPosition({ ...action, actionType: 'camera_transition' }, id), false);
+    assert.equal(movementBelongsToVerifiedPosition({ ...action, sourceVerified: false }, id), false);
+  }
+});
+
 test('general direction wording preserves the specific declared parent', () => {
   for (const label of ['Arkadan hareket temposunu artır', 'Arkadan ritmik hareket et', 'Arkadan pozisyonda devam et']) {
     const action = classified('a', { label, movementType: 'ritmik hareket' });

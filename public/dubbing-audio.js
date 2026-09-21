@@ -64,10 +64,30 @@ export function naturalDubRate(audioDuration, sourceDuration, videoRate = 1) {
 }
 
 export function canFinishDubTail(audio, nextSegment, videoTime) {
-  if (!nextSegment) return true;
   // Timestamp boundaries are estimates. Let a short final word finish before
   // starting the next speaker, but never accumulate an unbounded speech queue.
   const remaining = (Number(audio.duration) - Number(audio.currentTime)) / Math.max(0.25, audio.playbackRate || 1);
-  return Number.isFinite(remaining) && remaining <= 0.55 &&
-    Number(videoTime) - Number(nextSegment.startTime) <= 0.55;
+  const boundary = Number(nextSegment?.startTime ?? audio._vqSegment?.endTime);
+  return Number.isFinite(remaining) && remaining >= 0 && remaining <= 0.55 &&
+    (!Number.isFinite(boundary) || Number(videoTime) - boundary <= 0.55);
+}
+
+// Follow the rate actually used by this utterance, not a different linear
+// duration fit. Never seek backwards during continuous playback: that repeats
+// words. A voice ahead of the video waits; a stalled voice resynchronizes.
+export function correctDubClock(audio, videoTime, videoRate = 1) {
+  const rate = Number(audio._vqSpeechRate) || 1;
+  const anchor = Number(audio._vqAnchorVideoTime);
+  if (!Number.isFinite(anchor) || !Number.isFinite(Number(audio.duration))) return;
+  const target = Math.max(0, Math.min(audio.duration,
+    (Number(audio._vqAnchorAudioTime) || 0) + Math.max(0, videoTime - anchor) * rate));
+  const drift = Number(audio.currentTime) - target;
+  if (drift > 0.4) {
+    audio._vqClockHold = true;
+    audio.pause();
+  } else if (audio._vqClockHold && drift <= 0.08) audio._vqClockHold = false;
+  if (drift < -0.4) audio.currentTime = target;
+  const correction = Math.abs(drift) >= 0.12 && Math.abs(drift) <= 0.4
+    ? Math.min(0.08, Math.max(-0.08, -drift * 0.25)) : 0;
+  audio.playbackRate = Math.max(0.25, Math.min(4, (rate + correction) * videoRate));
 }

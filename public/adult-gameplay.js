@@ -269,7 +269,11 @@ export function resolveVerifiedAdultPosition(action = {}) {
 export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '') {
   if (['body_transition', 'partner_transition', 'camera_transition'].includes(String(action.actionType || '').toLowerCase())) return false;
   const structuralFamily = adultPositionFamilyFromBodyConfiguration(action);
-  if (structuralFamily && structuralFamily !== canonicalId) return false;
+  const activityClass = action.sourceVerified === true && ['oral', 'manual'].includes(canonicalId) &&
+    resolveVerifiedAdultPosition(action).family === canonicalId;
+  // Match the activity dimension against its parent activity. A support/posture
+  // classification must not contradict an already verified activity class.
+  if (!activityClass && structuralFamily && structuralFamily !== canonicalId) return false;
   const source = [
     action.label,
     action.movementType,

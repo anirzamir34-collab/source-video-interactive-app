@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import * as gameplay from '../public/adult-gameplay.js';
 import { sourceRangeForClip } from '../public/sequence-integrity.js';
+import { matchSceneIntroductions } from '../public/scene-entry.js';
+import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
 
 // Run the actual graph preparation with a neutral classifier stub. These tests
 // concern provenance and timeline integrity, not visual classification quality.
@@ -19,10 +21,10 @@ const action = (id, start, end, extra = {}) => ({
   loopStartTime: start, loopEndTime: end, ...extra
 });
 
-function prepare(actions) {
+function prepare(actions, overrides = {}) {
   const state = { analysis: { actions }, analysisFingerprint: 'test' };
   const scope = vm.createContext({
-    ...gameplay, state, ENGINE_VERSION: 'test',
+    ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
     canonicalAdultPosition: () => ({ id: 'chapter', label: 'Chapter' }),
     adultCategoryFor: () => ({ id: 'chapter', label: 'Chapter' }),
@@ -32,7 +34,8 @@ function prepare(actions) {
     movementBelongsToVerifiedPosition: item => item.sourceVerified === true && item.accepted !== false,
     mergeAdultSceneFragments: scenes => scenes,
     isWarmupPosition: () => false, isBonusPosition: () => false,
-    renderAdultAnalysisTrace() {}
+    renderAdultAnalysisTrace() {},
+    ...overrides
   });
   vm.runInContext(`${handler}\nprepareAdultScenes();`, scope);
   return state;
@@ -41,6 +44,25 @@ function prepare(actions) {
 test('preparation never fabricates a verified full-parent clip from rejected evidence', () => {
   const state = prepare([action('rejected', 10, 30, { accepted: false })]);
   assert.equal(state.adultScenes.length, 0);
+});
+
+test('preparation routes a verified same-cast introduction into its adjacent scene without changing source times', () => {
+  const intro = action('intro', 5, 10, { actionType: 'touch', positionId: '', positionLabel: '',
+    adultScene: false, adultSceneId: '', adultSceneStartTime: undefined, adultSceneEndTime: undefined,
+    subjectTrackId: 'a', partnerTrackId: 'b' });
+  const core = action('main', 10, 20, { subjectTrackId: 'a', partnerTrackId: 'b',
+    adultSceneStartTime: 10, adultSceneEndTime: 20, positionStartTime: 10, positionEndTime: 20 });
+  const classifier = { verifiedAdultPositionFamily: item => item.positionId ? 'chapter' : '' };
+  const state = prepare([intro, core], classifier);
+  assert.equal(state.adultScenes.length, 1);
+  assert.equal(state.adultScenes[0].foreplay.length, 1);
+  assert.deepEqual([state.adultScenes[0].foreplay[0].startTime, state.adultScenes[0].foreplay[0].endTime], [5, 10]);
+  assert.equal(intro.adultScene, false);
+  assert.equal(intro.adultSceneId, '');
+  assert.equal(state.adultAnalysisTrace.actions[0].route, 'FOREPLAY');
+  assert.equal(state.adultAnalysisTrace.warnings.some(row => row.code === 'CHARACTER_CONTEXT_MISSING'), true);
+  const ordinaryFamily = prepare([{ ...intro, relationshipResolution: 'verified', relationshipRoleLabel: 'kızı' }, core], classifier);
+  assert.equal(ordinaryFamily.adultScenes[0].foreplay.length, 0);
 });
 
 test('short source evidence does not authorize a longer parent fallback', () => {

@@ -161,16 +161,17 @@ test('dialogueSegmentsAt preserves overlap metadata while dialogueSegmentAt sele
   assert.equal(dialogueSegmentAt(segments, 12.5, 0.12)?.segmentId, 'b');
 });
 
-test('adjacent lines from the same speaker become one continuous dub block', () => {
+test('adjacent subtitle lines retain independent timed speech by default', () => {
   const blocks = buildDubBlocks([
     { segmentId: 'a', speakerId: 'woman-a', startTime: 10, endTime: 12, turkishText: 'Birinci cümle.' },
     { segmentId: 'b', speakerId: 'woman-a', startTime: 12.2, endTime: 14, turkishText: 'İkinci cümle.' },
     { segmentId: 'c', speakerId: 'man-a', startTime: 14.1, endTime: 16, turkishText: 'Yanıt.' }
   ]);
-  assert.equal(blocks.length, 2);
-  assert.equal(blocks[0].turkishText, 'Birinci cümle. İkinci cümle.');
-  assert.deepEqual(blocks[0].sourceSegmentIds, ['a', 'b']);
-  assert.equal(blocks[1].speakerId, 'man-a');
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[0].turkishText, 'Birinci cümle.');
+  assert.deepEqual(blocks[0].sourceSegmentIds, ['a']);
+  assert.equal(blocks[1].startTime, 12.2);
+  assert.equal(blocks[2].speakerId, 'man-a');
 });
 
 test('adult choice target primes the active Turkish line and following line once', () => {

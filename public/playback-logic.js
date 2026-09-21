@@ -1,3 +1,5 @@
+import { normalizeDialogueSegments } from './dialogue-integrity.js';
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
 // Scene metadata can include a distant post-roll time. Leaving a scene must
@@ -169,8 +171,8 @@ export function isDubStartTimely(videoTime, segment = {}, maxDelaySeconds = 0.65
   return now >= start - 0.12 && now <= latest;
 }
 
-export function buildDubBlocks(segments, { maxGap = 0.28, maxDuration = 14 } = {}) {
-  const rows = (Array.isArray(segments) ? segments : [])
+export function buildDubBlocks(segments, { mergeAdjacent = false, maxGap = 0.28, maxDuration = 14 } = {}) {
+  const rows = normalizeDialogueSegments(segments)
     .filter(segment => String(segment?.turkishText || '').trim())
     .map(segment => ({ ...segment }))
     .sort((left, right) => Number(left.startTime) - Number(right.startTime));
@@ -185,7 +187,10 @@ export function buildDubBlocks(segments, { maxGap = 0.28, maxDuration = 14 } = {
     const gap = previous ? start - Number(previous.endTime) : Number.POSITIVE_INFINITY;
     const combinedDuration = previous ? end - Number(previous.startTime) : end - start;
 
-    if (sameSpeaker && gap >= -0.04 && gap <= maxGap && combinedDuration <= maxDuration) {
+    // Keep each timed subtitle's speech independent by default. A merged TTS
+    // sentence has no internal timestamps and drifts across its captions.
+    const compatibleGender = !previous?.gender || !row.gender || previous.gender === row.gender;
+    if (mergeAdjacent && sameSpeaker && compatibleGender && gap >= -0.04 && gap <= maxGap && combinedDuration <= maxDuration) {
       previous.endTime = end;
       previous.turkishText = `${previous.turkishText} ${String(row.turkishText).trim()}`.trim();
       previous.originalText = `${previous.originalText || ''} ${String(row.originalText || '').trim()}`.trim();

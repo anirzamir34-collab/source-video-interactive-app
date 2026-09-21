@@ -14,6 +14,7 @@ import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 import { MAX_VIDEO_BYTES, dialogueUploadLimit } from './public/media-limits.js';
 import { allocateSpeakerVoices } from './lib/voice-allocation.js';
+import { uniqueTimedSpeech, normalizeDialogueSegments } from './public/dialogue-integrity.js';
 import { prepareLocalDialogueAudio } from './lib/dialogue-media.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 
@@ -1594,7 +1595,7 @@ function extractTranscribeWordAnnotations(interaction) {
       }
     }
   }
-  return words.sort((a, b) => a.startTime - b.startTime);
+  return uniqueTimedSpeech(words, { textField: 'text', tolerance: 0.015 });
 }
 
 function groupTranscribeWords(words) {
@@ -2144,7 +2145,7 @@ Rules:
         speakerProfiles.set(speakerId, { ...item, speakerId, gender, speakerName });
       }
 
-      const segments = (Array.isArray(parsed.segments) ? parsed.segments : [])
+      const segments = normalizeDialogueSegments((Array.isArray(parsed.segments) ? parsed.segments : [])
         .map((segment, index) => {
           const speakerId = String(segment.speakerId || 'speaker-uncertain');
           const gender = ['female', 'male'].includes(segment.gender)
@@ -2179,7 +2180,7 @@ Rules:
           segment.endTime > segment.startTime &&
           (!duration || segment.startTime <= duration)
         )
-        .sort((a, b) => a.startTime - b.startTime);
+        .sort((a, b) => a.startTime - b.startTime), duration);
 
       const nonSpeechEvents = (Array.isArray(parsed.nonSpeechEvents) ? parsed.nonSpeechEvents : [])
         .map((event, index) => ({

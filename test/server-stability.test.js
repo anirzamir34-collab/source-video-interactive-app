@@ -9,6 +9,7 @@ import { dialogueUploadLimit, MAX_VIDEO_BYTES } from '../public/media-limits.js'
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable, pipeline } from 'node:stream';
 import { selectExtractorSource, videoErrorDiagnostic } from '../lib/video-url.js';
+import { uniqueTimedSpeech, normalizeDialogueSegments } from '../public/dialogue-integrity.js';
 
 // Execute the production handlers with real streams and temporary files;
 // upstream providers and the transcoder are replaced to avoid paid calls.
@@ -36,7 +37,7 @@ function fixture(code, overrides = {}) {
   const timers = new Set();
   const errors = [];
   const scope = vm.createContext({
-    Buffer, URL, AbortController, AbortSignal, FormData, Blob, Date,
+    Buffer, URL, AbortController, AbortSignal, FormData, Blob, Date, uniqueTimedSpeech, normalizeDialogueSegments,
     fs, Readable, pipeline, resolvedVideoSessions: new Map(), dialogueUploadSessions: new Map(),
     dialogueChunkParser() {}, upload: { single: () => () => {} },
     multer: { MulterError: class extends Error {} },
@@ -430,6 +431,17 @@ test('chunked video upload accepts up to 2 GiB but rejects oversized audio and v
     assert.equal(res.statusCode, 400);
   }
   assert.equal(writes, 2);
+});
+
+test('repeated provider annotation steps do not duplicate words or erase later real repetitions', () => {
+  const f = fixture(section('function parseGeminiOffsetSeconds(', '\nasync function transcribeDialogueGemini35('));
+  const annotation = { type: 'word_info', speaker: 'a', text: 'Hello', start_offset: '1s', end_offset: '1.4s' };
+  const words = f.scope.extractTranscribeWordAnnotations({ steps: [
+    { content: [{ annotations: [annotation] }] },
+    { content: [{ annotations: [annotation, { ...annotation, speaker: 'b' },
+      { ...annotation, start_offset: '2s', end_offset: '2.4s' }] }] }
+  ] });
+  assert.deepEqual(Array.from(words, word => [word.speakerId, word.startTime]), [['a', 1], ['b', 1], ['a', 2]]);
 });
 
 test('overlapping word annotations preserve separate sentences while consecutive turns stay separate', () => {

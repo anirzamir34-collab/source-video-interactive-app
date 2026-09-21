@@ -90,7 +90,7 @@ import {
 } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 
-import { createDubMixer, naturalDubRate, canFinishDubTail } from './dubbing-audio.js';
+import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from './dubbing-audio.js';
 import { createDubRequestQueue } from './dubbing-queue.js';
 import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
@@ -104,6 +104,9 @@ import {
 import { dubSpeakerKey, buildDubSpeakerRoster, validateDubVoicePlan } from './dub-speakers.js';
 import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from './dub-overlap.js';
 import { createVideoDownloader } from './video-download.js';
+import { normalizeDialogueSegments } from './dialogue-integrity.js';
+import { matchSceneIntroductions, sourcePositionAtTime } from './scene-entry.js';
+import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
 
 const videoDownloads = createVideoDownloader();
@@ -1261,10 +1264,11 @@ async function analyzeSelectedDialogue(file) {
     throw new Error(body.error || body.message || `HTTP ${upload.status}`);
   }
 
+  const segments = normalizeDialogueSegments(body.segments, Number(els.video.duration));
   state.dialogue = {
     ...body,
-    segments: Array.isArray(body.segments) ? body.segments : [],
-    dubSegments: buildDubBlocks(Array.isArray(body.segments) ? body.segments : [])
+    segments,
+    dubSegments: buildDubBlocks(segments)
   };
 
   try {
@@ -1295,9 +1299,11 @@ function renderSubtitle() {
     const profile = (state.dialogue?.speakers || []).find(item => dubSpeakerKey(item) === dubSpeakerKey(segment));
     return String(segment.speakerName || profile?.speakerName || profile?.displayName || 'Konuşmacı').trim();
   };
-  els.subtitleSpeaker.textContent = active.length === 1 ? label(active[0]) : '';
-  els.subtitleText.textContent = active.length === 1 ? active[0].turkishText :
+  const speakerText = active.length === 1 ? label(active[0]) : '';
+  const captionText = active.length === 1 ? active[0].turkishText :
     active.map(segment => `${label(segment)}: ${segment.turkishText}`).join('\n');
+  if (els.subtitleSpeaker.textContent !== speakerText) els.subtitleSpeaker.textContent = speakerText;
+  if (els.subtitleText.textContent !== captionText) els.subtitleText.textContent = captionText;
   els.subtitleOverlay.classList.remove('hidden');
 }
 
@@ -1557,7 +1563,7 @@ function stableDubGender(segment) {
 async function ensureDubVoicePlan() {
   const controller = state.dubRequestController;
   const dialogue = state.dialogue;
-  const roster = buildDubSpeakerRoster(dubTimeline(), dialogue?.speakers || []);
+  const roster = buildDubSpeakerRoster(dialogue?.segments || dubTimeline(), dialogue?.speakers || []);
   state.dubSpeakerVoices ||= new Map();
   if (roster.every(row => state.dubSpeakerVoices.has(row.speakerId))) return state.dubSpeakerVoices;
   if (state.dubVoicePlanRequest?.controller === controller && state.dubVoicePlanRequest.dialogue === dialogue) {
@@ -1867,7 +1873,10 @@ async function syncDubPlayback() {
     const activeIds = new Set(active.map(getDubSegmentId));
     const waitingForTail = new Set();
     for (const [id, audio] of dubChannels) {
-      if (activeIds.has(id) && !audio.ended) continue;
+      if (activeIds.has(id) && !audio.ended) {
+        correctDubClock(audio, videoTime, els.video.playbackRate || 1);
+        continue;
+      }
       if (!audio.ended && canFinishDubTail(audio, active[0], videoTime)) {
         for (const segment of active) {
           // Only consecutive turns wait for a final syllable. Actual source
@@ -1894,16 +1903,21 @@ async function syncDubPlayback() {
       const id = getDubSegmentId(segment);
       const audio = prepared.get(id);
       if (!audio || !stillActive.has(id) || state.dubPlayedSegmentIds.has(id)) continue;
-      const offset = now - Number(segment.startTime) > 0.65
-        ? mapVideoTimeToDubTime({ videoTime: now, segmentStart: segment.startTime,
-            segmentEnd: segment.endTime, audioDuration: audio.duration }) : 0;
+      const elapsed = Math.max(0, now - Number(segment.startTime));
+      const sourceRate = naturalDubRate(audio.duration, dubSpeechEnd(segment, dubTimeline()) - Number(segment.startTime));
+      const offset = state.dubResumeTime !== null || elapsed > 0.65
+        ? Math.min(audio.duration, elapsed * sourceRate) : 0;
+      if (offset >= audio.duration - 0.02) { state.dubPlayedSegmentIds.add(id); continue; }
       audio.currentTime = offset;
       audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, dubSpeechEnd(segment, dubTimeline()) - now));
+      audio._vqAnchorVideoTime = now;
+      audio._vqAnchorAudioTime = offset;
+      audio._vqClockHold = false;
       audio.playbackRate = audio._vqSpeechRate * (els.video.playbackRate || 1);
       dubChannels.set(id, audio);
     }
     state.activeDubSegmentId = dubChannels.keys().next().value || null;
-    const starts = [...dubChannels].filter(([, audio]) => audio.paused && !audio.ended);
+    const starts = [...dubChannels].filter(([, audio]) => audio.paused && !audio.ended && !audio._vqClockHold);
     updateDubMix();
     if (starts.length) dubMixer.update({ enabled: true, keepOriginal: state.keepOriginalAudioEnabled, speaking: true });
     await Promise.all(starts.map(([id, audio]) => playDubAudio(audio, id, generation)));
@@ -1913,7 +1927,7 @@ async function syncDubPlayback() {
   }
 }
 
-els.video.addEventListener('timeupdate', () => void syncDubPlayback());
+els.video.addEventListener('timeupdate', () => { renderSubtitle(); void syncDubPlayback(); });
 els.video.addEventListener('pause', () => {
   stopDubClock();
   if (!state.decisionDubHold) {
@@ -1935,6 +1949,7 @@ els.video.addEventListener('seeking', () => {
   state.dubPlayedSegmentIds.clear();
 });
 els.video.addEventListener('seeked', () => {
+  renderSubtitle();
   state.dubVideoWaiting = els.video.readyState < 3;
   if (!state.dubbingEnabled) return;
   void syncDubPlayback();
@@ -3331,6 +3346,15 @@ function prepareAdultScenes() {
     }).map(sceneIdFor)
   );
 
+  const introductions = matchSceneIntroductions(actions,
+    actions.filter(action => traceByAction.get(action).sceneCandidate)
+      .map(action => ({ action, sceneId: sceneIdFor(action) })),
+    action => ['kiss', 'touch', 'clothing', 'body_transition'].includes(action.actionType) &&
+      !action.positionId && !action.positionLabel &&
+      !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
+        !isAdultSocialRelationshipRole(action.relationshipRoleLabel)));
+  introductions.forEach((sceneId, action) => sceneOccurrenceByAction.set(action, sceneId));
+
   actions.filter(action =>
     verifiedPositionSceneIds.has(sceneIdFor(action))
   ).forEach((action, index) => {
@@ -3730,6 +3754,9 @@ function prepareAdultScenes() {
   const graph = summarizeAdultSceneGraph(state.adultScenes);
   state.adultAnalysisTrace.graph = graph;
   state.adultAnalysisTrace.warnings = [
+    ...state.adultAnalysisTrace.warnings,
+    ...(!state.analysis?.storyContext?.characters?.length
+      ? [{ code: 'CHARACTER_CONTEXT_MISSING', message: 'Analiz karakter haritası üretmedi; ilişkiler doğrulanamıyor.' }] : []),
     ...(state.adultAnalysisTrace.audioContext.status === 'unavailable'
       ? [{ code: 'AUDIO_CONTEXT_UNAVAILABLE', message: 'Karakter eşleştirmesi için konuşma verisi bulunmuyor.' }] : []),
     ...graph.duplicateFamilies.map(item => ({
@@ -4304,6 +4331,23 @@ function renderAdultOutcomes(scene) {
 function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel || state.adultOutcomePhase !== 'idle') return;
+
+  if (!state.adultSexUnlocked && !state.activeAdultPreludeId && !state.activeMovementId) {
+    const current = sourcePositionAtTime((scene.positions || []).filter(position =>
+      !isWarmupPosition(position) && !isBonusPosition(position)), Number(els.video?.currentTime));
+    if (current) {
+      state.adultUnlockedPositionIds.add(current.id);
+      state.adultRevealedPositionIds.add(current.id);
+      state.adultSexUnlocked = true;
+      state.activePositionId = current.id;
+      state.activeAdultOccurrenceId = positionOccurrenceGroups(current).find(group =>
+        Number(els.video.currentTime) >= group.startTime - 0.04 &&
+        Number(els.video.currentTime) < group.endTime - 0.04)?.id || null;
+      resetAdultTapRhythm();
+      state.adultUiSignature = '';
+      logEngineEvent('SOURCE_BOUNDARY_PANEL_OPENED', { sceneId: scene.id, positionId: current.id });
+    }
+  }
 
   // Full Lust is the transition condition itself. Waiting for the approach
   // list to become empty left playback paused forever at 100/100.
@@ -5395,6 +5439,7 @@ function updateAdultPlayback(now, mediaTime) {
 }
 
 function adultFrameLoop(now, metadata) {
+  renderSubtitle();
   updateAdultPlayback(now, Number(metadata?.mediaTime ?? els.video?.currentTime ?? 0));
   if (els.video?.requestVideoFrameCallback) {
     state.adultFrameRequest = els.video.requestVideoFrameCallback(adultFrameLoop);

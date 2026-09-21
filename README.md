@@ -34,6 +34,14 @@ Dublajdan önce tüm konuşmacılara `speakerId` bazında ayrı bir ElevenLabs s
 
 Kaynakta üst üste gelen farklı konuşmacılar bağımsız ses kanalları ve ayrı altyazı satırları kullanır. Bir karakterin cümlesi diğerinin başlangıcıyla kısaltılmaz; toplam ses seviyesi taşmayı önleyecek biçimde dengelenir. İleri/geri sarma, duraklatma ve eksik ses hazırlığı bütün aktif kanallara uygulanır. Eski kayıtların hazır sesleri korunur; eski iki sesli dublajı kişi bazlı seslere geçirmek için yeniden analiz/dublaj gerekir.
 
+Yeni analizlerde her zamanlanmış cümle ayrı seslendirilir; ilk cümlenin konuşmacı bilgisi birleşik bloğa taşınmaz. Ses ataması özgün satırların tamamından yapılır, bilinen konuşmacılar için katalogdaki belirsiz ses profilleri eşleşme sayılmaz. Aynı konuşmacının aynı zaman ve metindeki yinelenen kayıtları ayıklanır; sonradan tekrarlanan cümleler ve farklı kişilerin eşzamanlı konuşmaları korunur. Ayrı cümleler daha fazla TTS isteği gerektirebilir.
+
+Altyazı video zamanıyla güncellenir. Sürekli oynatmada dublaj saati izlenir; öne geçen ses bekler, küçük sapmalar hızla düzeltilir, ciddi ses gecikmesinde ileri eşleme yapılır. Bu eşleme geriye sarıp kelime tekrarlamaz; çözümleyici duraklamalarında sesin bir bölümü atlanabilir. Son cümlenin sahne dışına sınırsız taşmasına izin verilmez. Önceden üretilmiş ses dosyaları değiştirilmez; yeni cümle sınırları ve ses planı için yeniden analiz gerekir. Gerçek kaynak ses olmadan modelin konuşmacı tanıma doğruluğu garanti edilemez.
+
+Panel, kısa girişte sayaç eşiği dolmasa bile mevcut doğrulanmış kaynak aralığına gelindiğinde açılır; açılış videoyu ileri/geri atlatmaz. Komşu girişler yalnızca doğrulanmış, aynı katılımcılara ait kayıtlar üzerinden bağlanır. Normal diyaloglarda kayınbaba/kayın baba ve kaynana/kayınvalide yazımları aynı doğrulanmış rolü kullanır. Eksik karakter haritası tanılama raporunda ayrıca belirtilir; rol uydurulmaz.
+
+21 Eylül 2026 oynatma doğrulaması: 491 test geçti. Yeni regresyonlar sahne sınırında panel açılışı, ayrık kaynak aralıkları, yinelenen konuşma kayıtları, konuşmacı ataması, altyazı güncellemesi, ses saatinin beklemesi/ileri eşlenmesi ve normal diyalogdaki rol yazımlarını kapsar. Ücretli sağlayıcı çağrısı veya kullanıcının kaynak sesiyle dinleme testi yapılmadı.
+
 ## Yapılandırma
 
 | Değişken | Kullanım |

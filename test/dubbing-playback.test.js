@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from '../public/dub-overlap.js';
 import { dubSpeakerKey } from '../public/dub-speakers.js';
-import { createDubMixer, naturalDubRate, canFinishDubTail } from '../public/dubbing-audio.js';
+import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from '../public/dubbing-audio.js';
 import { dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget,
   isDubStartTimely, mapVideoTimeToDubTime, dubSegmentKey } from '../public/playback-logic.js';
 
@@ -80,14 +80,14 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
   const scope = vm.createContext({
     state, els, Audio, console, AbortController, setTimeout, clearTimeout,
     setInterval: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearInterval: id => timers.delete(id),
-    createDubMixer: media => createDubMixer(media, frames), naturalDubRate, canFinishDubTail,
+    createDubMixer: media => createDubMixer(media, frames), naturalDubRate, canFinishDubTail, correctDubClock,
     dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget, isDubStartTimely, mapVideoTimeToDubTime,
     activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps, dubSpeakerKey,
     dubTimeline: () => segments, getDubSegmentId: segment => segment ? dubSegmentKey(segment) : '',
     ensureDubSegment: ensure || (async segment => segment.segmentId), renderSubtitle() {}, logEngineEvent() {}
   });
   const helpers = source.slice(source.indexOf('const dubChannels = new Map();'), source.indexOf('function recordAiUsage('));
-  const from = source.indexOf("els.video.addEventListener('timeupdate', () => void syncDubPlayback());");
+  const from = source.indexOf("els.video.addEventListener('timeupdate', () => { renderSubtitle();");
   const events = source.slice(from, source.indexOf("els.subtitleToggleBtn?.addEventListener", from));
   vm.runInContext(helpers + functions('stopDubPlayback', 'prefetchDubSegmentsAround', 'primeLanguageTracksAt',
     'resyncLanguageTracks', 'playDubAudio', 'syncDubPlayback') + events + '\nupdateDubMix();', scope);
@@ -134,6 +134,86 @@ test('voice fitting leaves short speech natural and bounds longer speech', () =>
   assert.equal(naturalDubRate(4.4, 4), 1.1);
   assert.equal(naturalDubRate(10, 4), 1.3);
   assert.equal(naturalDubRate(4, 4, 0.5), 0.5);
+});
+
+test('continuous clock correction never rewinds heard words and resumes after the video catches up', async () => {
+  const f = fixture([line('a', 1, 7)], { durations: { a: 6 } });
+  try {
+    await f.sync();
+    const audio = f.active();
+    audio.currentTime = 1;
+    f.video.currentTime = 1.3;
+    await f.sync();
+    assert.equal(audio.currentTime, 1);
+    assert.equal(audio.paused, true);
+    assert.equal(audio.plays, 1);
+    f.video.currentTime = 1.95;
+    await f.sync();
+    assert.equal(audio.paused, false);
+    assert.equal(audio.currentTime, 1);
+    assert.equal(audio.plays, 2);
+  } finally { f.close(); }
+});
+
+test('an audio decoder stall resynchronizes to the video and follows playback speed', async () => {
+  const f = fixture([line('a', 1, 7)], { durations: { a: 6 } });
+  try {
+    await f.sync();
+    const audio = f.active();
+    audio.currentTime = .2;
+    f.video.currentTime = 2;
+    f.video.playbackRate = 1.5;
+    await f.sync();
+    assert.equal(audio.currentTime, 1);
+    assert.equal(audio.playbackRate, 1.5);
+    assert.equal(audio.plays, 1);
+  } finally { f.close(); }
+});
+
+test('seeking into a short sentence preserves the heard offset even below the normal startup grace', async () => {
+  const f = fixture([line('a', 1, 3)], { durations: { a: 2 } });
+  try {
+    f.video.currentTime = 1.4;
+    f.event('seeking');
+    f.event('seeked');
+    await tick();
+    assert.ok(Math.abs(f.active().currentTime - .4) < 1e-6);
+  } finally { f.close(); }
+});
+
+test('the final voice cannot spill into unrelated footage without a following caption', async () => {
+  const f = fixture([line('a', 1, 2)], { durations: { a: 4 } });
+  try {
+    await f.sync();
+    const audio = f.active();
+    audio.currentTime = 1;
+    f.video.currentTime = 2.7;
+    await f.sync();
+    assert.equal(f.channels().length, 0);
+    assert.equal(audio.paused, true);
+    assert.equal(f.state.dubPlayedSegmentIds.has('a'), true);
+  } finally { f.close(); }
+});
+
+test('real timeupdate and seeked handlers update subtitles even when dubbing is disabled', () => {
+  const f = fixture([line('a', 1, 2), line('b', 3, 4)]);
+  try {
+    f.state.dubbingEnabled = false;
+    f.state.subtitlesEnabled = true;
+    f.state.dialogue = { segments: [line('a', 1, 2), { ...line('b', 3, 4), turkishText: 'İkinci cümle.' }] };
+    vm.runInContext(functions('renderSubtitle'), f.scope);
+    const element = () => ({ textContent: '', classList: { add() {}, remove() {} } });
+    f.els.subtitleOverlay = element(); f.els.subtitleText = element(); f.els.subtitleSpeaker = element();
+    f.video.currentTime = 1.5;
+    f.event('timeupdate');
+    assert.equal(f.els.subtitleText.textContent, 'Merhaba.');
+    f.video.currentTime = 3.5;
+    f.event('timeupdate');
+    assert.equal(f.els.subtitleText.textContent, 'İkinci cümle.');
+    f.video.currentTime = 1.5;
+    f.event('seeked');
+    assert.equal(f.els.subtitleText.textContent, 'Merhaba.');
+  } finally { f.close(); }
 });
 
 test('estimated end time does not cut the final word in the following silence', async () => {
@@ -247,6 +327,7 @@ test('buffering pauses the voice and playing resumes the same audio without rese
     await f.sync();
     const audio = f.active();
     audio.currentTime = 0.6;
+    f.video.currentTime = 1.6;
     f.event('waiting');
     assert.equal(audio.paused, true);
     await f.sync();

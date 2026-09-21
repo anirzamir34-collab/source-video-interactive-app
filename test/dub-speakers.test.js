@@ -54,6 +54,14 @@ test('insufficient voices never fall back to shared gender voices or partial ass
   assert.throws(() => validateDubVoicePlan(speakers, plan), /ayrı ve sabit/);
 });
 
+test('unknown catalog metadata cannot outrank a known matching voice or silently replace it', () => {
+  const roster = [{ speakerId: 'a', gender: 'male' }];
+  const unknown = { voice_id: 'unknown', gender: 'uncertain' };
+  const opts = { ...options, score: voice => voice.voice_id === 'unknown' ? 1000 : 1 };
+  assert.equal(allocateSpeakerVoices(roster, [unknown, voices[2]], opts)[0].voiceId, voices[2].voice_id);
+  assert.throws(() => allocateSpeakerVoices(roster, [unknown, voices[0]], opts), /yeterli farklı/);
+});
+
 test('simultaneous speakers retain full speech windows while one speaker never talks over itself', () => {
   const segments = [line('a', 0, 5), line('b', 1, 3), line('a', 4, 7)];
   assert.equal(activeDubSegments(segments, 2).length, 2);
@@ -68,6 +76,25 @@ function fn(name) {
   return source.slice(start, source.indexOf('\n}', start) + 2);
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('client voice planning uses original timed evidence instead of the first annotation of a merged block', async () => {
+  const raw = [{ ...line('a', 0, .5), gender: 'female', confidence: .4 },
+    { ...line('a', .5, 10), gender: 'male', confidence: .95 }];
+  const state = { dialogue: { segments: raw, dubSegments: [{ ...raw[0], endTime: 10 }] },
+    dubRequestController: new AbortController(), dubSpeakerVoices: new Map() };
+  let requested;
+  const context = vm.createContext({ state, buildDubSpeakerRoster, validateDubVoicePlan, dubSpeakerKey,
+    AbortSignal, dubTimeline: () => state.dialogue.dubSegments, elevenLabsHeaders: value => value,
+    fetch: async (_url, request) => {
+      requested = JSON.parse(request.body).speakers;
+      return { ok: true, json: async () => ({ available: true, assignments: allocateSpeakerVoices(requested, voices, options) }) };
+    }
+  });
+  vm.runInContext(fn('ensureDubVoicePlan'), context);
+  const plan = await context.ensureDubVoicePlan();
+  assert.deepEqual(requested, [{ speakerId: 'a', gender: 'male' }]);
+  assert.equal(plan.get('a').gender, 'male');
+});
 
 test('concurrent client requests share one complete voice plan and obsolete results cannot overwrite it', async () => {
   let finish;
