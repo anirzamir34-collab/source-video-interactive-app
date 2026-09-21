@@ -6,8 +6,8 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
-import youtubedl from 'youtube-dl-exec';
-import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure } from './lib/video-url.js';
+import { runVideoExtractor } from './lib/video-extractor.js';
+import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure, videoErrorDetail } from './lib/video-url.js';
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
@@ -1154,7 +1154,7 @@ async function resolvePublicVideoPage(startUrl) {
   return resolveVideoUrl(startUrl, { fetchPublicUrl, extractPage: resolveWithSiteExtractor });
 }
 
-async function resolveWithSiteExtractor(rawUrl, { referer = rawUrl, signal = AbortSignal.timeout(20000) } = {}) {
+async function resolveWithSiteExtractor(rawUrl, { referer = rawUrl, timeoutMs = 20000, signal = AbortSignal.timeout(timeoutMs) } = {}) {
   await validatePublicUrl(rawUrl);
   await validatePublicUrl(referer);
   signal.throwIfAborted();
@@ -1165,20 +1165,9 @@ async function resolveWithSiteExtractor(rawUrl, { referer = rawUrl, signal = Abo
     userAgent, referer,
     format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best/best*'
   };
-  const run = options => youtubedl(rawUrl, options, {
-    timeout: 20000, killSignal: 'SIGKILL', signal,
-    maxBuffer: 16 * 1024 * 1024
-  });
-  let output;
-  try {
-    output = await run({ ...baseOptions, impersonate: 'chrome' });
-  } catch (error) {
-    const detail = String(error?.stderr || error?.message || error);
-    // Retry only a missing local capability, not a site's access denial.
-    const missingCapability = /impersonat.*(?:not available|unavailable|not installed|not supported)|no such option.*impersonate/i.test(detail);
-    if (signal.aborted || !missingCapability || /403|captcha|cloudflare/i.test(detail)) throw error;
-    output = await run(baseOptions);
-  }
+  // Use the installed extractor's normal transport. Forcing Chrome required
+  // optional Python dependencies that the standard Render install lacks.
+  const output = await runVideoExtractor(rawUrl, baseOptions, { signal, timeoutMs });
   const selected = selectExtractorSource(output, rawUrl);
   await validatePublicUrl(selected.sourceUrl);
   await validatePublicUrl(selected.pageUrl);
@@ -1217,8 +1206,15 @@ app.post('/api/resolve-video-url', async (req, res) => {
           const errors = [];
           // Standard public pages/direct media should not wait for a subprocess.
           try { candidate = await resolvePublicVideoPage(normalizedUrl); }
-          catch (error) { errors.push(String(error?.message || error)); }
-          if (!candidate) console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname, videoResolutionFailure(errors.join('; ')).reason);
+          catch (error) { errors.push(videoErrorDetail(error)); }
+          if (!candidate) {
+            const detail = errors.join('; ');
+            // Log diagnostic codes, never signed URLs, cookies or subprocess
+            // command lines. This distinguishes source failures from runtime failures.
+            const httpStatuses = [...new Set([...detail.matchAll(/HTTP(?: Error)?[\s:_-]*([45]\d\d)\b/gi)].map(match => match[1]))];
+            console.warn('[site-video-extractor]', new URL(normalizedUrl).hostname,
+              videoResolutionFailure(detail).reason, JSON.stringify({ httpStatuses, elapsedMs: Date.now() - startedAt }));
+          }
           if (candidate) {
             resolvedVideoCache.set(normalizedUrl, { resolved: candidate, expiresAt: Date.now() + VIDEO_RESOLUTION_CACHE_MS });
           }
@@ -1232,7 +1228,9 @@ app.post('/api/resolve-video-url', async (req, res) => {
     }
     if (!resolved) {
       const failure = videoResolutionFailure(failureDetail);
-      return res.status(failure.reason === 'VIDEO_RESOLUTION_TIMEOUT' ? 504 : 422).json({ ok: false, ...failure });
+      const status = failure.reason === 'VIDEO_RESOLUTION_TIMEOUT' ? 504
+        : ['VIDEO_SOURCE_TEMPORARY_ERROR', 'VIDEO_EXTRACTOR_UNAVAILABLE'].includes(failure.reason) ? 503 : 422;
+      return res.status(status).json({ ok: false, ...failure });
     }
     const token = registerResolvedVideoSession(resolved);
     return res.json({

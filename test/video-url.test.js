@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverVideoSources, mediaResponseType, selectExtractorSource, videoResolutionFailure, resolveVideoPage, resolveVideoUrl, probeVideoSource } from '../lib/video-url.js';
+import { discoverVideoSources, mediaResponseType, selectExtractorSource, videoResolutionFailure, videoErrorDetail, resolveVideoPage, resolveVideoUrl, probeVideoSource } from '../lib/video-url.js';
 
 test('video discovery keeps media sources and embedded player pages separate', () => {
   const result = discoverVideoSources(`
@@ -197,4 +197,40 @@ test('cancellation stops resolution before a site extractor can start', async ()
     signal: controller.signal,
     fetchPublicUrl: () => assert.fail('must not fetch'), extractPage: () => assert.fail('must not extract')
   }), /abort/i);
+});
+
+test('mobile VK canonical links preserve the supplied list token only for the same video', () => {
+  const result = discoverVideoSources(`
+    <link rel="canonical" href="https://vkvideo.ru/video-1_2">
+    <iframe src="https://vk.com/video-1_3"></iframe>
+    <iframe src="https://unrelated.test/video-1_2"></iframe>
+  `, 'https://m.vkvideo.ru/video-1_2?list=ln-ExactCase');
+  assert.ok(result.pages.includes('https://vkvideo.ru/video-1_2?list=ln-ExactCase'));
+  assert.ok(result.pages.includes('https://vk.com/video-1_3'));
+  assert.ok(result.pages.includes('https://unrelated.test/video-1_2'));
+});
+
+test('VK extraction uses the complete original link once, with enough time for provider retries', async () => {
+  const url = 'https://m.vkvideo.ru/video-1_2?list=ln-ExactCase';
+  const f = upstream({
+    [url]: { body: '<link rel="canonical" href="https://vkvideo.ru/video-1_2">' },
+    'https://vkvideo.ru/video-1_2?list=ln-ExactCase': { status: 502 }
+  });
+  const attempts = [];
+  await assert.rejects(resolveVideoUrl(url, { ...f, extractPage: async (page, options) => {
+    attempts.push({ page, options });
+    throw Object.assign(new Error('VIDEO_EXTRACTOR_PROCESS_FAILED'), { stderr: 'HTTP Error 502: Bad Gateway' });
+  } }), error => {
+    assert.equal(videoResolutionFailure(videoErrorDetail(error)).reason, 'VIDEO_SOURCE_TEMPORARY_ERROR');
+    return true;
+  });
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].page, url);
+  assert.equal(attempts[0].options.timeoutMs, 45000);
+});
+
+test('empty-stderr kills and missing Python are not classified as hidden video', () => {
+  assert.equal(videoResolutionFailure(videoErrorDetail({ signalCode: 'SIGKILL', stderr: '' })).reason, 'VIDEO_RESOLUTION_TIMEOUT');
+  assert.equal(videoResolutionFailure('/usr/bin/env: python3: No such file or directory').reason, 'VIDEO_EXTRACTOR_UNAVAILABLE');
+  assert.equal(videoResolutionFailure('HTTP Error 503: Service Unavailable').reason, 'VIDEO_SOURCE_TEMPORARY_ERROR');
 });
