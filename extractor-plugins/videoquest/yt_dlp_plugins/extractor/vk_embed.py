@@ -1,4 +1,4 @@
-"""Handle declarative external players omitted by VK's native player parser."""
+"""Read VK HTML5 and external players when the legacy params field is absent."""
 import html
 import ipaddress
 import json
@@ -89,13 +89,23 @@ class VKExternalEmbedIE(VKIE, plugin_name='videoquest'):
                 raise
             payload = self._videoquest_payload
             opts = payload[-1] if isinstance(payload, list) and payload and isinstance(payload[-1], dict) else {}
+            page = payload[1] if isinstance(payload, list) and len(payload) > 1 and isinstance(payload[1], str) else ''
             if opts.get('player_unavailable'):
-                page = payload[1] if len(payload) > 1 and isinstance(payload[1], str) else ''
                 message = re.search(r'''(?is)<div\b[^>]*(?:class|id)=["'][^"']*\b(?:video_layer_message|video_ext_msg|mv_error|video_error|video_unavailable)\b[^"']*["'][^>]*>(.*?)</div>''', page)
                 reason = (clean_html(message.group(1)) or '')[:240] if message else ''
                 # Respect a declared unavailable player instead of following
                 # unrelated frames from the error page.
                 raise ExtractorError('VK_PLAYER_UNAVAILABLE' + (': ' + reason if reason else ''), expected=True) from error
+            # VK also returns a plain <video><source> player in payload[1],
+            # with no opts.player at all. The stock extractor ignores that HTML
+            # and indexes player['params']; reuse its HTML5 parser instead.
+            video_id = self._match_valid_url(url).group('videoid')
+            for entry in self._parse_html5_media_entries(url, page, video_id):
+                if entry.get('formats'):
+                    metadata = opts.get('mvData') or {}
+                    return {**entry, 'id': video_id,
+                            'title': clean_html(metadata.get('title')) or video_id,
+                            'duration': metadata.get('duration')}
             for candidate in external_players(payload, url):
                 if _public_player(candidate):
                     return self.url_result(candidate)

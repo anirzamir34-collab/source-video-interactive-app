@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / 'node_modules/youtube-dl-exec/bin/yt-dlp'))
 spec = importlib.util.spec_from_file_location('vk_embed_test_module', ROOT / 'extractor-plugins/videoquest/yt_dlp_plugins/extractor/vk_embed.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+from yt_dlp import YoutubeDL
 
 
 class VKEmbedTests(unittest.TestCase):
@@ -32,6 +33,19 @@ class VKEmbedTests(unittest.TestCase):
     def test_native_formats_unchanged(self):
         with patch.object(module.VKIE, '_real_extract', return_value={'formats': [{'url': 'https://cdn.example/a.mp4'}]}):
             self.assertIn('formats', module.VKExternalEmbedIE()._real_extract('https://vk.com/video-1_2'))
+
+    def test_vk_html5_payload_without_params_preserves_sources_quality_and_referer(self):
+        def native(instance, url):
+            instance._videoquest_payload = [None, '<div><video poster="https://img.example/poster.jpg"><source src="https://cdn.example/720.mp4?key=test&amp;v=2" type="video/mp4" label="720p"><source src="https://cdn.example/1080.mp4" type="video/mp4" label="1080p"></video></div>', {'is_vk_player': True, 'player_unavailable': False, 'mvData': {'title': 'Example video', 'duration': 120}}]
+            raise KeyError('params')
+        with patch.object(module.VKIE, '_real_extract', native), YoutubeDL({'quiet': True}) as downloader:
+            result = module.VKExternalEmbedIE(downloader)._real_extract('https://vk.com/video-1_2?list=ln-example')
+            self.assertEqual(result['id'], '-1_2')
+            self.assertEqual(result['title'], 'Example video')
+            self.assertEqual(result['duration'], 120)
+            self.assertEqual([f['height'] for f in result['formats']], [720, 1080])
+            self.assertEqual(result['formats'][0]['url'], 'https://cdn.example/720.mp4?key=test&v=2')
+            self.assertEqual(result['formats'][1]['http_headers']['Referer'], 'https://vk.com/video-1_2?list=ln-example')
 
     def test_missing_params_follows_only_returned_public_player(self):
         def native(instance, url):
