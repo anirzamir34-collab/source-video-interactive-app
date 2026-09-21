@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from '../public/dub-overlap.js';
+import { dubSpeakerKey } from '../public/dub-speakers.js';
 import { createDubMixer, naturalDubRate, canFinishDubTail } from '../public/dubbing-audio.js';
 import { dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget,
   isDubStartTimely, mapVideoTimeToDubTime, dubSegmentKey } from '../public/playback-logic.js';
@@ -80,6 +82,7 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
     setInterval: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearInterval: id => timers.delete(id),
     createDubMixer: media => createDubMixer(media, frames), naturalDubRate, canFinishDubTail,
     dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget, isDubStartTimely, mapVideoTimeToDubTime,
+    activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps, dubSpeakerKey,
     dubTimeline: () => segments, getDubSegmentId: segment => segment ? dubSegmentKey(segment) : '',
     ensureDubSegment: ensure || (async segment => segment.segmentId), renderSubtitle() {}, logEngineEvent() {}
   });
@@ -96,6 +99,7 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
       if (name === 'play') video.dispatchEvent(new Event('playing'));
     },
     active: () => vm.runInContext('dubChannels.get(state.activeDubSegmentId)', scope),
+    channels: () => vm.runInContext('[...dubChannels]', scope),
     close: () => { state.dubbingEnabled = false; scope.stopDubPlayback(); scope.clearPreparedDubAudio(); }
   };
 }
@@ -144,6 +148,24 @@ test('estimated end time does not cut the final word in the following silence', 
     assert.equal(audio.paused, false);
     audio.end();
     assert.equal(f.state.activeDubSegmentId, null);
+  } finally { f.close(); }
+});
+
+test('overlapping timestamps for the same person never double their voice', async () => {
+  const f = fixture([{ ...line('a', 0, 2), speakerId: 'person' }, { ...line('b', 1.9, 4), speakerId: 'person' }],
+    { durations: { a: 2.1, b: 2 } });
+  try {
+    await f.sync();
+    const first = f.active();
+    first.currentTime = 1.95;
+    f.video.currentTime = 2.01;
+    await f.sync();
+    assert.equal(f.channels().length, 1);
+    assert.equal(f.active(), first);
+    first.end();
+    await tick();
+    assert.equal(f.channels().length, 1);
+    assert.equal(f.state.activeDubSegmentId, 'b');
   } finally { f.close(); }
 });
 
@@ -474,5 +496,65 @@ test('buffering waits for the caller play promise to settle before pausing the s
     assert.equal(f.state.dubBuffer, null);
     assert.equal(f.active().paused, false);
     assert.equal(f.active().plays, 1);
+  } finally { f.close(); }
+});
+
+test('four overlapping speakers play once on four channels with bounded combined volume', async () => {
+  const segments = ['a', 'b', 'c', 'd'].map(id => ({ ...line(id, 1, 5), speakerId: id }));
+  const f = fixture(segments, { durations: { a: 4, b: 4, c: 4, d: 4 } });
+  try {
+    await f.sync();
+    assert.equal(f.channels().length, 4);
+    assert.ok(f.made.every(audio => audio.plays === 1 && !audio.paused));
+    assert.ok(f.channels().reduce((sum, [, audio]) => sum + audio.volume, 0) <= 0.82001);
+    const first = f.channels()[0][1];
+    first.end();
+    await tick();
+    assert.equal(f.channels().length, 3);
+    assert.ok(f.channels().every(([, audio]) => !audio.paused && audio.plays === 1));
+    f.video.currentTime = 2;
+    f.event('seeking');
+    f.event('seeked');
+    await tick();
+    assert.equal(f.channels().length, 4);
+    assert.ok(f.channels().every(([, audio]) => audio.currentTime === 1));
+  } finally { f.close(); }
+});
+
+test('an overlapping second speaker does not accelerate or stop the first', async () => {
+  const a = { ...line('a', 1, 5), speakerId: 'alice' };
+  const b = { ...line('b', 2, 4), speakerId: 'bob' };
+  const f = fixture([a, b], { durations: { a: 4, b: 2 } });
+  try {
+    await f.sync();
+    const first = f.active();
+    assert.equal(first.playbackRate, 1);
+    f.video.currentTime = 2;
+    first.currentTime = 1;
+    await f.sync();
+    assert.equal(f.channels().length, 2);
+    assert.equal(first.paused, false);
+    assert.equal(first.currentTime, 1);
+    assert.equal(first.playbackRate, 1);
+    assert.equal(f.made.find(audio => audio.src === 'b').currentTime, 0);
+  } finally { f.close(); }
+});
+
+test('a shared buffer waits for all simultaneous voices before resuming the source', async () => {
+  const a = deferred();
+  const b = deferred();
+  const segments = ['a', 'b'].map(id => ({ ...line(id, 1, 5), speakerId: id }));
+  const f = fixture(segments, { ensure: row => row.speakerId === 'a' ? a.promise : b.promise });
+  try {
+    const pending = f.sync();
+    a.resolve('a');
+    await tick();
+    assert.equal(f.video.paused, true);
+    assert.equal(f.channels().length, 0);
+    b.resolve('b');
+    await pending;
+    assert.equal(f.video.paused, false);
+    assert.equal(f.channels().length, 2);
+    assert.equal(f.video.plays, 1);
   } finally { f.close(); }
 });

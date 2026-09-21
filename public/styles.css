@@ -4749,3 +4749,7 @@ body { font-size: 13px; }
     width: min(72vw, 240px) !important;
   }
 }
+
+/* Concurrent speakers keep their own compact caption line. */
+.subtitle-text { white-space: pre-line; }
+.subtitle-speaker:empty { display: none; }

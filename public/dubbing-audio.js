@@ -47,7 +47,11 @@ export function createDubMixer(video, {
       video.muted = original.muted || !keepOriginal;
       ramp(original.volume * (speaking ? DUB_MIX.sourceSpeaking : DUB_MIX.sourceIdle), entering);
     },
-    voiceVolume() { return (original?.volume ?? video.volume) * DUB_MIX.voice; }
+    voiceVolume(count = 1) {
+      const voices = Math.max(1, Number(count) || 1);
+      // Keep overlapping dialogue intelligible while leaving source headroom.
+      return (original?.volume ?? video.volume) * Math.min(DUB_MIX.voice / Math.sqrt(voices), 0.82 / voices);
+    }
   };
 }
 

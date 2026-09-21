@@ -13,6 +13,7 @@ import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 import { MAX_VIDEO_BYTES, dialogueUploadLimit } from './public/media-limits.js';
+import { allocateSpeakerVoices } from './lib/voice-allocation.js';
 import { prepareLocalDialogueAudio } from './lib/dialogue-media.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 
@@ -1593,19 +1594,26 @@ function extractTranscribeWordAnnotations(interaction) {
 
 function groupTranscribeWords(words) {
   const groups = [];
+  const bySpeaker = new Map();
+  let previousWord;
   for (const word of words) {
-    const last = groups.at(-1);
-    const speakerChanged = last && last.speakerId !== word.speakerId;
+    const last = bySpeaker.get(word.speakerId);
+    const interleavedOverlap = last && previousWord &&
+      (previousWord.startTime < last.endTime - 0.04 || previousWord.endTime > word.startTime + 0.04);
+    const turnChanged = last && groups.at(-1) !== last && !interleavedOverlap;
     const gap = last ? Math.max(0, word.startTime - last.endTime) : 0;
     const tooLong = last ? word.endTime - last.startTime >= 7 : false;
-    if (!last || speakerChanged || gap > 1.15 || tooLong) {
-      groups.push({ speakerId: word.speakerId, startTime: word.startTime, endTime: word.endTime, words: [word.text] });
+    if (!last || turnChanged || gap > 1.15 || tooLong) {
+      const group = { speakerId: word.speakerId, startTime: word.startTime, endTime: word.endTime, words: [word.text] };
+      groups.push(group);
+      bySpeaker.set(word.speakerId, group);
     } else {
       last.endTime = Math.max(last.endTime, word.endTime);
       last.words.push(word.text);
     }
+    previousWord = word;
   }
-  return groups.map((group, index) => ({
+  return groups.sort((a, b) => a.startTime - b.startTime).map((group, index) => ({
     segmentId: `asr-${String(index + 1).padStart(3, '0')}`,
     speakerId: group.speakerId,
     startTime: group.startTime,
@@ -2455,9 +2463,12 @@ async function elevenLabsRequest(apiKey, path, options = {}) {
 
 function elevenVoiceGender(voice) {
   const labels = voice?.labels || voice?.sharing?.labels || {};
-  const text = [labels.gender, voice?.description, voice?.name].filter(Boolean).join(' ').toLowerCase();
-  if (/female|woman|kadın/.test(text)) return 'female';
-  if (/male|man|erkek/.test(text)) return 'male';
+  const explicit = String(labels.gender || '').trim().toLowerCase();
+  if (['female', 'woman', 'kadın'].includes(explicit)) return 'female';
+  if (['male', 'man', 'erkek'].includes(explicit)) return 'male';
+  const text = [voice?.description, voice?.name].filter(Boolean).join(' ').toLowerCase();
+  if (/\b(?:female|woman|kadın)\b/.test(text)) return 'female';
+  if (/\b(?:male|man|erkek)\b/.test(text)) return 'male';
   return 'uncertain';
 }
 
@@ -2497,9 +2508,20 @@ async function elevenLabsVoices(apiKey, force = false) {
   const cacheKey = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
   const cached = elevenLabsVoiceCache.get(cacheKey);
   if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
-  const response = await elevenLabsRequest(apiKey, '/v2/voices?page_size=100');
-  const body = await response.json();
-  const voices = Array.isArray(body?.voices) ? body.voices.filter(item => item?.voice_id) : [];
+  const found = new Map();
+  let pageToken = '';
+  const seenTokens = new Set();
+  for (let page = 0; page < 10; page += 1) {
+    const query = new URLSearchParams({ page_size: '100', include_total_count: 'false' });
+    if (pageToken) query.set('next_page_token', pageToken);
+    const response = await elevenLabsRequest(apiKey, `/v2/voices?${query}`);
+    const body = await response.json();
+    for (const voice of body?.voices || []) if (voice?.voice_id) found.set(voice.voice_id, voice);
+    if (!body.has_more || !body.next_page_token || seenTokens.has(body.next_page_token)) break;
+    pageToken = body.next_page_token;
+    seenTokens.add(pageToken);
+  }
+  const voices = [...found.values()];
   const pick = (gender, excludedVoiceId = '') => {
     const candidates = [...voices]
       .filter(voice => voice.voice_id !== excludedVoiceId)
@@ -2537,9 +2559,9 @@ function elevenV3DeliveryTag(emotion = '') {
 async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotion = '' }) {
   const voiceSet = await elevenLabsVoices(apiKey);
   const requested = String(voiceId || '').trim();
-  const voice = voiceSet.voices.find(item => item.voice_id === requested) ||
-    (gender === 'male' ? voiceSet.male : voiceSet.female || voiceSet.male);
-  if (!voice?.voice_id) throw new Error('ELEVENLABS_VOICE_MISSING');
+  const voice = voiceSet.voices.find(item => item.voice_id === requested);
+  if (!voice?.voice_id) throw Object.assign(new Error('Karaktere atanmış ses kullanılamıyor; başka sesle değiştirilmedi. Dublaj seslerini yeniden hazırla.'),
+    { status: 422, code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
   const deliveryText = [elevenV3DeliveryTag(emotion), text].filter(Boolean).join(' ');
   const accountHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
   const cacheKey = crypto.createHash('sha256')
@@ -2585,6 +2607,9 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
 }
 
 function elevenLabsErrorResponse(error, fallbackMessage) {
+  if (error.code === 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE') return {
+    status: 422, body: { available: false, reason: error.code, message: error.message }
+  };
   const status = Number(error?.status) || 502;
   const text = String(error?.message || error).toLowerCase();
   const quota = status === 402 || /insufficient credits|credits? (?:are )?(?:depleted|exhausted)|character limit (?:reached|exceeded)/.test(text);
@@ -2610,8 +2635,8 @@ app.post('/api/elevenlabs-status', async (req, res) => {
       elevenLabsSubscription(apiKey),
       elevenLabsVoices(apiKey, true)
     ]);
-    if (!voices.female || !voices.male) {
-      return res.status(422).json({ ok: false, state: 'unavailable', message: 'Kadın ve erkek için kullanılabilir iki ayrı ses bulunamadı.' });
+    if (!voices.voices.length) {
+      return res.status(422).json({ ok: false, state: 'unavailable', message: 'Hesapta kullanılabilir dublaj sesi bulunamadı.' });
     }
     const used = Math.max(0, Number(subscription?.character_count) || 0);
     const limit = Math.max(0, Number(subscription?.character_limit) || 0);
@@ -2622,15 +2647,30 @@ app.post('/api/elevenlabs-status', async (req, res) => {
       remaining,
       limit,
       used,
-      femaleVoice: voices.female.name,
-      maleVoice: voices.male.name,
-      femaleVoiceId: voices.female.voice_id,
-      maleVoiceId: voices.male.voice_id,
-      message: `ElevenLabs çalışıyor · ${remaining.toLocaleString('tr-TR')} kredi kaldı · Kadın: ${voices.female.name} · Erkek: ${voices.male.name}`
+      femaleVoice: voices.female?.name,
+      maleVoice: voices.male?.name,
+      femaleVoiceId: voices.female?.voice_id,
+      maleVoiceId: voices.male?.voice_id,
+      message: `ElevenLabs çalışıyor · ${remaining.toLocaleString('tr-TR')} kredi kaldı · ${voices.voices.length} ses kullanılabilir`
     });
   } catch (error) {
     const normalized = elevenLabsErrorResponse(error, 'ElevenLabs bağlantısı doğrulanamadı.');
     return res.status(normalized.status).json({ ok: false, ...normalized.body });
+  }
+});
+
+app.post('/api/elevenlabs-voice-plan', async (req, res) => {
+  const apiKey = clientElevenLabsApiKey(req);
+  if (!apiKey) return res.status(400).json({ available: false, reason: 'ELEVENLABS_NOT_CONFIGURED' });
+  try {
+    const catalog = await elevenLabsVoices(apiKey);
+    const assignments = allocateSpeakerVoices(req.body?.speakers, catalog.voices, {
+      previous: req.body?.previous || [], genderOf: elevenVoiceGender, score: scoreElevenVoice
+    });
+    return res.json({ available: true, assignments });
+  } catch (error) {
+    const normalized = elevenLabsErrorResponse(error, 'Konuşmacı sesleri eşleştirilemedi. Tekrar dene.');
+    return res.status(normalized.status).json(normalized.body);
   }
 });
 

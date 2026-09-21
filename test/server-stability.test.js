@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
 import { dialogueUploadLimit, MAX_VIDEO_BYTES } from '../public/media-limits.js';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable, pipeline } from 'node:stream';
@@ -74,6 +75,55 @@ test('Eleven v3 delivery keeps neutral lines clean and maps grounded emotion con
   assert.match(source, /stability:\s*0\.5/);
   assert.doesNotMatch(section('async function elevenLabsSynthesize(', '\n\nfunction elevenLabsErrorResponse('), /previous_text|next_text/);
   assert.doesNotMatch(source, /model_id:\s*'eleven_multilingual_v2'/);
+});
+
+test('ElevenLabs voice pages are combined and cached without dropping later speakers', async () => {
+  const calls = [];
+  const female = { voice_id: 'f', labels: { gender: 'female' }, description: 'German human narration' };
+  const male = { voice_id: 'm', labels: { gender: 'male' } };
+  const f = fixture(section('function elevenVoiceGender(', '\nasync function elevenLabsSubscription('), {
+    crypto, URLSearchParams, elevenLabsVoiceCache: new Map(),
+    elevenLabsRequest: async (_key, url) => {
+      calls.push(url);
+      return { json: async () => calls.length === 1
+        ? { voices: [female], has_more: true, next_page_token: 'page two' }
+        : { voices: [female, male], has_more: false } };
+    }
+  });
+  const catalog = await f.scope.elevenLabsVoices('fake-key');
+  assert.equal(catalog.voices.length, 2);
+  assert.equal(new URL('https://example.com' + calls[1]).searchParams.get('next_page_token'), 'page two');
+  assert.equal(f.scope.elevenVoiceGender(female), 'female');
+  assert.equal(f.scope.elevenVoiceGender({ description: 'German human narrator' }), 'uncertain');
+  assert.equal(await f.scope.elevenLabsVoices('fake-key'), catalog);
+  assert.equal(calls.length, 2);
+});
+
+test('four speakers use their assigned voices even for identical text; cache never crosses voices', async () => {
+  const calls = [];
+  const voices = ['one', 'two', 'three', 'four'].map(voice_id => ({ voice_id, name: voice_id }));
+  const f = fixture(section('function elevenV3DeliveryTag(', '\n\nfunction elevenLabsErrorResponse('), {
+    crypto, elevenLabsAudioCache: new Map(), elevenLabsAudioInflight: new Map(),
+    ELEVENLABS_AUDIO_CACHE_TTL_MS: 60000, pruneElevenLabsAudioCache() {},
+    elevenLabsVoices: async () => ({ voices }),
+    elevenLabsRequest: async (_key, url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return { arrayBuffer: async () => Buffer.from(url) };
+    }
+  });
+  const synthesize = voiceId => f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Merhaba.', voiceId });
+  const output = await Promise.all(voices.map(voice => synthesize(voice.voice_id)));
+  assert.equal(new Set(output.map(row => row.audioBase64)).size, 4);
+  for (let i = 0; i < output.length; i++) {
+    assert.equal(output[i].voiceId, voices[i].voice_id);
+    assert.match(calls[i].url, new RegExp(`/text-to-speech/${voices[i].voice_id}\\?`));
+    assert.equal(calls[i].body.language_code, 'tr');
+    assert.equal(calls[i].body.model_id, 'eleven_v3');
+  }
+  assert.equal((await synthesize('one')).cacheHit, true);
+  assert.equal(calls.length, 4);
+  await assert.rejects(synthesize('removed-voice'), { code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
+  assert.equal(calls.length, 4);
 });
 
 test('remote dialogue audio uses compact speech-optimized MP3 settings', () => {
@@ -377,4 +427,25 @@ test('chunked video upload accepts up to 2 GiB but rejects oversized audio and v
     assert.equal(res.statusCode, 400);
   }
   assert.equal(writes, 2);
+});
+
+test('overlapping word annotations preserve separate sentences while consecutive turns stay separate', () => {
+  const f = fixture(section('function groupTranscribeWords(', '\nasync function transcribeDialogueGemini35('));
+  const words = [
+    { speakerId: 'a', text: 'Merhaba', startTime: 0, endTime: 0.6 },
+    { speakerId: 'b', text: 'İyi', startTime: 0.3, endTime: 0.9 },
+    { speakerId: 'a', text: 'Elif.', startTime: 0.7, endTime: 1.2 },
+    { speakerId: 'b', text: 'akşamlar.', startTime: 1, endTime: 1.5 }
+  ];
+  const groups = f.scope.groupTranscribeWords(words);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].originalText, 'Merhaba Elif.');
+  assert.equal(groups[1].originalText, 'İyi akşamlar.');
+  assert.equal(groups[0].endTime, 1.2);
+  const turns = f.scope.groupTranscribeWords([
+    { speakerId: 'a', text: 'Selam', startTime: 0, endTime: 0.2 },
+    { speakerId: 'b', text: 'Merhaba', startTime: 0.3, endTime: 0.4 },
+    { speakerId: 'a', text: 'Nasılsın?', startTime: 0.5, endTime: 0.7 }
+  ]);
+  assert.equal(turns.length, 3);
 });

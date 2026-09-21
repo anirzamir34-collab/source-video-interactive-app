@@ -1,3 +1,5 @@
+import { buildDubSpeakerRoster, validateDubVoicePlan } from './dub-speakers.js';
+
 // Store media separately so opening the shelf never reads every video into memory.
 const DATABASE = 'videoquest-saved-games';
 const STORES = ['games', 'payloads', 'videos'];
@@ -27,6 +29,8 @@ export function validateGame(game) {
   if ((p.dubCache || []).some(([, value]) => !/^data:audio\/[\w.+-]+;base64,[A-Za-z0-9+/=\r\n]+$/.test(value))) {
     throw new Error('Kayıtta geçersiz dublaj sesi var.');
   }
+  if (p.dubSpeakerVoices != null && !Array.isArray(p.dubSpeakerVoices)) throw new Error('Kayıttaki konuşmacı sesleri geçersiz.');
+  if (p.dubSpeakerVoices?.length) validateDubVoicePlan(buildDubSpeakerRoster(p.dialogue?.dubSegments || p.dialogue?.segments || [], p.dialogue?.speakers || []), p.dubSpeakerVoices);
   return game;
 }
 
@@ -48,6 +52,7 @@ export function prepareGame(input, previous = null) {
       dialogue: input.payload?.dialogue || null,
       dubCache: input.payload?.dubCache || [],
       dubVoiceIds: input.payload?.dubVoiceIds || {},
+      dubSpeakerVoices: input.payload?.dubSpeakerVoices || [],
       dubStableSpeakerGenders: input.payload?.dubStableSpeakerGenders || [],
       subtitlesEnabled: Boolean(input.payload?.subtitlesEnabled),
       dubbingEnabled: Boolean(input.payload?.dubbingEnabled),

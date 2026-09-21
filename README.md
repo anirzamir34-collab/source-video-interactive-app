@@ -30,6 +30,10 @@ Hareket analizi Gemini storyboard uçlarını kullanır. Diyalog çözümlemesi 
 
 Gemini konuşma çözümleme, Türkçe çeviri ve satır duygusu için; ElevenLabs Eleven v3 ise doğal ve bağlama duyarlı oynatıcı dublaj seslerini üretmek için kullanılır. Dublaj modu bütün zamanlanmış Türkçe konuşma bloklarını oynatma başlamadan önce hazırlar.
 
+Dublajdan önce tüm konuşmacılara `speakerId` bazında ayrı bir ElevenLabs sesi atanır. Türkçe uygunluğu ve ses profili dikkate alınır; aynı ses iki konuşmacıya verilmez. Atama yeniden denemelerde ve kayıtlı oyunlarda korunur. Hesapta yeterli uygun ses yoksa ya da atanmış ses kaldırılırsa açıklayıcı hata gösterilir; başka sese sessizce geçilmez. Ses listesi sayfalı okunur (en çok 1.000 katalog girdisi); video başına en çok 64 konuşmacı için atama yapılır. Kaynak konuşmacı ayrımındaki model hataları hâlâ doğruluğu etkileyebilir.
+
+Kaynakta üst üste gelen farklı konuşmacılar bağımsız ses kanalları ve ayrı altyazı satırları kullanır. Bir karakterin cümlesi diğerinin başlangıcıyla kısaltılmaz; toplam ses seviyesi taşmayı önleyecek biçimde dengelenir. İleri/geri sarma, duraklatma ve eksik ses hazırlığı bütün aktif kanallara uygulanır. Eski kayıtların hazır sesleri korunur; eski iki sesli dublajı kişi bazlı seslere geçirmek için yeniden analiz/dublaj gerekir.
+
 ## Yapılandırma
 
 | Değişken | Kullanım |

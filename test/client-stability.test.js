@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { dubSpeakerKey } from '../public/dub-speakers.js';
 import { createVideoDownloader } from '../public/video-download.js';
 import { canDecodeDialogueLocally } from '../public/media-limits.js';
 import { createDubRequestQueue } from '../public/dubbing-queue.js';
@@ -124,7 +125,9 @@ function dubbingFixture() {
     dubQueue: createDubRequestQueue(), dubVoiceIds: {}, dubStableSpeakerGenders: new Map(), dubPlayedSegmentIds: new Set()
   };
   const f = fixture(functions('ensureDubSegment', 'resetDubState', 'prepareCompleteDubTimeline'), {
-    state, createDubRequestQueue, dubTimeline: () => state.dialogue.segments,
+    state, createDubRequestQueue, dubSpeakerKey,
+    ensureDubVoicePlan: async () => new Map([['speaker-unknown', { speakerId: 'speaker-unknown', voiceId: 'new-voice', gender: 'female' }]]),
+    dubTimeline: () => state.dialogue.segments,
     getDubSegmentId: segment => segment.id, stableDubGender: () => 'female',
     activeElevenLabsApiKey: () => 'test-key', elevenLabsHeaders: value => value,
     logEngineEvent() {}, stopDubPlayback() {}, stopDubClock() {}, clearPreparedDubAudio() {}, checkAiUsageStatus() {},
@@ -133,6 +136,19 @@ function dubbingFixture() {
   return { ...f, state, pending };
 }
 function voiceResponse(audio = 'new-audio') { return { ok: true, json: async () => ({ available: true, audioBase64: audio, voiceId: 'new-voice' }) }; }
+
+test('mismatched provider voice is neither cached nor retried as a transient error', async () => {
+  const f = dubbingFixture();
+  const segment = { id: 'line-1', turkishText: 'Merhaba' };
+  f.state.dialogue.segments = [segment];
+  const request = f.scope.ensureDubSegment(segment);
+  await tick();
+  f.pending[0].resolve({ ok: true, json: async () => ({ available: true, audioBase64: 'wrong-audio', voiceId: 'someone-else' }) });
+  assert.equal(await request, null);
+  assert.equal(f.pending.length, 1);
+  assert.equal(f.state.dubCache.size, 0);
+  assert.equal(f.state.dubFailureReason, 'DUB_VOICE_MISMATCH');
+});
 
 test('late audio from an old source cannot replace new audio or delete a new pending request with the same id', async () => {
   const f = dubbingFixture();

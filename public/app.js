@@ -101,6 +101,8 @@ import {
   createTactileEngine
 } from './tactile-controls.js';
 
+import { dubSpeakerKey, buildDubSpeakerRoster, validateDubVoicePlan } from './dub-speakers.js';
+import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from './dub-overlap.js';
 import { createVideoDownloader } from './video-download.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
 
@@ -143,7 +145,8 @@ const state = {
   dubProviderLock: '',
   dubQueue: createDubRequestQueue(2),
   dubBuffer: null,
-  dubVoiceIds: { female: '', male: '' },
+  dubSpeakerVoices: new Map(),
+  dubVoicePlanRequest: null,
   dubStableSpeakerGenders: new Map(),
   dubPlayedSegmentIds: new Set(),
   decisionDubHold: false,
@@ -614,12 +617,6 @@ async function testGeminiApiKey() {
       body: '{}'
     });
     const body = await response.json().catch(() => ({}));
-    if (response.ok) {
-      state.dubVoiceIds = {
-        female: String(body.femaleVoiceId || ''),
-        male: String(body.maleVoiceId || '')
-      };
-    }
     if (els.apiKeyStatus) {
       els.apiKeyStatus.className = String(body.state || 'unavailable');
       els.apiKeyStatus.textContent = body.message || (response.ok ? 'Anahtar çalışıyor' : 'Anahtar kullanılamıyor');
@@ -1288,25 +1285,18 @@ function renderSubtitle() {
     return;
   }
 
-  const segment = dialogueSegmentAt(segments, now, 0.015);
-
-  if (!segment) {
+  const active = activeDubSegments(segments, now, 0.015);
+  if (!active.length) {
     els.subtitleOverlay?.classList.add('hidden');
     return;
   }
-
-  const speakerProfile = (state.dialogue?.speakers || []).find(item =>
-    String(item.speakerId) === String(segment.speakerId)
-  );
-  const speaker = String(
-    segment.speakerName ||
-    speakerProfile?.speakerName ||
-    speakerProfile?.displayName ||
-    (segment.gender === 'female' ? 'Kadın' : segment.gender === 'male' ? 'Erkek' : 'Konuşmacı')
-  ).trim();
-
-  els.subtitleSpeaker.textContent = speaker;
-  els.subtitleText.textContent = segment.turkishText;
+  const label = segment => {
+    const profile = (state.dialogue?.speakers || []).find(item => dubSpeakerKey(item) === dubSpeakerKey(segment));
+    return String(segment.speakerName || profile?.speakerName || profile?.displayName || 'Konuşmacı').trim();
+  };
+  els.subtitleSpeaker.textContent = active.length === 1 ? label(active[0]) : '';
+  els.subtitleText.textContent = active.length === 1 ? active[0].turkishText :
+    active.map(segment => `${label(segment)}: ${segment.turkishText}`).join('\n');
   els.subtitleOverlay.classList.remove('hidden');
 }
 
@@ -1345,6 +1335,8 @@ function beginDubBuffer(segment, loading = true) {
   // Freeze the source, not just the voice: an unprepared line must not become
   // an undubbed gap while TTS or audio decoding is still in flight.
   els.video.pause();
+  dubChannels.forEach(audio => audio.pause());
+  updateDubMix();
   stopDubClock();
   renderDubBuffer(loading ? 'Türkçe dublaj hazırlanıyor… Video aynı noktada bekliyor.' :
     'Dublaj oynatılamadı. Devam etmek için yeniden dene.', loading);
@@ -1383,14 +1375,29 @@ async function retryDubBuffer(useOriginal = false) {
 }
 
 async function prepareDubForPlayback(segment) {
-  const id = getDubSegmentId(segment);
-  const prepared = preparedDubAudio.get(id);
-  // Cached, decoded lines start without stopping the source.
-  if (prepared?.readyState >= 2 && !prepared.error) return prepared;
-  const buffer = beginDubBuffer(segment);
-  let audio;
-  try { audio = await prepareDubAudio(segment, 100); }
-  catch (error) {
+  const group = await prepareDubGroupForPlayback([segment]);
+  return group?.get(getDubSegmentId(segment)) || null;
+}
+
+async function prepareDubGroupForPlayback(segments) {
+  const result = new Map();
+  const missing = [];
+  for (const segment of segments) {
+    const id = getDubSegmentId(segment);
+    const audio = preparedDubAudio.get(id);
+    if (audio?.readyState >= 2 && !audio.error) result.set(id, audio);
+    else missing.push(segment);
+  }
+  if (!missing.length) return result;
+  // One preparation hold covers every simultaneous speaker. Independent holds
+  // would cancel each other and resume with only the last prepared voice.
+  const buffer = beginDubBuffer(missing[0]);
+  try {
+    await Promise.all(missing.map(async segment => {
+      const audio = await prepareDubAudio(segment, 100);
+      if (audio) result.set(getDubSegmentId(segment), audio);
+    }));
+  } catch (error) {
     logEngineEvent('DUB_PREPARATION_FAILED', { message: error?.message || String(error) });
   }
   if (!isDubBufferCurrent(buffer) || !state.dubbingEnabled) {
@@ -1398,14 +1405,12 @@ async function prepareDubForPlayback(segment) {
     return null;
   }
   buffer.loading = false;
-  if (!audio) {
+  if (result.size !== segments.length) {
     renderDubBuffer('Bu bölümün Türkçe dublajı hazırlanamadı. Yeniden dene veya dublajı kapatarak devam et.');
     return null;
   }
-  try {
-    // Settle the source's play promise before starting its voice track.
-    await els.video.play();
-  } catch {
+  try { await els.video.play(); }
+  catch {
     if (isDubBufferCurrent(buffer)) renderDubBuffer('Ses hazır. Oynatmak için yeniden dokun.');
     return null;
   }
@@ -1415,7 +1420,7 @@ async function prepareDubForPlayback(segment) {
   }
   cancelDubBuffer();
   startDubClock();
-  return audio;
+  return result;
 }
 
 function updateDubMix() {
@@ -1424,7 +1429,8 @@ function updateDubMix() {
     keepOriginal: state.keepOriginalAudioEnabled,
     speaking: [...dubChannels.values()].some(audio => !audio.paused && !audio.ended)
   });
-  for (const audio of dubChannels.values()) audio.volume = dubMixer.voiceVolume();
+  const voices = [...dubChannels.values()].filter(audio => !audio.ended).length;
+  for (const audio of dubChannels.values()) audio.volume = dubMixer.voiceVolume(voices);
 }
 
 function clearPreparedDubAudio() {
@@ -1483,8 +1489,8 @@ async function prepareDubAudio(segment, priority = 0) {
   preparedDubAudio.set(id, audio);
   // Keep only a handful of decoded media elements, including the active line.
   for (const [key, old] of preparedDubAudio) {
-    if (preparedDubAudio.size <= 6) break;
-    if (key === id || dubChannels.has(key)) continue;
+    if (preparedDubAudio.size <= Math.max(6, activeDubSegments(dubTimeline(), els.video.currentTime).length + 3)) break;
+    if (key === id || dubChannels.has(key) || activeDubSegments(dubTimeline(), els.video.currentTime).some(row => getDubSegmentId(row) === key)) continue;
     preparedDubAudio.delete(key);
     old.pause();
     old._vqCancelReady?.();
@@ -1547,6 +1553,35 @@ function stableDubGender(segment) {
   return resolved;
 }
 
+async function ensureDubVoicePlan() {
+  const controller = state.dubRequestController;
+  const dialogue = state.dialogue;
+  const roster = buildDubSpeakerRoster(dubTimeline(), dialogue?.speakers || []);
+  state.dubSpeakerVoices ||= new Map();
+  if (roster.every(row => state.dubSpeakerVoices.has(row.speakerId))) return state.dubSpeakerVoices;
+  if (state.dubVoicePlanRequest?.controller === controller && state.dubVoicePlanRequest.dialogue === dialogue) {
+    return state.dubVoicePlanRequest.promise;
+  }
+  const task = { controller, dialogue, promise: null };
+  task.promise = (async () => {
+    const response = await fetch('/api/elevenlabs-voice-plan', {
+      method: 'POST', headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }),
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(70000)]),
+      body: JSON.stringify({ speakers: roster, previous: [...state.dubSpeakerVoices.values()] })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (controller !== state.dubRequestController || dialogue !== state.dialogue || controller.signal.aborted) return null;
+    if (!response.ok || !body.available) throw new Error(body.message || 'Karakterler için ayrı sesler hazırlanamadı.');
+    const plan = validateDubVoicePlan(roster, body.assignments);
+    state.dubSpeakerVoices = plan;
+    return plan;
+  })().finally(() => {
+    if (state.dubVoicePlanRequest === task) state.dubVoicePlanRequest = null;
+  });
+  state.dubVoicePlanRequest = task;
+  return task.promise;
+}
+
 async function ensureDubSegment(segment, priority = 0) {
   if (!segment?.turkishText) return null;
   if (!dubTimeline().includes(segment)) return null;
@@ -1563,22 +1598,18 @@ async function ensureDubSegment(segment, priority = 0) {
   // Provider cooldowns do not invalidate audio that is already available.
   if (state.dubUnavailableUntil > Date.now()) return null;
 
-  const segments = dubTimeline();
-  const segmentIndex = Math.max(0, segments.indexOf(segment));
-  const gender = stableDubGender(segment);
-  const payload = JSON.stringify({
-    text: segment.turkishText,
-    gender,
-    speakerId: segment.speakerId || segmentId,
-    voiceId: state.dubVoiceIds[gender] || '',
-    emotion: segment.emotion || 'uncertain',
-    previousText: segments[segmentIndex - 1]?.turkishText || '',
-    nextText: segments[segmentIndex + 1]?.turkishText || ''
-  });
-
   const runRequest = async () => {
     if (!isCurrent() || state.dubbingEnabled === false || state.dubUnavailableUntil > Date.now()) return null;
     if (!activeElevenLabsApiKey()) throw new Error('ElevenLabs anahtarı gerekli');
+    const plan = await ensureDubVoicePlan();
+    if (!isCurrent()) return null;
+    const assignment = plan?.get(dubSpeakerKey(segment));
+    if (!assignment?.voiceId) throw new Error('Bu konuşmacıya ayrı ses atanamadı.');
+    const payload = JSON.stringify({
+      text: segment.turkishText, speakerId: dubSpeakerKey(segment),
+      gender: assignment.gender, voiceId: assignment.voiceId,
+      emotion: segment.emotion || 'uncertain'
+    });
     let lastFailure = null;
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       if (!isCurrent()) return null;
@@ -1597,7 +1628,9 @@ async function ensureDubSegment(segment, priority = 0) {
           }
           state.dubFailureReason = '';
           state.dubProviderLock = 'elevenlabs';
-          if (body.voiceId && (gender === 'female' || gender === 'male')) state.dubVoiceIds[gender] = body.voiceId;
+          if (body.voiceId !== assignment.voiceId || (body.speakerId && body.speakerId !== assignment.speakerId)) {
+            throw Object.assign(new Error('Dublaj yanıtının konuşmacı sesi eşleşmedi; yanlış ses oynatılmadı.'), { code: 'DUB_VOICE_MISMATCH' });
+          }
           const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
           state.dubCache.set(segmentId, source);
           logEngineEvent('DUB_PROVIDER_USED', { provider: 'elevenlabs', segmentId, voiceId: body.voiceId });
@@ -1616,6 +1649,7 @@ async function ensureDubSegment(segment, priority = 0) {
       } catch (error) {
         if (!isCurrent()) return null;
         lastFailure = { error };
+        if (error.code === 'DUB_VOICE_MISMATCH') break;
         if (attempt < 4) {
           await new Promise(resolve => setTimeout(resolve, attempt * 1200));
           continue;
@@ -1643,8 +1677,8 @@ async function ensureDubSegment(segment, priority = 0) {
       checkAiUsageStatus();
       return null;
     }
-    const message = body?.message || body?.error || 'ElevenLabs dublaj üretilemedi';
-    state.dubFailureReason = body?.reason || 'DUB_PROVIDER_ERROR';
+    const message = body?.message || body?.error || lastFailure?.error?.message || 'ElevenLabs dublaj üretilemedi';
+    state.dubFailureReason = body?.reason || lastFailure?.error?.code || 'DUB_PROVIDER_ERROR';
     if (els.dubToggleBtn) {
       els.dubToggleBtn.textContent = `DUBLAJ HATASI: ${message}`;
       els.dubToggleBtn.title = message;
@@ -1694,7 +1728,8 @@ function resetDubState() {
   state.dubQueue = createDubRequestQueue(2);
   state.dubStableSpeakerGenders.clear();
   state.dubPlayedSegmentIds.clear();
-  state.dubVoiceIds = { female: '', male: '' };
+  state.dubSpeakerVoices = new Map();
+  state.dubVoicePlanRequest = null;
   state.decisionDubHold = false;
   state.dubUnavailableUntil = 0;
   state.aiUsage = {
@@ -1820,68 +1855,58 @@ async function playDubAudio(audio, segmentId, generation) {
 
 async function syncDubPlayback() {
   if (!state.dubbingEnabled) return stopDubPlayback();
-  if (els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked) return;
-
+  if (els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked || state.dubStartingToken) return;
   const generation = state.dubSyncGeneration;
-  const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
-  // Never let the next speaker's tolerance window cut the current word early.
-  const segment = dialogueSegmentAt(dubTimeline(), videoTime, 0);
-  const segmentId = getDubSegmentId(segment);
-  const currentAudio = dubChannels.get(state.activeDubSegmentId);
-  if (currentAudio && !currentAudio.ended &&
-      (state.activeDubSegmentId === segmentId || canFinishDubTail(currentAudio, segment, videoTime))) {
-    if (currentAudio.paused && !state.dubStartingToken) {
-      const token = { segmentId: state.activeDubSegmentId };
-      state.dubStartingToken = token;
-      await playDubAudio(currentAudio, token.segmentId, generation);
-      if (state.dubStartingToken === token) state.dubStartingToken = null;
-    }
-    prefetchDubSegmentsAround(videoTime);
-    return;
-  }
-  if (state.activeDubSegmentId) {
-    currentAudio?.pause();
-    dubChannels.delete(state.activeDubSegmentId);
-    state.activeDubSegmentId = null;
-    updateDubMix();
-  }
-  if (!segment?.turkishText || !segmentId || state.dubPlayedSegmentIds.has(segmentId)) {
-    prefetchDubSegmentsAround(videoTime);
-    return;
-  }
-  if (state.dubStartingToken?.segmentId === segmentId) return;
-  const token = { segmentId };
+  const token = { generation };
   state.dubStartingToken = token;
+  const current = () => state.dubStartingToken === token && generation === state.dubSyncGeneration && state.dubbingEnabled;
   try {
-    const audio = await prepareDubForPlayback(segment);
-    if (!audio || token !== state.dubStartingToken || generation !== state.dubSyncGeneration ||
-        !state.dubbingEnabled || els.video.paused || els.video.seeking || state.dubVideoWaiting ||
-        state.dubPlayedSegmentIds.has(segmentId)) return;
+    const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
+    const active = activeDubSegments(dubTimeline(), videoTime);
+    const activeIds = new Set(active.map(getDubSegmentId));
+    const waitingForTail = new Set();
+    for (const [id, audio] of dubChannels) {
+      if (activeIds.has(id) && !audio.ended) continue;
+      if (!audio.ended && canFinishDubTail(audio, active[0], videoTime)) {
+        for (const segment of active) {
+          // Only consecutive turns wait for a final syllable. Actual source
+          // overlap starts immediately on each speaker's independent channel.
+          if (dubSpeakerKey(audio._vqSegment) === dubSpeakerKey(segment) || !sourceSpeechOverlaps(audio._vqSegment, segment)) {
+            waitingForTail.add(getDubSegmentId(segment));
+          }
+        }
+        continue;
+      }
+      audio.pause();
+      dubChannels.delete(id);
+    }
+    state.activeDubSegmentId = dubChannels.keys().next().value || null;
+    const pending = active.filter(segment => {
+      const id = getDubSegmentId(segment);
+      return !waitingForTail.has(id) && !dubChannels.has(id) && !state.dubPlayedSegmentIds.has(id);
+    });
+    const prepared = await prepareDubGroupForPlayback(pending);
+    if (!prepared || !current() || els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked) return;
     const now = Math.max(0, Number(els.video.currentTime) || 0);
-    if (getDubSegmentId(dialogueSegmentAt(dubTimeline(), now, 0)) !== segmentId) return;
-
-    const start = Number(segment.startTime);
-    const nextStart = Math.min(...dubTimeline()
-      .filter(item => Number(item.startTime) > start)
-      .map(item => Number(item.startTime)));
-    const end = Math.min(Number(segment.endTime), nextStart);
-    // A delayed browser callback must not discard the entire line. Resume at
-    // its matching offset when already inside it; short boundary drift keeps
-    // the opening syllable, including after a normal preparation wait.
-    const offset = now - start > 0.65
-      ? mapVideoTimeToDubTime({ videoTime: now, segmentStart: start,
-          segmentEnd: segment.endTime, audioDuration: audio.duration })
-      : 0;
-    audio.currentTime = offset;
-    audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, end - now));
-    audio.playbackRate = audio._vqSpeechRate * (els.video.playbackRate || 1);
-    audio.volume = dubMixer.voiceVolume();
-    dubChannels.set(segmentId, audio);
-    state.activeDubSegmentId = segmentId;
-    // Lower the source before play() begins, including on a fast cached start.
-    dubMixer.update({ enabled: true, keepOriginal: state.keepOriginalAudioEnabled, speaking: true });
-    await playDubAudio(audio, segmentId, generation);
-    prefetchDubSegmentsAround(now);
+    const stillActive = new Set(activeDubSegments(dubTimeline(), now).map(getDubSegmentId));
+    for (const segment of pending) {
+      const id = getDubSegmentId(segment);
+      const audio = prepared.get(id);
+      if (!audio || !stillActive.has(id) || state.dubPlayedSegmentIds.has(id)) continue;
+      const offset = now - Number(segment.startTime) > 0.65
+        ? mapVideoTimeToDubTime({ videoTime: now, segmentStart: segment.startTime,
+            segmentEnd: segment.endTime, audioDuration: audio.duration }) : 0;
+      audio.currentTime = offset;
+      audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, dubSpeechEnd(segment, dubTimeline()) - now));
+      audio.playbackRate = audio._vqSpeechRate * (els.video.playbackRate || 1);
+      dubChannels.set(id, audio);
+    }
+    state.activeDubSegmentId = dubChannels.keys().next().value || null;
+    const starts = [...dubChannels].filter(([, audio]) => audio.paused && !audio.ended);
+    updateDubMix();
+    if (starts.length) dubMixer.update({ enabled: true, keepOriginal: state.keepOriginalAudioEnabled, speaking: true });
+    await Promise.all(starts.map(([id, audio]) => playDubAudio(audio, id, generation)));
+    if (current()) prefetchDubSegmentsAround(now);
   } finally {
     if (state.dubStartingToken === token) state.dubStartingToken = null;
   }
@@ -2131,7 +2156,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         els.analysisState.textContent = 'PREPARING_DUB';
         els.analysisTitle.textContent = 'Türkçe dublajın tamamı hazırlanıyor';
         els.analysisOutput.textContent = `0/${dubSegments.length} konuşma bloğu hazır…`;
-        if (!state.dubVoiceIds.female || !state.dubVoiceIds.male) await testElevenLabsKey();
+        await ensureDubVoicePlan();
         let completedDubBlocks = 0;
         dubPreparationPlan = { dialogue, dubSegments };
         dubPreparation = prepareCompleteDubTimeline(dubSegments, 2, (completed, total) => {
@@ -6359,7 +6384,7 @@ function captureSavedGame() {
       analysis: state.analysis,
       dialogue: state.dialogue,
       dubCache: [...state.dubCache],
-      dubVoiceIds: { ...state.dubVoiceIds },
+      dubSpeakerVoices: [...state.dubSpeakerVoices.values()],
       dubStableSpeakerGenders: [...state.dubStableSpeakerGenders],
       subtitlesEnabled: state.subtitlesEnabled,
       dubbingEnabled: state.dubbingEnabled,
@@ -6407,7 +6432,8 @@ async function openSavedGame(game) {
   state.analysis = game.payload.analysis;
   state.dialogue = game.payload.dialogue;
   state.dubCache = new Map(game.payload.dubCache || []);
-  state.dubVoiceIds = game.payload.dubVoiceIds || { female: '', male: '' };
+  state.dubSpeakerVoices = new Map((game.payload.dubSpeakerVoices || []).map(row => [row.speakerId, row]));
+  state.dubVoicePlanRequest = null;
   state.dubStableSpeakerGenders = new Map(game.payload.dubStableSpeakerGenders || []);
   state.subtitlesEnabled = Boolean(game.payload.subtitlesEnabled);
   state.dubbingEnabled = Boolean(game.payload.dubbingEnabled && state.dubCache.size);

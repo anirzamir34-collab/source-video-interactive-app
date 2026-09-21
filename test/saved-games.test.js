@@ -129,3 +129,22 @@ test('missing media, malformed dub entries and unavailable storage fail explicit
   assert.throws(() => prepareGame(bad), /dublaj/);
   await assert.rejects(createGameStore({ indexedDB: null }).list(), /desteklemiyor/);
 });
+
+test('four speaker voice assignments survive saving, reopening and backup without being merged', async () => {
+  const input = fixture();
+  input.payload.dialogue.segments = ['one', 'two', 'three', 'four'].map((speakerId, index) => ({
+    speakerId, startTime: index, endTime: index + 1, turkishText: 'Merhaba'
+  }));
+  input.payload.dubSpeakerVoices = input.payload.dialogue.segments.map((row, index) => ({
+    speakerId: row.speakerId, voiceId: `voice-${index}`, voiceName: `Ses ${index}`, gender: 'uncertain'
+  }));
+  const store = createGameStore({ indexedDB: new IDBFactory() });
+  const saved = await store.save(input);
+  const loaded = await store.load(saved.id);
+  assert.deepEqual(loaded.payload.dubSpeakerVoices, input.payload.dubSpeakerVoices);
+  const imported = await importGame(exportGame(loaded));
+  assert.deepEqual(imported.payload.dubSpeakerVoices, input.payload.dubSpeakerVoices);
+  input.payload.dubSpeakerVoices[1].voiceId = 'voice-0';
+  assert.throws(() => prepareGame(input), /ayrı ve sabit/);
+  await store.close();
+});
