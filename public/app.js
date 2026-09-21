@@ -994,6 +994,7 @@ function sendDialogueChunk({
 }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    const attemptStartedAt = performance.now();
     let settled = false;
     let stallTimer = null;
     let uploadComplete = false;
@@ -1035,7 +1036,7 @@ function sendDialogueChunk({
         completedBytes + (event.loaded || 0)
       );
       const elapsed = Math.max(
-        (performance.now() - startedAt) / 1000,
+        (performance.now() - attemptStartedAt) / 1000,
         0.1
       );
 
@@ -1043,7 +1044,7 @@ function sendDialogueChunk({
         loaded,
         total: totalBytes,
         percent: Math.min(100, Math.round(loaded / totalBytes * 100)),
-        speed: (loaded / 1024 / 1024) / elapsed
+        speed: ((event.loaded || 0) / 1024 / 1024) / elapsed
       });
     });
 
@@ -1268,12 +1269,13 @@ async function analyzeSelectedDialogue(file) {
         els.analysisState.textContent = 'AUDIO_UPLOAD';
         const audioOnly = dialogueFile.type.startsWith('audio/');
         els.analysisTitle.textContent = `${audioOnly ? 'Yalnızca konuşma sesi' : 'Cihazdaki video'} sunucuya yükleniyor · %${percent}`;
+        const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
         els.analysisOutput.textContent =
           (audioOnly ? 'Video cihazda kalıyor; sadece ses gönderiliyor.\n' : 'Ses cihazda ayrılamadığı için video sunucuya gönderiliyor.\n') +
           `Gerçek yükleme ilerlemesi: %${percent}\n` +
           `${(loaded / 1024 / 1024).toFixed(1)} / ` +
           `${(total / 1024 / 1024).toFixed(1)} MB\n` +
-          `Yükleme hızı: ${speed.toFixed(1)} MB/sn`;
+          `Yükleme hızı: ${speedText} MB/sn`;
       },
       () => {
         const processingStartedAt = performance.now();

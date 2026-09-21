@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractMp4Audio } from '../public/mp4-audio.js';
+import { extractMp4Audio, packAudioChunks } from '../public/mp4-audio.js';
 import { dialogueUploadLimit, dialogueUploadMimeType } from '../public/media-limits.js';
 
 const ffmpeg = '/usr/bin/ffmpeg';
@@ -107,4 +107,15 @@ test('audio-only M4A uses the existing audio upload limit and MIME type', () => 
   const mime = dialogueUploadMimeType(new File(['audio'], 'dialogue.m4a'));
   assert.equal(mime, 'audio/mp4');
   assert.equal(dialogueUploadLimit(mime), 250 * 1024 * 1024);
+});
+
+test('thousands of source fragments become a few sequential upload blocks without changing bytes', async () => {
+  const bytes = Uint8Array.from({ length: 4097 }, (_, index) => index % 251);
+  const file = new File([bytes], 'fragmented-source.mp4');
+  const chunks = Array.from(bytes, (_value, index) => ({ start: index, size: 1 }));
+  const parts = await packAudioChunks(file, chunks, bytes.length, 1024);
+  assert.equal(parts.length, 5);
+  assert.ok(parts.every((part, index) => part.byteLength === (index < 4 ? 1024 : 1)));
+  const packed = new Uint8Array(await new Blob(parts).arrayBuffer());
+  assert.deepEqual(packed, bytes);
 });

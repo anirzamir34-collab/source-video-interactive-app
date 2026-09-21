@@ -5,6 +5,7 @@ import { MAX_AUDIO_BYTES } from './media-limits.js';
 // Preserve timing/edit lists, including AAC priming and delayed audio starts.
 // Fragmented, encrypted and unsupported containers use the existing fallback.
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
+const PACK_BYTES = 1024 * 1024;
 const invalid = () => { throw new Error('MP4_AUDIO_UNSUPPORTED'); };
 const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 const tag = (bytes, at) => String.fromCharCode(...bytes.subarray(at, at + 4));
@@ -54,6 +55,41 @@ function table(bytes, box, width, prefix = 8) {
   const count = view(bytes).getUint32(box.data + prefix - 4);
   if (!count || box.data + prefix + count * width !== box.end) invalid();
   return count;
+}
+
+// A File made from thousands of tiny slices is cheap on desktop but Android
+// can stall while XHR walks that fragmented Blob. Copy only the compact audio
+// payload into bounded MiB blocks so upload reads remain sequential and fast.
+export async function packAudioChunks(file, chunks, audioBytes, packBytes = PACK_BYTES) {
+  if (!(file instanceof Blob) || !Number.isSafeInteger(audioBytes) || audioBytes <= 0 ||
+      !Number.isSafeInteger(packBytes) || packBytes <= 0) invalid();
+  const parts = [];
+  let copied = 0;
+  let block = new Uint8Array(Math.min(packBytes, audioBytes));
+  let used = 0;
+  for (const chunk of chunks) {
+    let source = chunk.start;
+    let remaining = chunk.size;
+    while (remaining > 0) {
+      const count = Math.min(remaining, block.length - used);
+      const bytes = new Uint8Array(await file.slice(source, source + count).arrayBuffer());
+      if (bytes.byteLength !== count) invalid();
+      block.set(bytes, used);
+      used += count;
+      copied += count;
+      source += count;
+      remaining -= count;
+      if (used === block.length) {
+        parts.push(block);
+        const left = audioBytes - copied;
+        if (left > 0) block = new Uint8Array(Math.min(packBytes, left));
+        used = 0;
+      }
+    }
+    if (parts.length && parts.length % 16 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  if (copied !== audioBytes || used) invalid();
+  return parts;
 }
 
 async function remux(file) {
@@ -173,7 +209,8 @@ async function remux(file) {
   movieBytes = rebuild();
   const mdat = atom('mdat', []);
   view(mdat).setUint32(0, audioBytes + 8);
-  return new File([fileType, movieBytes, mdat, ...chunks.map(chunk => file.slice(chunk.start, chunk.start + chunk.size))],
+  const packedAudio = await packAudioChunks(file, chunks, audioBytes);
+  return new File([fileType, movieBytes, mdat, ...packedAudio],
     'dialogue.m4a', { type: 'audio/mp4' });
 }
 
