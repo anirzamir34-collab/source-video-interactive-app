@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { createVideoDownloader } from '../public/video-download.js';
+import { openVideoDownload } from '../public/video-range-stream.js';
 
 const bytes = Uint8Array.from({ length: 12 * 1024 * 1024 + 17 }, (_, i) => (i * 17 + (i >>> 16)) % 251);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -17,6 +18,80 @@ function part(range, changes = {}) {
   } });
 }
 const downloader = fetch => createVideoDownloader({ fetch, storage: null, locks: null });
+
+test('early bytes reach the writer while a later range is stalled, with bounded prefetch', { timeout: 4000 }, async t => {
+  let release;
+  const stalled = new Promise(resolve => { release = resolve; });
+  const requests = [];
+  const response = await openVideoDownload('/video', {
+    parallel: true,
+    fetchVideo: async (_url, options) => {
+      const range = options.headers.Range;
+      requests.push(range);
+      if (range.startsWith('bytes=2097153-')) await stalled;
+      return part(range);
+    }
+  });
+  const reader = response.body.getReader();
+  t.after(async () => { release(); await reader.cancel(); });
+  const prefix = await reader.read();
+  const next = await Promise.race([
+    reader.read(),
+    new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(Error('writer blocked by an unrelated later range')), 1000);
+      timer.unref(); t.after(() => clearTimeout(timer));
+    })
+  ]);
+  assert.equal(next.value.length, 2 * 1024 * 1024);
+  // One probe, four initial parts, and one replacement. Waiting consumers
+  // cannot trigger unbounded downloads or an in-memory copy of the video.
+  assert.equal(requests.length, 6);
+  release();
+  const chunks = [prefix.value, next.value];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  assert.equal(digest(Buffer.concat(chunks)), expectedHash);
+});
+
+test('large files use six bounded four-MiB ranges and preserve every byte', async () => {
+  const total = 64 * 1024 * 1024 + 17;
+  const requests = [], progress = [];
+  let active = 0, peak = 0;
+  const fetchVideo = async (_url, options) => {
+    const [, a, b] = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range);
+    const start = Number(a), end = Number(b);
+    requests.push([start, end]);
+    active++; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    active--;
+    return new Response(new Uint8Array(end - start + 1).fill(29), { status: 206, headers: {
+      'content-range': `bytes ${start}-${end}/${total}`, 'content-length': String(end - start + 1),
+      'content-type': 'video/mp4', etag: '"large-original"'
+    } });
+  };
+  const response = await openVideoDownload('/video', { fetchVideo, parallel: true, onNetwork: row => progress.push(row) });
+  const reader = response.body.getReader();
+  const hash = createHash('sha256');
+  let received = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    hash.update(value);
+  }
+  assert.equal(received, total);
+  const expected = createHash('sha256');
+  for (let i = 0; i < 64; i++) expected.update(new Uint8Array(1024 * 1024).fill(29));
+  expected.update(new Uint8Array(17).fill(29));
+  assert.equal(hash.digest('hex'), expected.digest('hex'));
+  assert.equal(peak, 6);
+  assert.equal(requests.length, 18);
+  assert.ok(requests.every(([start, end]) => end - start + 1 <= 4 * 1024 * 1024));
+  assert.equal(progress.at(-1).connections, 6);
+});
 
 test('parallel ranges preserve original bytes, ordering and one consistent version', async () => {
   const requests = [], progress = [];

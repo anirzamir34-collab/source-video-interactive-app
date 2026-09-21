@@ -1,6 +1,9 @@
 const PART_BYTES = 2 * 1024 * 1024;
 const MIN_BYTES = 8 * 1024 * 1024;
 const CONNECTIONS = 4;
+const LARGE_FILE_BYTES = 64 * 1024 * 1024;
+const LARGE_PART_BYTES = 4 * 1024 * 1024;
+const LARGE_CONNECTIONS = 6;
 
 function rangeOf(response) {
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/i.exec(response.headers.get('content-range') || '');
@@ -27,7 +30,8 @@ const retrySerial = (message = 'Parçalı aktarım desteklenmedi; normal aktarı
   Object.assign(new Error(message), { code: 'VIDEO_RANGE_RETRY', retrySerial: true });
 
 // Return an ordinary Response either way. Consumers keep their existing disk
-// writer, size limits and cleanup. At most one 8 MiB batch is held in memory.
+// writer, size limits and cleanup. Prefetch a bounded sliding window rather
+// than waiting for a whole batch's slowest request before any disk write.
 export async function openVideoDownload(url, {
   fetchVideo, signal, requestOptions = {}, parallel = false, maxBytes = Infinity, onNetwork
 }) {
@@ -52,11 +56,13 @@ export async function openVideoDownload(url, {
     return fetchVideo(url, { ...requestOptions, signal });
   }
   const total = initial.total;
+  const connections = total >= LARGE_FILE_BYTES ? LARGE_CONNECTIONS : CONNECTIONS;
+  const partBytes = total >= LARGE_FILE_BYTES ? LARGE_PART_BYTES : PART_BYTES;
   let loaded = 0;
   let offset = 1;
   let prefix = first;
-  let ready = [];
   let inflight = [];
+  let failure;
   const readers = new Set();
   let cancelled = false;
   const readPart = async (response, start, end) => {
@@ -88,7 +94,7 @@ export async function openVideoDownload(url, {
         bytes.set(value, count);
         count += value.byteLength;
         loaded += value.byteLength;
-        onNetwork?.({ loaded, total, connections: CONNECTIONS });
+        onNetwork?.({ loaded, total, connections });
       }
       if (count !== expected) throw retrySerial();
       return bytes;
@@ -100,11 +106,30 @@ export async function openVideoDownload(url, {
   const stop = async reason => {
     cancelled = true;
     group.abort(reason);
-    ready = [];
     await Promise.allSettled([...readers].map(reader => reader.cancel()));
     if (prefix) { try { await prefix.body?.cancel(); } catch {} prefix = null; }
     await Promise.allSettled(inflight);
     inflight = [];
+  };
+  const fillWindow = () => {
+    while (!cancelled && !failure && inflight.length < connections && offset < total) {
+      const start = offset;
+      const end = Math.min(total - 1, start + partBytes - 1);
+      offset = end + 1;
+      const task = (async () => {
+        const response = await fetchVideo(url, { ...requestOptions,
+          signal: AbortSignal.any([combined, AbortSignal.timeout(45000)]),
+          headers: { Range: `bytes=${start}-${end}`, 'If-Range': validator.value } });
+        return { bytes: await readPart(response, start, end) };
+      })().catch(error => {
+        // Observe every background rejection immediately. A bad later range
+        // cancels the whole window, even while an earlier range is stalled.
+        failure ||= error;
+        group.abort(failure);
+        return { error: failure };
+      });
+      inflight.push(task);
+    }
   };
   const body = new ReadableStream({
     async pull(stream) {
@@ -114,32 +139,25 @@ export async function openVideoDownload(url, {
           const response = prefix;
           prefix = null;
           const bytes = await readPart(response, 0, 0);
-          if (!cancelled) stream.enqueue(bytes);
+          if (!cancelled) { fillWindow(); stream.enqueue(bytes); }
           return;
         }
-        if (!ready.length && offset < total) {
-          inflight = [];
-          for (let i = 0; i < CONNECTIONS && offset < total; i++) {
-            const start = offset;
-            const end = Math.min(total - 1, start + PART_BYTES - 1);
-            offset = end + 1;
-            inflight.push((async () => {
-              const response = await fetchVideo(url, { ...requestOptions,
-                signal: AbortSignal.any([combined, AbortSignal.timeout(45000)]),
-                headers: { Range: `bytes=${start}-${end}`, 'If-Range': validator.value } });
-              return readPart(response, start, end);
-            })());
-          }
-          ready = await Promise.all(inflight);
-          inflight = [];
-        }
+        if (failure) throw failure;
         if (cancelled) return;
-        if (ready.length) stream.enqueue(ready.shift());
-        else { stream.close(); group.abort(); }
+        if (!inflight.length) { stream.close(); group.abort(); return; }
+        const result = await inflight[0];
+        if (failure || result.error) throw failure || result.error;
+        combined.throwIfAborted();
+        inflight.shift();
+        stream.enqueue(result.bytes);
+        // Keep network reads running while the consumer writes this part.
+        // At most 24 MiB is prefetched, plus the 4 MiB handed to the writer.
+        fillWindow();
       } catch (error) {
         const parentAborted = signal?.aborted;
         await stop(error);
-        stream.error(parentAborted ? signal.reason : error.retrySerial ? error : retrySerial());
+        const cause = failure || error;
+        stream.error(parentAborted ? signal.reason : cause.retrySerial ? cause : retrySerial());
       }
     },
     cancel: stop
