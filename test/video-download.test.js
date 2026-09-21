@@ -304,3 +304,37 @@ test('manifest and non-HTTPS inputs always retain the existing proxy flow', asyn
     assert.equal(await (await downloads.download('/proxy', { directUrl })).text(), 'video');
   }
 });
+
+test('direct-only mode never fetches the fallback URL, including failed, absent or unsupported sources', async () => {
+  for (const candidate of [directUrl, '', 'http://cdn.example.com/video.mp4', 'https://cdn.example.com/video.m3u8']) {
+    const disk = diskFixture();
+    let calls = 0;
+    const downloads = createVideoDownloader({ ...disk, fetch: async url => {
+      calls++;
+      assert.equal(url, directUrl);
+      throw new TypeError('network denied');
+    } });
+    await assert.rejects(downloads.download('/proxy-never', { directOnly: true, directUrl: candidate }), { code: 'DIRECT_VIDEO_BLOCKED' });
+    assert.equal(calls, candidate === directUrl ? 1 : 0);
+    assert.equal(disk.files.size, 0);
+    assert.equal(disk.held.size, 0);
+  }
+});
+
+test('direct-only partial transfers are discarded without redownloading through the server', async () => {
+  const disk = diskFixture();
+  let calls = 0;
+  let pulled = false;
+  const downloads = createVideoDownloader({ ...disk, fetch: async url => {
+    calls++;
+    assert.equal(url, directUrl);
+    return new Response(new ReadableStream({ pull(controller) {
+      if (pulled) controller.error(new Error('disconnected'));
+      else { pulled = true; controller.enqueue(new Uint8Array(1024 * 1024)); }
+    } }), { headers: { 'content-type': 'video/mp4' } });
+  } });
+  await assert.rejects(downloads.download('/proxy-never', { directOnly: true, directUrl }), { code: 'DIRECT_VIDEO_BLOCKED' });
+  assert.equal(calls, 1);
+  assert.equal(disk.files.size, 0);
+  assert.equal(disk.held.size, 0);
+});

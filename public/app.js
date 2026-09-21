@@ -828,6 +828,7 @@ els.videoInput.addEventListener('change', () => {
   state.selectedRemoteVideo = null;
   state.analysisSession = null;
   if (file) {
+    hideBrowserDownloadHelp();
     els.fileMeta.textContent = `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • ${file.type || 'video'}`;
     state.videoObjectUrl = URL.createObjectURL(file);
     els.video.src = state.videoObjectUrl;
@@ -2019,7 +2020,7 @@ async function prepareStoryboardSource(session, file) {
     els.video.load();
     const startedAt = performance.now();
     try {
-      localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total, transport }) => {
+      localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total }) => {
         const knownTotal = total || remote.size || 0;
         const elapsed = Math.max(0.1, (performance.now() - startedAt) / 1000);
         const percent = knownTotal ? ` · %${Math.min(100, Math.round(loaded / knownTotal * 100))}` : '';
@@ -2027,15 +2028,16 @@ async function prepareStoryboardSource(session, file) {
         els.analysisOutput.textContent = [
           `${(loaded / 1024 / 1024).toFixed(1)}${knownTotal ? ` / ${(knownTotal / 1024 / 1024).toFixed(1)}` : ''} MB`,
           `${(loaded / 1024 / 1024 / elapsed).toFixed(2)} MB/sn · ${Math.round(elapsed)} sn geçti`,
-          transport === 'direct' ? 'Doğrudan kaynaktan telefona indiriliyor.' : 'Kaynak bağlantısı sunucu üzerinden aktarılıyor.',
+          'Doğrudan kaynaktan telefona indiriliyor.',
           'İndirme bitince ses ve kareler aynı dosyadan hazırlanacak.'
         ].join('\n');
       } });
       session.sourceDownloadMs = Math.round(performance.now() - startedAt);
     } catch (error) {
       if (state.selectedRemoteVideo === remote) {
-        els.video.src = remote.proxyUrl;
+        els.video.removeAttribute('src');
         els.video.load();
+        if (error.code === 'DIRECT_VIDEO_BLOCKED') showBrowserDownloadHelp(remote.sourceUrl, remote.pageUrl);
       }
       throw error;
     }
@@ -6192,35 +6194,45 @@ function setUrlStatus(message, type = '') {
   urlStatus.className = `url-status ${type}`.trim();
 }
 
-async function downloadUrlVideo(proxyUrl, sourceUrl, options = {}) {
-  return videoDownloads.download(proxyUrl, {
-    ...options,
-    directUrl: options.allowDirect ? sourceUrl : '',
-    onProgress: options.onProgress || (({ loaded, total }) => {
-      const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
-      setUrlStatus(`Video hazırlanıyor: ${(loaded / 1024 / 1024).toFixed(1)} MB${totalText}`);
-    })
-  });
+function hideBrowserDownloadHelp() {
+  document.getElementById('browserDownloadHelp')?.classList.add('hidden');
+  for (const id of ['browserVideoLink', 'browserPageLink']) document.getElementById(id)?.removeAttribute('href');
 }
 
-async function probeSeekableVideo(proxyUrl) {
-  try {
-    const response = await fetch(proxyUrl, {
-      headers: { Range: 'bytes=0-1' },
-      signal: AbortSignal.timeout(20000)
-    });
-    const contentRange = String(response.headers.get('content-range') || '');
-    const size = Number(contentRange.match(/\/(\d+)$/)?.[1]) || 0;
-    const contentType = response.headers.get('content-type') || 'video/mp4';
-    try { await response.body?.cancel(); } catch {}
-    return {
-      seekable: response.status === 206 && /^bytes\s/i.test(contentRange),
-      size,
-      contentType
-    };
-  } catch {
-    return { seekable: false, size: 0, contentType: '' };
+function showBrowserDownloadHelp(sourceUrl, pageUrl) {
+  const panel = document.getElementById('browserDownloadHelp');
+  if (!panel) return;
+  for (const [id, value] of [['browserVideoLink', sourceUrl], ['browserPageLink', pageUrl]]) {
+    const link = document.getElementById(id);
+    if (!link) continue;
+    link.removeAttribute('href');
+    let valid = false;
+    try {
+      const url = new URL(value);
+      if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) {
+        link.href = url.href;
+        valid = true;
+      }
+    } catch {}
+    link.classList.toggle('hidden', !valid);
   }
+  panel.classList.remove('hidden');
+}
+
+document.getElementById('chooseDownloadedVideoBtn')?.addEventListener('click', () => {
+  if (!state.analysisInProgress && !state.urlResolutionInProgress && !state.savedGameBusy) els.videoInput.click();
+});
+
+async function downloadUrlVideo(_proxyUrl, sourceUrl, options = {}) {
+  return videoDownloads.download('', {
+    ...options,
+    directUrl: sourceUrl,
+    directOnly: true,
+    onProgress: options.onProgress || (({ loaded, total }) => {
+      const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
+      setUrlStatus(`Video doğrudan cihaza indiriliyor: ${(loaded / 1024 / 1024).toFixed(1)} MB${totalText}`);
+    })
+  });
 }
 
 function remoteVideoFileName(sourceUrl, contentType = '') {
@@ -6237,14 +6249,13 @@ function remoteVideoFileName(sourceUrl, contentType = '') {
 async function ensureSelectedRemoteFile({ onProgress } = {}) {
   if (state.selectedFile) return state.selectedFile;
   const remote = state.selectedRemoteVideo;
-  if (!remote?.proxyUrl) throw new Error('İndirilecek uzak video kaynağı bulunamadı.');
+  if (!remote?.sourceUrl) throw new Error('İndirilecek uzak video kaynağı bulunamadı.');
   if (state.remoteFileDownload?.remote === remote) return state.remoteFileDownload.promise;
   setUrlStatus('Bu analiz modu için video cihaza geçici olarak indiriliyor...');
   const task = { remote, controller: new AbortController(), promise: null };
   task.promise = (async () => {
     const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl, {
       signal: task.controller.signal,
-      allowDirect: remote.directDownload === true,
       expectedSize: remote.size || 0,
       onProgress: progress => {
         if (remote !== state.selectedRemoteVideo) return;
@@ -6284,8 +6295,10 @@ async function resolveVideoUrl() {
   if (videoUrlInput) videoUrlInput.disabled = true;
   updateAnalyzeAvailability();
   setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor...');
+  hideBrowserDownloadHelp();
   const resolveStartedAt = performance.now();
   let pendingBlob;
+  let resolved;
 
   try {
     const resolveResponse = await fetch('/api/resolve-video-url', {
@@ -6304,39 +6317,13 @@ async function resolveVideoUrl() {
       );
     }
 
-    const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
-    let fileName = remoteVideoFileName(result.sourceUrl);
-    if (result.type === 'video') {
-      setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Akış desteği kontrol ediliyor...`);
-      const probe = await probeSeekableVideo(result.proxyUrl);
-      fileName = remoteVideoFileName(result.sourceUrl, probe.contentType || '');
-      if (probe.seekable) {
-        clearPreviousGameResidue();
-        state.selectedFile = null;
-        state.selectedSourceKind = 'url';
-        state.selectedRemoteVideo = {
-          proxyUrl: result.proxyUrl,
-          sourceUrl: result.sourceUrl,
-          fileName,
-          size: probe.size,
-          contentType: probe.contentType,
-          directDownload: result.directDownload === true
-        };
-        state.analysisSession = null;
-        els.video.src = result.proxyUrl;
-        const sizeText = probe.size ? ` • ${(probe.size / 1024 / 1024).toFixed(1)} MB` : '';
-        els.fileMeta.textContent = `${fileName}${sizeText} • URL akışı`;
-        updateAnalyzeAvailability();
-        renderDebug();
-        setUrlStatus('Video hazır. Hareket analizi başladığında hızlı kare hazırlığı için bir kez telefona alınacak.', 'success');
-        return;
-      }
+    resolved = result;
+    if (result.type !== 'video') {
+      throw Object.assign(new Error('Bu kaynak parçalı video akışı kullanıyor. Kaynak sayfanın indirme seçeneğiyle videoyu cihazına kaydet, ardından dosyayı seç.'), { code: 'DIRECT_VIDEO_BLOCKED' });
     }
-
-    setUrlStatus(['hls', 'dash'].includes(result.type)
-      ? `${result.type.toUpperCase()} akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
-      : `Kaynak ileri sarmayı desteklemiyor. Video cihaza hazırlanıyor...`);
-    const blob = pendingBlob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl, { allowDirect: result.type === 'video' && result.directDownload === true });
+    const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
+    setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Doğrudan cihaza indiriliyor...`);
+    const blob = pendingBlob = await downloadUrlVideo('', result.sourceUrl);
 
     if (!blob.size) throw new Error('Video boş geldi.');
 
@@ -6357,9 +6344,10 @@ async function resolveVideoUrl() {
     updateAnalyzeAvailability();
     renderDebug();
 
-    setUrlStatus('Video hazır. Şimdi “Videoyu analiz et” düğmesine bas.', 'success');
+    setUrlStatus('Video cihazda hazır. “Seçili analizleri başlat” ile devam et.', 'success');
   } catch (error) {
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
+    if (error.code === 'DIRECT_VIDEO_BLOCKED') showBrowserDownloadHelp(resolved?.type === 'video' ? resolved.sourceUrl : '', resolved?.pageUrl || pageUrl);
   } finally {
     await videoDownloads.release(pendingBlob);
     state.urlResolutionInProgress = false;

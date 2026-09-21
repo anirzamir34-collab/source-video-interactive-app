@@ -73,9 +73,18 @@
         <div class="url-row">
           <input id="videoUrl" class="url-input" type="url" inputmode="url"
             placeholder="https://site.com/video-sayfasi" autocomplete="off" />
-          <button id="resolveUrlBtn" class="url-btn" type="button">VİDEOYU BUL</button>
+          <button id="resolveUrlBtn" class="url-btn" type="button">BUL VE İNDİR</button>
         </div>
-        <div id="urlStatus" class="url-status"></div>
+        <div id="urlStatus" class="url-status" role="status" aria-live="polite"></div>
+        <small class="url-download-note">Video önce doğrudan bu cihaza indirilir; ardından analiz edilir.</small>
+        <div id="browserDownloadHelp" class="browser-download-help hidden">
+          <p>Tarayıcıda açılan videoyu veya kaynak sitenin indirme seçeneğini kullanarak dosyayı indir. Sonra “İndirdiğim videoyu seç” ile devam et.</p>
+          <div class="browser-download-actions">
+            <a id="browserVideoLink" target="_blank" rel="noopener noreferrer">Videoyu tarayıcıda aç</a>
+            <a id="browserPageLink" target="_blank" rel="noopener noreferrer">Kaynak sayfayı aç</a>
+            <button id="chooseDownloadedVideoBtn" type="button">İndirdiğim videoyu seç</button>
+          </div>
+        </div>
       </div>
       <div class="protagonist-lock">
         <label for="protagonistInput">BAŞKARAKTER KİLİDİ</label>

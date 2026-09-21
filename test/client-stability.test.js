@@ -336,14 +336,15 @@ test('changing source removes the previous time boundary listener and clears old
   assert.equal(state.gameState, 'IDLE');
 });
 
-function urlFixture(fetch) {
+function urlFixture(fetch, overrides = {}) {
   const state = { selectedFile: { name: 'existing.mp4' }, analysis: { actions: [{}] }, analysisSession: { saved: true } };
   let handlerCode = source.slice(source.indexOf('async function resolveVideoUrl()'));
   handlerCode = handlerCode.slice(0, handlerCode.indexOf('\nresolveUrlBtn?.addEventListener'));
   return fixture(handlerCode, {
     state, fetch, videoUrlInput: { value: 'https://example.com/new' }, resolveUrlBtn: {},
     setUrlStatus() {}, updateAnalyzeAvailability() {}, renderDebug() {},
-    clearPreviousGameResidue: () => assert.fail('failed resolution must keep previous source')
+    hideBrowserDownloadHelp() {}, showBrowserDownloadHelp() {},
+    clearPreviousGameResidue: () => assert.fail('failed resolution must keep previous source'), ...overrides
   });
 }
 
@@ -373,6 +374,83 @@ test('Enter and button presses during URL resolution cannot launch duplicate imp
   assert.equal(f.scope.resolveUrlBtn.disabled, false);
 });
 
+test('URL import downloads the complete source directly before enabling a local player; no proxy preview or probe', async () => {
+  const gate = deferred();
+  const requests = [];
+  const sourceUrl = 'https://cdn.example.com/original.mp4';
+  let cleared = 0;
+  const f = urlFixture(async (url, options) => {
+    requests.push(url);
+    if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
+      type: 'video', sourceUrl, proxyUrl: '/api/video-proxy?token=never', directDownload: false }) };
+    assert.equal(url, sourceUrl);
+    assert.equal(options.credentials, 'omit');
+    assert.equal(options.headers, undefined);
+    return gate.promise;
+  }, { clearPreviousGameResidue() { cleared++; } });
+  vm.runInContext(functions('downloadUrlVideo', 'remoteVideoFileName'), f.scope);
+  const oldFile = f.scope.state.selectedFile;
+  const pending = f.scope.resolveVideoUrl();
+  await tick();
+  assert.deepEqual(requests, ['/api/resolve-video-url', sourceUrl]);
+  assert.equal(f.scope.state.urlResolutionInProgress, true);
+  assert.equal(f.scope.els.videoInput.disabled, true);
+  assert.equal(f.scope.state.selectedFile, oldFile);
+  assert.equal(cleared, 0);
+  assert.equal(f.scope.els.video.src, undefined);
+  gate.resolve(new Response('exact original video', { headers: { 'content-type': 'video/mp4' } }));
+  await pending;
+  try {
+    assert.equal(cleared, 1);
+    assert.equal(await f.scope.state.selectedFile.text(), 'exact original video');
+    assert.equal(f.scope.state.selectedRemoteVideo, null);
+    assert.match(f.scope.els.video.src, /^blob:/);
+    assert.equal(f.scope.state.urlResolutionInProgress, false);
+    assert.equal(f.scope.els.videoInput.disabled, false);
+    assert.equal(requests.length, 2);
+  } finally { URL.revokeObjectURL(f.scope.state.videoObjectUrl); }
+});
+
+test('blocked browser downloads and manifests show manual import without transferring via Render', async () => {
+  for (const type of ['video', 'hls', 'dash']) {
+    const sourceUrl = 'https://cdn.example.com/video.' + (type === 'video' ? 'mp4' : type === 'hls' ? 'm3u8' : 'mpd');
+    const pageUrl = 'https://example.com/watch';
+    const requests = [];
+    const help = [];
+    const f = urlFixture(async url => {
+      requests.push(url);
+      if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
+        type, sourceUrl, pageUrl, proxyUrl: '/api/video-proxy?token=never' }) };
+      assert.equal(url, sourceUrl);
+      throw new TypeError('CORS denied');
+    }, { showBrowserDownloadHelp: (...args) => help.push(args) });
+    vm.runInContext(functions('downloadUrlVideo', 'remoteVideoFileName'), f.scope);
+    const oldFile = f.scope.state.selectedFile;
+    await f.scope.resolveVideoUrl();
+    assert.deepEqual(requests, type === 'video' ? ['/api/resolve-video-url', sourceUrl] : ['/api/resolve-video-url']);
+    assert.deepEqual(help, [[type === 'video' ? sourceUrl : '', pageUrl]]);
+    assert.equal(f.scope.state.selectedFile, oldFile);
+    assert.equal(f.scope.els.video.src, undefined);
+    assert.equal(f.scope.els.videoInput.disabled, false);
+  }
+});
+
+test('manual download links reject executable URLs and discard stale source links', () => {
+  const nodes = new Map(['browserDownloadHelp', 'browserVideoLink', 'browserPageLink'].map(id => [id, new Element()]));
+  const f = fixture(functions('showBrowserDownloadHelp', 'hideBrowserDownloadHelp'), {
+    document: { getElementById: id => nodes.get(id) }
+  });
+  f.scope.showBrowserDownloadHelp('https://cdn.example.com/video.mp4', 'https://example.com/watch');
+  assert.equal(nodes.get('browserVideoLink').href, 'https://cdn.example.com/video.mp4');
+  f.scope.showBrowserDownloadHelp('javascript:alert(1)', 'https://user:secret@example.com/private');
+  assert.equal(nodes.get('browserVideoLink').href, undefined);
+  assert.equal(nodes.get('browserPageLink').href, undefined);
+  f.scope.showBrowserDownloadHelp('https://cdn.example.com/new.mp4', 'https://example.com/watch');
+  f.scope.hideBrowserDownloadHelp();
+  assert.equal(nodes.get('browserVideoLink').href, undefined);
+  assert.equal(nodes.get('browserPageLink').href, undefined);
+});
+
 test('malformed escape sequences in remote filenames do not block a valid media URL', () => {
   const f = fixture(functions('remoteVideoFileName'));
   assert.equal(f.scope.remoteVideoFileName('https://example.com/clip%broken.mp4'), 'clip%broken.mp4');
@@ -384,10 +462,10 @@ test('oversized downloads are cancelled before consuming their response body', a
   const f = fixture(functions('downloadUrlVideo'), {
     setUrlStatus() {}, fetch: async (_url, options) => {
       signal = options.signal;
-      return { ok: true, headers: new Headers({ 'content-length': String(601 * 1024 * 1024) }), body: { getReader() { reads++; } } };
+      return { ok: true, status: 200, headers: new Headers({ 'content-length': String(601 * 1024 * 1024) }), body: { getReader() { reads++; } } };
     }
   });
-  await assert.rejects(f.scope.downloadUrlVideo('/proxy'), /600 MB/);
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4'), /600 MB/);
   assert.equal(signal.aborted, true);
   assert.equal(reads, 0);
 });
@@ -396,12 +474,12 @@ test('download without content length is still bounded and its reader released',
   let cancelled = false;
   let released = false;
   const f = fixture(functions('downloadUrlVideo'), {
-    setUrlStatus() {}, fetch: async () => ({ ok: true, headers: new Headers(), body: { getReader: () => ({
+    setUrlStatus() {}, fetch: async () => ({ ok: true, status: 200, headers: new Headers(), body: { getReader: () => ({
       read: async () => ({ done: false, value: { length: 601 * 1024 * 1024 } }),
       cancel: async () => { cancelled = true; }, releaseLock() { released = true; }
     }) } })
   });
-  await assert.rejects(f.scope.downloadUrlVideo('/proxy'), /600 MB/);
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4'), /600 MB/);
   assert.equal(cancelled, true);
   assert.equal(released, true);
 });
@@ -410,7 +488,7 @@ test('normal download returns exact bytes and releases its reader', async () => 
   const f = fixture(functions('downloadUrlVideo'), {
     setUrlStatus() {}, fetch: async () => new Response('test-video-bytes', { headers: { 'content-type': 'video/mp4' } })
   });
-  const blob = await f.scope.downloadUrlVideo('/proxy');
+  const blob = await f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4');
   assert.equal(await blob.text(), 'test-video-bytes');
   assert.equal(blob.type, 'video/mp4');
 });
@@ -421,10 +499,10 @@ test('storyboard transfer enforces its smaller limit and reports bytes without c
     setUrlStatus() { assert.fail('storyboard owns transfer progress'); },
     fetch: async () => new Response('exact-video-bytes', { headers: { 'content-type': 'video/mp4', 'content-length': '17' } })
   });
-  const blob = await f.scope.downloadUrlVideo('/proxy', '', { maxBytes: 128, onProgress: detail => progress.push(detail) });
+  const blob = await f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4', { maxBytes: 128, onProgress: detail => progress.push(detail) });
   assert.equal(await blob.text(), 'exact-video-bytes');
   assert.equal(progress.at(-1).loaded, 17);
-  await assert.rejects(f.scope.downloadUrlVideo('/proxy', '', { maxBytes: 8 }), /indirme sınırını/);
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4', { maxBytes: 8 }), /indirme sınırını/);
 });
 
 test('storyboard transfer has an overall deadline even when waiting for response headers', async () => {
@@ -435,7 +513,7 @@ test('storyboard transfer has an overall deadline even when waiting for response
       signal.addEventListener('abort', () => reject(signal.reason), { once: true });
     })
   });
-  await assert.rejects(f.scope.downloadUrlVideo('/proxy', '', { maxDurationMs: 5 }), /aktarımı durdu/);
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4', { maxDurationMs: 5 }), { code: 'DIRECT_VIDEO_BLOCKED' });
   assert.equal(signal.aborted, true);
 });
 
@@ -444,7 +522,7 @@ test('cancelling storyboard transfer aborts and releases its active reader', asy
   let cancelled = false;
   let released = false;
   const f = fixture(functions('downloadUrlVideo'), {
-    fetch: async (_url, { signal }) => ({ ok: true, headers: new Headers(), body: { getReader: () => ({
+    fetch: async (_url, { signal }) => ({ ok: true, status: 200, headers: new Headers(), body: { getReader: () => ({
       read: () => new Promise((_resolve, reject) => {
         signal.addEventListener('abort', () => reject(signal.reason), { once: true });
         controller.abort();
@@ -452,7 +530,7 @@ test('cancelling storyboard transfer aborts and releases its active reader', asy
       cancel: async () => { cancelled = true; }, releaseLock() { released = true; }
     }) } })
   });
-  await assert.rejects(f.scope.downloadUrlVideo('/proxy', '', { signal: controller.signal }), { name: 'AbortError' });
+  await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4', { signal: controller.signal }), { name: 'AbortError' });
   assert.equal(cancelled, true);
   assert.equal(released, true);
 });
@@ -540,7 +618,7 @@ test('an already uploaded local file needs no download or source replacement', a
   assert.equal(f.scope.els.video.src, 'blob:existing');
 });
 
-test('failed download restores the preview and can be retried without silently resuming remote frame seeks', async () => {
+test('failed download leaves the player unloaded and can be retried without starting a proxy preview', async () => {
   let attempts = 0;
   const f = remoteFileFixture(async () => {
     if (++attempts === 1) throw Error('network stalled');
@@ -548,7 +626,7 @@ test('failed download restores the preview and can be retried without silently r
   });
   const session = {};
   await assert.rejects(f.scope.prepareStoryboardSource(session, null), /network stalled/);
-  assert.equal(f.scope.els.video.src, '/proxy?token=one');
+  assert.equal(f.scope.els.video.src, undefined);
   assert.equal(f.scope.state.selectedFile, null);
   assert.equal(session.file, undefined);
   assert.equal(f.scope.state.remoteFileDownload, null);

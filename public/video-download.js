@@ -4,6 +4,7 @@ const DIRECTORY = 'videoquest-temporary-downloads';
 const WRITE_BATCH_BYTES = 1024 * 1024;
 const lockName = name => `${DIRECTORY}:${name}`;
 const storageError = () => Object.assign(new Error('Video için cihazda yeterli boş depolama alanı yok. Yer açıp tekrar dene.'), { code: 'VIDEO_STORAGE_FULL' });
+const directError = () => Object.assign(new Error('Video doğrudan tarayıcıya indirilemedi. Kaynak erişimi engelliyor veya bağlantı yanıt vermiyor olabilir. Videoyu tarayıcıda açıp indir, ardından cihazından seç.'), { code: 'DIRECT_VIDEO_BLOCKED' });
 
 export function createVideoDownloader({
   fetch: fetchVideo = (...args) => globalThis.fetch(...args),
@@ -89,7 +90,8 @@ export function createVideoDownloader({
       if (options.maxDurationMs > 0) totalTimer = setTimeout(() => controller.abort(), options.maxDurationMs);
       refreshDeadline();
       checkpoint();
-      if (options.direct) headerTimer = setTimeout(() => controller.abort(), Math.min(4000, options.directHeaderTimeoutMs || 4000));
+      const headerWait = options.directOnly ? 12000 : 4000;
+      if (options.direct) headerTimer = setTimeout(() => controller.abort(), Math.min(headerWait, options.directHeaderTimeoutMs || headerWait));
       response = await fetchVideo(url, { signal: controller.signal,
         ...(options.direct ? { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' } : {}) });
       clearTimeout(headerTimer);
@@ -233,10 +235,12 @@ export function createVideoDownloader({
       if (candidate.protocol === 'https:' && !candidate.username && !candidate.password &&
           !/\.(?:m3u8|mpd)(?:$|[?#])/i.test(candidate.href)) directUrl = candidate.href;
     } catch {}
+    if (options.directOnly && !directUrl) throw directError();
     if (directUrl) {
       try { return await transfer(directUrl, { ...options, direct: true }); }
       catch (error) {
         if (options.signal?.aborted || !error.retryViaProxy) throw error;
+        if (options.directOnly) throw directError();
         if (options.maxDurationMs > 0 && Date.now() - started >= options.maxDurationMs) throw error;
         options.onProgress?.({ loaded: 0, total: options.expectedSize || 0, transport: 'proxy', writeMs: 0 });
       }

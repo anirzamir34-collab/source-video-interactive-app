@@ -906,6 +906,11 @@ section {
 
 .url-status.success { color: #2ee6a6; }
 .url-status.error { color: #ff727d; }
+.url-download-note { display: block; color: #a1b3ad; font-size: 12px; line-height: 1.5; }
+.browser-download-help { margin-top: 12px; padding: 12px; border: 1px solid #285047; border-radius: 10px; background: #101d1a; }
+.browser-download-help p { margin: 0 0 10px; font-size: 12px; line-height: 1.5; color: #cad8d3; }
+.browser-download-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.browser-download-actions a, .browser-download-actions button { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 10px; border: 1px solid #397465; border-radius: 8px; background: #17372f; color: #d4fff1; font: inherit; font-size: 12px; text-decoration: none; cursor: pointer; }
 
 @media (max-width: 480px) {
   .url-row {
