@@ -996,6 +996,8 @@ function sendDialogueChunk({
     const xhr = new XMLHttpRequest();
     let settled = false;
     let stallTimer = null;
+    let uploadComplete = false;
+    const chunkError = (message, details = {}) => Object.assign(new Error(message), details);
     const finish = (handler, value) => {
       if (settled) return;
       settled = true;
@@ -1003,11 +1005,15 @@ function sendDialogueChunk({
       handler(value);
     };
     const armStallTimer = () => {
+      if (uploadComplete) return;
       clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
+        const error = chunkError('Bu parçada 45 saniye veri gönderilemedi.', {
+          code: 'CHUNK_UPLOAD_STALLED', retryable: true
+        });
+        finish(reject, error);
         xhr.abort();
-        finish(reject, new Error('Yükleme ilerlemesi durdu; parça yeniden deneniyor.'));
-      }, 15000);
+      }, 45000);
     };
 
     xhr.open(
@@ -1016,7 +1022,9 @@ function sendDialogueChunk({
     );
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
-    xhr.timeout = 45000;
+    // The upload may already be at 100% while Render is still accepting and
+    // writing the request. Do not let the progress watchdog abort that wait.
+    xhr.timeout = 120000;
     xhr.responseType = 'json';
     armStallTimer();
 
@@ -1039,33 +1047,42 @@ function sendDialogueChunk({
       });
     });
 
+    xhr.upload.addEventListener('load', () => {
+      uploadComplete = true;
+      clearTimeout(stallTimer);
+      stallTimer = null;
+    });
+
     xhr.addEventListener('load', () => {
       const body = xhr.response || {};
 
       if (xhr.status >= 200 && xhr.status < 300 && body.available) {
         finish(resolve, body);
       } else {
+        const retryable = xhr.status === 0 || xhr.status === 408 || xhr.status === 409 ||
+          xhr.status === 425 || xhr.status === 429 || xhr.status >= 500;
         finish(
           reject,
-          new Error(
+          chunkError(
             body.message ||
             body.reason ||
-            `Parça yükleme hatası: HTTP ${xhr.status}`
+            `Parça yükleme hatası: HTTP ${xhr.status}`,
+            { code: body.reason || 'CHUNK_UPLOAD_HTTP_ERROR', status: xhr.status, retryable }
           )
         );
       }
     });
 
     xhr.addEventListener('error', () => {
-      finish(reject, new Error('Parça yüklenirken bağlantı kesildi.'));
+      finish(reject, chunkError('Parça sunucuya ulaşamadı.', { code: 'CHUNK_NETWORK_ERROR', retryable: true }));
     });
 
     xhr.addEventListener('timeout', () => {
-      finish(reject, new Error('Parça yüklemesi zaman aşımına uğradı.'));
+      finish(reject, chunkError('Sunucu bu parçaya 120 saniye içinde yanıt vermedi.', { code: 'CHUNK_RESPONSE_TIMEOUT', retryable: true }));
     });
 
     xhr.addEventListener('abort', () => {
-      finish(reject, new Error('Takılan parça iptal edilip yeniden başlatıldı.'));
+      finish(reject, chunkError('Takılan parça iptal edilip yeniden başlatıldı.', { code: 'CHUNK_UPLOAD_ABORTED', retryable: true }));
     });
 
     xhr.send(chunk);
@@ -1138,15 +1155,19 @@ async function uploadDialogueWithProgress(
       } catch (error) {
         retryCount += 1;
 
-        if (retryCount >= 5) throw error;
+        if (error.retryable === false || retryCount >= 5) throw error;
 
         els.analysisTitle.textContent =
-          `Bağlantı bekleniyor · parça ${chunkIndex + 1}/${chunkCount}`;
+          `Parça yeniden deneniyor (${retryCount}/5) · ${chunkIndex + 1}/${chunkCount}`;
         els.analysisOutput.textContent =
-          'Yükleme kesildi veya uygulama arka plana alındı.\n' +
-          'Sayfaya dönüldüğünde kaldığı parçadan devam edilecek.';
+          `${error.message || 'Parça gönderilemedi.'}\n` +
+          `${navigator.onLine === false ? 'Telefon çevrimdışı görünüyor. Bağlantı gelince devam edilecek.' : 'Bağlantı açık; aynı parça yeniden gönderilecek.'}`;
 
-        await new Promise(resolve => setTimeout(resolve, Math.min(4000, 700 * retryCount)));
+        if (navigator.onLine === false) {
+          await new Promise(resolve => window.addEventListener('online', resolve, { once: true }));
+        } else {
+          await new Promise(resolve => setTimeout(resolve, Math.min(6000, 1000 * retryCount)));
+        }
       }
     }
 

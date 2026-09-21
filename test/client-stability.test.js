@@ -105,6 +105,51 @@ test('missing dubbing credentials fail before expensive analysis and unlock cont
   assert.equal(els.videoInput.disabled, false);
 });
 
+class UploadRequest extends EventTarget {
+  upload = new EventTarget();
+  status = 0;
+  response = null;
+  open() {}
+  setRequestHeader() {}
+  send(chunk) { this.chunk = chunk; }
+  abort() { this.aborted = true; this.dispatchEvent(new Event('abort')); }
+}
+
+test('completed mobile upload is not aborted while waiting for the server response', async () => {
+  const timers = new Map();
+  let nextTimer = 0;
+  let request;
+  const f = fixture(functions('sendDialogueChunk'), {
+    XMLHttpRequest: class extends UploadRequest { constructor() { super(); request = this; } },
+    setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
+    clearTimeout: id => timers.delete(id)
+  });
+  const result = f.scope.sendDialogueChunk({ uploadId: 'one', chunk: new Blob(['speech']), chunkIndex: 0,
+    completedBytes: 0, totalBytes: 6, startedAt: performance.now(), onProgress() {} });
+  request.upload.dispatchEvent(new Event('progress'));
+  request.upload.dispatchEvent(new Event('load'));
+  for (const callback of [...timers.values()]) callback();
+  assert.equal(request.aborted, undefined);
+  request.status = 200;
+  request.response = { available: true, nextChunk: 1 };
+  request.dispatchEvent(new Event('load'));
+  assert.equal((await result).nextChunk, 1);
+});
+
+test('HTTP upload errors expose status and do not retry permanent authorization failures', async () => {
+  let request;
+  const f = fixture(functions('sendDialogueChunk'), {
+    XMLHttpRequest: class extends UploadRequest { constructor() { super(); request = this; } }
+  });
+  const result = f.scope.sendDialogueChunk({ uploadId: 'one', chunk: new Blob(['speech']), chunkIndex: 0,
+    completedBytes: 0, totalBytes: 6, startedAt: performance.now(), onProgress() {} });
+  request.upload.dispatchEvent(new Event('load'));
+  request.status = 401;
+  request.response = { reason: 'AUTH_REQUIRED', message: 'Oturum süresi doldu.' };
+  request.dispatchEvent(new Event('load'));
+  await assert.rejects(result, error => error.status === 401 && error.retryable === false && /Oturum/.test(error.message));
+});
+
 test('quota status does not advertise an unused provider as ready for dubbing', async () => {
   const badges = [];
   const f = fixture(functions('checkAiUsageStatus'), {
