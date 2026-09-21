@@ -53,7 +53,7 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
     for (const id of ['dubBufferStatus', 'dubBufferMessage', 'dubRetryBtn', 'dubContinueOriginalBtn']) {
       assert.ok(html.includes(`id="${id}"`), id);
     }
-    for (const path of ['/app.js', '/dubbing-audio.js', '/dubbing-queue.js', '/adult-gameplay.js', '/engine-hardening.js', '/sequence-integrity.js', '/story-engine.js', '/character-identity.js']) {
+    for (const path of ['/app.js', '/mp4-audio.js', '/dubbing-audio.js', '/dubbing-queue.js', '/adult-gameplay.js', '/engine-hardening.js', '/sequence-integrity.js', '/story-engine.js', '/character-identity.js']) {
       const script = await request(path, { headers: { Cookie: cookie } });
       assert.equal(script.status, 200, path);
       assert.match(script.headers.get('content-type'), /javascript/);
@@ -96,5 +96,21 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
     });
     assert.equal(raw.status, 413);
     assert.equal((await raw.json()).reason, 'UPLOAD_TOO_LARGE');
+  });
+  await t.test('compact M4A is accepted by the resumable audio upload endpoint', async () => {
+    const response = await request('/api/dialogue-upload/start', {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ totalSize: 6, fileName: 'dialogue.m4a', mimeType: 'audio/mp4' })
+    });
+    assert.equal(response.status, 200);
+    const { uploadId } = await response.json();
+    const filePath = `/tmp/videoquest-dialogue/${uploadId}.part`;
+    t.after(() => fs.unlink(filePath).catch(() => {}));
+    const uploaded = await request(`/api/dialogue-upload/${uploadId}/chunk`, {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/octet-stream', 'x-chunk-index': '0' },
+      body: 'speech'
+    });
+    assert.equal((await uploaded.json()).complete, true);
+    assert.equal(await fs.readFile(filePath, 'utf8'), 'speech');
   });
 });

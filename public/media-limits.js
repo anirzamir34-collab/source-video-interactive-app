@@ -7,7 +7,7 @@ export function dialogueUploadMimeType(file) {
   if (type && !['application/octet-stream', 'binary/octet-stream'].includes(type)) return type;
   const extension = String(file.name || '').split('.').pop().toLowerCase();
   return ({ mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime', webm: 'video/webm',
-    ogv: 'video/ogg', '3gp': 'video/3gpp', '3g2': 'video/3gpp2', wav: 'audio/wav', mp3: 'audio/mpeg' })[extension] || type;
+    ogv: 'video/ogg', '3gp': 'video/3gpp', '3g2': 'video/3gpp2', wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4' })[extension] || type;
 }
 
 export function dialogueUploadLimit(mimeType) {

@@ -108,6 +108,7 @@ import { normalizeDialogueSegments } from './dialogue-integrity.js';
 import { matchSceneIntroductions, sourcePositionAtTime } from './scene-entry.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
+import { extractMp4Audio } from './mp4-audio.js';
 
 const videoDownloads = createVideoDownloader();
 let savedGames;
@@ -1188,8 +1189,18 @@ async function uploadDialogueWithProgress(
 async function prepareDialoguePayload(file, session = state.analysisSession) {
   if (session?.audioSource === file && session.audioFile instanceof Blob) return session.audioFile;
   const duration = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
+  try {
+    els.analysisOutput.textContent = 'Cihazdaki dosyadan yalnızca konuşma sesi ayrılıyor; video yeniden aktarılmıyor.';
+    const audioFile = await extractMp4Audio(file);
+    if (audioFile) {
+      if (session) { session.audioSource = file; session.audioFile = audioFile; }
+      return audioFile;
+    }
+  } catch (error) {
+    console.warn('Sıkıştırılmış ses kanalı ayrılamadı; mevcut ses hazırlığı kullanılacak:', error);
+  }
   if (!canDecodeDialogueLocally(file, duration)) {
-    els.analysisOutput.textContent = 'Büyük video parçalar halinde gönderilecek; konuşma sesi sunucuda dosyadan hazırlanacak.';
+    els.analysisOutput.textContent = 'Bu dosyanın ses kanalı cihazda ayrılamadı. Video, ses hazırlığı için sunucuya yüklenecek.';
     return file;
   }
   try {
@@ -1234,8 +1245,10 @@ async function analyzeSelectedDialogue(file) {
       form,
       ({ loaded, total, percent, speed }) => {
         els.analysisState.textContent = 'AUDIO_UPLOAD';
-        els.analysisTitle.textContent = `${dialogueFile.type.startsWith('audio/') ? 'Konuşma sesi' : 'Cihazdaki video'} yükleniyor · %${percent}`;
+        const audioOnly = dialogueFile.type.startsWith('audio/');
+        els.analysisTitle.textContent = `${audioOnly ? 'Yalnızca konuşma sesi' : 'Cihazdaki video'} sunucuya yükleniyor · %${percent}`;
         els.analysisOutput.textContent =
+          (audioOnly ? 'Video cihazda kalıyor; sadece ses gönderiliyor.\n' : 'Ses cihazda ayrılamadığı için video sunucuya gönderiliyor.\n') +
           `Gerçek yükleme ilerlemesi: %${percent}\n` +
           `${(loaded / 1024 / 1024).toFixed(1)} / ` +
           `${(total / 1024 / 1024).toFixed(1)} MB\n` +

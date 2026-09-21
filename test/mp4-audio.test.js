@@ -1,0 +1,110 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { extractMp4Audio } from '../public/mp4-audio.js';
+import { dialogueUploadLimit, dialogueUploadMimeType } from '../public/media-limits.js';
+
+const ffmpeg = '/usr/bin/ffmpeg';
+const ffprobe = '/usr/bin/ffprobe';
+const skip = !fs.existsSync(ffmpeg) || !fs.existsSync(ffprobe);
+function directory(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vq-mp4-audio-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+function createVideo(file, extra = [], inputExtra = []) {
+  execFileSync(ffmpeg, ['-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=10',
+    ...inputExtra, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', '3',
+    '-c:v', 'libx264', '-threads', '1', '-pix_fmt', 'yuv420p', '-c:a', 'aac', ...extra, file], { timeout: 10000 });
+}
+function packets(file) {
+  return JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-select_streams', 'a:0', '-show_packets',
+    '-show_data_hash', 'sha256', '-show_entries', 'packet=pts,dts,duration,size,data_hash', '-of', 'json', file])).packets;
+}
+async function verifyTrack(t, { extra = [], inputExtra = [] } = {}) {
+  const dir = directory(t), input = path.join(dir, 'source.mp4'), output = path.join(dir, 'speech.m4a');
+  createVideo(input, extra, inputExtra);
+  const source = fs.readFileSync(input);
+  const audio = await extractMp4Audio(new File([source], 'source.mp4', { type: 'video/mp4' }));
+  assert.ok(audio instanceof File);
+  assert.equal(audio.type, 'audio/mp4');
+  assert.ok(audio.size < source.length);
+  fs.writeFileSync(output, Buffer.from(await audio.arrayBuffer()));
+  const streams = JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-show_streams', '-of', 'json', output])).streams;
+  assert.equal(streams.length, 1);
+  assert.equal(streams[0].codec_type, 'audio');
+  // Compare every compressed packet and its timing, not just a plausible duration.
+  assert.deepEqual(packets(output), packets(input));
+  execFileSync(ffmpeg, ['-v', 'error', '-xerror', '-i', output, '-f', 'null', '-'], { timeout: 10000 });
+  assert.deepEqual(fs.readFileSync(input), source);
+  return { audioBytes: audio.size, videoBytes: source.length };
+}
+
+test('ordinary MP4 with index at the end keeps every audio packet and timestamp', { skip }, async t => {
+  const sizes = await verifyTrack(t);
+  t.diagnostic(JSON.stringify(sizes));
+});
+test('fast-start MP4 keeps every audio packet and timestamp', { skip }, t => verifyTrack(t, { extra: ['-movflags', '+faststart'] }));
+test('delayed audio keeps its original edit list and timestamps', { skip }, t => verifyTrack(t, { inputExtra: ['-itsoffset', '0.6'] }));
+
+test('a 1.9 GB disk-backed MP4 reads only its small index and uploads audio-sized bytes', { skip }, async t => {
+  const dir = directory(t), input = path.join(dir, 'large.mp4');
+  createVideo(input);
+  const originalSize = fs.statSync(input).size;
+  const totalSize = Math.round(1919.4 * 1024 * 1024);
+  const padding = Buffer.alloc(8);
+  padding.writeUInt32BE(totalSize - originalSize, 0);
+  padding.write('free', 4);
+  const fd = fs.openSync(input, 'r+');
+  fs.writeSync(fd, padding, 0, padding.length, originalSize);
+  fs.ftruncateSync(fd, totalSize);
+  fs.closeSync(fd);
+  const source = await fs.openAsBlob(input, { type: 'video/mp4' });
+  let readBytes = 0, largestRead = 0;
+  const slice = source.slice.bind(source);
+  source.arrayBuffer = () => assert.fail('must never read the whole source video');
+  source.slice = (start, end) => {
+    const part = slice(start, end);
+    const read = part.arrayBuffer.bind(part);
+    part.arrayBuffer = () => { readBytes += part.size; largestRead = Math.max(largestRead, part.size); return read(); };
+    return part;
+  };
+  const audio = await extractMp4Audio(source);
+  assert.ok(audio?.size > 0 && audio.size < 100000);
+  assert.ok(readBytes < 100000 && largestRead < 100000);
+  const output = path.join(dir, 'speech.m4a');
+  fs.writeFileSync(output, Buffer.from(await audio.arrayBuffer()));
+  assert.deepEqual(packets(output), packets(input));
+  t.diagnostic(JSON.stringify({ sourceBytes: source.size, uploadedBytes: audio.size, indexReadBytes: readBytes }));
+});
+
+test('fragmented or malformed files return to existing preparation without truncated audio', { skip }, async t => {
+  const dir = directory(t), input = path.join(dir, 'fragmented.mp4');
+  createVideo(input, ['-movflags', 'frag_keyframe+empty_moov']);
+  assert.equal(await extractMp4Audio(await fs.openAsBlob(input)), null);
+  for (const bytes of [Buffer.from('invalid-video'), Buffer.from('00000001mdat0000'), Buffer.alloc(16)]) {
+    assert.equal(await extractMp4Audio(new File([bytes], 'bad.mp4')), null);
+  }
+});
+
+test('chunk offsets outside source media are rejected instead of producing incomplete audio', { skip }, async t => {
+  const dir = directory(t), input = path.join(dir, 'source.mp4');
+  createVideo(input);
+  const bytes = fs.readFileSync(input);
+  let at = -1, count = 0;
+  while ((at = bytes.indexOf('stco', at + 1)) !== -1) {
+    bytes.writeUInt32BE(bytes.length + 10, at + 12);
+    count++;
+  }
+  assert.ok(count >= 2);
+  assert.equal(await extractMp4Audio(new File([bytes], 'broken.mp4')), null);
+});
+
+test('audio-only M4A uses the existing audio upload limit and MIME type', () => {
+  const mime = dialogueUploadMimeType(new File(['audio'], 'dialogue.m4a'));
+  assert.equal(mime, 'audio/mp4');
+  assert.equal(dialogueUploadLimit(mime), 250 * 1024 * 1024);
+});
