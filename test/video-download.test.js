@@ -186,3 +186,121 @@ test('large CDN and local files with generic or missing MIME types retain their 
   assert.equal(dialogueUploadMimeType({ name: 'wrong.mp4', type: 'text/html' }), 'text/html');
   assert.equal(dialogueUploadMimeType({ name: 'speech.wav', type: 'audio/wav' }), 'audio/wav');
 });
+
+test('small network packets use bounded batched disk writes and preserve every byte', async () => {
+  const disk = diskFixture();
+  const bytes = Uint8Array.from({ length: 3 * 1024 * 1024 + 7 }, (_, i) => i % 251);
+  let offset = 0;
+  let packets = 0;
+  const progress = [];
+  const response = new Response(new ReadableStream({ pull(controller) {
+    if (offset === bytes.length) { controller.close(); return; }
+    const end = Math.min(bytes.length, offset + 16 * 1024);
+    controller.enqueue(bytes.slice(offset, end)); offset = end; packets++;
+  } }), { headers: { 'content-length': String(bytes.length), 'content-type': 'video/mp4' } });
+  const downloads = createVideoDownloader({ ...disk, fetch: async () => response });
+  const file = await downloads.download('/video', { onProgress: row => progress.push(row) });
+  assert.deepEqual(new Uint8Array(await file.arrayBuffer()), bytes);
+  assert.equal(packets, 193);
+  assert.equal(disk.events.filter(event => event === 'write').length, 4);
+  assert.ok([...disk.files.values()][0].chunks.every(chunk => chunk.byteLength <= 1024 * 1024));
+  assert.ok(progress.length < packets);
+  assert.equal(progress.at(-1).loaded, bytes.length);
+  await downloads.release(file);
+});
+
+const directUrl = 'https://cdn.example.com/source.mp4';
+test('permitted direct media needs one source request, no proxy and no credentials', async () => {
+  const disk = diskFixture();
+  const calls = [];
+  const progress = [];
+  const downloads = createVideoDownloader({ ...disk, fetch: async (url, options) => {
+    calls.push(url);
+    assert.equal(options.mode, 'cors');
+    assert.equal(options.credentials, 'omit');
+    assert.equal(options.referrerPolicy, 'no-referrer');
+    assert.equal(options.headers, undefined);
+    return new Response('exact original video', { headers: { 'content-type': 'video/mp4' } });
+  } });
+  const file = await downloads.download('/proxy', { directUrl, expectedSize: 20, onProgress: row => progress.push(row) });
+  assert.equal(await file.text(), 'exact original video');
+  assert.deepEqual(calls, [directUrl]);
+  assert.equal(progress.at(-1).transport, 'direct');
+  await downloads.release(file);
+});
+
+test('CORS, HTTP, HTML, changed size and broken direct streams fall back cleanly to the proxy', async () => {
+  for (const failure of ['cors', 'http', 'html', 'size', 'stream']) {
+    const disk = diskFixture();
+    const calls = [];
+    const downloads = createVideoDownloader({ ...disk, fetch: async url => {
+      calls.push(url);
+      if (url === '/proxy') return new Response('video', { headers: { 'content-length': '5', 'content-type': 'video/mp4' } });
+      if (failure === 'cors') throw new TypeError('Failed to fetch');
+      if (failure === 'http') return new Response('denied', { status: 403 });
+      if (failure === 'html') return new Response('<html>login</html>', { headers: { 'content-type': 'text/html' } });
+      if (failure === 'size') return new Response('other video', { headers: { 'content-length': '11' } });
+      let pulled = false;
+      return new Response(new ReadableStream({ pull(controller) {
+        if (pulled) { controller.error(new Error('connection lost')); return; }
+        pulled = true; controller.enqueue(new Uint8Array([1, 2]));
+      } }), { headers: { 'content-type': 'video/mp4' } });
+    } });
+    const file = await downloads.download('/proxy', { directUrl, expectedSize: 5 });
+    assert.equal(await file.text(), 'video', failure);
+    assert.deepEqual(calls, [directUrl, '/proxy']);
+    assert.equal(disk.files.size, 1);
+    assert.equal(disk.held.size, 1);
+    await downloads.release(file);
+    assert.equal(disk.files.size, 0);
+  }
+});
+
+test('a direct source that never sends headers is bounded and releases its request before fallback', async () => {
+  let firstSignal;
+  const downloads = createVideoDownloader({ storage: null, locks: null, fetch: async (url, { signal }) => {
+    if (url === '/proxy') { assert.equal(firstSignal.aborted, true); return new Response('video'); }
+    firstSignal = signal;
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  } });
+  const file = await downloads.download('/proxy', { directUrl, directHeaderTimeoutMs: 5 });
+  assert.equal(await file.text(), 'video');
+});
+
+test('a rejected direct response never waits for its error body before proxy fallback', async () => {
+  let cancelled = false;
+  const downloads = createVideoDownloader({ storage: null, locks: null, fetch: async url => {
+    if (url === '/proxy') { assert.equal(cancelled, true); return new Response('video'); }
+    return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 403 });
+  } });
+  assert.equal(await (await downloads.download('/proxy', { directUrl })).text(), 'video');
+});
+
+test('quota errors, size limits and user cancellation never start a second download', async () => {
+  for (const failure of ['quota', 'limit', 'cancel']) {
+    const disk = diskFixture(failure === 'quota' ? { quota: 1 } : {});
+    const controller = new AbortController();
+    let calls = 0;
+    const downloads = createVideoDownloader({ ...disk, fetch: async () => {
+      calls++;
+      return new Response('video', { headers: { 'content-type': 'video/mp4', 'content-length': '5' } });
+    } });
+    await assert.rejects(downloads.download('/proxy', { directUrl, signal: controller.signal,
+      maxBytes: failure === 'limit' ? 1 : MAX_VIDEO_BYTES,
+      onProgress() { if (failure === 'cancel') controller.abort(); }
+    }));
+    assert.equal(calls, 1);
+    assert.equal(disk.files.size, 0);
+    assert.equal(disk.held.size, 0);
+  }
+});
+
+test('manifest and non-HTTPS inputs always retain the existing proxy flow', async () => {
+  for (const directUrl of ['', 'http://cdn.example.com/video.mp4', 'https://cdn.example.com/video.m3u8', 'https://cdn.example.com/video.mpd']) {
+    const downloads = createVideoDownloader({ storage: null, locks: null, fetch: async url => {
+      assert.equal(url, '/proxy');
+      return new Response('video');
+    } });
+    assert.equal(await (await downloads.download('/proxy', { directUrl })).text(), 'video');
+  }
+});

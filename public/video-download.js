@@ -1,8 +1,9 @@
 import { MAX_VIDEO_BYTES, MAX_MEMORY_VIDEO_BYTES } from './media-limits.js';
 
 const DIRECTORY = 'videoquest-temporary-downloads';
+const WRITE_BATCH_BYTES = 1024 * 1024;
 const lockName = name => `${DIRECTORY}:${name}`;
-const storageError = () => new Error('Video için cihazda yeterli boş depolama alanı yok. Yer açıp tekrar dene.');
+const storageError = () => Object.assign(new Error('Video için cihazda yeterli boş depolama alanı yok. Yer açıp tekrar dene.'), { code: 'VIDEO_STORAGE_FULL' });
 
 export function createVideoDownloader({
   fetch: fetchVideo = (...args) => globalThis.fetch(...args),
@@ -60,12 +61,14 @@ export function createVideoDownloader({
     return file;
   }
 
-  async function download(url, options = {}) {
+  async function transfer(url, options = {}) {
     const controller = new AbortController();
     const requestedLimit = Math.min(MAX_VIDEO_BYTES, Math.max(1, Number(options.maxBytes) || MAX_VIDEO_BYTES));
     let maxBytes = requestedLimit;
     let reader, response, writer, dir, name, unlock;
-    let idleTimer, totalTimer;
+    let idleTimer, totalTimer, headerTimer;
+    let stage = 'network';
+    let writeMs = 0;
     let retained = false;
     const abort = () => controller.abort(options.signal?.reason);
     const checkpoint = () => controller.signal.throwIfAborted();
@@ -73,9 +76,9 @@ export function createVideoDownloader({
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => controller.abort(), 45000);
     };
-    const sizeError = () => new Error(maxBytes < requestedLimit
+    const sizeError = () => Object.assign(new Error(maxBytes < requestedLimit
       ? 'Bu tarayıcı büyük dosyaları doğrudan depolamaya yazamıyor; bellekten indirme sınırı 600 MB. Güncel Chrome/Safari kullan veya videoyu cihazından seç.'
-      : `Video ${Math.round(maxBytes / 1024 / 1024)} MB indirme sınırını aşıyor.`);
+      : `Video ${Math.round(maxBytes / 1024 / 1024)} MB indirme sınırını aşıyor.`), { code: 'VIDEO_SIZE_LIMIT' });
     const dispose = async () => {
       try { if (name) await dir.removeEntry(name); } catch {}
       finally { if (unlock) { await unlock(); unlock = null; } }
@@ -86,14 +89,25 @@ export function createVideoDownloader({
       if (options.maxDurationMs > 0) totalTimer = setTimeout(() => controller.abort(), options.maxDurationMs);
       refreshDeadline();
       checkpoint();
-      response = await fetchVideo(url, { signal: controller.signal });
+      if (options.direct) headerTimer = setTimeout(() => controller.abort(), Math.min(4000, options.directHeaderTimeoutMs || 4000));
+      response = await fetchVideo(url, { signal: controller.signal,
+        ...(options.direct ? { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' } : {}) });
+      clearTimeout(headerTimer);
       if (!response.ok) {
+        if (options.direct) throw new Error(`Doğrudan video aktarımı kullanılamıyor (${response.status}).`);
         const body = await response.json().catch(() => ({}));
         throw new Error(body.message || `Video indirilemedi (${response.status}).`);
       }
-      const total = Number(response.headers.get('content-length')) || 0;
+      const declaredTotal = Number(response.headers.get('content-length')) || 0;
+      const expectedTotal = Math.max(0, Number(options.expectedSize) || 0);
+      if (expectedTotal && declaredTotal && expectedTotal !== declaredTotal) throw new Error('Video kaynak boyutu değişti. Bağlantıyı yeniden aç.');
+      const total = declaredTotal || expectedTotal;
       const contentType = response.headers.get('content-type') || 'video/mp4';
+      if (options.direct && (response.status !== 200 || !/^(?:video\/|application\/octet-stream|binary\/octet-stream)/i.test(contentType))) {
+        throw new Error('Kaynak doğrudan video aktarımını desteklemiyor.');
+      }
       if (total > maxBytes) throw sizeError();
+      stage = 'storage';
       dir = await directory();
       checkpoint();
       if (dir) {
@@ -104,7 +118,7 @@ export function createVideoDownloader({
         unlock = await hold(name);
         checkpoint();
         const handle = await dir.getFileHandle(name, { create: true });
-        // Backpressure: each chunk reaches storage before the next is read.
+        // A bounded buffer below batches network packets into larger writes.
         try { writer = await handle.createWritable(); }
         catch (error) {
           if (!['NotSupportedError', 'SecurityError', 'NotAllowedError'].includes(error.name) && typeof handle.createWritable === 'function') throw error;
@@ -115,46 +129,94 @@ export function createVideoDownloader({
       }
       if (!writer) maxBytes = Math.min(requestedLimit, MAX_MEMORY_VIDEO_BYTES);
       if (total > maxBytes) throw sizeError();
+      stage = 'network';
       reader = response.body?.getReader();
       if (!reader) throw new Error('Tarayıcı video akışını okuyamadı. Güncel bir tarayıcıyla tekrar dene.');
       const chunks = [];
+      let pending = [];
+      let pendingBytes = 0;
+      const write = async value => {
+        stage = 'storage';
+        const started = Date.now();
+        await writer.write(value);
+        writeMs += Date.now() - started;
+        checkpoint();
+      };
+      const flush = async () => {
+        if (!pendingBytes) return;
+        let data = pending[0];
+        if (pending.length > 1) {
+          data = new Uint8Array(pendingBytes);
+          let offset = 0;
+          for (const part of pending) { data.set(part, offset); offset += part.byteLength; }
+        }
+        await write(data);
+        pending = [];
+        pendingBytes = 0;
+      };
       let received = 0;
+      let lastReport = -Infinity;
+      const report = (force = false) => {
+        const now = Date.now();
+        if (force || now - lastReport >= 200) {
+          lastReport = now;
+          options.onProgress?.({ loaded: received, total, transport: options.direct ? 'direct' : 'proxy', writeMs });
+        }
+      };
       while (true) {
         checkpoint();
+        stage = 'network';
         const { done, value } = await reader.read();
         checkpoint();
         if (done) break;
         received += value.byteLength ?? value.length;
         if (received > maxBytes) throw sizeError();
         refreshDeadline();
-        if (writer) await writer.write(value);
+        if (writer) {
+          if (value.byteLength >= WRITE_BATCH_BYTES) { await flush(); await write(value); }
+          else {
+            pending.push(value);
+            pendingBytes += value.byteLength;
+            if (pendingBytes >= WRITE_BATCH_BYTES) await flush();
+          }
+        }
         else chunks.push(value);
         checkpoint();
         refreshDeadline();
-        options.onProgress?.({ loaded: received, total });
+        report();
       }
       if (!received) throw new Error('Video boş geldi.');
       if (total && received !== total) throw new Error('Video aktarımı eksik kaldı. Bağlantıyı kontrol edip tekrar dene.');
       let blob;
       if (writer) {
+        await flush();
+        stage = 'storage';
         await writer.close();
         writer = null;
         checkpoint();
         const file = await (await dir.getFileHandle(name)).getFile();
         if (file.size !== received) throw new Error('Video cihaz depolamasına eksik yazıldı. Tekrar dene.');
         blob = file.slice(0, file.size, contentType);
+        report(true);
+        checkpoint();
         owners.set(blob, dispose);
         retained = true;
-      } else blob = new Blob(chunks, { type: contentType });
+      } else {
+        blob = new Blob(chunks, { type: contentType });
+        report(true);
+        checkpoint();
+      }
       return blob;
     } catch (error) {
       if (options.signal?.aborted) throw options.signal.reason || error;
       if (error.name === 'QuotaExceededError') throw storageError();
-      if (controller.signal.aborted) throw new Error('Video aktarımı durdu. Bağlantını kontrol edip tekrar dene.');
+      if (controller.signal.aborted) error = new Error('Video aktarımı durdu. Bağlantını kontrol edip tekrar dene.');
+      if (options.direct && stage === 'network' && !error.code) error.retryViaProxy = true;
       throw error;
     } finally {
       clearTimeout(idleTimer);
       clearTimeout(totalTimer);
+      clearTimeout(headerTimer);
       options.signal?.removeEventListener('abort', abort);
       controller.abort();
       try { if (reader) await reader.cancel(); else await response?.body?.cancel(); } catch {}
@@ -162,6 +224,25 @@ export function createVideoDownloader({
       if (writer) { try { await writer.abort(); } catch {} }
       if (!retained) await dispose();
     }
+  }
+  async function download(url, options = {}) {
+    const started = Date.now();
+    let directUrl;
+    try {
+      const candidate = new URL(options.directUrl);
+      if (candidate.protocol === 'https:' && !candidate.username && !candidate.password &&
+          !/\.(?:m3u8|mpd)(?:$|[?#])/i.test(candidate.href)) directUrl = candidate.href;
+    } catch {}
+    if (directUrl) {
+      try { return await transfer(directUrl, { ...options, direct: true }); }
+      catch (error) {
+        if (options.signal?.aborted || !error.retryViaProxy) throw error;
+        if (options.maxDurationMs > 0 && Date.now() - started >= options.maxDurationMs) throw error;
+        options.onProgress?.({ loaded: 0, total: options.expectedSize || 0, transport: 'proxy', writeMs: 0 });
+      }
+    }
+    return transfer(url, { ...options, direct: false,
+      maxDurationMs: options.maxDurationMs > 0 ? Math.max(1, options.maxDurationMs - (Date.now() - started)) : 0 });
   }
   return { download, adopt, release };
 }

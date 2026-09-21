@@ -2019,14 +2019,15 @@ async function prepareStoryboardSource(session, file) {
     els.video.load();
     const startedAt = performance.now();
     try {
-      localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total }) => {
+      localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total, transport }) => {
         const knownTotal = total || remote.size || 0;
         const elapsed = Math.max(0.1, (performance.now() - startedAt) / 1000);
         const percent = knownTotal ? ` · %${Math.min(100, Math.round(loaded / knownTotal * 100))}` : '';
         els.analysisTitle.textContent = `Video telefona alınıyor${percent}`;
         els.analysisOutput.textContent = [
           `${(loaded / 1024 / 1024).toFixed(1)}${knownTotal ? ` / ${(knownTotal / 1024 / 1024).toFixed(1)}` : ''} MB`,
-          `${(loaded / 1024 / 1024 / elapsed).toFixed(1)} MB/sn · ${Math.round(elapsed)} sn geçti`,
+          `${(loaded / 1024 / 1024 / elapsed).toFixed(2)} MB/sn · ${Math.round(elapsed)} sn geçti`,
+          transport === 'direct' ? 'Doğrudan kaynaktan telefona indiriliyor.' : 'Kaynak bağlantısı sunucu üzerinden aktarılıyor.',
           'İndirme bitince ses ve kareler aynı dosyadan hazırlanacak.'
         ].join('\n');
       } });
@@ -6194,6 +6195,7 @@ function setUrlStatus(message, type = '') {
 async function downloadUrlVideo(proxyUrl, sourceUrl, options = {}) {
   return videoDownloads.download(proxyUrl, {
     ...options,
+    directUrl: options.allowDirect ? sourceUrl : '',
     onProgress: options.onProgress || (({ loaded, total }) => {
       const totalText = total ? ` / ${(total / 1024 / 1024).toFixed(1)} MB` : '';
       setUrlStatus(`Video hazırlanıyor: ${(loaded / 1024 / 1024).toFixed(1)} MB${totalText}`);
@@ -6242,6 +6244,8 @@ async function ensureSelectedRemoteFile({ onProgress } = {}) {
   task.promise = (async () => {
     const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl, {
       signal: task.controller.signal,
+      allowDirect: remote.directDownload === true,
+      expectedSize: remote.size || 0,
       onProgress: progress => {
         if (remote !== state.selectedRemoteVideo) return;
         if (typeof onProgress === 'function') onProgress(progress);
@@ -6315,7 +6319,8 @@ async function resolveVideoUrl() {
           sourceUrl: result.sourceUrl,
           fileName,
           size: probe.size,
-          contentType: probe.contentType
+          contentType: probe.contentType,
+          directDownload: result.directDownload === true
         };
         state.analysisSession = null;
         els.video.src = result.proxyUrl;
@@ -6331,7 +6336,7 @@ async function resolveVideoUrl() {
     setUrlStatus(['hls', 'dash'].includes(result.type)
       ? `${result.type.toUpperCase()} akışı ${resolveSeconds} sn içinde bulundu. MP4 hazırlanıyor...`
       : `Kaynak ileri sarmayı desteklemiyor. Video cihaza hazırlanıyor...`);
-    const blob = pendingBlob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl);
+    const blob = pendingBlob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl, { allowDirect: result.type === 'video' && result.directDownload === true });
 
     if (!blob.size) throw new Error('Video boş geldi.');
 
