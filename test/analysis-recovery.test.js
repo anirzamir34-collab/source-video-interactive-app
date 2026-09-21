@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { parseStoryboardResponse, generateStoryboardWithRetry, storyboardFailureReason, isTerminalStoryboardFailure,
   hasDeclaredPartialCoverage } from '../public/analysis-recovery.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
+import { serializeReviewCandidates } from '../public/classification-integrity.js';
 
 for (const response of [
   { text: 'I cannot fulfill this request.' },
@@ -115,7 +116,7 @@ test('the live server handler reports refused chapters without retrying or split
       } }; },
       resolveGeminiApiKey: () => 'test-only', emptyGeminiUsage: () => ({ requests: 0 }),
       addGeminiUsage: usage => { usage.requests += 1; },
-      storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure,
+      storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
       process: { env: {} }, console: { warn() {}, error() {} }
     });
     const req = { body: { chunkIndex, chunkCount: 12, chunkStart: chunkIndex * 12,

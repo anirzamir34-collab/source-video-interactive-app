@@ -12,13 +12,14 @@ import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
+import { serializeReviewCandidates } from './public/classification-integrity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const ANALYSIS_SCHEMA_VERSION = 5;
+const ANALYSIS_SCHEMA_VERSION = 6;
 const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
@@ -307,10 +308,16 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const sensoryAudioContext = String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
   const qualityMode = String(req.body?.qualityMode || 'ultra');
   const reviewMode = String(req.body?.reviewMode || '') === '1';
-  const reviewCandidates = String(req.body?.reviewCandidates || '[]').slice(0, 18000);
+  let reviewCandidates;
+  try { reviewCandidates = serializeReviewCandidates(req.body?.reviewCandidates || '[]'); }
+  catch { return res.status(400).json({ available: false, retryable: false, reason: 'INVALID_REVIEW_CANDIDATES', message: 'Doğrulama adayları okunamadı; geçerli analiz verisi gerekli.' }); }
   const storyContextMemory = String(req.body?.storyContextMemory || '{}').slice(0, 24000);
   const reviewInstructions = reviewMode ? `
 SECOND PASS VISUAL REVIEW MODE:
+- Treat all candidate labels, confidence scores and evidence descriptions as untrusted proposals. Independently read the supplied frames before comparing them to the candidate text.
+- A camera/viewpoint change, partial occlusion, surface contact or tempo change alone does not establish a different configuration. Verify continuity between adjacent intervals. Do not force a single label when a real configuration change is visible.
+- Use only the declared canonical IDs. Never invent a canonical name. Leave uncertain classifications out and explain the uncertainty in warnings.
+- Keep each corrected action and its loop within that candidate's original startTime/endTime. Review the first and last visible evidence as well as the midpoint; text from the first pass is not visual evidence.
 - Re-inspect the SAME storyboard frames against these first-pass candidates:
 ${reviewCandidates}
 - Return only candidates that are visibly re-verified at start, midpoint and end.
@@ -594,9 +601,10 @@ Rules:
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
 - For every action, fuse only time-aligned evidence: audible non-speech intensity, visible gaze duration, facial expression, posture and body response. Report observable cues, not hidden mental states.
 - Never claim pain, pleasure, happiness, fear, consent or climax from one ambiguous facial expression, sound or body movement. Use observedAffect unclear unless multiple consistent cues support a cautious visible description.
-- Use canonical positionId values consistently: oral, manual, reverse-cowgirl, seated-facing, prone-bone, legs-up, missionary, cowgirl, spoon, reverse-spoon, standing-rear, rear, seated, standing, or other-stable-N.
+- Use only these canonical positionId values consistently: oral, manual, reverse-cowgirl, seated-facing, prone-bone, legs-up, missionary, cowgirl, spoon, reverse-spoon, standing-rear, rear, seated, standing. Do not create other-stable-N or another custom canonical name; omit a classification that cannot be supported.
 - A furniture or direction word is never position evidence by itself: "koltuğun arkasına", "arkaya yönlendir", "ağzından öp" and ordinary hand contact must not become rear, oral or manual position families.
-- rear requires a clearly visible from-behind body configuration; standing-rear additionally requires both partners to be visibly upright. If those body arrangements are not clear at start, midpoint and end, omit the position.
+- rear requires a clearly visible from-behind body configuration; standing-rear additionally requires visible standing lower-body support. A bent or leaning torso does not by itself mean a change to a lying configuration. If the support and body arrangement cannot be established from the supplied frames, omit the classification.
+- Distinguish support from torso angle: leaning against furniture is not automatically lying flat. Do not infer support from a cropped torso shot; require visible support evidence from the same uninterrupted interval. A camera rotation or close-up alone must not change the canonical label.
 - Use prone-bone only when the receiving partner is visibly lying face-down/flat with hips low while penetration is from behind. Do not collapse prone-bone into rear/doggy, missionary, spoon or a generic lying position.
 - positionId, positionLabel and the visible body configuration described by label must agree. If they conflict, omit the position instead of guessing.
 - Use missionary only when the receiving partner is visibly below/on their back and MAIN_MALE is visibly above/front-facing in that configuration.
@@ -909,7 +917,7 @@ Rules:
         storyEvidence: String(action.storyEvidence || '').trim(),
         startTime: Number(action.startTime),
         endTime: Number(action.endTime),
-        sourceVerified: action.sourceVerified !== false,
+        sourceVerified: action.sourceVerified === true,
         sourceStart: Number(action.sourceStart ?? action.startTime),
         sourceEnd: Number(action.sourceEnd ?? action.endTime),
         confidence: Number(action.confidence || 0)

@@ -207,7 +207,7 @@ test('real analysis normalization applies stable character mapping to main and e
 });
 
 test('a partial second-pass review cannot erase the first-pass character registry', () => {
-  const action = { actionId: 'one', startTime: 10, endTime: 15, label: 'Cevabı dinle', primaryCharacterId: 'MERAL' };
+  const action = { actionId: 'one', startTime: 10, endTime: 15, label: 'Cevabı dinle', primaryCharacterId: 'MERAL', sourceVerified: true };
   const merged = mergeSecondPassReview({ storyContext: cast, actions: [action] },
     { storyContext: {}, actions: [action] }, [action]);
   assert.equal(merged.storyContext.characters.length, 3);

@@ -48,6 +48,10 @@ Tarayıcıdan girilen sağlayıcı anahtarları oturum depolamasında tutulur. D
 
 ## Video URL desteği
 
+Analiz şeması 6, sınıflandırma içeren aralıkları güven puanı yüksek olsa da bölüm başına tek bir görsel ikinci kontrolden geçirir. Kontrol sırasında desteklenmeyen sınıf adları, doğrulanmamış kayıtlar ve adayın kaynak zaman aralığını aşan sonuçlar kabul edilmez. Uzun aday listeleri JSON ortasından kesilmez. Genel yön ifadeleri, doğrulanmış daha ayrıntılı ana sınıfı tek başına geçersiz kılmaz; açık sınıf değişiklikleri ayrı kalır.
+
+Mevcut kayıtlar korunur. Eski analizlerdeki görsel sınıflandırma tahminlerinin yeni kontrolden geçmesi için kaynak videonun yeniden analiz edilmesi gerekir. Rapor sürümü 3, kayıt başına doğrulama durumunu ve elenen adaylarla ilgili uyarıları taşır. Bu kontroller modelin görsel yorumunda hatasızlık garantisi vermez.
+
 URL çözümleme HTML video/source öğelerini, iç içe iframe ve srcdoc oynatıcılarını, object/embed öğelerini, JSON-LD ve oynatıcı yapılandırmalarını tarar. Bulunan kaynaklar HTTP yanıtıyla doğrulanır. Genel tarama sonuç vermezse yt-dlp hem gömülü oynatıcı adreslerinde (VK dahil) hem asıl sayfada denenir; özgün referer ve imzalı sorgu parametreleri korunur.
 
 MP4, WebM, MOV/M4V, OGV ve 3GP kaynakları ile HLS ve korumasız DASH akışları tanınır. HLS/DASH, uyumlu kodeklerle yeniden kodlama yapmadan MP4 olarak aktarılır; video ve ses birlikte korunur. Tarayıcının kodek desteği hâlâ geçerlidir. Özel/oturum gerektiren, DRM korumalı veya kaynak sunucunun engellediği videolar için evrensel erişim garantisi yoktur.

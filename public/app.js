@@ -2888,6 +2888,7 @@ function normalizeAnalysis(body) {
       receiverSupport: String(a.receiverSupport || 'unclear'),
       positionConfigurationConfidence: Math.max(0, Math.min(1, Number(a.positionConfigurationConfidence) || 0)),
       positionEvidence: String(a.positionEvidence || ''),
+      classificationReview: a.classificationReview === 'verified' ? 'verified' : 'pending',
       groupScene: a.groupScene === true,
       adultParticipantCount: Math.max(0, Math.floor(Number(a.adultParticipantCount) || 0)),
       participantTrackIds: Array.isArray(a.participantTrackIds)
@@ -3210,6 +3211,7 @@ function prepareAdultScenes() {
       receiverSupport: String(action?.receiverSupport || ''),
       positionConfigurationConfidence: Number(action?.positionConfigurationConfidence || 0),
       positionEvidence: String(action?.positionEvidence || ''),
+      classificationReview: String(action?.classificationReview || 'legacy'),
       groupScene: action?.groupScene === true,
       partnerTrackId: String(action?.partnerTrackId || ''),
       partnerLabel: String(action?.partnerLabel || ''),
@@ -3242,7 +3244,7 @@ function prepareAdultScenes() {
   }));
   const traceByAction = new Map(actions.map((action, index) => [action, traceRows[index]]));
   state.adultAnalysisTrace = {
-    reportVersion: 2,
+    reportVersion: 3,
     generatedAt: new Date().toISOString(),
     engineVersion: ENGINE_VERSION,
     analysisFingerprint: state.analysisFingerprint || '',
@@ -3255,7 +3257,7 @@ function prepareAdultScenes() {
     },
     actions: traceRows,
     graph: null,
-    warnings: []
+    warnings: [...(state.analysis?.warnings || [])]
   };
   const sceneMap = new Map();
   const sceneOccurrenceIds = assignAdultSceneOccurrenceIds(actions);

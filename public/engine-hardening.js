@@ -1,10 +1,11 @@
 import { hasDeclaredPartialCoverage } from './analysis-recovery.js';
 import { clipRange, sourceRangeForClip } from './sequence-integrity.js';
 import { mergeStoryContexts } from './story-engine.js';
+import { isClassificationCandidate, isVerifiedReviewWithinSource, knownPositionId } from './classification-integrity.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
-export const ANALYSIS_SCHEMA_VERSION = 5;
+export const ANALYSIS_SCHEMA_VERSION = 6;
 export const ENGINE_VERSION = 'videoquest-story-v1';
 export const SAVE_VERSION = 9;
 
@@ -174,6 +175,8 @@ function structuralPositionFamily(action = {}) {
 }
 
 function textualPositionFamily(action = {}) {
+  const declaredId = knownPositionId(action.positionId);
+  if (declaredId) return declaredId;
   const text = normalizedText(`${action.positionId || ''} ${action.positionLabel || ''} ${action.label || ''}`);
   if (/\b(reverse cowgirl|reverse rider|ters kovboy|ters cowgirl|ters rider|ters kucak(?:ta)?|arkasi donuk kovboy|sirtini donerek ustte)\b/.test(text)) return 'reverse-cowgirl';
   if (/\b(lap dance|kucakta|kucaginda|lotus|yuz yuze oturarak|seated face to face)\b/.test(text)) return 'seated-facing';
@@ -275,6 +278,12 @@ export function secondPassReviewCandidates(result = {}) {
   // Final/outcome mistakes are expensive in gameplay, so they always receive
   // one visual verification pass. Ordinary foreplay and generic actions do not.
   actions.forEach(action => {
+    // A model's own confidence score cannot certify its visual classification.
+    // Review every classified interval together in one request for this chunk.
+    if (isClassificationCandidate(action) && action.classificationReview !== 'verified') {
+      selected.add(action);
+      return;
+    }
     if (action?.partnerSwitch === true || String(action?.actionType || '').toLowerCase() === 'partner_transition') {
       selected.add(action);
       return;
@@ -355,12 +364,21 @@ export function mergeSecondPassReview(firstPass = {}, reviewPass = {}, candidate
   const untouched = firstActions.filter(action => !candidateIds.has(String(action?.actionId || '')));
   // A second pass may verify, correct, or omit only the supplied candidates.
   // It is never allowed to invent a brand-new action id.
-  const verified = reviewedActions.filter(action => candidateIds.has(String(action?.actionId || '')));
+  const originals = new Map(firstActions.map(action => [String(action.actionId || ''), action]));
+  const seen = new Set();
+  const verified = reviewedActions.filter(action => {
+    const id = String(action?.actionId || '');
+    if (!candidateIds.has(id) || seen.has(id) || !isVerifiedReviewWithinSource(action, originals.get(id))) return false;
+    seen.add(id);
+    return true;
+  }).map(action => ({ ...action, classificationReview: 'verified' }));
   const actions = [...untouched, ...verified]
     .sort((a, b) => numberOr(a.startTime) - numberOr(b.startTime));
+  const rejectedIds = [...candidateIds].filter(id => !seen.has(id));
   const warnings = [...new Set([
     ...(Array.isArray(firstPass.warnings) ? firstPass.warnings : []),
-    ...(Array.isArray(reviewPass.warnings) ? reviewPass.warnings : [])
+    ...(Array.isArray(reviewPass.warnings) ? reviewPass.warnings : []),
+    ...(rejectedIds.length ? [`${rejectedIds.length} aday görsel doğrulama veya kaynak aralığı kontrolünden geçemedi; seçeneklere eklenmedi.`] : [])
   ])];
 
   return {
@@ -371,6 +389,7 @@ export function mergeSecondPassReview(firstPass = {}, reviewPass = {}, candidate
     warnings,
     secondPassReviewed: true,
     secondPassCandidateCount: candidateIds.size,
+    classificationReviewRejectedIds: rejectedIds,
     firstPassActionCount: firstActions.length
   };
 }
@@ -404,6 +423,13 @@ export function reviewAndHardenAnalysis(input = {}) {
     const confidence = actionConfidence(action);
     const minimum = minimumConfidenceForAction(action);
     const id = String(action.actionId || `action-${action.__index}`);
+
+    if (Number(input.schemaVersion) >= 6 && isClassificationCandidate(action) &&
+        (!knownPositionId(action.positionId) || action.classificationReview !== 'verified')) {
+      droppedActionIds.push(id);
+      issues.push({ severity: 'drop', code: 'UNVERIFIED_CLASSIFICATION', actionId: id });
+      continue;
+    }
 
     if (!interval.valid) {
       droppedActionIds.push(id);

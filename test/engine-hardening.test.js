@@ -36,17 +36,17 @@ test('timeline validator rejects broken ranges and movement outside parent posit
   assert.ok(validateActionInterval(action, 30).reasons.includes('LOOP_OUTSIDE_POSITION'));
 });
 
-test('second visual pass is selective: only critical positions, conflicts and finals', () => {
+test('already reviewed classifications avoid redundant review unless other evidence is uncertain', () => {
   const genericLow = { actionId: 'g', startTime: 0, endTime: 2, confidence: 0.6 };
   const foreplayHigh = { actionId: 'f', startTime: 2, endTime: 5, confidence: 0.95, adultScene: true, actionType: 'touch' };
   const coreHigh = {
     actionId: 'p-high', startTime: 10, endTime: 25, confidence: 0.95, adultScene: true,
-    adultSceneId: 's', actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner'
+    adultSceneId: 's', actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner', classificationReview: 'verified'
   };
   const coreLow = { ...coreHigh, actionId: 'p-low', startTime: 30, endTime: 45, confidence: 0.78 };
   const oralLow = {
     actionId: 'oral', startTime: 46, endTime: 58, confidence: 0.76, adultScene: true,
-    adultSceneId: 's', actionType: 'position', positionId: 'oral', positionLabel: 'Oral'
+    adultSceneId: 's', actionType: 'position', positionId: 'oral', positionLabel: 'Oral', classificationReview: 'verified'
   };
   const final = {
     actionId: 'final', startTime: 60, endTime: 65, confidence: 0.96, adultScene: true,
@@ -61,7 +61,7 @@ test('second visual pass is selective: only critical positions, conflicts and fi
 test('group scenes are rechecked only when identity evidence is incomplete, while partner switches always are', () => {
   const groupPosition = {
     actionId: 'group-position', sourceVerified: true, confidence: 0.98,
-    actionType: 'position', positionId: 'cowgirl', groupScene: true,
+    actionType: 'position', positionId: 'cowgirl', groupScene: true, classificationReview: 'verified',
     partnerTrackId: 'PARTNER_B', partnerEvidence: 'same visible partner at start midpoint and end',
     participantTrackIds: ['MAIN_MALE', 'PARTNER_A', 'PARTNER_B'], startTime: 20, endTime: 35
   };
@@ -94,7 +94,7 @@ test('only uncertain vaginal or anal claims receive a visual route recheck', () 
   const ambiguous = {
     actionId: 'route-low', startTime: 10, endTime: 25, confidence: 0.98, adultSceneId: 's',
     actionType: 'position', positionId: 'missionary', positionLabel: 'Misyoner',
-    activityType: 'vaginal', activityTypeConfidence: 0.72, activityEvidence: ''
+    activityType: 'vaginal', activityTypeConfidence: 0.72, activityEvidence: '', classificationReview: 'verified'
   };
   const clear = { ...ambiguous, actionId: 'route-high', activityTypeConfidence: 0.96, activityEvidence: 'direct visible route evidence' };
   const anal = { ...clear, actionId: 'route-anal', startTime: 30, endTime: 45, activityType: 'anal' };
@@ -161,7 +161,8 @@ test('hardening downgrades unsupported penetrative route instead of keeping a fa
 test('selective review preserves safe first-pass actions and rejects invented review ids', () => {
   const safe = { actionId: 'safe', label: 'Dokun', startTime: 1, endTime: 3, confidence: 0.95 };
   const risky = { actionId: 'risky', label: 'Misyoner', startTime: 10, endTime: 20, confidence: 0.78 };
-  const reviewedRisky = { ...risky, confidence: 0.93, positionId: 'missionary' };
+  const reviewedRisky = { ...risky, confidence: 0.93, positionId: 'missionary', sourceVerified: true,
+    positionEvidence: 'Visible configuration confirmed in the source frames', positionConfigurationConfidence: 0.94 };
   const invented = { actionId: 'invented', label: 'Uydurma', startTime: 30, endTime: 40, confidence: 1 };
   const merged = mergeSecondPassReview(
     { actions: [safe, risky], warnings: ['first'] },

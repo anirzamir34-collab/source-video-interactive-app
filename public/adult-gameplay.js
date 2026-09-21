@@ -1,9 +1,12 @@
 import { groupSourceChoiceCards, sourceActionLabel, sourceIdentityLabel } from './choice-groups.js';
 import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
+import { knownPositionId } from './classification-integrity.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
 export function adultPositionFamily(value) {
+  const canonicalId = knownPositionId(value);
+  if (canonicalId) return canonicalId;
   const text = String(value || '')
     .toLocaleLowerCase('tr-TR')
     .replace(/[ıİ]/g, 'i')
@@ -264,6 +267,7 @@ export function resolveVerifiedAdultPosition(action = {}) {
 }
 
 export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '') {
+  if (['body_transition', 'partner_transition', 'camera_transition'].includes(String(action.actionType || '').toLowerCase())) return false;
   const structuralFamily = adultPositionFamilyFromBodyConfiguration(action);
   if (structuralFamily && structuralFamily !== canonicalId) return false;
   const source = [
@@ -272,10 +276,6 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
     action.activityEvidence,
     action.sensoryEvidence
   ].filter(Boolean).join(' ');
-  const family = adultPositionFamily(source);
-  if (family && family !== canonicalId) return false;
-  if (family && family === canonicalId) return true;
-
   const text = String(source || '')
     .toLocaleLowerCase('tr-TR')
     .replace(/[ıİ]/g, 'i')
@@ -290,9 +290,18 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
   // Only an explicit change to another configuration is a transition.
   // Words describing the ongoing verified activity (vaginal, penetration,
   // kissing or touching) are legitimate position-local movement choices.
-  const actionType = String(action.actionType || '').toLowerCase();
-  if (['body_transition', 'partner_transition', 'camera_transition'].includes(actionType)) return false;
-  return !/\b(gecis|transition|pozisyon(?:una|a)?\s+gec|pozisyon\s+degistir|ustune\s+cik|yuzustu\s+don|donerken|yonlendir)\b/.test(text);
+  if (/\b(gecis|transition|pozisyon(?:una|a)?\s+gec|pozisyon\s+degistir|ustune\s+cik|yuzustu\s+don|donerken|yonlendir)\b/.test(text)) return false;
+  const family = adultPositionFamily(source);
+  if (family && family !== canonicalId) {
+    // Generic direction prose cannot override a verified specific parent.
+    // An explicitly different named configuration is still a conflict.
+    const broadDirectionOnly = family === 'rear' &&
+      /\b(?:arkadan|from[ -]behind|rear)\b/.test(text) &&
+      !/doggy|dort|hands[ _-]knees/.test(text);
+    return Boolean(broadDirectionOnly && resolveVerifiedAdultPosition(action).family === canonicalId &&
+      ['standing-rear', 'prone-bone'].includes(canonicalId));
+  }
+  return true;
 }
 
 export const DEFAULT_OUTCOME_UNLOCK_PROGRESS = 92;
