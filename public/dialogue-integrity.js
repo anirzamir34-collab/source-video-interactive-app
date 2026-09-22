@@ -1,19 +1,11 @@
 const clean = value => String(value || '').trim().replace(/\s+/g, ' ');
 const textKey = value => clean(value).normalize('NFKC').toLocaleLowerCase('tr-TR').replace(/[\p{P}\p{S}]/gu, '').trim();
 
-// Speech recognition occasionally returns the English interjection "ah" as a
-// standalone Turkish letter ("A evet"). ElevenLabs then reads that as the
-// letter name, which sounds robotic and can be especially distracting in a
-// rapid exchange. Keep the spoken meaning while making only this narrowly
-// defined transcription artefact pronounceable. Also collapse an immediately
-// duplicated short interjection inside one model segment; repetitions at
-// different source times remain untouched.
+// Normalize spacing without guessing which words were really spoken.
 export function naturalizeTurkishSpeech(value) {
-  let text = clean(value);
-  if (!text) return '';
-  text = text.replace(/\ba\s+(?=evet\b)/giu, 'Ah, ');
-  text = text.replace(/\b(ah[,!]?\s+evet[.!]?)(?:\s+\1){1,3}/giu, '$1');
-  return text;
+  // Text alone cannot distinguish a real repetition from an ASR error.
+  // Never invent an interjection or delete source words to mask audio issues.
+  return clean(value);
 }
 
 // Only collapse duplicate observations of the same speaker at the same time.

@@ -73,7 +73,7 @@ test('Eleven v3 delivery keeps neutral lines clean and maps grounded emotion con
   assert.equal(f.scope.elevenV3DeliveryTag('soft and relaxed'), '[softly]');
   assert.equal(f.scope.elevenV3DeliveryTag('unrecognized-state'), '');
   assert.match(source, /model_id:\s*'eleven_v3'/);
-  assert.match(source, /stability:\s*0\.5/);
+  assert.match(source, /stability:.*\? 1 : 0\.5/);
   assert.doesNotMatch(section('async function elevenLabsSynthesize(', '\n\nfunction elevenLabsErrorResponse('), /previous_text|next_text/);
   assert.doesNotMatch(source, /model_id:\s*'eleven_multilingual_v2'/);
 });
@@ -120,11 +120,16 @@ test('four speakers use their assigned voices even for identical text; cache nev
     assert.match(calls[i].url, new RegExp(`/text-to-speech/${voices[i].voice_id}\\?`));
     assert.equal(calls[i].body.language_code, 'tr');
     assert.equal(calls[i].body.model_id, 'eleven_v3');
+    assert.equal(calls[i].body.text, 'Merhaba.');
+    assert.equal(calls[i].body.voice_settings.stability, 1);
   }
   assert.equal((await synthesize('one')).cacheHit, true);
   assert.equal(calls.length, 4);
+  await f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Bugün hep birlikte dışarı çıkıp biraz yürüyelim.', voiceId: 'one', emotion: 'excited' });
+  assert.equal(calls[4].body.text, 'Bugün hep birlikte dışarı çıkıp biraz yürüyelim.');
+  assert.equal(calls[4].body.voice_settings.stability, 0.5);
   await assert.rejects(synthesize('removed-voice'), { code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
 });
 
 test('remote dialogue audio uses compact speech-optimized MP3 settings', () => {

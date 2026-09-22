@@ -39,14 +39,14 @@ test('explicit legacy merging cannot combine contradictory speaker annotations',
   assert.equal(blocks.length, 2);
 });
 
-test('Turkish dub text repairs the isolated A/ah artefact without deleting timed repetitions', () => {
-  assert.equal(naturalizeTurkishSpeech('A evet A evet'), 'Ah, evet');
+test('Turkish dub text preserves words and repetitions without inventing interjections', () => {
+  assert.equal(naturalizeTurkishSpeech('A evet A evet'), 'A evet A evet');
   assert.equal(naturalizeTurkishSpeech('Tamam, evet.'), 'Tamam, evet.');
   const rows = normalizeDialogueSegments([
     line({ segmentId: 'a', startTime: 1, endTime: 2, turkishText: 'A evet' }),
     line({ segmentId: 'b', startTime: 4, endTime: 5, turkishText: 'A evet' })
   ]);
-  assert.deepEqual(rows.map(row => row.turkishText), ['Ah, evet', 'Ah, evet']);
+  assert.deepEqual(rows.map(row => row.turkishText), ['A evet', 'A evet']);
 });
 
 test('adjacent subtitle rows from one speaker form a complete dub utterance', () => {

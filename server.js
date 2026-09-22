@@ -2574,10 +2574,14 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
   const voice = voiceSet.voices.find(item => item.voice_id === requested);
   if (!voice?.voice_id) throw Object.assign(new Error('Karaktere atanmış ses kullanılamıyor; başka sesle değiştirilmedi. Dublaj seslerini yeniden hazırla.'),
     { status: 422, code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
-  const deliveryText = [elevenV3DeliveryTag(emotion), text].filter(Boolean).join(' ');
+  // Short replies need restrained delivery, not an automatically added acting
+  // tag. Keep longer speech on Natural and use Robust for very short replies.
+  const deliveryText = String(text || '').trim();
+  const voiceSettings = { stability: deliveryText.split(/\s+/u).length <= 4 ? 1 : 0.5,
+    similarity_boost: 0.75, use_speaker_boost: true };
   const accountHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
   const cacheKey = crypto.createHash('sha256')
-    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128']))
+    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, 'natural-dialogue-v2']))
     .digest('hex');
   pruneElevenLabsAudioCache();
   const cached = elevenLabsAudioCache.get(cacheKey);
@@ -2600,7 +2604,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
           text: deliveryText,
           model_id: 'eleven_v3',
           language_code: 'tr',
-          voice_settings: { stability: 0.5, similarity_boost: 0.82, use_speaker_boost: true }
+          voice_settings: voiceSettings
         })
       }
     );

@@ -72,9 +72,8 @@ export function canFinishDubTail(audio, nextSegment, videoTime) {
     (!Number.isFinite(boundary) || Number(videoTime) - boundary <= 1.1);
 }
 
-// Follow the rate actually used by this utterance, not a different linear
-// duration fit. Never seek backwards during continuous playback: that repeats
-// words. A voice ahead of the video waits; a stalled voice resynchronizes.
+// Preserve syllables during continuous playback. Explicit source seeks are
+// handled by the player; decoder drift must not pause or jump through speech.
 export function correctDubClock(audio, videoTime, videoRate = 1) {
   const rate = Number(audio._vqSpeechRate) || 1;
   const anchor = Number(audio._vqAnchorVideoTime);
@@ -82,12 +81,12 @@ export function correctDubClock(audio, videoTime, videoRate = 1) {
   const target = Math.max(0, Math.min(audio.duration,
     (Number(audio._vqAnchorAudioTime) || 0) + Math.max(0, videoTime - anchor) * rate));
   const drift = Number(audio.currentTime) - target;
-  if (drift > 0.4) {
-    audio._vqClockHold = true;
-    audio.pause();
-  } else if (audio._vqClockHold && drift <= 0.08) audio._vqClockHold = false;
-  if (drift < -0.4) audio.currentTime = target;
+  audio._vqClockHold = false;
+  if (Math.abs(drift) > 0.4) {
+    audio._vqAnchorVideoTime = videoTime;
+    audio._vqAnchorAudioTime = Number(audio.currentTime) || 0;
+  }
   const correction = Math.abs(drift) >= 0.12 && Math.abs(drift) <= 0.4
-    ? Math.min(0.08, Math.max(-0.08, -drift * 0.25)) : 0;
+    ? Math.min(0.03, Math.max(-0.03, -drift * 0.1)) : 0;
   audio.playbackRate = Math.max(0.25, Math.min(4, (rate + correction) * videoRate));
 }

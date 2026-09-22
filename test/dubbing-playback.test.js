@@ -136,7 +136,7 @@ test('voice fitting leaves short speech natural and bounds longer speech', () =>
   assert.equal(naturalDubRate(4, 4, 0.5), 0.5);
 });
 
-test('continuous clock correction never rewinds heard words and resumes after the video catches up', async () => {
+test('continuous clock drift never pauses or restarts a heard sentence', async () => {
   const f = fixture([line('a', 1, 7)], { durations: { a: 6 } });
   try {
     await f.sync();
@@ -145,17 +145,17 @@ test('continuous clock correction never rewinds heard words and resumes after th
     f.video.currentTime = 1.3;
     await f.sync();
     assert.equal(audio.currentTime, 1);
-    assert.equal(audio.paused, true);
+    assert.equal(audio.paused, false);
     assert.equal(audio.plays, 1);
     f.video.currentTime = 1.95;
     await f.sync();
     assert.equal(audio.paused, false);
     assert.equal(audio.currentTime, 1);
-    assert.equal(audio.plays, 2);
+    assert.equal(audio.plays, 1);
   } finally { f.close(); }
 });
 
-test('an audio decoder stall resynchronizes to the video and follows playback speed', async () => {
+test('an audio decoder stall preserves unspoken syllables and follows playback speed', async () => {
   const f = fixture([line('a', 1, 7)], { durations: { a: 6 } });
   try {
     await f.sync();
@@ -164,7 +164,7 @@ test('an audio decoder stall resynchronizes to the video and follows playback sp
     f.video.currentTime = 2;
     f.video.playbackRate = 1.5;
     await f.sync();
-    assert.equal(audio.currentTime, 1);
+    assert.equal(audio.currentTime, .2);
     assert.equal(audio.playbackRate, 1.5);
     assert.equal(audio.plays, 1);
   } finally { f.close(); }
