@@ -719,6 +719,8 @@ test('a stale transfer or incomplete file cannot replace the current source', as
 
 test('large or long videos skip full browser decoding before chunked upload', async () => {
   const f = fixture(functions('prepareDialoguePayload'), {
+    setInterval, clearInterval,
+    extractMp4Audio: async () => null,
     extractDialogueAudio() { assert.fail('large source must not be read into an ArrayBuffer'); }
   });
   for (const [size, duration] of [[700 * 1024 * 1024, 300], [10 * 1024 * 1024, 1800]]) {

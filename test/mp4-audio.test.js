@@ -119,3 +119,67 @@ test('thousands of source fragments become a few sequential upload blocks withou
   const packed = new Uint8Array(await new Blob(parts).arrayBuffer());
   assert.deepEqual(packed, bytes);
 });
+
+test('packing sparse audio uses bounded batch reads, not one async file read per tiny sample', async t => {
+  const bytes = Uint8Array.from({ length: 8194 }, (_, index) => index % 251);
+  const file = new File([bytes], 'interleaved.mp4');
+  const chunks = Array.from({ length: 4097 }, (_, i) => ({ start: i * 2, size: 1 }));
+  const originalRead = Blob.prototype.arrayBuffer;
+  const reads = [];
+  const progress = [];
+  Blob.prototype.arrayBuffer = function () { reads.push(this.size); return originalRead.call(this); };
+  t.after(() => { Blob.prototype.arrayBuffer = originalRead; });
+  const parts = await packAudioChunks(file, chunks, chunks.length, 1024, {
+    onProgress: value => progress.push(value)
+  });
+  assert.ok(reads.length <= 5, `${reads.length} file reads for only 4097 audio bytes`);
+  assert.ok(reads.every(size => size <= 1024));
+  assert.equal(progress.at(-1)?.loaded, 4097);
+  assert.equal(progress.at(-1)?.total, 4097);
+  assert.ok(progress.every((row, i) => !i || row.loaded > progress[i - 1].loaded));
+  assert.deepEqual(new Uint8Array(await new Blob(parts).arrayBuffer()),
+    Uint8Array.from(chunks, chunk => bytes[chunk.start]));
+});
+
+test('a never-settling Android file read releases preparation at its deadline', async () => {
+  const file = new File([new Uint8Array(32)], 'stalled.mp4');
+  file.slice = () => Object.assign(new Blob(['pending-read']), { arrayBuffer: () => new Promise(() => {}) });
+  let watchdog;
+  try {
+    await assert.rejects(Promise.race([
+      extractMp4Audio(file, { timeoutMs: 5 }),
+      new Promise(resolve => { watchdog = setTimeout(() => resolve('still-pending'), 100); })
+    ]), error => error.code === 'LOCAL_AUDIO_PREPARATION_TIMEOUT');
+  } finally { clearTimeout(watchdog); }
+});
+
+test('cancelled extraction never reads the old file or reports progress', async () => {
+  const file = new File([new Uint8Array(32)], 'old.mp4');
+  file.slice = () => assert.fail('cancelled source must not be read');
+  const reason = new Error('new source selected');
+  await assert.rejects(extractMp4Audio(file, {
+    signal: AbortSignal.abort(reason), onProgress: () => assert.fail('stale progress')
+  }), error => error === reason);
+});
+
+test('a late batch read after cancellation cannot publish progress or start another batch', async t => {
+  const originalRead = Blob.prototype.arrayBuffer;
+  let finishRead;
+  let reads = 0;
+  Blob.prototype.arrayBuffer = function () {
+    reads++;
+    return new Promise(resolve => { finishRead = () => resolve(new ArrayBuffer(this.size)); });
+  };
+  t.after(() => { Blob.prototype.arrayBuffer = originalRead; });
+  const controller = new AbortController();
+  const progress = [];
+  const pending = packAudioChunks(new File([new Uint8Array(2048)], 'source.mp4'),
+    [{ start: 0, size: 2048 }], 2048, 1024, { signal: controller.signal, onProgress: row => progress.push(row) });
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  finishRead();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 1);
+  assert.equal(progress.length, 0);
+});

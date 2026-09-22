@@ -1211,15 +1211,51 @@ async function uploadDialogueWithProgress(
 async function prepareDialoguePayload(file, session = state.analysisSession) {
   if (session?.audioSource === file && session.audioFile instanceof Blob) return session.audioFile;
   const duration = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
+  const controller = new AbortController();
+  session?.audioPreparationController?.abort();
+  if (session) session.audioPreparationController = controller;
+  const startedAt = performance.now();
+  let progress = null;
+  const showPreparation = () => {
+    if (controller.signal.aborted || (session && session !== state.analysisSession)) return;
+    const elapsed = Math.round((performance.now() - startedAt) / 1000);
+    const total = Number(progress?.total) || 0;
+    const loaded = Number(progress?.loaded) || 0;
+    const percent = total ? Math.min(100, Math.round(loaded / total * 100)) : null;
+    els.analysisTitle.textContent = percent === null
+      ? `Videonun ses bilgileri okunuyor · ${elapsed} sn`
+      : `Konuşma sesi hazırlanıyor · %${percent}`;
+    els.analysisOutput.textContent = (total
+      ? `Hazırlanan ses: ${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n`
+      : 'Video cihazda kalıyor; ses kanalı bulunuyor.\n') +
+      `${elapsed} sn geçti. Cihazda hazırlama 60 saniyede tamamlanamazsa sunucuda devam edilecek.`;
+  };
+  showPreparation();
+  const preparationTimer = setInterval(showPreparation, 1000);
   try {
-    els.analysisOutput.textContent = 'Cihazdaki dosyadan yalnızca konuşma sesi ayrılıyor; video yeniden aktarılmıyor.';
-    const audioFile = await extractMp4Audio(file);
+    const audioFile = await extractMp4Audio(file, {
+      signal: controller.signal,
+      onProgress: value => { progress = value; showPreparation(); }
+    });
+    controller.signal.throwIfAborted();
     if (audioFile) {
       if (session) { session.audioSource = file; session.audioFile = audioFile; }
       return audioFile;
     }
   } catch (error) {
+    if (controller.signal.aborted) throw error;
+    if (error?.code === 'LOCAL_AUDIO_PREPARATION_TIMEOUT') {
+      // A stuck file read must not start another full-file local decoder.
+      // Reuse the original bytes with the existing server audio preparation.
+      els.analysisTitle.textContent = 'Ses hazırlığı sunucuda devam edecek';
+      els.analysisOutput.textContent = 'Cihazda ses hazırlama 60 saniyede tamamlanamadı. Mevcut video sunucuya yüklenerek devam edilecek.';
+      if (session) { session.audioSource = file; session.audioFile = file; }
+      return file;
+    }
     console.warn('Sıkıştırılmış ses kanalı ayrılamadı; mevcut ses hazırlığı kullanılacak:', error);
+  } finally {
+    clearInterval(preparationTimer);
+    if (session?.audioPreparationController === controller) delete session.audioPreparationController;
   }
   if (!canDecodeDialogueLocally(file, duration)) {
     els.analysisOutput.textContent = 'Bu dosyanın ses kanalı cihazda ayrılamadı. Video, ses hazırlığı için sunucuya yüklenecek.';
@@ -6162,6 +6198,7 @@ setInterval(checkAiUsageStatus, 60 * 1000);
 renderDebug();
 
 function clearPreviousGameResidue() {
+  state.analysisSession?.audioPreparationController?.abort();
   state.activeSavedGameId = null;
   state.savedGameReady = false;
   state.savedPlaybackOnly = false;

@@ -6,9 +6,32 @@ import { MAX_AUDIO_BYTES } from './media-limits.js';
 // Fragmented, encrypted and unsupported containers use the existing fallback.
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
 const PACK_BYTES = 1024 * 1024;
+const MAX_PACK_SLICES = 2048;
+const PREPARATION_TIMEOUT_MS = 60000;
 const invalid = () => { throw new Error('MP4_AUDIO_UNSUPPORTED'); };
 const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 const tag = (bytes, at) => String.fromCharCode(...bytes.subarray(at, at + 4));
+
+function readBlob(blob, signal) {
+  signal?.throwIfAborted();
+  if (!signal) return blob.arrayBuffer();
+  // Blob.arrayBuffer has no abort argument. Release the caller even if Android
+  // never settles a read, and ignore its eventual result after cancellation.
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (handler, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', aborted);
+      handler(value);
+    };
+    const aborted = () => finish(reject, signal.reason);
+    signal.addEventListener('abort', aborted, { once: true });
+    if (signal.aborted) { aborted(); return; }
+    Promise.resolve().then(() => { signal.throwIfAborted(); return blob.arrayBuffer(); })
+      .then(value => finish(resolve, value), error => finish(reject, error));
+  });
+}
 
 function header(bytes, at, end) {
   if (at + 8 > bytes.length) invalid();
@@ -60,54 +83,68 @@ function table(bytes, box, width, prefix = 8) {
 // A File made from thousands of tiny slices is cheap on desktop but Android
 // can stall while XHR walks that fragmented Blob. Copy only the compact audio
 // payload into bounded MiB blocks so upload reads remain sequential and fast.
-export async function packAudioChunks(file, chunks, audioBytes, packBytes = PACK_BYTES) {
+export async function packAudioChunks(file, chunks, audioBytes, packBytes = PACK_BYTES,
+  { signal, onProgress = () => {} } = {}) {
   if (!(file instanceof Blob) || !Number.isSafeInteger(audioBytes) || audioBytes <= 0 ||
       !Number.isSafeInteger(packBytes) || packBytes <= 0) invalid();
   const parts = [];
   let copied = 0;
-  let block = new Uint8Array(Math.min(packBytes, audioBytes));
-  let used = 0;
+  let slices = [];
+  let queued = 0;
+  const flush = async () => {
+    // One bounded read per batch, rather than thousands of serialized reads
+    // of tiny samples. Only audio slices enter this Blob; video stays on disk.
+    const bytes = new Uint8Array(await readBlob(new Blob(slices), signal));
+    signal?.throwIfAborted();
+    if (bytes.byteLength !== queued) invalid();
+    parts.push(bytes);
+    copied += queued;
+    slices = [];
+    queued = 0;
+    onProgress({ phase: 'packing', loaded: copied, total: audioBytes });
+    // Yield once per completed batch so the phone can paint real progress.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    signal?.throwIfAborted();
+  };
   for (const chunk of chunks) {
+    signal?.throwIfAborted();
+    if (!Number.isSafeInteger(chunk.start) || chunk.start < 0 ||
+        !Number.isSafeInteger(chunk.size) || chunk.size <= 0 || chunk.start + chunk.size > file.size) invalid();
     let source = chunk.start;
     let remaining = chunk.size;
     while (remaining > 0) {
-      const count = Math.min(remaining, block.length - used);
-      const bytes = new Uint8Array(await file.slice(source, source + count).arrayBuffer());
-      if (bytes.byteLength !== count) invalid();
-      block.set(bytes, used);
-      used += count;
-      copied += count;
+      const count = Math.min(remaining, packBytes - queued);
+      if (copied + queued + count > audioBytes) invalid();
+      slices.push(file.slice(source, source + count));
+      queued += count;
       source += count;
       remaining -= count;
-      if (used === block.length) {
-        parts.push(block);
-        const left = audioBytes - copied;
-        if (left > 0) block = new Uint8Array(Math.min(packBytes, left));
-        used = 0;
-      }
+      if (queued === packBytes || slices.length === MAX_PACK_SLICES) await flush();
     }
-    if (parts.length && parts.length % 16 === 0) await new Promise(resolve => setTimeout(resolve, 0));
   }
-  if (copied !== audioBytes || used) invalid();
+  if (queued) await flush();
+  if (copied !== audioBytes) invalid();
   return parts;
 }
 
-async function remux(file) {
+async function remux(file, { signal, onProgress }) {
+  signal.throwIfAborted();
   if (!(file instanceof Blob) || file.size < 16) return null;
+  onProgress({ phase: 'index', loaded: 0, total: 0 });
   let index;
   let fileType;
   const media = [];
   for (let at = 0, count = 0; at < file.size; count++) {
     if (count >= 10000) invalid();
-    const bytes = new Uint8Array(await file.slice(at, at + 16).arrayBuffer());
+    const bytes = new Uint8Array(await readBlob(file.slice(at, at + 16), signal));
     const box = header(bytes, 0, file.size - at);
     if (box.type === 'moof') return null;
     if (box.type === 'moov') {
       if (index || box.size > MAX_INDEX_BYTES) invalid();
-      index = new Uint8Array(await file.slice(at, at + box.size).arrayBuffer());
+      index = new Uint8Array(await readBlob(file.slice(at, at + box.size), signal));
     } else if (box.type === 'ftyp') {
       if (fileType || box.size > 65536) invalid();
-      fileType = new Uint8Array(await file.slice(at, at + box.size).arrayBuffer());
+      fileType = new Uint8Array(await readBlob(file.slice(at, at + box.size), signal));
     } else if (box.type === 'mdat') media.push({ start: at + box.data, end: at + box.end });
     at += box.size;
   }
@@ -173,6 +210,7 @@ async function remux(file) {
   const chunks = [];
   let sample = 0, mapping = 0, audioBytes = 0;
   for (let i = 0; i < chunkCount; i++) {
+    signal.throwIfAborted();
     if (mapping + 1 < mappings.length && mappings[mapping + 1].first === i + 1) mapping++;
     const count = mappings[mapping].samples;
     if (sample + count > sampleCount) invalid();
@@ -209,15 +247,21 @@ async function remux(file) {
   movieBytes = rebuild();
   const mdat = atom('mdat', []);
   view(mdat).setUint32(0, audioBytes + 8);
-  const packedAudio = await packAudioChunks(file, chunks, audioBytes);
+  const packedAudio = await packAudioChunks(file, chunks, audioBytes, PACK_BYTES, { signal, onProgress });
+  signal.throwIfAborted();
   return new File([fileType, movieBytes, mdat, ...packedAudio],
     'dialogue.m4a', { type: 'audio/mp4' });
 }
 
-export async function extractMp4Audio(file) {
-  try { return await remux(file); }
+export async function extractMp4Audio(file, { signal, onProgress = () => {}, timeoutMs = PREPARATION_TIMEOUT_MS } = {}) {
+  const deadline = new AbortController();
+  const combined = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+  const timer = setTimeout(() => deadline.abort(Object.assign(new Error('Cihazda ses hazırlama zaman aşımına uğradı.'),
+    { code: 'LOCAL_AUDIO_PREPARATION_TIMEOUT' })), Math.max(1, Number(timeoutMs) || PREPARATION_TIMEOUT_MS));
+  try { return await remux(file, { signal: combined, onProgress }); }
   catch (error) {
+    if (combined.aborted) throw combined.reason;
     if (error.message === 'MP4_AUDIO_UNSUPPORTED' || error instanceof RangeError) return null;
     throw error;
-  }
+  } finally { clearTimeout(timer); }
 }
