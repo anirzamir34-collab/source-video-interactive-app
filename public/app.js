@@ -1351,6 +1351,7 @@ function renderSubtitle() {
 }
 
 const dubChannels = new Map();
+const dubTailWaitIds = new Set();
 const preparedDubAudio = new Map();
 const dubMixer = createDubMixer(els.video);
 let dubPlaybackTimer = null;
@@ -1550,6 +1551,22 @@ async function prepareDubAudio(segment, priority = 0) {
   audio.src = source;
   audio.load();
   return audio._vqReady;
+}
+
+function finishDubPlaybackAtVideoEnd() {
+  cancelDubBuffer();
+  state.dubStartingToken = null;
+  dubTailWaitIds.clear();
+  // The video's natural end emits pause before ended. Neither event should
+  // truncate a final syllable that is already playing within the tail budget.
+  for (const [id, audio] of dubChannels) {
+    if (!audio.paused && !audio.ended && canFinishDubTail(audio, null, els.video.currentTime)) continue;
+    audio.pause();
+    dubChannels.delete(id);
+  }
+  state.activeDubSegmentId = dubChannels.keys().next().value || null;
+  updateDubMix();
+  stopDubClock();
 }
 
 function startDubClock() {
@@ -1752,6 +1769,7 @@ async function ensureDubSegment(segment, priority = 0) {
 function stopDubPlayback() {
   cancelDubBuffer();
   state.dubStartingToken = null;
+  dubTailWaitIds.clear();
   dubChannels.forEach(audio => audio.pause());
   dubChannels.clear();
   state.activeDubSegmentId = null;
@@ -1914,6 +1932,7 @@ async function syncDubPlayback() {
     const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
     const active = activeDubSegments(dubTimeline(), videoTime);
     const activeIds = new Set(active.map(getDubSegmentId));
+    for (const id of dubTailWaitIds) if (!activeIds.has(id)) dubTailWaitIds.delete(id);
     const waitingForTail = new Set();
     for (const [id, audio] of dubChannels) {
       if (activeIds.has(id) && !audio.ended) {
@@ -1926,6 +1945,7 @@ async function syncDubPlayback() {
           // overlap starts immediately on each speaker's independent channel.
           if (dubSpeakerKey(audio._vqSegment) === dubSpeakerKey(segment) || !sourceSpeechOverlaps(audio._vqSegment, segment)) {
             waitingForTail.add(getDubSegmentId(segment));
+            dubTailWaitIds.add(getDubSegmentId(segment));
           }
         }
         continue;
@@ -1948,10 +1968,14 @@ async function syncDubPlayback() {
       if (!audio || !stillActive.has(id) || state.dubPlayedSegmentIds.has(id)) continue;
       const elapsed = Math.max(0, now - Number(segment.startTime));
       const sourceRate = naturalDubRate(audio.duration, dubSpeechEnd(segment, dubTimeline()) - Number(segment.startTime));
-      const offset = state.dubResumeTime !== null || elapsed > 0.65
+      // A deliberate tail wait is not a source seek or a missed callback.
+      // Preserve the unheard beginning even when that wait exceeds 650 ms.
+      const offset = state.dubResumeTime !== null || (!dubTailWaitIds.has(id) && elapsed > 0.65)
         ? Math.min(audio.duration, elapsed * sourceRate) : 0;
+      dubTailWaitIds.delete(id);
       if (offset >= audio.duration - 0.02) { state.dubPlayedSegmentIds.add(id); continue; }
       audio.currentTime = offset;
+      audio._vqSpeechEnd = dubSpeechEnd(segment, dubTimeline());
       audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, dubSpeechEnd(segment, dubTimeline()) - now));
       audio._vqAnchorVideoTime = now;
       audio._vqAnchorAudioTime = offset;
@@ -1972,6 +1996,7 @@ async function syncDubPlayback() {
 
 els.video.addEventListener('timeupdate', () => { renderSubtitle(); void syncDubPlayback(); });
 els.video.addEventListener('pause', () => {
+  if (els.video.ended && state.dubbingEnabled) { finishDubPlaybackAtVideoEnd(); return; }
   stopDubClock();
   if (!state.decisionDubHold) {
     dubChannels.forEach(audio => audio.pause());
@@ -2018,8 +2043,7 @@ els.video.addEventListener('ratechange', () => {
   }
 });
 els.video.addEventListener('ended', () => {
-  stopDubPlayback();
-  stopDubClock();
+  finishDubPlaybackAtVideoEnd();
 });
 els.keepOriginalAudio?.addEventListener('change', () => {
   state.keepOriginalAudioEnabled = Boolean(els.keepOriginalAudio.checked);

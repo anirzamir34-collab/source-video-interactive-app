@@ -639,3 +639,87 @@ test('a shared buffer waits for all simultaneous voices before resuming the sour
     assert.equal(f.video.plays, 1);
   } finally { f.close(); }
 });
+
+test('an earlier overlapping speaker cannot cut another speakers final syllable', async () => {
+  const segments = [{ ...line('a', 1, 3), speakerId: 'alice' },
+    { ...line('b', 1.5, 6), speakerId: 'bob' }];
+  const f = fixture(segments, { durations: { a: 2.4, b: 4.5 } });
+  try {
+    await f.sync();
+    const first = f.active();
+    f.video.currentTime = 1.5;
+    first.currentTime = .6;
+    await f.sync();
+    f.video.currentTime = 3.05;
+    first.currentTime = 2.2;
+    await f.sync();
+    assert.equal(first.paused, false);
+    assert.equal(f.channels().length, 2);
+  } finally { f.close(); }
+});
+
+test('a later active speaker cannot extend a stale tail beyond its own boundary', () => {
+  const audio = { duration: 4, currentTime: 3.8, playbackRate: 1, _vqSpeechRate: 1,
+    _vqSegment: { startTime: 1, endTime: 2 } };
+  assert.equal(canFinishDubTail(audio, { startTime: 8, endTime: 10 }, 8), false);
+});
+
+test('tail budget uses source seconds at both slow and fast video rates', () => {
+  const audio = { duration: 2, currentTime: 1.2, playbackRate: .5, _vqSpeechRate: 1,
+    _vqSegment: { startTime: 1, endTime: 3 } };
+  assert.equal(canFinishDubTail(audio, null, 3.05), true);
+  audio.playbackRate = 2;
+  audio.currentTime = .4;
+  assert.equal(canFinishDubTail(audio, null, 3.05), false);
+});
+
+test('waiting 800ms for a tail does not seek past the next replies first syllables', async () => {
+  const f = fixture([line('a', 1, 2), line('b', 2, 4)], { durations: { a: 2, b: 2 } });
+  try {
+    await f.sync();
+    const first = f.active();
+    first.currentTime = 1.1;
+    f.video.currentTime = 2.01;
+    await f.sync();
+    f.video.currentTime = 2.8;
+    first.end();
+    await tick();
+    assert.equal(f.state.activeDubSegmentId, 'b');
+    assert.equal(f.active().currentTime, 0);
+  } finally { f.close(); }
+});
+
+test('an explicit seek clears tail waiting and still maps into the selected sentence', async () => {
+  const f = fixture([line('a', 1, 2), line('b', 2, 4)], { durations: { a: 2, b: 2 } });
+  try {
+    await f.sync();
+    f.active().currentTime = 1.1;
+    f.video.currentTime = 2.01;
+    await f.sync();
+    f.video.currentTime = 2.8;
+    f.event('seeking');
+    f.event('seeked');
+    await tick();
+    assert.equal(f.state.activeDubSegmentId, 'b');
+    assert.ok(Math.abs(f.active().currentTime - .8) < 1e-6);
+  } finally { f.close(); }
+});
+
+test('natural video end lets a short final syllable finish through pause and ended events', async () => {
+  const f = fixture([line('a', 1, 2)], { durations: { a: 1.2 } });
+  try {
+    await f.sync();
+    const audio = f.active();
+    audio.currentTime = 1.05;
+    f.video.currentTime = 2;
+    f.video.ended = true;
+    f.video.paused = true;
+    f.event('pause');
+    f.event('ended');
+    assert.equal(audio.paused, false);
+    assert.equal(f.state.activeDubSegmentId, 'a');
+    assert.equal(f.timers.size, 0);
+    audio.end();
+    assert.equal(f.channels().length, 0);
+  } finally { f.close(); }
+});

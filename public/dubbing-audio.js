@@ -66,8 +66,12 @@ export function naturalDubRate(audioDuration, sourceDuration, videoRate = 1) {
 export function canFinishDubTail(audio, nextSegment, videoTime) {
   // Timestamp boundaries are estimates. Let a short final word finish before
   // starting the next speaker, but never accumulate an unbounded speech queue.
-  const remaining = (Number(audio.duration) - Number(audio.currentTime)) / Math.max(0.25, audio.playbackRate || 1);
-  const boundary = Number(nextSegment?.startTime ?? audio._vqSegment?.endTime);
+  // Use source seconds on both sides of the budget. playbackRate also includes
+  // the video's speed and would prematurely reject a tail at 0.5x.
+  const remaining = (Number(audio.duration) - Number(audio.currentTime)) / Math.max(0.25, audio._vqSpeechRate || 1);
+  // Another overlapping speaker may have started seconds earlier, or a later
+  // turn may be far away. Neither timestamp is this utterance's end boundary.
+  const boundary = Number(audio._vqSpeechEnd ?? audio._vqSegment?.endTime ?? nextSegment?.startTime);
   return Number.isFinite(remaining) && remaining >= 0 && remaining <= 1.1 &&
     (!Number.isFinite(boundary) || Number(videoTime) - boundary <= 1.1);
 }
