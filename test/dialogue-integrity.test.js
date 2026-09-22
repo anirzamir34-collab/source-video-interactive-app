@@ -34,8 +34,8 @@ test('one timed speech block per caption preserves pauses and a later real repet
 });
 
 test('explicit legacy merging cannot combine contradictory speaker annotations', () => {
-  const blocks = buildDubBlocks([line({ gender: 'female' }),
-    line({ segmentId: 'two', startTime: 2, endTime: 3, gender: 'male' })], { mergeAdjacent: true });
+  const blocks = buildDubBlocks([line({ gender: 'female', originalText: 'This', turkishText: 'Bu' }),
+    line({ segmentId: 'two', startTime: 2, endTime: 3, gender: 'male', originalText: 'sentence', turkishText: 'cümle' })], { mergeAdjacent: true });
   assert.equal(blocks.length, 2);
 });
 
@@ -51,11 +51,38 @@ test('Turkish dub text preserves words and repetitions without inventing interje
 
 test('adjacent subtitle rows from one speaker form a complete dub utterance', () => {
   const blocks = buildDubBlocks([
-    line({ segmentId: 'a', startTime: 1, endTime: 3, turkishText: 'Bu cümle' }),
-    line({ segmentId: 'b', startTime: 3.2, endTime: 5, turkishText: 'burada bitiyor.' }),
+    line({ segmentId: 'a', startTime: 1, endTime: 3, originalText: 'This sentence', turkishText: 'Bu cümle' }),
+    line({ segmentId: 'b', startTime: 3.2, endTime: 5, originalText: 'ends here.', turkishText: 'burada bitiyor.' }),
     line({ segmentId: 'c', speakerId: 'speaker-b', startTime: 5.1, endTime: 6, turkishText: 'Yanıt.' })
   ], { mergeAdjacent: true, maxGap: 0.5, maxDuration: 18 });
   assert.equal(blocks.length, 2);
   assert.equal(blocks[0].turkishText, 'Bu cümle burada bitiyor.');
   assert.deepEqual(blocks[0].sourceSegmentIds, ['a', 'b']);
+});
+
+test('complete short replies keep their own timing and short-utterance synthesis setting', () => {
+  const rows = Array.from({ length: 5 }, (_, i) => line({
+    segmentId: `reply-${i}`, startTime: i * .6, endTime: i * .6 + .4,
+    originalText: 'Yes.', turkishText: 'Evet.'
+  }));
+  const blocks = buildDubBlocks(rows, { mergeAdjacent: true, maxGap: .5, maxDuration: 18 });
+  assert.equal(blocks.length, 5);
+  assert.deepEqual(blocks.map(row => [row.startTime, row.endTime, row.turkishText]),
+    rows.map(row => [row.startTime, row.endTime, row.turkishText]));
+});
+
+test('repeated unpunctuated replies remain separate without deleting source words', () => {
+  const blocks = buildDubBlocks([
+    line({ segmentId: 'a', startTime: 1, endTime: 1.4, originalText: 'Yes', turkishText: 'Evet' }),
+    line({ segmentId: 'b', startTime: 1.6, endTime: 2, originalText: 'yes', turkishText: 'evet' })
+  ], { mergeAdjacent: true, maxGap: .5, maxDuration: 18 });
+  assert.deepEqual(blocks.map(row => row.turkishText), ['Evet', 'evet']);
+});
+
+test('a completed source sentence is not merged when translation loses punctuation', () => {
+  const blocks = buildDubBlocks([
+    line({ segmentId: 'a', startTime: 1, endTime: 2, originalText: 'Ready?', turkishText: 'Hazır mısın' }),
+    line({ segmentId: 'b', startTime: 2.2, endTime: 3, originalText: 'Let us go.', turkishText: 'Hadi gidelim.' })
+  ], { mergeAdjacent: true, maxGap: .5, maxDuration: 18 });
+  assert.equal(blocks.length, 2);
 });

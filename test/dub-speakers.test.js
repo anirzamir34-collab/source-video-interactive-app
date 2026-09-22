@@ -31,6 +31,17 @@ test('speaker identity keeps one gender across uncertain lines and isolated conf
   ]);
 });
 
+test('zero-confidence labels cannot outweigh grounded speaker evidence', () => {
+  const segments = [
+    { ...line('a', 0, .5), gender: 'male', confidence: .9 },
+    { ...line('a', 1, 15), gender: 'female', confidence: 0 },
+    { ...line('b'), gender: 'female', confidence: 0 }
+  ];
+  assert.deepEqual(buildDubSpeakerRoster(segments, [{ speakerId: 'b', gender: 'male' }]), [
+    { speakerId: 'a', gender: 'male' }, { speakerId: 'b', gender: 'male' }
+  ]);
+});
+
 test('matching reserves scarce voices and never gives unknown speakers an already assigned voice', () => {
   const roster = [{ speakerId: 'unknown', gender: 'uncertain' }, ...speakers.slice(0, 2)];
   const catalog = [voices[0], voices[1], voices[2]];

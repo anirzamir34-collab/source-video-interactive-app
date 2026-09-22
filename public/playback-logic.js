@@ -187,10 +187,17 @@ export function buildDubBlocks(segments, { mergeAdjacent = false, maxGap = 0.28,
     const gap = previous ? start - Number(previous.endTime) : Number.POSITIVE_INFINITY;
     const combinedDuration = previous ? end - Number(previous.startTime) : end - start;
 
-    // Keep each timed subtitle's speech independent by default. A merged TTS
-    // sentence has no internal timestamps and drifts across its captions.
+    // Merge fragments of an unfinished sentence, not completed replies. TTS
+    // has no internal timestamps, so joining "Evet. Evet." destroys the real
+    // pauses and can push short replies past the restrained-synthesis cutoff.
+    const sentenceEnded = previous && [previous.turkishText, previous.originalText]
+      .some(text => /[.!?…]["'”’»\)\]]*$/u.test(String(text || '').trim()));
+    const replyKey = text => String(text || '').trim().toLocaleLowerCase('tr-TR');
+    const repeatedReply = previous && String(row.turkishText).trim().split(/\s+/u).length <= 4 &&
+      replyKey(previous.turkishText) === replyKey(row.turkishText);
     const compatibleGender = !previous?.gender || !row.gender || previous.gender === row.gender;
-    if (mergeAdjacent && sameSpeaker && compatibleGender && gap >= -0.04 && gap <= maxGap && combinedDuration <= maxDuration) {
+    if (mergeAdjacent && sameSpeaker && compatibleGender && !sentenceEnded && !repeatedReply &&
+        gap >= -0.04 && gap <= maxGap && combinedDuration <= maxDuration) {
       previous.endTime = end;
       previous.turkishText = `${previous.turkishText} ${String(row.turkishText).trim()}`.trim();
       previous.originalText = `${previous.originalText || ''} ${String(row.originalText || '').trim()}`.trim();

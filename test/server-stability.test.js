@@ -480,3 +480,12 @@ test('a long same-speaker sentence is not chopped at the former seven second bou
   assert.equal(groups.length, 1);
   assert.match(groups[0].originalText, /bitiyor\.$/);
 });
+
+test('short completed ASR replies retain their pauses before caption and TTS grouping', () => {
+  const f = fixture(section('function groupTranscribeWords(', '\nasync function transcribeDialogueGemini35('));
+  const words = Array.from({ length: 5 }, (_, index) => ({ speakerId: 'a', text: 'Yes.',
+    startTime: index * .6, endTime: index * .6 + .4 }));
+  const groups = f.scope.groupTranscribeWords(words);
+  assert.equal(groups.length, 5);
+  assert.ok(groups.every((row, i) => row.originalText === 'Yes.' && row.startTime === words[i].startTime));
+});

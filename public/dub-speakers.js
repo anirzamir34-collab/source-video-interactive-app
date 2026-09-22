@@ -9,8 +9,12 @@ export function buildDubSpeakerRoster(segments = [], profiles = []) {
     let row = roster.get(speakerId);
     if (!row) { row = { speakerId, female: 0, male: 0 }; roster.set(speakerId, row); }
     const gender = genderOf(segment.gender);
+    // Missing confidence can use a default; an explicit zero is no evidence.
+    // Treating 0 as .5 made long, ungrounded labels override real voice turns.
+    const confidence = segment.confidence == null || !Number.isFinite(Number(segment.confidence))
+      ? .5 : Math.max(0, Math.min(1, Number(segment.confidence)));
     if (gender !== 'uncertain') row[gender] += Math.max(0.25, Math.min(14,
-      Number(segment.endTime) - Number(segment.startTime) || 1)) * Math.max(0.25, Number(segment.confidence) || 0.5);
+      Number(segment.endTime) - Number(segment.startTime) || 1)) * confidence;
   }
   return [...roster.values()].map(row => {
     const profile = profiles.find(item => dubSpeakerKey(item) === row.speakerId);
