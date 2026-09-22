@@ -373,11 +373,16 @@ test('the scene control occupies space only while an existing clip is available'
   f.isEnergeticSexMoment = () => true;
   f.state.activeAdultOccurrenceId = 'source-navigation';
   f.state.activePositionId = position.id;
+  f.state.activeMovementId = 'navigation-1';
   f.els.video.time = 40;
   f.updateRhythmControl(position);
   assert.equal(f.els.rhythmControl.classes.has('hidden'), false);
   assert.equal(f.els.rhythmTapBtn.disabled, false);
   assert.equal(f.els.rhythmTapStatus.textContent, 'Hazır');
+  f.state.activeMovementId = null;
+  f.updateRhythmControl(position);
+  assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
+  f.state.activeMovementId = 'navigation-1';
   f.els.video.time = 60;
   f.updateRhythmControl(position);
   assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
