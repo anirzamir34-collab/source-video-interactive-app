@@ -314,7 +314,7 @@ export const DEFAULT_BONUS_UNLOCK_PROGRESS = 78;
 export const MIN_CORE_PLAY_SECONDS_FOR_OUTCOME = 75;
 export const MIN_VERIFIED_POSITION_SECONDS = 3;
 export const FEMALE_ORGASM_CYCLE_SECONDS = 165;
-export const MALE_ORGASM_CYCLE_SECONDS = 150;
+export const MALE_ORGASM_CYCLE_SECONDS = 115;
 
 export function isPlayableVerifiedPositionDuration(startTime, endTime) {
   const start = Number(startTime);
@@ -359,13 +359,13 @@ export function maleOrgasmPlaybackMultiplier({
   const safeMaleRate = clamp(maleRate, 0.4, 2);
   const tempo = String(movementTempo || '').toLowerCase();
   const thresholdShift = tempo === 'fast' ? -0.05 : tempo === 'slow' ? 0.05 : 0;
-  const activationRatio = clamp(0.42 - (safeMaleRate - 1) * 0.08 + thresholdShift, 0.3, 0.5);
+  const activationRatio = clamp(0.36 - (safeMaleRate - 1) * 0.08 + thresholdShift, 0.25, 0.45);
 
   if (sceneRatio < activationRatio) return 0;
 
   const tempoFactor = tempo === 'fast' ? 1.3 : tempo === 'slow' ? 0.72 : tempo === 'moderate' ? 1 : 0.9;
-  const ramp = 0.75 + Math.min(0.35, (sceneRatio - activationRatio) * 0.7);
-  return clamp(tempoFactor * ramp, 0.7, 1.45);
+  const ramp = 0.9 + Math.min(0.45, (sceneRatio - activationRatio) * 0.85);
+  return clamp(tempoFactor * ramp, 0.7, 1.7);
 }
 
 export function averageAdultProgress(maleProgress, femaleProgress) {
