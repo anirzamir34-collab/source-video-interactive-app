@@ -99,6 +99,21 @@ test('participant placeholders are hidden in ordinary choice copy and are never 
   }
 });
 
+test('unnamed participants use only observed visual descriptions', () => {
+  const context = { characters: [
+    { id: 'PARTNER_B', participantTrackId: 'PARTNER_B', displayName: 'Partner B',
+      evidenceLevel: 'fact', confidence: 0.95, evidence: 'Kırmızı üstlü, koltuğun sağında yatan kadın.' },
+    { id: 'OTHER_MALE', participantTrackId: 'OTHER_MALE', displayName: 'Diğer Erkek',
+      evidenceLevel: 'fact', confidence: 0.95, evidence: 'Beyaz gömlekli diğer erkek.' }
+  ] };
+  const partner = bindActionCharacter({ label: 'Konuş', partnerTrackId: 'PARTNER_B',
+    primaryCharacterId: 'PARTNER_B' }, context);
+  assert.equal(partner.partnerLabel, 'Kırmızı üstlü');
+  assert.equal(partner.identityResolution, 'described');
+  assert.equal(bindActionCharacter({ label: 'Dinle', primaryCharacterId: 'OTHER_MALE' }, context)
+    .primaryCharacterLabel, 'Beyaz gömlekli');
+});
+
 test('an explicit addressed character is preserved in a group scene', () => {
   const action = bindActionCharacter({ label: 'Cevabını dinle', primaryCharacterId: 'DENIZ', involvedCharacterIds: ['DANNY', 'MERAL', 'DENIZ'] }, cast);
   assert.equal(action.primaryCharacterLabel, 'Deniz');

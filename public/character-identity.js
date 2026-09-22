@@ -17,6 +17,17 @@ export function verifiedCharacterName(character) {
   return name;
 }
 
+export function verifiedVisualDescription(character) {
+  if (character?.identityConflict || character?.evidenceLevel !== 'fact' ||
+      Number(character?.confidence) < 0.68) return '';
+  const evidence = text(character?.evidence);
+  // Use only a directly supplied visual descriptor. Never turn a track ID,
+  // generic gender, or a claimed relationship into a character name.
+  const phrase = evidence.match(/^([^,.;]{5,65})[,.;]/u)?.[1]?.trim() || '';
+  if (!/(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü)(?=\s|$)/iu.test(phrase)) return '';
+  return phrase.replace(/\s+(?:diğer\s+)?(?:kadın|erkek|kişi)$/iu, '').trim();
+}
+
 export function mergeCharacterRecords(records = []) {
   const out = [];
   const byTrack = new Map();
@@ -140,8 +151,9 @@ export function bindActionCharacter(action, context = {}) {
   let targetRole = '';
   if (target) {
     result.primaryCharacterId = target.participantTrackId || target.id;
-    result.primaryCharacterLabel = verifiedCharacterName(target) || participantLabel(target);
-    result.identityResolution = target.identityConflict ? 'conflict' : verifiedCharacterName(target) ? 'verified' : 'unknown';
+    result.primaryCharacterLabel = verifiedCharacterName(target) || verifiedVisualDescription(target) || participantLabel(target);
+    result.identityResolution = target.identityConflict ? 'conflict' : verifiedCharacterName(target) ? 'verified'
+      : verifiedVisualDescription(target) ? 'described' : 'unknown';
   } else if (targetId || declared.length || vaguePossessive.test(text(action.primaryCharacterLabel))) {
     result.primaryCharacterLabel = '';
     result.identityResolution = mismatch ? 'conflict' : 'unknown';
@@ -149,7 +161,7 @@ export function bindActionCharacter(action, context = {}) {
   if (action.partnerTrackId) {
     const partner = lookup(action.partnerTrackId);
     result.partnerLabel = !mismatch && partner && (!declared.length || present.includes(partner))
-      ? verifiedCharacterName(partner) || participantLabel(partner) : '';
+      ? verifiedCharacterName(partner) || verifiedVisualDescription(partner) || participantLabel(partner) : '';
   }
   // Relationship labels are story context only. Intimate controls retain the
   // verified name/track so a family role never becomes erotic UI wording.

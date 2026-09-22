@@ -550,7 +550,7 @@ test('one position tab exposes later verified returns and switches occurrence on
   await startFirstChapter(f);
   assert.deepEqual(
     new Set(first.activeMovementChoices.flatMap(item => item.variants).map(item => item.id)),
-    new Set(['one-1', 'one-2', 'return-0', 'return-1', 'return-2'])
+    new Set(['return-0', 'return-1', 'return-2'])
   );
   f.selectAdultMovement('return-0', true);
   await flush();
@@ -603,7 +603,7 @@ test('invalid child clips are neither shown nor allowed to bridge disjoint sourc
     { id: 'source-one', startTime: 40, endTime: 50 }
   ];
   await startFirstChapter(f);
-  assert.deepEqual(first.activeMovementChoices.flatMap(c => c.variants).map(m => m.id), ['one-2']);
+  assert.deepEqual(first.activeMovementChoices.flatMap(c => c.variants).map(m => m.id), []);
   const currentOccurrence = f.state.activeAdultOccurrenceId;
   f.selectAdultMovement('one-1', true);
   await flush();

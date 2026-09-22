@@ -2511,6 +2511,12 @@ function scoreElevenVoice(voice, gender) {
   // verified_languages/fine_tuning metadata and fell back to Bella/George.
   if (/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score += 1200;
   if (verifiedLanguages.some(item => /^(?:tr|tr-tr)$/i.test(String(item?.language || item?.locale || '')))) score += 500;
+  // Accent and language metadata from the voice catalog is more useful than
+  // a generic 'natural' marketing description for Turkish dialogue.
+  if (/\b(?:english|american|british|australian|german|french|spanish)\b/.test(languageEvidence) &&
+      !/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score -= 350;
+  if (voice?.category === 'premade' &&
+      !/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score -= 80;
   if (/conversational|natural|warm|soft|calm|professional/.test(description)) score += 18;
   if (/narration|news|storyteller/.test(description)) score -= 8;
   if (/^(?:bella|george)$/.test(name)) score -= 250;

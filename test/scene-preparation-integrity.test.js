@@ -8,6 +8,17 @@ import { matchSceneIntroductions } from '../public/scene-entry.js';
 import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
 import { sourceIdentityLabel } from '../public/choice-groups.js';
 
+test('verified action time repairs zeroed position and loop metadata', () => {
+  const repaired = gameplay.normalizeSourceActionTimes({ startTime: 332.653, endTime: 345.5,
+    positionStartTime: 0, positionEndTime: 0, loopStartTime: 0, loopEndTime: 0 });
+  assert.deepEqual([repaired.positionStartTime, repaired.positionEndTime,
+    repaired.loopStartTime, repaired.loopEndTime], [332.653, 345.5, 332.653, 345.5]);
+  const valid = gameplay.normalizeSourceActionTimes({ startTime: 10, endTime: 12,
+    positionStartTime: 8, positionEndTime: 15, loopStartTime: 10.2, loopEndTime: 11.8 });
+  assert.deepEqual([valid.positionStartTime, valid.positionEndTime,
+    valid.loopStartTime, valid.loopEndTime], [8, 15, 10.2, 11.8]);
+});
+
 // Run the actual graph preparation with a neutral classifier stub. These tests
 // concern provenance and timeline integrity, not visual classification quality.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
