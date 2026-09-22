@@ -59,7 +59,8 @@ export function createDubMixer(video, {
 // repeatedly seeking the voice. Short sentences keep their natural speed.
 export function naturalDubRate(audioDuration, sourceDuration, videoRate = 1) {
   const duration = Math.max(0.05, Number(sourceDuration) || 0.05);
-  const speechRate = Math.min(1.3, Math.max(1, (Number(audioDuration) || duration) / duration));
+  // Larger differences are handled by a source hold, not rushed delivery.
+  const speechRate = Math.min(1.15, Math.max(1, (Number(audioDuration) || duration) / duration));
   return speechRate * Math.min(4, Math.max(0.25, Number(videoRate) || 1));
 }
 

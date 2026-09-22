@@ -236,3 +236,18 @@ test('old dubbing completion cannot finish a choice after navigation', async () 
   assert.equal(f.state.gameCursorTime, 60);
   assert.equal(f.state.decisionDubHold, false);
 });
+
+test('a decision boundary budgets the remaining voice duration at the chosen playback speed', async () => {
+  const f = fixture();
+  const audio = new Media();
+  audio.duration = 12;
+  audio.time = 2;
+  audio.playbackRate = .5;
+  let deadline;
+  f.setTimeout = (_callback, delay) => { deadline = delay; return 1; };
+  f.clearTimeout = () => {};
+  const pending = f.waitForDubEnd([audio]);
+  assert.ok(deadline > 20000, 'twenty seconds of remaining speech must not be cut by the former eight-second timer');
+  audio.dispatchEvent(new Event('ended'));
+  await pending;
+});

@@ -14,15 +14,17 @@ const end = source.indexOf('\n  if (\n    body?.available', start);
 assert.ok(start >= 0 && end > start);
 const loop = source.slice(start, end);
 
-function runChunks({ completed = 0, total = 1, review = false, fetch, session: existingSession }) {
+function runChunks({ completed = 0, total = 1, review = false, fetch, session: existingSession, storyboard: suppliedStoryboard }) {
   const session = existingSession || { chunkResults: Array.from({ length: completed }, () => ({ available: true, actions: [] })), firstPassResults: {} };
   const chunkResults = session.chunkResults;
   const delays = [];
   const requests = [];
+  const windows = [];
   const scope = vm.createContext({
     FormData, AbortSignal, console,
-    chunkResults, chunkCount: total, sheetsPerChunk: 1, framesPerSheet: 12,
-    storyboard: {
+    chunkResults, chunkCount: total, framesPerSheet: 12,
+    analysisPlan: { chunks: Array.from({ length: total }, (_, firstSheet) => ({ firstSheet, sheetCount: 1 })) },
+    storyboard: suppliedStoryboard || {
       sheets: Array.from({ length: total }, () => new Blob(['image'])),
       timestamps: Array.from({ length: total * 12 }, (_, index) => index),
       duration: total * 12, interval: 1
@@ -43,13 +45,23 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
         review: options.body.has('reviewMode')
       };
       requests.push(request);
+      windows.push([Number(options.body.get('chunkStart')), Number(options.body.get('chunkEnd'))]);
       const body = fetch(request, requests.length);
       return { ok: body.available, json: async () => body };
     }
   });
   return vm.runInContext(`(async () => { ${loop}; return { chunkResults, failureBody, body }; })()`, scope)
-    .then(result => ({ ...result, delays, requests, session }));
+    .then(result => ({ ...result, delays, requests, windows, session }));
 }
+
+test('focused timestamps produce contiguous source windows through the video end', async () => {
+  const result = await runChunks({ total: 3, storyboard: {
+    sheets: Array.from({ length: 3 }, () => new Blob(['image'])),
+    timestamps: Array.from({ length: 36 }, (_, i) => i < 12 ? .5 + i * .3 : i < 24 ? 10 + i - 12 : 80 + i - 24),
+    duration: 100, interval: 100 / 36
+  }, fetch: request => ordinaryChapter(request.chunk) });
+  assert.deepEqual(result.windows, [[0, 10], [10, 80], [80, 100]]);
+});
 
 test('transient review failure waits before retrying and preserves the successful result', async () => {
   let failed = false;

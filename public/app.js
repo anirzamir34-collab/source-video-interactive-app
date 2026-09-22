@@ -1387,10 +1387,78 @@ function renderSubtitle() {
 }
 
 const dubChannels = new Map();
-const dubTailWaitIds = new Set();
+const dubRecoveryOffsets = new Map();
+let dubBoundaryHold = null;
 const preparedDubAudio = new Map();
 const dubMixer = createDubMixer(els.video);
 let dubPlaybackTimer = null;
+
+function cancelDubBoundaryHold() {
+  if (dubBoundaryHold) clearTimeout(dubBoundaryHold.timer);
+  dubBoundaryHold = null;
+}
+
+function isDubBoundaryHoldCurrent(hold) {
+  return dubBoundaryHold === hold && state.dubbingEnabled &&
+    hold.generation === state.dubSyncGeneration && hold.controller === state.dubRequestController &&
+    hold.selectionToken === state.adultSelectionToken && hold.playbackGeneration === state.playbackGeneration &&
+    hold.gameState === state.gameState && !els.video.seeking && !els.video.ended &&
+    Math.abs(Number(els.video.currentTime) - hold.videoTime) < 0.35;
+}
+
+function beginDubBoundaryHold(ids) {
+  if (dubBoundaryHold || !ids.size) return;
+  const hold = {
+    ids, generation: state.dubSyncGeneration, controller: state.dubRequestController,
+    selectionToken: state.adultSelectionToken, playbackGeneration: state.playbackGeneration,
+    gameState: state.gameState, videoTime: Number(els.video.currentTime), resuming: false
+  };
+  dubBoundaryHold = hold;
+  // Let only the overdue speakers finish. Other overlapping voices retain
+  // their exact sample offsets while the source clock is stopped.
+  for (const [id, audio] of dubChannels) if (!ids.has(id)) audio.pause();
+  els.video.pause();
+  stopDubClock();
+  updateDubMix();
+  const remaining = Math.max(0, ...[...ids].map(id => {
+    const audio = dubChannels.get(id);
+    return audio ? (audio.duration - audio.currentTime) / Math.max(.25, audio.playbackRate) : 0;
+  }));
+  // A decoder that never emits ended must expose recovery, not hang forever.
+  hold.timer = setTimeout(() => {
+    if (!isDubBoundaryHoldCurrent(hold)) { if (dubBoundaryHold === hold) cancelDubBoundaryHold(); return; }
+    const audio = [...hold.ids].map(id => dubChannels.get(id)).find(item => item && !item.ended);
+    if (!audio) { void resumeDubBoundaryHold(); return; }
+    cancelDubBoundaryHold();
+    beginDubBuffer(audio._vqSegment, false);
+  }, (remaining + 8) * 1000);
+}
+
+async function resumeDubBoundaryHold() {
+  const hold = dubBoundaryHold;
+  if (!hold || hold.resuming) return;
+  if (!isDubBoundaryHoldCurrent(hold)) { cancelDubBoundaryHold(); return; }
+  if ([...hold.ids].some(id => dubChannels.has(id))) return;
+  clearTimeout(hold.timer);
+  if (state.decisionDubHold) { cancelDubBoundaryHold(); return; }
+  hold.resuming = true;
+  for (const audio of dubChannels.values()) {
+    audio._vqAnchorVideoTime = Number(els.video.currentTime);
+    audio._vqAnchorAudioTime = audio.currentTime;
+  }
+  try {
+    await els.video.play();
+    if (!isDubBoundaryHoldCurrent(hold)) return;
+    cancelDubBoundaryHold();
+    startDubClock();
+    void syncDubPlayback();
+  } catch {
+    if (isDubBoundaryHoldCurrent(hold)) {
+      cancelDubBoundaryHold();
+      beginDubBuffer(activeDubSegments(dubTimeline(), els.video.currentTime)[0], false);
+    }
+  }
+}
 
 function renderDubBuffer(message, loading = false) {
   els.dubBufferStatus?.classList.toggle('hidden', !state.dubBuffer);
@@ -1413,6 +1481,7 @@ function isDubBufferCurrent(buffer) {
 }
 
 function beginDubBuffer(segment, loading = true) {
+  cancelDubBoundaryHold();
   const buffer = {
     segment, generation: state.dubSyncGeneration, controller: state.dubRequestController,
     selectionToken: state.adultSelectionToken, playbackGeneration: state.playbackGeneration,
@@ -1561,7 +1630,8 @@ async function prepareDubAudio(segment, priority = 0) {
     dubChannels.delete(id);
     if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
     updateDubMix();
-    if (state.dubbingEnabled && !els.video.paused) void syncDubPlayback();
+    if (dubBoundaryHold) void resumeDubBoundaryHold();
+    else if (state.dubbingEnabled && !els.video.paused) void syncDubPlayback();
   });
   audio.addEventListener('error', () => {
     if (dubChannels.get(id) !== audio) return;
@@ -1569,6 +1639,7 @@ async function prepareDubAudio(segment, priority = 0) {
     dubChannels.delete(id);
     if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
     state.dubPlayedSegmentIds.delete(id);
+    dubRecoveryOffsets.set(id, { segment, offset: Math.max(0, Number(audio.currentTime) || 0) });
     preparedDubAudio.delete(id);
     if (state.dubbingEnabled) beginDubBuffer(segment, false);
     updateDubMix();
@@ -1590,13 +1661,14 @@ async function prepareDubAudio(segment, priority = 0) {
 }
 
 function finishDubPlaybackAtVideoEnd() {
+  cancelDubBoundaryHold();
   cancelDubBuffer();
   state.dubStartingToken = null;
-  dubTailWaitIds.clear();
   // The video's natural end emits pause before ended. Neither event should
-  // truncate a final syllable that is already playing within the tail budget.
+  // truncate a voice that is already playing. The source cannot drift into
+  // another scene after its natural end, so no artificial tail limit is needed.
   for (const [id, audio] of dubChannels) {
-    if (!audio.paused && !audio.ended && canFinishDubTail(audio, null, els.video.currentTime)) continue;
+    if (!audio.paused && !audio.ended) continue;
     audio.pause();
     dubChannels.delete(id);
   }
@@ -1711,7 +1783,13 @@ async function ensureDubSegment(segment, priority = 0) {
     const payload = JSON.stringify({
       text: segment.turkishText, speakerId: dubSpeakerKey(segment),
       gender: assignment.gender, voiceId: assignment.voiceId,
-      emotion: segment.emotion || 'uncertain'
+      emotion: segment.emotion || 'uncertain',
+      sourceContext: {
+        segmentId, startTime: segment.startTime, endTime: segment.endTime,
+        originalText: segment.originalText || '',
+        previousText: dubTimeline()[dubTimeline().indexOf(segment) - 1]?.turkishText || '',
+        nextText: dubTimeline()[dubTimeline().indexOf(segment) + 1]?.turkishText || ''
+      }
     });
     let lastFailure = null;
     for (let attempt = 1; attempt <= 4; attempt += 1) {
@@ -1803,9 +1881,10 @@ async function ensureDubSegment(segment, priority = 0) {
 }
 
 function stopDubPlayback() {
+  cancelDubBoundaryHold();
   cancelDubBuffer();
   state.dubStartingToken = null;
-  dubTailWaitIds.clear();
+  dubRecoveryOffsets.clear();
   dubChannels.forEach(audio => audio.pause());
   dubChannels.clear();
   state.activeDubSegmentId = null;
@@ -1940,6 +2019,7 @@ async function playDubAudio(audio, segmentId, generation) {
     }
     // A queued or blocked play() is not a heard sentence.
     state.dubPlayedSegmentIds.add(segmentId);
+    dubRecoveryOffsets.delete(segmentId);
     state.dubResumeTime = null;
     if (state.dubBuffer?.segment === audio._vqSegment) cancelDubBuffer();
     updateDubMix();
@@ -1967,21 +2047,29 @@ async function syncDubPlayback() {
   try {
     const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
     const active = activeDubSegments(dubTimeline(), videoTime);
+    // A decoder retry resumes unheard samples even if its caption has ended.
+    // Explicit seeks and source changes clear these recovery entries.
+    for (const { segment } of dubRecoveryOffsets.values()) if (!active.includes(segment)) active.push(segment);
     const activeIds = new Set(active.map(getDubSegmentId));
-    for (const id of dubTailWaitIds) if (!activeIds.has(id)) dubTailWaitIds.delete(id);
     const waitingForTail = new Set();
+    const overdue = new Set();
+    let mustHold = false;
     for (const [id, audio] of dubChannels) {
       if (activeIds.has(id) && !audio.ended) {
         correctDubClock(audio, videoTime, els.video.playbackRate || 1);
         continue;
       }
-      if (!audio.ended && canFinishDubTail(audio, active[0], videoTime)) {
+      if (!audio.ended && (!audio.paused || state.dubPlayedSegmentIds.has(id))) {
+        overdue.add(id);
+        const remaining = (audio.duration - audio.currentTime) / Math.max(.25, audio._vqSpeechRate || 1);
+        if (!canFinishDubTail(audio, active[0], videoTime)) mustHold = true;
         for (const segment of active) {
           // Only consecutive turns wait for a final syllable. Actual source
           // overlap starts immediately on each speaker's independent channel.
           if (dubSpeakerKey(audio._vqSegment) === dubSpeakerKey(segment) || !sourceSpeechOverlaps(audio._vqSegment, segment)) {
             waitingForTail.add(getDubSegmentId(segment));
-            dubTailWaitIds.add(getDubSegmentId(segment));
+            // A brief reply can expire entirely during the preceding tail.
+            if (remaining >= Number(segment.endTime) - videoTime - .12) mustHold = true;
           }
         }
         continue;
@@ -1990,6 +2078,12 @@ async function syncDubPlayback() {
       dubChannels.delete(id);
     }
     state.activeDubSegmentId = dubChannels.keys().next().value || null;
+    if (mustHold) {
+      await Promise.all([...overdue].filter(id => dubChannels.get(id)?.paused)
+        .map(id => playDubAudio(dubChannels.get(id), id, generation)));
+      if (current() && !els.video.paused && !state.dubPlaybackBlocked) beginDubBoundaryHold(overdue);
+      return;
+    }
     const pending = active.filter(segment => {
       const id = getDubSegmentId(segment);
       return !waitingForTail.has(id) && !dubChannels.has(id) && !state.dubPlayedSegmentIds.has(id);
@@ -2001,14 +2095,14 @@ async function syncDubPlayback() {
     for (const segment of pending) {
       const id = getDubSegmentId(segment);
       const audio = prepared.get(id);
-      if (!audio || !stillActive.has(id) || state.dubPlayedSegmentIds.has(id)) continue;
+      if (!audio || (!stillActive.has(id) && !dubRecoveryOffsets.has(id)) || state.dubPlayedSegmentIds.has(id)) continue;
       const elapsed = Math.max(0, now - Number(segment.startTime));
       const sourceRate = naturalDubRate(audio.duration, dubSpeechEnd(segment, dubTimeline()) - Number(segment.startTime));
-      // A deliberate tail wait is not a source seek or a missed callback.
-      // Preserve the unheard beginning even when that wait exceeds 650 ms.
-      const offset = state.dubResumeTime !== null || (!dubTailWaitIds.has(id) && elapsed > 0.65)
-        ? Math.min(audio.duration, elapsed * sourceRate) : 0;
-      dubTailWaitIds.delete(id);
+      // Only an explicit source seek skips heard material. A late callback,
+      // initial preparation or preceding speaker must not cut the beginning.
+      const offset = dubRecoveryOffsets.get(id)?.offset ??
+        (state.dubResumeTime !== null
+          ? Math.min(audio.duration, elapsed * sourceRate) : 0);
       if (offset >= audio.duration - 0.02) { state.dubPlayedSegmentIds.add(id); continue; }
       audio.currentTime = offset;
       audio._vqSpeechEnd = dubSpeechEnd(segment, dubTimeline());
@@ -2034,14 +2128,14 @@ els.video.addEventListener('timeupdate', () => { renderSubtitle(); void syncDubP
 els.video.addEventListener('pause', () => {
   if (els.video.ended && state.dubbingEnabled) { finishDubPlaybackAtVideoEnd(); return; }
   stopDubClock();
-  if (!state.decisionDubHold) {
+  if (!state.decisionDubHold && !dubBoundaryHold) {
     dubChannels.forEach(audio => audio.pause());
     updateDubMix();
   }
 });
 els.video.addEventListener('waiting', () => {
   state.dubVideoWaiting = true;
-  if (!state.decisionDubHold) dubChannels.forEach(audio => audio.pause());
+  if (!state.decisionDubHold && !dubBoundaryHold) dubChannels.forEach(audio => audio.pause());
   updateDubMix();
 });
 els.video.addEventListener('seeking', () => {
@@ -2060,6 +2154,8 @@ els.video.addEventListener('seeked', () => {
   prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
 });
 els.video.addEventListener('play', () => {
+  // A new user play gesture takes ownership from an automatic speech hold.
+  if (dubBoundaryHold && !dubBoundaryHold.resuming) cancelDubBoundaryHold();
   state.dubPlaybackBlocked = false;
   // play() is still pending here. Pausing for TTS inside this event would
   // reject the caller's play promise and incorrectly fail its navigation.
@@ -2364,11 +2460,8 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
     const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, modes.quality);
-    const sheetsPerChunk = analysisPlan.sheetsPerChunk;
     const framesPerSheet = 12;
-    const chunkCount = Math.ceil(
-      storyboard.sheets.length / sheetsPerChunk
-    );
+    const chunkCount = analysisPlan.chunkCount;
 
     const dialogueRows = state.dialogue?.segments || [];
     const dialogueSample = [
@@ -2377,7 +2470,8 @@ els.analyzeBtn.addEventListener('click', async () => {
       ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
     ].join('|');
     analysisModeKey = JSON.stringify({
-      pipelineVersion: 'source-context-2',
+      pipelineVersion: 'source-context-3',
+      chunks: analysisPlan.chunks,
       motion: modes.motion,
       quality: modes.quality,
       subtitles: modes.subtitles,
@@ -2409,10 +2503,10 @@ els.analyzeBtn.addEventListener('click', async () => {
       if (chunkResults[chunkIndex]?.available || chunkResults[chunkIndex]?.retryable === false) continue;
       // A retry in the middle only receives context from earlier chapters.
       storyContextMemory = mergeStoryContexts(chunkResults.slice(0, chunkIndex).filter(result => result?.available));
-      const firstSheet = chunkIndex * sheetsPerChunk;
+      const { firstSheet, sheetCount } = analysisPlan.chunks[chunkIndex];
       const chunkSheets = storyboard.sheets.slice(
         firstSheet,
-        firstSheet + sheetsPerChunk
+        firstSheet + sheetCount
       );
 
       const firstFrame = firstSheet * framesPerSheet;
@@ -2421,15 +2515,11 @@ els.analyzeBtn.addEventListener('click', async () => {
         firstFrame + chunkSheets.length * framesPerSheet
       );
 
-      const chunkStart = Number(chunkTimestamps[0] ?? 0);
-      const lastTimestamp = Number(
-        chunkTimestamps[chunkTimestamps.length - 1] ?? chunkStart
-      );
-
-      const chunkEnd = Math.min(
-        storyboard.duration,
-        lastTimestamp + storyboard.interval
-      );
+      const chunkStart = chunkIndex === 0 ? 0 : Number(chunkTimestamps[0] ?? 0);
+      // Adjacent chapters share a boundary even when focused samples are
+      // unevenly spaced; an average frame interval left gaps or overlaps.
+      const nextFrame = (firstSheet + sheetCount) * framesPerSheet;
+      const chunkEnd = Number(storyboard.timestamps[nextFrame] ?? storyboard.duration);
 
       const chunkMotionProfile = (
         storyboard.motionProfile || []
@@ -2560,7 +2650,7 @@ els.analyzeBtn.addEventListener('click', async () => {
               form.set('reviewMode', '1');
               form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
               els.analysisOutput.textContent =
-                `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} kritik aday ikinci kez doğrulanıyor...`;
+                `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} bulgu ikinci kez doğrulanıyor...\nHazır kareler yeniden kullanılıyor; videodan tekrar kare çıkarılmıyor.`;
               const reviewResponse = await fetch('/api/gemini-storyboard-analyze', {
                 method: 'POST',
                 headers: geminiRequestHeaders(),
@@ -5966,7 +6056,11 @@ function waitForDubEnd(playing) {
       }
       resolve();
     };
-    const timer = setTimeout(finish, 8000);
+    const remainingSeconds = Math.max(0, ...playing.map(audio => {
+      const remaining = (Number(audio.duration) - Number(audio.currentTime)) / Math.max(.25, Number(audio.playbackRate) || 1);
+      return Number.isFinite(remaining) ? Math.max(0, remaining) : 0;
+    }));
+    const timer = setTimeout(finish, (remainingSeconds + 8) * 1000);
     for (const audio of playing) {
       const done = () => {
         pending.delete(audio);
