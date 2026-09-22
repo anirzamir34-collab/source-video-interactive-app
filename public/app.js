@@ -4946,6 +4946,9 @@ function updateRhythmControl(position) {
   const eligible = Boolean(
     position && !isWarmupPosition(position) &&
     state.adultOutcomePhase === 'idle' &&
+    movement && isEnergeticSexMoment(movement) &&
+    Number(els.video?.currentTime) >= Number(movement.loopStartTime) &&
+    Number(els.video?.currentTime) < Number(movement.loopEndTime) &&
     nextEnergetic
   );
   els.rhythmControl?.classList.toggle('hidden', !eligible);
