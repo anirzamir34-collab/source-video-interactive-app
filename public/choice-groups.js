@@ -56,7 +56,7 @@ export function groupSourceChoiceCards(clips, {
       stableContext ? [] : [...(clip.participantTrackIds || [])].map(text).sort(),
       stableContext ? '' : text(clip.receiverBodyOrientation),
       stableContext ? '' : text(clip.receiverSupport), band,
-      stableContext ? 'verified-position-movement'
+      stableContext ? label.toLocaleLowerCase('tr-TR')
         : hasScope && kind && kind !== 'other' ? kind : label.toLocaleLowerCase('tr-TR'),
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);

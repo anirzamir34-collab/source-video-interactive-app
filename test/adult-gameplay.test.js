@@ -69,11 +69,15 @@ test('approach choices advance through verified source chronology instead of sta
 
   assert.deepEqual(
     selectSequentialApproachChoices(candidates, { timelineFloor: 0, limit: 5 }).map(item => item.id),
-    ['warmup-1', 'warmup-2', 'warmup-4', 'warmup-5', 'warmup-6']
+    ['warmup-1', 'warmup-2']
   );
   assert.deepEqual(
     selectSequentialApproachChoices(candidates, { timelineFloor: 28, limit: 5 }).map(item => item.id),
-    ['warmup-4', 'warmup-5', 'warmup-6', 'warmup-7', 'warmup-8']
+    ['warmup-4', 'warmup-5']
+  );
+  assert.deepEqual(
+    selectSequentialApproachChoices(candidates, { timelineFloor: 28, limit: 5, maxForwardSeconds: 0 }).map(item => item.id),
+    []
   );
 });
 

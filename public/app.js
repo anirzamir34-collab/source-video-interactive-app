@@ -13,6 +13,7 @@ import {
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
   expandVerifiedMovementVariants,
+  exclusiveControlClipIds,
   findAdultSceneForTimeline,
   isEnergeticSexMoment,
   isPlayableVerifiedPositionDuration,
@@ -106,6 +107,7 @@ import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from './dub-ove
 import { createVideoDownloader } from './video-download.js';
 import { normalizeDialogueSegments } from './dialogue-integrity.js';
 import { matchSceneIntroductions, sourcePositionAtTime } from './scene-entry.js';
+import { sourceIdentityLabel } from './choice-groups.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
 import { extractMp4Audio } from './mp4-audio.js';
@@ -1780,6 +1782,13 @@ async function ensureDubSegment(segment, priority = 0) {
     if (!isCurrent()) return null;
     const assignment = plan?.get(dubSpeakerKey(segment));
     if (!assignment?.voiceId) throw new Error('Bu konuşmacıya ayrı ses atanamadı.');
+    const timeline = dubTimeline();
+    const segmentIndex = timeline.indexOf(segment);
+    const adjacentText = offset => {
+      const neighbor = timeline[segmentIndex + offset];
+      return neighbor && dubSpeakerKey(neighbor) === dubSpeakerKey(segment)
+        ? String(neighbor.turkishText || '') : '';
+    };
     const payload = JSON.stringify({
       text: segment.turkishText, speakerId: dubSpeakerKey(segment),
       gender: assignment.gender, voiceId: assignment.voiceId,
@@ -1787,8 +1796,8 @@ async function ensureDubSegment(segment, priority = 0) {
       sourceContext: {
         segmentId, startTime: segment.startTime, endTime: segment.endTime,
         originalText: segment.originalText || '',
-        previousText: dubTimeline()[dubTimeline().indexOf(segment) - 1]?.turkishText || '',
-        nextText: dubTimeline()[dubTimeline().indexOf(segment) + 1]?.turkishText || ''
+        previousText: adjacentText(-1),
+        nextText: adjacentText(1)
       }
     });
     let lastFailure = null;
@@ -3661,16 +3670,8 @@ function prepareAdultScenes() {
         traceRow.routeReason = 'EXPLICIT_OR_LABEL_WARMUP';
         scene.foreplay.push({
           id: action.actionId || `${sceneId}:warmup-${index}`,
-          label: (() => {
-            const base = String(action.narrativeChoiceLabel || action.label || '').trim();
-            const rawIdentity = String(action.primaryCharacterLabel || '').trim();
-            const identity = action.adultScene === true && /\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(rawIdentity)
-              ? String(action.partnerLabel || action.partnerTrackId || '').trim()
-              : rawIdentity;
-            return identity && !base.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))
-              ? `${base} · ${identity}`
-              : base;
-          })(),
+          label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
+            { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           sourceVerified: true,
           startTime,
           endTime,
@@ -3735,14 +3736,8 @@ function prepareAdultScenes() {
         positionEvidence: String(action.positionEvidence || ''),
         activityType: routeNamespace,
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
-        label: (() => {
-          const base = activityDisplayLabel(canonical.label, action);
-          const partnerLabel = String(action.partnerLabel || action.primaryCharacterLabel || '').trim();
-          return partnerLabel &&
-            !normalizeAdultLabel(base).includes(normalizeAdultLabel(partnerLabel))
-            ? `${base} · ${partnerLabel}`
-            : base;
-        })(),
+        label: sourceIdentityLabel(activityDisplayLabel(canonical.label, action),
+          { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
         categoryId: category.id,
         categoryLabel: category.label,
         startTime: correctedStart,
@@ -3786,16 +3781,8 @@ function prepareAdultScenes() {
           ...action,
           id: action.actionId || `movement-${index}`,
           sourcePositionId: position.id,
-          label: (() => {
-            const base = String(action.narrativeChoiceLabel || action.label || '').trim();
-            const rawIdentity = String(action.partnerLabel || action.primaryCharacterLabel || '').trim();
-            const identity = /\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(rawIdentity)
-              ? String(action.partnerTrackId || '').trim().replace(/^PARTNER[_-]?/i, 'Partner ')
-              : rawIdentity;
-            return identity && !base.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))
-              ? `${base} · ${identity}`
-              : base;
-          })(),
+          label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
+            { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           loopStartTime: movementStart,
           loopEndTime: movementEnd
         });
@@ -3917,15 +3904,19 @@ function prepareAdultScenes() {
     });
     scene.positions = consolidateVerifiedPositions(scene.positions, {
       mergeDistantReturns: true
-    }).map(position => ({
-      ...position,
-      movementChoices: buildVerifiedMovementChoices(
-        position.movements.filter(item => item.id !== position.entryMovementId),
-        position.label,
-        5,
-        position
-      )
-    }));
+    }).map(position => {
+      const controlClipIds = isWarmupPosition(position) ? new Set() : exclusiveControlClipIds(position);
+      return {
+        ...position,
+        controlClipIds: [...controlClipIds],
+        movementChoices: buildVerifiedMovementChoices(
+          position.movements.filter(item => item.id !== position.entryMovementId && !controlClipIds.has(item.id)),
+          position.label,
+          5,
+          position
+        )
+      };
+    });
 
     const hasWarmup = scene.foreplay.length > 0 || scene.positions.some(isWarmupPosition);
     let coreIndex = 0;
@@ -4440,7 +4431,7 @@ function renderAdultApproachChoices(scene) {
     })
   ];
   const candidates = selectSequentialApproachChoices(approachPool, {
-    timelineFloor: state.adultTimelineFloor,
+    timelineFloor: Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0),
     limit: 5
   });
 
@@ -4486,7 +4477,9 @@ function renderAdultApproachChoices(scene) {
     if (unlocked) {
       state.adultUiSignature = '';
       queueMicrotask(() => renderAdultProgressiveUI(true));
-    } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId) {
+    } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId &&
+      Number(els.video.currentTime) < Math.min(...(scene?.positions || [])
+        .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)))) {
       void resumePanelPlayback();
     }
   }
@@ -4925,7 +4918,7 @@ function remainingPositionControlClips(position, currentMovement = null) {
   // completed clip ID is cleared at its end, so time must also exclude it.
   return forwardVerifiedClips(
     movementsForPositionOccurrence(position, state.activeAdultOccurrenceId)
-      .filter(item => isEnergeticSexMoment(item)),
+      .filter(item => position.controlClipIds?.includes(item.id) && isEnergeticSexMoment(item)),
     {
       currentId: currentMovement?.id || '',
       after: Math.max(Number(state.adultTimelineFloor) || 0,

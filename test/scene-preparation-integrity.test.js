@@ -6,6 +6,7 @@ import * as gameplay from '../public/adult-gameplay.js';
 import { sourceRangeForClip } from '../public/sequence-integrity.js';
 import { matchSceneIntroductions } from '../public/scene-entry.js';
 import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
+import { sourceIdentityLabel } from '../public/choice-groups.js';
 
 // Run the actual graph preparation with a neutral classifier stub. These tests
 // concern provenance and timeline integrity, not visual classification quality.
@@ -24,7 +25,7 @@ const action = (id, start, end, extra = {}) => ({
 function prepare(actions, overrides = {}) {
   const state = { analysis: { actions }, analysisFingerprint: 'test' };
   const scope = vm.createContext({
-    ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole,
+    ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole, sourceIdentityLabel,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
     canonicalAdultPosition: () => ({ id: 'chapter', label: 'Chapter' }),
     adultCategoryFor: () => ({ id: 'chapter', label: 'Chapter' }),

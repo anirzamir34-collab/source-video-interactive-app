@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { groupSourceChoiceCards, sourceIdentityLabel } from '../public/choice-groups.js';
-import { buildVerifiedMovementChoices, findAdultSceneForTimeline } from '../public/adult-gameplay.js';
+import { buildVerifiedMovementChoices, exclusiveControlClipIds, findAdultSceneForTimeline } from '../public/adult-gameplay.js';
 
 const clip = (index, extra = {}) => ({ id: `clip-${index}`, sourceVerified: true,
   label: `Patikada yürü · Sekans ${index + 1}`, actionType: 'movement',
@@ -72,6 +72,18 @@ test('a rich verified occurrence forms truthful tempo cards with three or four m
   assert.deepEqual(cards.map(card => card.variants.length), [4, 4, 3, 3]);
   assert.equal(cards.flatMap(card => card.variants).length, movements.length);
   assert.ok(cards.every(card => new Set(card.variants.map(item => item.sourcePositionId)).size === 1));
+});
+
+test('the contextual control reserves later energetic source clips without duplicating cards', () => {
+  const movements = [clip(0, { movementTempo: 'slow' }),
+    clip(1, { movementTempo: 'fast' }), clip(2, { movementTempo: 'fast' }),
+    clip(3, { movementTempo: 'fast' })];
+  const position = { id: 'trail', startTime: 0, endTime: 20,
+    sourceRanges: [{ id: 'trail-a', startTime: 0, endTime: 20 }], movements };
+  const reserved = exclusiveControlClipIds(position);
+  assert.deepEqual([...reserved], ['clip-2', 'clip-3']);
+  const cards = buildVerifiedMovementChoices(movements.filter(item => !reserved.has(item.id)), 'Yürüyüş', 5, position);
+  assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)), ['clip-0', 'clip-1']);
 });
 
 test('an earlier source action is not owned solely by a reused scene ID', () => {

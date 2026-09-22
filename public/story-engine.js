@@ -149,15 +149,13 @@ export function storyChoiceLabelForAction(action = {}) {
     }
     // Participant IDs are internal tracking data, not story copy. Keep the
     // verified relationship below when a proper name is not yet established.
-    if (action.adultScene !== true &&
-        /^(?:karakter(?:\s+\S+)?|ana karakter|partner(?:\s+\S+)?|kadın|erkek|adam|kişi)$/iu.test(character)) {
+    if (/^(?:karakter(?:\s+\S+)?|ana karakter|partner(?:\s+\S+)?|kadın|erkek|adam|kişi)$/iu.test(character)) {
       character = '';
     }
     if (action.adultScene === true && /\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(character)) {
       const partner = cleanText(action.partnerLabel, 100);
       character = partner && !/\b(?:anne|baba|kardeş|abla|ağabey|abi|amca|dayı|hala|teyze|üvey)\b/i.test(partner)
-        ? partner
-        : cleanText(action.partnerTrackId, 80).replace(/^PARTNER[_-]?/i, 'Partner ');
+        ? partner : '';
     }
     const relationship = action.adultScene === true ? '' : cleanText(action.relationshipDisplayLabel, 140);
     const withRelationship = value => relationship && !value.toLocaleLowerCase('tr-TR').includes(relationship.toLocaleLowerCase('tr-TR'))

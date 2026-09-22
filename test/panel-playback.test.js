@@ -281,6 +281,7 @@ function chapter(id, start, family = id, role = 'core') {
     id, familyId: family, progressionRole: role, label: `Chapter ${id}`,
     partnerTrackId: 'track-a', startTime: start, endTime: start + 30,
     sourceRanges: [{ id: `source-${id}`, startTime: start, endTime: start + 30 }],
+    controlClipIds: [`${id}-1`, `${id}-2`],
     movements: [0, 1, 2].map(index => ({
       id: `${id}-${index}`, sourcePositionId: `source-${id}`, sourceVerified: true,
       label: `Action ${index}`, startTime: start + index * 10, endTime: start + (index + 1) * 10,

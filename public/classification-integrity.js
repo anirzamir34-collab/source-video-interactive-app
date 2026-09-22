@@ -16,6 +16,20 @@ export function isClassificationCandidate(action = {}) {
   return Boolean(action.positionId || action.positionLabel || action.actionType === 'position');
 }
 
+export function verifiedBodyConfigurationFamily(action = {}) {
+  if (Number(action.positionConfigurationConfidence || 0) < 0.78 ||
+      !String(action.positionEvidence || '').trim()) return '';
+  const orientation = String(action.receiverBodyOrientation || '').toLowerCase();
+  const support = String(action.receiverSupport || '').toLowerCase();
+  return ({
+    on_top_facing: { straddling: 'cowgirl' },
+    on_top_away: { straddling: 'reverse-cowgirl' },
+    face_down_flat: { torso_flat: 'prone-bone' },
+    on_back: { back_flat: 'missionary' },
+    hands_knees: { hands_knees: 'rear' }
+  })[orientation]?.[support] || '';
+}
+
 // A review can narrow an original clip, but cannot replace it with a different
 // part of the source. Parent ranges must also contain the reviewed clip.
 export function isVerifiedReviewWithinSource(review = {}, source = {}) {
@@ -26,6 +40,8 @@ export function isVerifiedReviewWithinSource(review = {}, source = {}) {
   if (isClassificationCandidate(review)) {
     if (!knownPositionId(review.positionId) || !String(review.positionEvidence || '').trim()) return false;
     if (Number(review.positionConfigurationConfidence || 0) < 0.78) return false;
+    const observed = verifiedBodyConfigurationFamily(review);
+    if (observed && !['oral', 'manual'].includes(review.positionId) && observed !== review.positionId) return false;
     const parentStart = Number(review.positionStartTime ?? start);
     const parentEnd = Number(review.positionEndTime ?? end);
     const loopStart = Number(review.loopStartTime ?? start);

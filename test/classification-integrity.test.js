@@ -57,6 +57,14 @@ test('review cannot move a candidate to another source interval or accept an inv
   ]) assert.equal(isVerifiedReviewWithinSource(classified('a', extra), source), false);
 });
 
+test('review rejects a position name contradicted by directly observed body configuration', () => {
+  const source = classified('mismatch', { positionId: 'cowgirl', positionLabel: 'Kovboy Pozisyonu',
+    receiverBodyOrientation: 'on_top_away', receiverSupport: 'straddling' });
+  assert.equal(isVerifiedReviewWithinSource(source, source), false);
+  const corrected = { ...source, positionId: 'reverse-cowgirl', positionLabel: 'Ters Kovboy Pozisyonu' };
+  assert.equal(isVerifiedReviewWithinSource(corrected, source), true);
+});
+
 test('review corrections remain local and rejected guesses do not survive the merge', () => {
   const a = classified('a'), b = classified('b', { startTime: 25, endTime: 35, positionId: 'prone-bone' });
   const corrected = { ...b, positionId: 'standing-rear', positionLabel: 'Ayakta Arkadan' };
