@@ -233,7 +233,7 @@ test('VK extraction uses the complete original link once, with enough time for p
   });
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0].page, url);
-  assert.equal(attempts[0].options.timeoutMs, 45000);
+  assert.equal(attempts[0].options.timeoutMs, 90000);
 });
 
 test('empty-stderr kills and missing Python are not classified as hidden video', () => {

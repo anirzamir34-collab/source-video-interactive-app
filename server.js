@@ -1173,7 +1173,7 @@ async function resolveWithSiteExtractor(rawUrl, { referer = rawUrl, timeoutMs = 
   const userAgent = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Safari/537.36';
   const baseOptions = {
     dumpSingleJson: true, skipDownload: true, noWarnings: true,
-    noPlaylist: true, playlistEnd: 5, socketTimeout: 10, retries: 1, extractorRetries: 1,
+    noPlaylist: true, playlistEnd: 5, socketTimeout: 30, retries: 1, extractorRetries: 1,
     userAgent, referer,
     format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best/best*'
   };
