@@ -2584,8 +2584,6 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
   // Identical short replies in different scenes need their own generation.
   // Context scopes reuse; it is not added to spoken text or acting prompts.
   const context = sourceContext && typeof sourceContext === 'object' ? sourceContext : {};
-  const previousText = String(context.previousText || '').trim().slice(0, 500);
-  const nextText = String(context.nextText || '').trim().slice(0, 500);
   const deliveryContext = [String(context.segmentId || '').slice(0, 250),
     Number(context.startTime) || 0, Number(context.endTime) || 0,
     ...['originalText', 'previousText', 'nextText'].map(key => String(context[key] || '').trim().slice(0, 1200)),
@@ -2614,9 +2612,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
           text: deliveryText,
           model_id: 'eleven_v3',
           language_code: 'tr',
-          voice_settings: voiceSettings,
-          ...(previousText ? { previous_text: previousText } : {}),
-          ...(nextText ? { next_text: nextText } : {})
+          voice_settings: voiceSettings
         })
       }
     );
