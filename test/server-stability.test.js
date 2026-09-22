@@ -74,6 +74,7 @@ test('Eleven v3 delivery keeps neutral lines clean and maps grounded emotion con
   assert.equal(f.scope.elevenV3DeliveryTag('unrecognized-state'), '');
   assert.match(source, /model_id:\s*'eleven_v3'/);
   assert.match(source, /stability:.*\? 0\.65 : 0\.5/);
+  assert.doesNotMatch(section('async function elevenLabsSynthesize(', '\n\nfunction elevenLabsErrorResponse('), /previous_text\s*:|next_text\s*:/);
   assert.doesNotMatch(source, /model_id:\s*'eleven_multilingual_v2'/);
 });
 
@@ -135,7 +136,7 @@ test('four speakers use their assigned voices even for identical text; cache nev
   assert.equal((await contextual({ ...sourceContext })).cacheHit, true);
   await contextual({ ...sourceContext, segmentId: 'reply-2', startTime: 20, endTime: 21 });
   assert.equal(calls.length, 7, 'distinct source replies do not reuse the same generated take');
-  assert.ok(calls.slice(5).every(call => call.body.text === 'Merhaba.' && call.body.previous_text === 'Nasılsın?' && !call.body.next_text));
+  assert.ok(calls.slice(5).every(call => call.body.text === 'Merhaba.' && !('previous_text' in call.body) && !('next_text' in call.body)));
 });
 
 test('remote dialogue audio uses compact speech-optimized MP3 settings', () => {
