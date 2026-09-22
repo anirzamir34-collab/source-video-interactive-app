@@ -25,6 +25,7 @@ import {
   positionOccurrenceGroups,
   positionOccurrenceForMovement,
   monotonicAdultPhase,
+  normalizeSourceActionTimes,
   maleOrgasmPlaybackMultiplier,
   movementBelongsToVerifiedPosition,
   nearestAvailableTempo,
@@ -174,6 +175,7 @@ const state = {
   activePositionId: null,
   activeAdultOccurrenceId: null,
   activeAdultCategory: null,
+  activeAdultPartnerTrackId: null,
   activeMovementId: null,
   activeMovementChoiceId: null,
   maleSceneProgress: 0,
@@ -307,6 +309,8 @@ const els = {
   foreplayCount: $('foreplayCount'),
   foreplayChoices: $('foreplayChoices'),
   categorySection: $('categorySection'),
+  groupPartnerSection: $('groupPartnerSection'),
+  groupPartnerTabs: $('groupPartnerTabs'),
   positionSection: $('positionSection'),
   movementSection: $('movementSection'),
   positionCount: $('positionCount'),
@@ -3251,6 +3255,7 @@ function initializeInteractive(analysis) {
   state.activePositionId = null;
   state.activeAdultOccurrenceId = null;
   state.activeAdultCategory = null;
+  state.activeAdultPartnerTrackId = null;
   state.activeMovementId = null;
   state.adultSelectionToken += 1;
   cancelAdultSeek();
@@ -3446,7 +3451,7 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
 }
 
 function prepareAdultScenes() {
-  const actions = state.analysis?.actions || [];
+  const actions = (state.analysis?.actions || []).map(normalizeSourceActionTimes);
   const traceRows = actions.map((action, index) => ({
     index,
     actionId: String(action?.actionId || `action-${index}`),
@@ -3853,7 +3858,10 @@ function prepareAdultScenes() {
       // the first verified position. A later partner switch must never be
       // offered as the first choice and seek the player hundreds of seconds
       // forward in the source timeline.
-      const playableForeplay = initialWarmupBeforeFirstPosition(foreplay, positions)
+      const firstCorePositions = positions.filter(position =>
+        !['oral', 'manual'].includes(String(position.familyId || '')));
+      const playableForeplay = initialWarmupBeforeFirstPosition(foreplay,
+        firstCorePositions.length ? firstCorePositions : positions)
         .filter(item => Number(item.endTime) > Number(scene.startTime));
       const interactionStart = playableForeplay.length
         ? Math.min(positionStart, ...playableForeplay.map(item => Number(item.startTime)))
@@ -4553,6 +4561,9 @@ function renderAdultProgressiveUI(force = false) {
     availablePositions.map(item => item.id).join(','),
     state.activePositionId || '',
     state.activeAdultCategory || '',
+    state.activeAdultPartnerTrackId || '',
+    phase === 'foreplay' ? Math.floor(Math.max(Number(els.video?.currentTime) || 0,
+      Number(state.adultTimelineFloor) || 0) / 3) : '',
     Math.round(currentAdultFlow())
   ].join('|');
 
@@ -4650,6 +4661,7 @@ function renderAdultPanel(scene) {
     state.activePositionId = null;
     state.activeAdultOccurrenceId = null;
     state.activeAdultCategory = null;
+    state.activeAdultPartnerTrackId = null;
     state.activeMovementId = null;
   }
   if (restoringSameScene) {
@@ -4729,7 +4741,29 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
-  const positions = unlockedAdultPositions(scene)
+  const unlocked = unlockedAdultPositions(scene).filter(item => !isWarmupPosition(item));
+  const partners = [...new Map(unlocked.filter(item => item.groupScene && item.partnerTrackId)
+    .map(item => [item.partnerTrackId, item.partnerLabel || item.partnerTrackId])).entries()];
+  const showPartners = partners.length > 1;
+  if (!showPartners) state.activeAdultPartnerTrackId = null;
+  if (els.groupPartnerTabs) els.groupPartnerTabs.innerHTML = '';
+  els.groupPartnerSection?.classList.toggle('hidden', !showPartners);
+  if (showPartners) {
+    for (const [trackId, label] of [['', 'Tüm kişiler'], ...partners]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'position-tab';
+      button.textContent = label;
+      button.classList.toggle('active', (state.activeAdultPartnerTrackId || '') === trackId);
+      button.addEventListener('click', () => {
+        state.activeAdultPartnerTrackId = trackId || null;
+        selectAdultCategory(categoryId, false);
+      });
+      els.groupPartnerTabs?.appendChild(button);
+    }
+  }
+  const positions = unlocked
+    .filter(item => !state.activeAdultPartnerTrackId || item.partnerTrackId === state.activeAdultPartnerTrackId)
     .filter(item => !isWarmupPosition(item))
     .filter(item => {
       if (categoryId === 'all') return true;
@@ -5049,7 +5083,8 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const entryMovement = verifiedMovements.find(item => item.id === position.entryMovementId) ||
     [...verifiedMovements].sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0] || null;
   const entryMovementId = entryMovement?.id || '';
-  const movementPool = verifiedMovements.filter(item => item.id !== entryMovementId);
+  const movementPool = verifiedMovements.filter(item => item.id !== entryMovementId &&
+    !position.controlClipIds?.includes(item.id));
   const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5, position);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
@@ -5299,7 +5334,8 @@ function finishAdultScene(options = {}) {
   state.adultMode = false;
   state.adultScene = null;
   state.activePositionId = null;
-  state.activeAdultCategory = null;
+    state.activeAdultCategory = null;
+    state.activeAdultPartnerTrackId = null;
   state.activeMovementId = null;
   state.activeAdultOutcomeId = null;
   state.activeAdultPreludeId = null;

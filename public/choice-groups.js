@@ -7,7 +7,7 @@ export const sourceActionLabel = value => text(value)
 export function sourceIdentityLabel(value, clip = {}) {
   const label = sourceActionLabel(value);
   if (!label || clip?.relationshipResolution === 'verified') return label;
-  const identity = clip?.identityResolution === 'verified'
+  const identity = ['verified', 'described'].includes(clip?.identityResolution)
     ? text(clip.primaryCharacterLabel)
     : '';
   if (!identity || /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity) ||

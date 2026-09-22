@@ -4,6 +4,25 @@ import { knownPositionId, verifiedBodyConfigurationFamily } from './classificati
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
+export function normalizeSourceActionTimes(action = {}) {
+  const start = Number(action.startTime), end = Number(action.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return action;
+  const parentStart = Number(action.positionStartTime);
+  const parentEnd = Number(action.positionEndTime);
+  const validParent = Number.isFinite(parentStart) && Number.isFinite(parentEnd) &&
+    parentStart <= start + 0.05 && parentEnd >= end - 0.05 && parentEnd > parentStart;
+  const loopStart = Number(action.loopStartTime), loopEnd = Number(action.loopEndTime);
+  const validLoop = Number.isFinite(loopStart) && Number.isFinite(loopEnd) &&
+    loopStart >= start - 0.05 && loopEnd <= end + 0.05 && loopEnd > loopStart;
+  return {
+    ...action,
+    positionStartTime: validParent ? parentStart : start,
+    positionEndTime: validParent ? parentEnd : end,
+    loopStartTime: validLoop ? loopStart : start,
+    loopEndTime: validLoop ? loopEnd : end
+  };
+}
+
 export function adultPositionFamily(value) {
   const canonicalId = knownPositionId(value);
   if (canonicalId) return canonicalId;
