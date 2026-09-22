@@ -1,6 +1,6 @@
 import { groupSourceChoiceCards, sourceActionLabel, sourceIdentityLabel } from './choice-groups.js';
 import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
-import { knownPositionId } from './classification-integrity.js';
+import { knownPositionId, verifiedBodyConfigurationFamily } from './classification-integrity.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
@@ -52,10 +52,12 @@ export function initialWarmupBeforeFirstPosition(foreplay = [], positions = []) 
 
 export function selectSequentialApproachChoices(candidates = [], {
   timelineFloor = 0,
-  limit = 5
+  limit = 5,
+  maxForwardSeconds = 18
 } = {}) {
   const floor = Math.max(0, Number(timelineFloor) || 0);
   const safeLimit = Math.max(1, Math.floor(Number(limit) || 5));
+  const horizon = floor + Math.max(0, Number(maxForwardSeconds) || 0);
   const seen = new Set();
   const forward = (Array.isArray(candidates) ? candidates : [])
     .filter(item => {
@@ -63,6 +65,7 @@ export function selectSequentialApproachChoices(candidates = [], {
       const endTime = Number(item?.endTime);
       if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return false;
       if (endTime <= floor + 0.05) return false;
+      if (startTime > horizon + 0.05) return false;
       const key = `${String(item?.kind || '')}:${String(item?.id || '')}:${String(item?.movementId || '')}`;
       if (seen.has(key)) return false;
       seen.add(key);
@@ -190,16 +193,7 @@ export function verifiedAdultPositionFamily(action = {}) {
 }
 
 export function adultPositionFamilyFromBodyConfiguration(action = {}) {
-  const orientation = String(action.receiverBodyOrientation || '').trim().toLowerCase();
-  const support = String(action.receiverSupport || '').trim().toLowerCase();
-  const confidence = Number(action.positionConfigurationConfidence);
-  if (!Number.isFinite(confidence) || confidence < 0.78 || !String(action.positionEvidence || '').trim()) return '';
-  if (orientation === 'on_top_facing' && support === 'straddling') return 'cowgirl';
-  if (orientation === 'on_top_away' && support === 'straddling') return 'reverse-cowgirl';
-  if (orientation === 'face_down_flat' && support === 'torso_flat') return 'prone-bone';
-  if (orientation === 'on_back' && support === 'back_flat') return 'missionary';
-  if (orientation === 'hands_knees' && support === 'hands_knees') return 'rear';
-  return '';
+  return verifiedBodyConfigurationFamily(action);
 }
 
 export function resolveVerifiedAdultPosition(action = {}) {
@@ -1037,6 +1031,20 @@ export function isEnergeticSexMoment(movement = null) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
   return /\b(hizli|sert|derin|guclu|thrust|hard|deep)\b/.test(text);
+}
+
+// Reserve later energetic clips for the contextual control. Keep the first
+// energetic clip of each continuous source occurrence on a normal card, so
+// the player can reach the control without jumping into an unseen section.
+export function exclusiveControlClipIds(position = {}) {
+  const reserved = new Set();
+  for (const occurrence of positionOccurrenceGroups(position)) {
+    const energetic = movementsForPositionOccurrence(position, occurrence.id)
+      .filter(isEnergeticSexMoment)
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+    for (const clip of energetic.slice(1)) reserved.add(clip.id);
+  }
+  return reserved;
 }
 
 export function dedupeVerifiedTimelineActions(actions = []) {

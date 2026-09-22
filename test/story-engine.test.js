@@ -39,7 +39,7 @@ test('preserves verified character identity in main and fallback choices', () =>
   assert.equal(storyChoiceLabelForAction({
     label: 'Ritmi sürdür', adultScene: true, primaryCharacterLabel: 'Anne',
     partnerTrackId: 'PARTNER_A'
-  }), 'Ritmi sürdür · Partner A');
+  }), 'Ritmi sürdür');
 });
 
 test('sensory cues require direct evidence and sufficient confidence', () => {
