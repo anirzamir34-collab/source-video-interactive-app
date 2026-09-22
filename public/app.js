@@ -6411,7 +6411,7 @@ async function resolveVideoUrl() {
   els.videoInput.disabled = true;
   if (videoUrlInput) videoUrlInput.disabled = true;
   updateAnalyzeAvailability();
-  setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor...');
+  setUrlStatus('Sayfa inceleniyor, video kaynağı aranıyor... Yavaş sitelerde arama 5 dakika sürebilir.');
   hideBrowserDownloadHelp();
   const resolveStartedAt = performance.now();
   let pendingBlob;
@@ -6421,7 +6421,7 @@ async function resolveVideoUrl() {
     const resolveResponse = await fetch('/api/resolve-video-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(360000),
       body: JSON.stringify({ url: pageUrl })
     });
 
