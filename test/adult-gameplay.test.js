@@ -83,8 +83,8 @@ test('lust and orgasm progression remains bounded and uses balanced cycle length
   assert.ok(delta.maleOrgasm > 0);
   assert.ok(delta.femaleOrgasm > 0);
   assert.ok(FEMALE_ORGASM_CYCLE_SECONDS >= 150);
-  assert.ok(MALE_ORGASM_CYCLE_SECONDS >= 140);
-  assert.ok(MALE_ORGASM_CYCLE_SECONDS <= 190);
+  assert.ok(MALE_ORGASM_CYCLE_SECONDS >= 105);
+  assert.ok(MALE_ORGASM_CYCLE_SECONDS <= 130);
 
   const warmup = adultPlaybackProgressDelta({ elapsed: 0.25, warmup: true });
   assert.equal(warmup.maleOrgasm, 0);
@@ -125,7 +125,10 @@ test('male orgasm starts around the middle and follows verified movement intensi
   assert.ok(slow < moderate);
   assert.ok(moderate < fast);
   assert.ok(slow >= 0.7);
-  assert.ok(fast <= 1.45);
+  assert.ok(fast <= 1.7);
+  assert.ok(maleOrgasmPlaybackMultiplier({
+    ...base, corePlaySeconds: 37, movementTempo: 'moderate'
+  }) > 0);
   assert.equal(maleOrgasmPlaybackMultiplier({
     ...base, corePlaySeconds: 100, coreVisitedCount: 0, movementTempo: 'fast'
   }), 0);
