@@ -2570,7 +2570,7 @@ function elevenV3DeliveryTag(emotion = '') {
   return '';
 }
 
-async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotion = '' }) {
+async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotion = '', sourceContext = {} }) {
   const voiceSet = await elevenLabsVoices(apiKey);
   const requested = String(voiceId || '').trim();
   const voice = voiceSet.voices.find(item => item.voice_id === requested);
@@ -2582,8 +2582,15 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
   const voiceSettings = { stability: deliveryText.split(/\s+/u).length <= 4 ? 1 : 0.5,
     similarity_boost: 0.75, use_speaker_boost: true };
   const accountHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
+  // Identical short replies in different scenes need their own generation.
+  // Context scopes reuse; it is not added to spoken text or acting prompts.
+  const context = sourceContext && typeof sourceContext === 'object' ? sourceContext : {};
+  const deliveryContext = [String(context.segmentId || '').slice(0, 250),
+    Number(context.startTime) || 0, Number(context.endTime) || 0,
+    ...['originalText', 'previousText', 'nextText'].map(key => String(context[key] || '').trim().slice(0, 1200)),
+    String(emotion || '').trim().toLowerCase().slice(0, 80)];
   const cacheKey = crypto.createHash('sha256')
-    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, 'natural-dialogue-v2']))
+    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, deliveryContext, 'natural-dialogue-v3']))
     .digest('hex');
   pruneElevenLabsAudioCache();
   const cached = elevenLabsAudioCache.get(cacheKey);
@@ -2704,8 +2711,7 @@ app.post('/api/elevenlabs-dub-segment', async (req, res) => {
     const audio = await elevenLabsSynthesize({
       apiKey, text, gender, voiceId,
       emotion: req.body?.emotion,
-      previousText: req.body?.previousText,
-      nextText: req.body?.nextText
+      sourceContext: req.body?.sourceContext
     });
     console.info('[elevenlabs-dub-ok]', JSON.stringify({
       speakerId: speakerId.slice(0, 80),

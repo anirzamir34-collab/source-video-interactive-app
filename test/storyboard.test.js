@@ -10,18 +10,29 @@ import {
   storyboardSamplingPlan
 } from '../public/storyboard.js';
 
-test('analysis chunks scale with video length and stay capped at fifteen', () => {
-  assert.deepEqual(adaptiveAnalysisChunkPlan(12, 578, 'ultra'), {
-    sheetsPerChunk: 2,
-    chunkCount: 6
-  });
-  assert.deepEqual(adaptiveAnalysisChunkPlan(40, 3600, 'ultra'), {
-    sheetsPerChunk: 3,
-    chunkCount: 14
-  });
+test('analysis chunks scale with video length and stay capped at twenty', () => {
+  assert.equal(adaptiveAnalysisChunkPlan(12, 578, 'ultra').chunkCount, 7);
+  assert.equal(adaptiveAnalysisChunkPlan(40, 3600, 'ultra').chunkCount, 20);
   assert.equal(adaptiveAnalysisChunkPlan(2, 45, 'ultra').chunkCount, 1);
   assert.ok(adaptiveAnalysisChunkPlan(30, 180, 'ultra').chunkCount <= 3);
   assert.ok(adaptiveAnalysisChunkPlan(40, 773, 'ultra').chunkCount <= 10);
+});
+
+test('a fifty-minute video no longer collapses nineteen sheets into ten broad requests', () => {
+  const plan = adaptiveAnalysisChunkPlan(19, 3000, 'ultra');
+  assert.equal(plan.chunkCount, 19);
+  assert.ok(plan.chunks.every(chunk => chunk.sheetCount === 1));
+});
+
+test('uneven chunk groups include each sheet once and stay balanced', () => {
+  for (const [sheets, seconds] of [[19, 2000], [40, 3600], [12, 578], [2, 45]]) {
+    const plan = adaptiveAnalysisChunkPlan(sheets, seconds);
+    const covered = plan.chunks.flatMap(chunk => Array.from({ length: chunk.sheetCount }, (_, i) => chunk.firstSheet + i));
+    assert.deepEqual(covered, Array.from({ length: sheets }, (_, i) => i));
+    const sizes = plan.chunks.map(chunk => chunk.sheetCount);
+    assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1);
+    assert.equal(plan.chunkCount, plan.chunks.length);
+  }
 });
 
 test('analysis chunk planning reduces calls without dropping storyboard frames', () => {

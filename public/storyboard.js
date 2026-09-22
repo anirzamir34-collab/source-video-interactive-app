@@ -46,15 +46,20 @@ export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityM
   const seconds = Math.max(1, Number(duration) || 1);
   const fast = String(qualityMode || 'ultra').toLowerCase() === 'fast';
   // Model calls scale with the source duration, not with a dense patch of
-  // focused frames. Short videos should never pay the fifteen-call ceiling.
+  // focused frames. Short videos should never pay the long-video ceiling.
   const targetSeconds = fast ? 125 : 95;
   const durationCeiling = seconds <= 180 ? 3
     : seconds <= 480 ? 6
       : seconds <= 900 ? 10
-        : seconds <= 1800 ? 12 : 15;
-  const desiredChunks = Math.min(durationCeiling, Math.max(1, Math.ceil(seconds / targetSeconds)));
-  const sheetsPerChunk = Math.max(1, Math.ceil(sheets / desiredChunks));
-  return { sheetsPerChunk, chunkCount: Math.ceil(sheets / sheetsPerChunk) };
+        : seconds <= 1800 ? 12 : seconds <= 2400 ? 15 : 20;
+  const chunkCount = Math.min(sheets, durationCeiling, Math.max(1, Math.ceil(seconds / targetSeconds)));
+  // Partition by cumulative boundaries. Rounding a single group size up
+  // reduced 19 sheets / 15 requested chapters to only 10 actual chapters.
+  const chunks = Array.from({ length: chunkCount }, (_, index) => {
+    const firstSheet = Math.floor(index * sheets / chunkCount);
+    return { firstSheet, sheetCount: Math.floor((index + 1) * sheets / chunkCount) - firstSheet };
+  });
+  return { sheetsPerChunk: Math.ceil(sheets / chunkCount), chunkCount, chunks };
 }
 
 export function storyboardSamplingPlan(duration, remote = false) {

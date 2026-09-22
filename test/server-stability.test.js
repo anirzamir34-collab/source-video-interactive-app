@@ -130,6 +130,13 @@ test('four speakers use their assigned voices even for identical text; cache nev
   assert.equal(calls[4].body.voice_settings.stability, 0.5);
   await assert.rejects(synthesize('removed-voice'), { code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
   assert.equal(calls.length, 5);
+  const sourceContext = { segmentId: 'reply-1', startTime: 3, endTime: 4, originalText: 'Hello.', previousText: 'Nasılsın?' };
+  const contextual = context => f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Merhaba.', voiceId: 'one', sourceContext: context });
+  await contextual(sourceContext);
+  assert.equal((await contextual({ ...sourceContext })).cacheHit, true);
+  await contextual({ ...sourceContext, segmentId: 'reply-2', startTime: 20, endTime: 21 });
+  assert.equal(calls.length, 7, 'distinct source replies do not reuse the same generated take');
+  assert.ok(calls.slice(5).every(call => call.body.text === 'Merhaba.' && !call.body.previous_text && !call.body.next_text));
 });
 
 test('remote dialogue audio uses compact speech-optimized MP3 settings', () => {

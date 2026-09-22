@@ -60,7 +60,11 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
         if (this.paused) { const error = new Error('play interrupted by pause'); error.name = 'AbortError'; throw error; }
       }
     }
-    pause() { this.pauses++; this.paused = true; }
+    pause() {
+      const changed = !this.paused;
+      this.pauses++; this.paused = true;
+      if (browserEvents && this === video && changed) queueMicrotask(() => this.dispatchEvent(new Event('pause')));
+    }
     end() { this.ended = true; this.paused = true; this.currentTime = this.duration; this.dispatchEvent(new Event('ended')); }
   }
   class Audio extends Media { constructor() { super(); made.push(this); } }
@@ -132,7 +136,7 @@ test('source stays below the voice; levels ramp smoothly and restore the user vo
 test('voice fitting leaves short speech natural and bounds longer speech', () => {
   assert.equal(naturalDubRate(2, 4), 1);
   assert.equal(naturalDubRate(4.4, 4), 1.1);
-  assert.equal(naturalDubRate(10, 4), 1.3);
+  assert.equal(naturalDubRate(10, 4), 1.15);
   assert.equal(naturalDubRate(4, 4, 0.5), 0.5);
 });
 
@@ -181,7 +185,7 @@ test('seeking into a short sentence preserves the heard offset even below the no
   } finally { f.close(); }
 });
 
-test('the final voice cannot spill into unrelated footage without a following caption', async () => {
+test('a long final voice holds the source instead of cutting words or spilling into later footage', async () => {
   const f = fixture([line('a', 1, 2)], { durations: { a: 4 } });
   try {
     await f.sync();
@@ -189,9 +193,71 @@ test('the final voice cannot spill into unrelated footage without a following ca
     audio.currentTime = 1;
     f.video.currentTime = 2.7;
     await f.sync();
-    assert.equal(f.channels().length, 0);
-    assert.equal(audio.paused, true);
+    assert.equal(f.channels().length, 1);
+    assert.equal(audio.paused, false);
+    assert.equal(f.video.paused, true);
     assert.equal(f.state.dubPlayedSegmentIds.has('a'), true);
+    audio.end();
+    await tick();
+    assert.equal(f.video.paused, false);
+  } finally { f.close(); }
+});
+
+test('a short reply survives waiting past its caption end and starts from the beginning', async () => {
+  const f = fixture([line('a', 1, 2), line('b', 2, 2.35)], { durations: { a: 2, b: .4 } });
+  try {
+    await f.sync();
+    const first = f.active();
+    first.currentTime = 1.1;
+    f.video.currentTime = 2.01;
+    await f.sync();
+    assert.equal(f.video.paused, true, 'the next reply must not expire while the previous speaker finishes');
+    first.end();
+    await tick();
+    assert.equal(f.state.activeDubSegmentId, 'b');
+    assert.equal(f.active().currentTime, 0);
+    assert.equal(f.active().plays, 1);
+  } finally { f.close(); }
+});
+
+test('a seek during a speech hold cancels its automatic resume and old voice', async () => {
+  const f = fixture([line('a', 1, 2), line('b', 5, 7)], { durations: { a: 4 } });
+  try {
+    await f.sync();
+    const first = f.active();
+    f.video.currentTime = 2.02;
+    await f.sync();
+    assert.equal(f.video.paused, true);
+    f.video.currentTime = 5.5;
+    f.event('seeking');
+    f.event('seeked');
+    const plays = f.video.plays;
+    first.end();
+    await tick();
+    assert.equal(f.video.plays, plays);
+    assert.equal(f.video.paused, true);
+    assert.equal(f.channels().length, 0);
+  } finally { f.close(); }
+});
+
+test('a stalled held decoder exposes recovery and retry retains its sample offset', async () => {
+  const f = fixture([line('a', 1, 2)], { durations: { a: 4 } });
+  try {
+    await f.sync();
+    const audio = f.active();
+    audio.currentTime = 1;
+    f.video.currentTime = 2.02;
+    let timeout;
+    f.scope.setTimeout = callback => { timeout = callback; return 0; };
+    await f.sync();
+    assert.equal(f.video.paused, true);
+    timeout();
+    assert.equal(f.state.dubBuffer.loading, false);
+    await f.scope.retryDubBuffer();
+    await tick();
+    assert.equal(f.active(), audio);
+    assert.equal(audio.currentTime, 1);
+    assert.equal(audio.paused, false);
   } finally { f.close(); }
 });
 
@@ -443,13 +509,13 @@ test('a slow current line holds the source and then starts from its first syllab
   } finally { f.close(); }
 });
 
-test('callbacks delayed beyond the former 650ms cutoff still dub the current line', async () => {
+test('a delayed initial callback preserves the unheard beginning without an explicit seek', async () => {
   const f = fixture([line('a', 1, 5)], { durations: { a: 4 } });
   try {
     f.video.currentTime = 2;
     await f.sync();
     assert.equal(f.state.activeDubSegmentId, 'a');
-    assert.equal(f.active().currentTime, 1);
+    assert.equal(f.active().currentTime, 0);
     assert.equal(f.active().paused, false);
   } finally { f.close(); }
 });
@@ -559,6 +625,68 @@ test('an audio decode failure exposes recovery instead of leaving a heard-but-si
     await tick();
     assert.notEqual(f.active(), old);
     assert.equal(f.active().paused, false);
+  } finally { f.close(); }
+});
+
+test('decoder recovery preserves heard samples even after the original caption expired', async () => {
+  const f = fixture([line('a', 1, 2)], { durations: { a: 3 } });
+  try {
+    await f.sync();
+    const first = f.active();
+    first.currentTime = 1.4;
+    f.video.currentTime = 2.02;
+    await f.sync();
+    first.error = { code: 3 };
+    first.dispatchEvent(new Event('error'));
+    assert.equal(f.state.dubBuffer.loading, false);
+    await f.scope.retryDubBuffer();
+    await tick();
+    assert.notEqual(f.active(), first);
+    assert.equal(f.active().currentTime, 1.4, 'the heard beginning must not repeat');
+    assert.equal(f.active().paused, false);
+  } finally { f.close(); }
+});
+
+test('browser pause events preserve the held voice and overlapping voices resume at their saved offsets', async () => {
+  const f = fixture([{ ...line('a', 1, 2), speakerId: 'first' }, { ...line('b', 1.5, 6), speakerId: 'second' }],
+    { durations: { a: 4, b: 4 }, browserEvents: true });
+  try {
+    await f.sync();
+    const first = f.active();
+    f.video.currentTime = 1.5;
+    await f.sync();
+    const second = f.channels().find(([id]) => id === 'b')[1];
+    second.currentTime = .5;
+    first.currentTime = 1;
+    f.video.currentTime = 2.02;
+    await f.sync();
+    await tick();
+    assert.equal(first.paused, false);
+    assert.equal(second.paused, true);
+    first.end();
+    await tick();
+    assert.equal(f.video.paused, false);
+    assert.equal(second.paused, false);
+    assert.equal(second.currentTime, .5);
+  } finally { f.close(); }
+});
+
+test('natural video end does not cut a long final utterance or replay the video', async () => {
+  const f = fixture([line('a', 1, 2)], { durations: { a: 4 } });
+  try {
+    await f.sync();
+    const audio = f.active();
+    audio.currentTime = 1;
+    const plays = f.video.plays;
+    f.video.currentTime = 2;
+    f.video.ended = true;
+    f.video.paused = true;
+    f.event('pause');
+    f.event('ended');
+    assert.equal(audio.paused, false);
+    audio.end();
+    await tick();
+    assert.equal(f.video.plays, plays);
   } finally { f.close(); }
 });
 
