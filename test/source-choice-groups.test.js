@@ -13,6 +13,7 @@ test('an old position return exposes only nearby forward source clips', () => {
       { id: 'trail-a', startTime: 778, endTime: 812 }] };
   assert.deepEqual(forwardLocalMovementClips(position, 734).map(item => item.id), []);
   assert.deepEqual(forwardLocalMovementClips(position, 778).map(item => item.id), ['clip-1', 'clip-2']);
+  assert.deepEqual(forwardLocalMovementClips(position, 779).map(item => item.id), ['clip-1', 'clip-2']);
   assert.deepEqual(forwardLocalMovementClips(position, 839).map(item => item.id), []);
 });
 

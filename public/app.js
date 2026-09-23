@@ -4037,9 +4037,8 @@ function unlockNextAdultPositionFromLust() {
   if (currentAdultFlow() < 99.9 || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision) return null;
   const firstUnlock = !state.adultSexUnlocked;
   const positions = state.adultScene?.positions || [];
-  const firstCoreStart = Math.min(...positions.filter(position => !isWarmupPosition(position))
-    .map(position => Number(position.startTime)));
-  if (firstUnlock && Number(els.video?.currentTime) < firstCoreStart - 0.3) return null;
+  // A full meter may open the first nearby verified segment. Requiring the
+  // playhead to reach the segment first can strand a paused introduction.
   const latestUnlocked = positions.filter(position =>
     !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id)
   ).sort((a, b) => Number(b.startTime) - Number(a.startTime))[0];
@@ -4851,9 +4850,7 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     els.positionTabs?.appendChild(button);
   });
 
-  const selected =
-    positions.find(item => item.id === state.activePositionId && forwardLocalMovementClips(item,
-      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length) ||
+  const selected = positions.find(item => item.id === state.activePositionId) ||
     positions.find(item => forwardLocalMovementClips(item,
       Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length);
 
@@ -5276,7 +5273,10 @@ function selectAdultMovement(
 
   if (shouldSeek && els.video) {
     els.video.pause();
-    void seekAdultLoop(movement.loopStartTime, effectiveToken);
+    const cursor = Number(els.video.currentTime) || 0;
+    const target = cursor >= movement.loopStartTime && cursor < movement.loopEndTime
+      ? cursor : movement.loopStartTime;
+    void seekAdultLoop(target, effectiveToken);
   }
 }
 
@@ -5492,7 +5492,9 @@ async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionTo
     selectionToken === state.adultSelectionToken;
   try {
     primeLanguageTracksAt(target, 2);
-    await seekMediaTo(els.video, target, { signal: controller.signal });
+    if (Math.abs((Number(els.video.currentTime) || 0) - target) > 0.12) {
+      await seekMediaTo(els.video, target, { signal: controller.signal });
+    }
     if (!isCurrent()) return false;
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
