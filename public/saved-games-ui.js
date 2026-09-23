@@ -4,6 +4,13 @@ import { repairableAnalysisGaps } from './analysis-gap-repair.js';
 const sizeText = bytes => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const durationText = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 
+export function savedGameOperationError(error) {
+  if (error?.code === 'GEMINI_CREDITS_DEPLETED') {
+    return 'Eksik bölümler analiz edilemedi: Gemini API kredisi veya proje kotası şu anda kullanılamıyor. Kayıtlı video ve mevcut analiz korunuyor. Kullanılabilir bir Gemini anahtarı ekledikten veya kota yenilendikten sonra yeniden dene.';
+  }
+  return storageError(error);
+}
+
 export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, onBusy, onSaved, onDeleted }) {
   const store = createGameStore();
   const list = root.querySelector('[data-games-list]');
@@ -120,7 +127,7 @@ export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, o
     onBusy(true);
     refreshControls();
     try { await operation(); return true; }
-    catch (error) { message(storageError(error), true); return false; }
+    catch (error) { message(savedGameOperationError(error), true); return false; }
     finally { busy = false; onBusy(false); refreshControls(); }
   }
   async function saveCurrent(automatic = false) {
