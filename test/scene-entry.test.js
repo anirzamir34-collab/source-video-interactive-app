@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchSceneIntroductions, sourcePositionAtTime } from '../public/scene-entry.js';
+import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from '../public/scene-entry.js';
+
+test('reentering a source scene at a later position keeps the current frame', () => {
+  const scene = { startTime: 443.537, endTime: 1034.92 };
+  assert.equal(sceneEntrySeekTarget(scene, 720.747, true, false), null);
+  assert.equal(sceneEntrySeekTarget(scene, 430, true, false), 443.537);
+  assert.equal(sceneEntrySeekTarget(scene, 720.747, true, true), null);
+});
 
 const action = (start, end, extra = {}) => ({ startTime: start, endTime: end, subjectTrackId: 'a',
   partnerTrackId: 'b', sourceVerified: true, confidence: .95, kind: 'introduction', ...extra });

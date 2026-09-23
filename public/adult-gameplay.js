@@ -172,6 +172,16 @@ export function positionOccurrenceForMovement(position = {}, movement = null) {
   ) || null;
 }
 
+export function forwardLocalMovementClips(position = {}, cursor = 0, horizonSeconds = 18) {
+  const floor = Math.max(0, Number(cursor) || 0);
+  const horizon = floor + Math.max(0, Number(horizonSeconds) || 0);
+  return (Array.isArray(position?.movements) ? position.movements : [])
+    .filter(item => item?.sourceVerified === true && positionOccurrenceForMovement(position, item))
+    .filter(item => Number(item.loopStartTime) >= floor - 0.05 &&
+      Number(item.loopStartTime) <= horizon + 0.05)
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+}
+
 export function assignAdultSceneOccurrenceIds(actions = [], maxSilentGapSeconds = 45) {
   const input = Array.isArray(actions) ? actions : [];
   const assignments = new Array(input.length).fill('');
@@ -319,7 +329,12 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
   // Only an explicit change to another configuration is a transition.
   // Words describing the ongoing verified activity (vaginal, penetration,
   // kissing or touching) are legitimate position-local movement choices.
-  if (/\b(gecis|transition|pozisyon(?:una|a)?\s+gec|pozisyon\s+degistir|ustune\s+cik|yuzustu\s+don|donerken|yonlendir)\b/.test(text)) return false;
+  const verifiedEntry = String(action.actionType || '').toLowerCase() === 'position' &&
+    action.classificationReview === 'verified' &&
+    String(action.positionId || '').toLowerCase() === canonicalId &&
+    Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
+    String(action.positionEvidence || '').trim();
+  if (!verifiedEntry && /\b(gecis|transition|pozisyon(?:una|a)?\s+gec|pozisyon\s+degistir|ustune\s+cik|yuzustu\s+don|donerken|yonlendir)\b/.test(text)) return false;
   const family = adultPositionFamily(source);
   if (family && family !== canonicalId) {
     // Generic direction prose cannot override a verified specific parent.

@@ -128,8 +128,9 @@ export function bindActionCharacter(action, context = {}) {
   }
   const candidate = lookup(targetId);
   const partnerCandidate = lookup(action.partnerTrackId);
-  const conflictingTargets = Boolean(action.primaryCharacterId && action.partnerTrackId && candidate &&
-    partnerCandidate && canonicalCharacterId(candidate) !== canonicalCharacterId(partnerCandidate));
+  const conflictingTargets = Boolean(action.primaryCharacterId && action.partnerTrackId &&
+    text(action.primaryCharacterId) !== text(action.partnerTrackId) &&
+    (!candidate || !partnerCandidate || canonicalCharacterId(candidate) !== canonicalCharacterId(partnerCandidate)));
   const mismatch = conflictingTargets || Boolean(candidate && declared.length && !present.includes(candidate));
   const target = mismatch ? null : candidate;
   const result = { ...action,

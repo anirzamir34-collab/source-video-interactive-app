@@ -48,6 +48,7 @@ function prepare(actions, overrides = {}) {
   const state = { analysis: { actions }, analysisFingerprint: 'test' };
   const scope = vm.createContext({
     ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole, sourceIdentityLabel,
+    bindActionCharacter: item => item,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
     playableAdultPanelFamily: item => item.sourceVerified && item.adultScene && item.positionId ? 'chapter' : '',
     canonicalAdultPosition: () => ({ id: 'chapter', label: 'Chapter' }),

@@ -15,6 +15,7 @@ import {
   expandVerifiedMovementVariants,
   exclusiveControlClipIds,
   findAdultSceneForTimeline,
+  forwardLocalMovementClips,
   isEnergeticSexMoment,
   isPlayableVerifiedPositionDuration,
   isOutcomeUnlocked,
@@ -108,7 +109,7 @@ import { dubSpeakerKey, buildDubSpeakerRoster, validateDubVoicePlan } from './du
 import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from './dub-overlap.js';
 import { createVideoDownloader } from './video-download.js';
 import { normalizeDialogueSegments } from './dialogue-integrity.js';
-import { matchSceneIntroductions, sourcePositionAtTime } from './scene-entry.js';
+import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel } from './choice-groups.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
@@ -3452,7 +3453,8 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
 }
 
 function prepareAdultScenes() {
-  const actions = (state.analysis?.actions || []).map(normalizeSourceActionTimes);
+  const actions = (state.analysis?.actions || []).map(action => bindActionCharacter(
+    normalizeSourceActionTimes(action), state.analysis?.storyContext || {}));
   const traceRows = actions.map((action, index) => ({
     index,
     actionId: String(action?.actionId || `action-${index}`),
@@ -4045,12 +4047,14 @@ function unlockNextAdultPositionFromLust() {
   // have started playback; clicking locked/stalled cards cannot skip it.
   if (!firstUnlock && (!latestUnlocked || !state.adultVisitedPositionIds.has(latestUnlocked.id))) return null;
   const locked = orderedLockedAdultPositions();
+  const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
   const coreVisited = (state.adultScene?.positions || []).some(position =>
     !isWarmupPosition(position) && !isBonusPosition(position) &&
     state.adultVisitedPositionIds.has(position.id)
   );
   const next = locked.find(position =>
-    !state.adultSexUnlocked ? !isBonusPosition(position) : coreVisited
+    (!state.adultSexUnlocked ? !isBonusPosition(position) : coreVisited) &&
+    forwardLocalMovementClips(position, cursor).length
   );
   if (!next) return null;
   state.adultUnlockedPositionIds.add(next.id);
@@ -4496,10 +4500,18 @@ function renderAdultApproachChoices(scene, later = false) {
     if (unlocked) {
       state.adultUiSignature = '';
       queueMicrotask(() => renderAdultProgressiveUI(true));
-    } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId &&
-      Number(els.video.currentTime) < Math.min(...(scene?.positions || [])
+    } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId) {
+      if (later) {
+        const continueButton = document.createElement('button');
+        continueButton.type = 'button';
+        continueButton.className = 'choice-btn';
+        continueButton.textContent = 'Videoya devam et';
+        continueButton.addEventListener('click', () => void resumePanelPlayback());
+        els.choices.appendChild(continueButton);
+      } else if (Number(els.video.currentTime) < Math.min(...(scene?.positions || [])
         .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)))) {
-      void resumePanelPlayback();
+        void resumePanelPlayback();
+      }
     }
   }
 }
@@ -4537,17 +4549,19 @@ function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel || state.adultOutcomePhase !== 'idle') return;
 
-  if (!state.adultSexUnlocked && !state.activeAdultPreludeId && !state.activeMovementId) {
+  if (!state.activeAdultPreludeId && !state.activeMovementId) {
     const current = sourcePositionAtTime((scene.positions || []).filter(position =>
       !isWarmupPosition(position) && !isBonusPosition(position)), Number(els.video?.currentTime));
-    if (current) {
+    const currentOccurrence = current && positionOccurrenceGroups(current).find(group =>
+      Number(els.video.currentTime) >= group.startTime - 0.04 &&
+      Number(els.video.currentTime) < group.endTime - 0.04)?.id || null;
+    if (current && (!state.adultUnlockedPositionIds.has(current.id) ||
+        current.id !== state.activePositionId || currentOccurrence !== state.activeAdultOccurrenceId)) {
       state.adultUnlockedPositionIds.add(current.id);
       state.adultRevealedPositionIds.add(current.id);
       state.adultSexUnlocked = true;
       state.activePositionId = current.id;
-      state.activeAdultOccurrenceId = positionOccurrenceGroups(current).find(group =>
-        Number(els.video.currentTime) >= group.startTime - 0.04 &&
-        Number(els.video.currentTime) < group.endTime - 0.04)?.id || null;
+      state.activeAdultOccurrenceId = currentOccurrence;
       resetAdultTapRhythm();
       state.adultUiSignature = '';
       logEngineEvent('SOURCE_BOUNDARY_PANEL_OPENED', { sceneId: scene.id, positionId: current.id });
@@ -4650,7 +4664,7 @@ function renderAdultProgressiveUI(force = false) {
       button.className = 'category-tab';
       button.textContent = category.label;
       button.dataset.categoryId = category.id;
-      button.addEventListener('click', () => selectAdultCategory(category.id, true));
+      button.addEventListener('click', () => selectAdultCategory(category.id, false));
       els.categoryTabs?.appendChild(button);
     });
   }
@@ -4737,14 +4751,13 @@ function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}
 
   const sameSession = state.adultMode && state.adultScene?.id === scene.id;
   const mediaTime = Number(els.video.currentTime) || 0;
-  const insideScene = mediaTime >= Number(scene.startTime) - 0.15 &&
-    mediaTime < Number(scene.endTime) - 0.04;
-  if (forceStart && !sameSession && (!insideScene || mediaTime > Number(scene.startTime) + 1)) {
+  const seekTarget = sceneEntrySeekTarget(scene, mediaTime, forceStart, sameSession);
+  if (seekTarget !== null) {
     els.video.pause();
-    els.video.currentTime = Math.max(0, Number(scene.startTime) || 0);
+    els.video.currentTime = seekTarget;
   }
 
-  state.gameCursorTime = Math.max(0, Number(scene.startTime) || 0);
+  state.gameCursorTime = Math.max(0, Number(scene.startTime) || 0, mediaTime);
   renderAdultPanel(scene);
   setGameState('SEGMENT_PLAYING');
   logEngineEvent('ADULT_SCENE_ENTERED', { sceneId: scene.id, reason, sameSession });
@@ -4825,6 +4838,8 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
       .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
       .trim();
     button.dataset.positionId = position.id;
+    button.disabled = !forwardLocalMovementClips(position,
+      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
       button.classList.add('unlock-reveal');
@@ -4837,8 +4852,10 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
   });
 
   const selected =
-    positions.find(item => item.id === state.activePositionId) ||
-    positions[0];
+    positions.find(item => item.id === state.activePositionId && forwardLocalMovementClips(item,
+      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length) ||
+    positions.find(item => forwardLocalMovementClips(item,
+      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length);
 
   if (selected) selectAdultPosition(selected.id, shouldSeek);
 }
@@ -5079,6 +5096,12 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
+  const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
+  const localMovements = forwardLocalMovementClips(position, cursor);
+  if (shouldSeek && !localMovements.length) {
+    logEngineEvent('POSITION_FORWARD_RANGE_BLOCKED', { positionId: position.id, cursor });
+    return;
+  }
   primeAdultPositionLanguage(position);
   const positionGuard = guardPlayable(
     isWarmupPosition(position) ? 'foreplay' : 'position',
@@ -5097,7 +5120,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   state.activePositionId = position.id;
   if (changedPosition) {
     state.activeMovementId = null;
-    state.activeAdultOccurrenceId = positionOccurrenceGroups(position)[0]?.id || null;
+    state.activeAdultOccurrenceId = positionOccurrenceForMovement(position, localMovements[0])?.id || null;
   }
   if (changedPosition) resetAdultTapRhythm();
 
@@ -5107,9 +5130,8 @@ function selectAdultPosition(positionId, shouldSeek = true) {
 
   // The main tab owns only the verified position entry. All later returns and
   // movements from the same canonical position live under its subchoices.
-  const verifiedMovements = position.movements.filter(item => positionOccurrenceForMovement(position, item));
-  const entryMovement = verifiedMovements.find(item => item.id === position.entryMovementId) ||
-    [...verifiedMovements].sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0] || null;
+  const verifiedMovements = localMovements;
+  const entryMovement = verifiedMovements[0] || null;
   const entryMovementId = entryMovement?.id || '';
   const movementPool = verifiedMovements.filter(item => item.id !== entryMovementId &&
     !position.controlClipIds?.includes(item.id));
@@ -5211,6 +5233,12 @@ function selectAdultMovement(
       occurrenceId: state.activeAdultOccurrenceId,
       sourcePositionId: movement.sourcePositionId || null
     });
+    return;
+  }
+  if (shouldSeek && !forwardLocalMovementClips(position,
+    Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0))
+    .some(item => item.id === movement.id)) {
+    logEngineEvent('MOVEMENT_FORWARD_RANGE_BLOCKED', { movementId: movement.id });
     return;
   }
   const movementGuard = guardPlayable('movement', movement, {

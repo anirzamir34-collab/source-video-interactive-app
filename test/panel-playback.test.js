@@ -327,6 +327,7 @@ test('a grouped introduction card selects another existing clip on each click an
   intro.movements.forEach(item => { item.actionType = 'movement'; item.label = 'Patikada yürü'; });
   f.state.adultScene.foreplay = [];
   f.state.adultScene.positions = [intro, chapter('main', 60)];
+  f.els.video.time = 0;
   f.renderAdultApproachChoices(f.state.adultScene);
   const card = f.els.choices.children[1];
   assert.equal(card.dataset.variantIds, 'opening-0,opening-1,opening-2');
@@ -476,9 +477,14 @@ test('later thresholds unlock exactly one next chapter without switching playbac
   assert.equal(f.unlockNextAdultPositionFromLust(), null);
   f.addFemaleLust(35);
   await flush();
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
+  f.state.activeMovementId = null;
+  f.state.adultTimelineFloor = 59.8;
+  f.els.video.time = 59.8;
+  f.addFemaleLust(0);
   assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one', 'two']);
   assert.equal(f.state.activePositionId, 'one');
-  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.els.video.currentTime, 59.8);
   assert.equal(f.state.femaleSceneProgress, 0);
   f.addFemaleLust(35);
   assert.equal(f.state.adultUnlockedPositionIds.has('three'), false);
@@ -487,6 +493,11 @@ test('later thresholds unlock exactly one next chapter without switching playbac
   f.selectAdultPosition('two', true);
   await flush();
   f.addFemaleLust(35);
+  assert.equal(f.state.adultUnlockedPositionIds.has('three'), false);
+  f.state.activeMovementId = null;
+  f.state.adultTimelineFloor = 119.8;
+  f.els.video.time = 119.8;
+  f.addFemaleLust(0);
   assert.equal(f.state.adultUnlockedPositionIds.has('three'), true);
 });
 
@@ -554,15 +565,34 @@ test('one position tab exposes later verified returns and switches occurrence on
   first.movements.push(...later.movements);
   first.endTime = 150;
   await startFirstChapter(f);
+  assert.equal(first.activeMovementChoices.some(choice => choice.variants.some(item => item.id === 'return-0')), false);
+  f.state.activeMovementId = null;
+  f.state.adultTimelineFloor = 119.8;
+  f.els.video.time = 119.8;
+  f.selectAdultPosition('one', false);
   assert.deepEqual(
     new Set(first.activeMovementChoices.flatMap(item => item.variants).map(item => item.id)),
-    new Set(['return-0', 'return-1', 'return-2'])
+    new Set(['return-1'])
   );
   f.selectAdultMovement('return-0', true);
   await flush();
   assert.equal(f.state.activeAdultOccurrenceId, 'source-return');
   assert.equal(f.els.video.currentTime, 120);
   assert.equal(f.state.activePositionId, 'one');
+});
+
+test('choosing an old consolidated position never rewinds from a later scene', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  f.state.activeMovementId = null;
+  f.state.adultTimelineFloor = 120;
+  f.els.video.time = 120;
+  const plays = f.els.video.playCalls;
+  f.selectAdultPosition('one', true);
+  f.selectAdultMovement('one-0', true);
+  await flush();
+  assert.equal(f.els.video.currentTime, 120);
+  assert.equal(f.els.video.playCalls, plays);
 });
 
 test('a rejected later selection does not mutate the current occurrence or playback token', async () => {
