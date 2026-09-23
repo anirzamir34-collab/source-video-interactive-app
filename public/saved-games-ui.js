@@ -172,6 +172,7 @@ export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, o
   void storageStatus();
   return {
     saveCurrent, refreshControls,
+    setSyncOffset(id, offset) { return store.updateLanguageSync(id, offset); },
     resetCurrent() { title.value = ''; refreshControls(); }
   };
 }

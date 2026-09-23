@@ -6,12 +6,18 @@ import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from '../public
 import { dubSpeakerKey } from '../public/dub-speakers.js';
 import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from '../public/dubbing-audio.js';
 import { dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget,
-  isDubStartTimely, mapVideoTimeToDubTime, dubSegmentKey } from '../public/playback-logic.js';
+  isDubStartTimely, mapVideoTimeToDubTime, dubSegmentKey, languageTimelineTime } from '../public/playback-logic.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const deferred = () => { let resolve; let reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const line = (id, startTime, endTime) => ({ segmentId: id, startTime, endTime, turkishText: 'Merhaba.' });
+
+test('one shared language clock moves subtitles and dubbing earlier without moving the video', () => {
+  assert.equal(languageTimelineTime(10, 1.25), 11.25);
+  assert.equal(languageTimelineTime(10, -0.5), 9.5);
+  assert.equal(languageTimelineTime(0.2, -2), 0);
+});
 function functions(...names) {
   return names.map(name => {
     const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
@@ -73,7 +79,7 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
   video.paused = false;
   const frames = clock();
   const state = {
-    dubbingEnabled: true, keepOriginalAudioEnabled: true, dubSyncGeneration: 0,
+    dubbingEnabled: true, keepOriginalAudioEnabled: true, languageSyncOffset: 0, dubSyncGeneration: 0,
     dubStartingToken: null, dubResumeTime: null, dubVideoWaiting: false, dubPlaybackBlocked: false,
     activeDubSegmentId: null, dubBuffer: null, dubPlayedSegmentIds: new Set(), dubRequestController: new AbortController()
   };
@@ -87,6 +93,7 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
     createDubMixer: media => createDubMixer(media, frames), naturalDubRate, canFinishDubTail, correctDubClock,
     dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget, isDubStartTimely, mapVideoTimeToDubTime,
     activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps, dubSpeakerKey,
+    languageClockTime: time => languageTimelineTime(time ?? video.currentTime, state.languageSyncOffset),
     dubTimeline: () => segments, getDubSegmentId: segment => segment ? dubSegmentKey(segment) : '',
     ensureDubSegment: ensure || (async segment => segment.segmentId), renderSubtitle() {}, logEngineEvent() {}
   });
@@ -530,6 +537,17 @@ test('ready prefetched lines do not stop the video', async () => {
     assert.equal(f.video.pauses, pauses);
     assert.equal(f.state.dubBuffer, null);
     assert.equal(f.active().plays, 1);
+  } finally { f.close(); }
+});
+
+test('saved playback uses the language offset to select the voice for the current frame', async () => {
+  const f = fixture([line('a', 10, 13)], { durations: { a: 3 } });
+  try {
+    f.state.languageSyncOffset = 1;
+    f.video.currentTime = 9;
+    await f.sync();
+    assert.equal(f.state.activeDubSegmentId, 'a');
+    assert.equal(f.video.currentTime, 9);
   } finally { f.close(); }
 });
 

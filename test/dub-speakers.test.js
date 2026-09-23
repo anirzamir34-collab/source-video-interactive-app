@@ -145,7 +145,8 @@ test('overlapping captions show every current speaker and preserve text without 
     { ...line('a'), speakerName: 'Ayşe', turkishText: '<Merhaba>' },
     { ...line('b', 1, 3), speakerName: 'Elif', turkishText: 'Nasılsın?' }
   ] } };
-  const context = vm.createContext({ state, els, activeDubSegments, dubSpeakerKey });
+  const context = vm.createContext({ state, els, activeDubSegments, dubSpeakerKey,
+    languageClockTime: () => els.video.currentTime });
   vm.runInContext(fn('renderSubtitle'), context);
   context.renderSubtitle();
   assert.equal(els.subtitleText.textContent, 'Ayşe: <Merhaba>\nElif: Nasılsın?');

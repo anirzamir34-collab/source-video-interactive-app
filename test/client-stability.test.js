@@ -370,7 +370,7 @@ test('changing source removes the previous time boundary listener and clears old
   const state = { stopListener: listener, analysis: { actions: [{}] }, dialogue: { segments: [{}] } };
   const f = fixture(section('function clearPreviousGameResidue()', '\nclearPreviousGameResidue();'), {
     state, els, cancelTimelineNavigation() {}, cancelAdultSeek() {}, removeStoredValue() {},
-    RUNTIME_SAVE_KEY: 'runtime', releaseVideoObjectUrl() {}, resetDubState() {}, setGameState(value) { state.gameState = value; }
+    RUNTIME_SAVE_KEY: 'runtime', releaseVideoObjectUrl() {}, resetDubState() {}, updateLanguageSyncControls() {}, setGameState(value) { state.gameState = value; }
   });
   f.scope.clearPreviousGameResidue();
   els.video.dispatchEvent(new Event('timeupdate'));

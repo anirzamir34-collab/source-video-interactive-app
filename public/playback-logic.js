@@ -250,6 +250,13 @@ export function dubSegmentKey(segment, fallbackIndex = 0) {
   return `dub-${fallbackIndex}-${start.toFixed(3)}-${end.toFixed(3)}-${speaker}-${text}`;
 }
 
+export function languageTimelineTime(videoTime, offsetSeconds = 0) {
+  const time = Number(videoTime);
+  const offset = Number(offsetSeconds);
+  return Math.max(0, (Number.isFinite(time) ? time : 0) +
+    (Number.isFinite(offset) ? Math.max(-10, Math.min(10, offset)) : 0));
+}
+
 export function mapVideoTimeToDubTime({ videoTime = 0, segmentStart = 0, segmentEnd = 0, audioDuration = 0 } = {}) {
   const start = Number(segmentStart) || 0;
   const end = Math.max(start, Number(segmentEnd) || start);

@@ -51,6 +51,19 @@ test('the saved-game shelf counts explicit gaps and updates that same record aft
   await store.close();
 });
 
+test('changing language sync stores only the payload and survives reopening the saved video', async () => {
+  const store = createGameStore({ indexedDB: new IDBFactory() });
+  const source = fixture();
+  const saved = await store.save(source);
+  await store.updateLanguageSync(saved.id, 1.25);
+  const restored = await store.load(saved.id);
+  assert.equal(restored.payload.languageSyncOffset, 1.25);
+  assert.deepEqual(await bytes(restored.video), await bytes(source.video));
+  assert.equal((await importGame(exportGame(restored))).payload.languageSyncOffset, 1.25);
+  assert.throws(() => store.updateLanguageSync(saved.id, Number.NaN));
+  await store.close();
+});
+
 test('device files and dialogue-only analyses can be saved and replayed', async () => {
   const store = createGameStore({ indexedDB: new IDBFactory() });
   const input = fixture({ sourceKind: 'file' });

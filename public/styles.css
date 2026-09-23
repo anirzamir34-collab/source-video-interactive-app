@@ -3445,6 +3445,23 @@ pre {
   margin: 0 !important;
 }
 
+#playerSection .language-sync-controls {
+  position: absolute; z-index: 91; top: 48px; left: 12px;
+  display: flex; align-items: center; gap: 5px; padding: 4px;
+  border: 1px solid #55776d; border-radius: 9px;
+  background: rgba(7, 18, 16, .83); color: #e4fff3;
+  font-size: 11px; line-height: 1.2;
+}
+#playerSection .language-sync-controls.hidden { display: none; }
+#playerSection .language-sync-controls button {
+  min-height: 30px; padding: 3px 8px; border: 1px solid #587d70;
+  border-radius: 7px; background: #18352b; color: inherit; font: inherit;
+}
+#playerSection .video-stage:fullscreen .language-sync-controls,
+#playerSection .video-stage:-webkit-full-screen .language-sync-controls {
+  position: absolute; top: max(53px, calc(env(safe-area-inset-top) + 43px)); left: 12px;
+}
+
 #playerSection .video-stage:fullscreen #choices,
 #playerSection .video-stage:-webkit-full-screen #choices {
   position: absolute !important;
