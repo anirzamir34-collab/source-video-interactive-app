@@ -179,6 +179,18 @@ test('frame preparation waits for decoded data and releases frame buffers', asyn
   });
 });
 
+test('repair capture reads frames only inside the explicit missing interval', async () => {
+  const sought = [];
+  await withMediaFixture(async () => {
+    const result = await extractStoryboard(new Blob(['video']), () => {}, undefined,
+      { timeRange: { startTime: 40, endTime: 65 } });
+    assert.ok(result.timestamps.length >= 12);
+    assert.ok(result.timestamps.every(time => time >= 40 && time < 65));
+    assert.ok(result.sheets.length > 0);
+  }, { duration: 100, onSeek: time => sought.push(time) });
+  assert.ok(sought.length > 0 && sought.every(time => time >= 40 && time < 65));
+});
+
 test('failed image encoding releases all frames and the source video', async () => {
   await withMediaFixture(async fixture => {
     await assert.rejects(extractStoryboard(new Blob(['video'])), /oluşturulamadı/);

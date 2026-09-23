@@ -1,9 +1,10 @@
 import { createGameStore, exportGame, importGame, storageError } from './saved-games.js';
+import { repairableAnalysisGaps } from './analysis-gap-repair.js';
 
 const sizeText = bytes => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const durationText = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 
-export function mountSavedGames({ root, capture, openGame, isBusy, onBusy, onSaved, onDeleted }) {
+export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, onBusy, onSaved, onDeleted }) {
   const store = createGameStore();
   const list = root.querySelector('[data-games-list]');
   const status = root.querySelector('[data-games-status]');
@@ -65,10 +66,11 @@ export function mountSavedGames({ root, capture, openGame, isBusy, onBusy, onSav
       const name = document.createElement('h3');
       name.textContent = row.title;
       const detail = document.createElement('p');
-      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${row.dubCount ? ' · Dublaj kayıtlı' : ''}`;
+      const gapCount = Number(row.analysisGapCount || 0);
+      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${row.dubCount ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'saved-game-actions';
-      for (const [label, action] of [['Baştan oyna', 'play'], ['Yedek indir', 'export'], ['Sil', 'delete']]) {
+      for (const [label, action] of [['Baştan oyna', 'play'], ...(gapCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
@@ -80,6 +82,20 @@ export function mountSavedGames({ root, capture, openGame, isBusy, onBusy, onSav
             onDeleted(row.id);
             await refresh();
             message('Kayıt silindi. İndirdiğin yedek dosyaları silinmedi.');
+          } else if (action === 'repair') {
+            const game = await store.load(row.id);
+            const missing = repairableAnalysisGaps(game.payload.analysis, game.duration);
+            if (!missing.length) throw new Error('Bu kayıtta doğrulanmış eksik analiz aralığı yok.');
+            message(`${missing.length} eksik aralık yeniden analiz ediliyor…`);
+            const analysis = await repairGame(game, update => message(update));
+            const updated = { ...game, payload: { ...game.payload, analysis } };
+            await store.save(updated, row.id);
+            await openGame(updated);
+            title.value = row.title;
+            await refresh();
+            message(analysis.analysisGaps?.length
+              ? `${analysis.analysisGaps.length} aralık hâlâ eksik. Başarılı sonuçlar aynı kayda eklendi.`
+              : 'Eksik aralıklar tamamlandı ve aynı kayda eklendi.');
           } else if (action === 'play') {
             message('Kayıtlı video açılıyor…');
             await openGame(await store.load(row.id));

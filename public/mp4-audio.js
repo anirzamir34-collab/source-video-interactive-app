@@ -7,7 +7,7 @@ import { MAX_AUDIO_BYTES } from './media-limits.js';
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
 const PACK_BYTES = 1024 * 1024;
 const MAX_PACK_SLICES = 2048;
-const PREPARATION_TIMEOUT_MS = 60000;
+const PREPARATION_TIMEOUT_MS = 120000;
 const invalid = () => { throw new Error('MP4_AUDIO_UNSUPPORTED'); };
 const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 const tag = (bytes, at) => String.fromCharCode(...bytes.subarray(at, at + 4));

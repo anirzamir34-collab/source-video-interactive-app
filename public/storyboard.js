@@ -222,10 +222,23 @@ export async function extractStoryboard(source, onProgress = () => {}, signal, o
     }
 
     const samplingPlan = storyboardSamplingPlan(duration, remoteSampling);
+    const repairRange = options.timeRange;
+    const rangeStart = repairRange ? Math.max(0, Number(repairRange.startTime)) : 0;
+    const rangeEnd = repairRange ? Math.min(duration, Number(repairRange.endTime)) : duration;
+    if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd) || rangeEnd <= rangeStart) {
+      throw new Error('Yeniden analiz aralığı geçersiz.');
+    }
     const targetFrameCount = samplingPlan.baseCount;
     const interval = Math.max(0.75, duration / targetFrameCount);
     const times = [];
-    for (let time = 0; time < duration; time += interval) times.push(time);
+    if (repairRange) {
+      const gapInterval = Math.max(0.75, (rangeEnd - rangeStart) / Math.min(48,
+        Math.max(12, Math.ceil((rangeEnd - rangeStart) / 3))));
+      for (let time = rangeStart; time < rangeEnd - 0.05; time += gapInterval) times.push(time);
+      if (!times.length) times.push(rangeStart);
+    } else {
+      for (let time = 0; time < duration; time += interval) times.push(time);
+    }
     let plannedFrames = times.length + samplingPlan.focusedCount;
     const report = (progress, detail = {}) => onProgress(progress, {
       captured: capturedFrames.length,
@@ -442,8 +455,8 @@ export async function extractStoryboard(source, onProgress = () => {}, signal, o
     const focusedTimes = selectFocusedTimestamps(
       motionProfile,
       duration,
-      samplingPlan.focusedCount
-    );
+      repairRange ? Math.min(12, Math.ceil(times.length / 4)) : samplingPlan.focusedCount
+    ).filter(time => time >= rangeStart && time < rangeEnd);
     plannedFrames = times.length + focusedTimes.length;
     for (let index = 0; index < focusedTimes.length; index += 1) {
       await captureFrameSafely(
