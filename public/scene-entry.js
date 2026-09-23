@@ -45,3 +45,10 @@ export function sourcePositionAtTime(positions, time) {
       point >= Number(range.startTime) - 0.04 && point < Number(range.endTime) - 0.04);
   }) || null;
 }
+
+export function sceneEntrySeekTarget(scene, mediaTime, forceStart, sameSession) {
+  const start = Number(scene?.startTime);
+  const time = Number(mediaTime);
+  return forceStart && !sameSession && Number.isFinite(start) && Number.isFinite(time) &&
+    time < start - 0.15 ? Math.max(0, start) : null;
+}

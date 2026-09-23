@@ -40,6 +40,16 @@ test('specific conflicting labels and transitions remain outside a parent card',
   assert.equal(movementBelongsToVerifiedPosition(classified('a', { label: 'Ayakta arkadan', actionType: 'body_transition' }), 'standing-rear'), false);
 });
 
+test('a verified position entry remains playable even when its prose says guide', () => {
+  const entry = classified('entry', { actionType: 'position', classificationReview: 'verified',
+    positionId: 'cowgirl', positionLabel: 'Üstte oturma pozisyonu',
+    receiverBodyOrientation: 'on_top_facing', receiverSupport: 'straddling',
+    label: 'Yatarak partneri yönlendir' });
+  assert.equal(movementBelongsToVerifiedPosition(entry, 'cowgirl'), true);
+  assert.equal(movementBelongsToVerifiedPosition({ ...entry, classificationReview: 'pending' }, 'cowgirl'), false);
+  assert.equal(movementBelongsToVerifiedPosition({ ...entry, positionId: 'rear' }, 'cowgirl'), false);
+});
+
 test('high confidence cannot bypass classification review for single or multiple families', () => {
   const dialogue = { actionId: 'talk', startTime: 0, endTime: 5, confidence: 0.99, actionType: 'other' };
   const actions = [classified('one'), classified('two', { positionId: 'prone-bone', startTime: 25, endTime: 35 })];

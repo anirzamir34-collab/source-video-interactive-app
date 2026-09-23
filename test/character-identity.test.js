@@ -167,6 +167,12 @@ test('conflicting primary and partner tracks do not produce two different names 
   assert.equal(result.primaryCharacterLabel, '');
   assert.equal(result.partnerLabel, '');
   assert.equal(result.characterPairLabel, '');
+  const missingPartner = bindActionCharacter({ label: 'Kaynak hareket', primaryCharacterId: 'DENIZ',
+    partnerTrackId: 'PARTNER_A', involvedCharacterIds: ['DANNY', 'DENIZ'] },
+  { characters: [cast.characters[0], cast.characters[2]] });
+  assert.equal(missingPartner.identityResolution, 'conflict');
+  assert.equal(missingPartner.primaryCharacterLabel, '');
+  assert.equal(missingPartner.partnerLabel, '');
 });
 
 test('same names never merge distinct tracks and contradictory names do not silently replace each other', () => {

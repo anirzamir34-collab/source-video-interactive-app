@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { groupSourceChoiceCards, sourceIdentityLabel } from '../public/choice-groups.js';
-import { buildVerifiedMovementChoices, exclusiveControlClipIds, findAdultSceneForTimeline } from '../public/adult-gameplay.js';
+import { buildVerifiedMovementChoices, exclusiveControlClipIds, findAdultSceneForTimeline,
+  forwardLocalMovementClips } from '../public/adult-gameplay.js';
+
+test('an old position return exposes only nearby forward source clips', () => {
+  const movements = [clip(0, { loopStartTime: 443, loopEndTime: 462 }),
+    clip(1, { loopStartTime: 778, loopEndTime: 795 }),
+    clip(2, { loopStartTime: 795, loopEndTime: 812 })];
+  const position = { id: 'oral', startTime: 443, endTime: 812, movements,
+    sourceRanges: [{ id: 'trail-a', startTime: 443, endTime: 462 },
+      { id: 'trail-a', startTime: 778, endTime: 812 }] };
+  assert.deepEqual(forwardLocalMovementClips(position, 734).map(item => item.id), []);
+  assert.deepEqual(forwardLocalMovementClips(position, 778).map(item => item.id), ['clip-1', 'clip-2']);
+  assert.deepEqual(forwardLocalMovementClips(position, 839).map(item => item.id), []);
+});
 
 const clip = (index, extra = {}) => ({ id: `clip-${index}`, sourceVerified: true,
   label: `Patikada yürü · Sekans ${index + 1}`, actionType: 'movement',
