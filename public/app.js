@@ -58,6 +58,7 @@ import {
   analysisGapBridgeTarget,
   hasRemainingVideo,
   isCompleteChunkAnalysis,
+  languageTimelineTime,
   mapVideoTimeToDubTime,
   nextDialogueSegments,
   resolveDubGender,
@@ -141,6 +142,7 @@ const state = {
   subtitlesEnabled: true,
   dubbingEnabled: false,
   keepOriginalAudioEnabled: true,
+  languageSyncOffset: 0,
   activeDubSegmentId: null,
   dubCache: new Map(),
   dubRequests: new Map(),
@@ -276,6 +278,10 @@ const els = {
   subtitleText: $('subtitleText'),
   subtitleToggleBtn: $('subtitleToggleBtn'),
   dubToggleBtn: $('dubToggleBtn'),
+  languageSyncControls: $('languageSyncControls'),
+  languageEarlierBtn: $('languageEarlierBtn'),
+  languageLaterBtn: $('languageLaterBtn'),
+  languageSyncValue: $('languageSyncValue'),
   dubBufferStatus: $('dubBufferStatus'),
   dubBufferMessage: $('dubBufferMessage'),
   dubRetryBtn: $('dubRetryBtn'),
@@ -1358,6 +1364,7 @@ async function analyzeSelectedDialogue(file) {
       maxDuration: 18
     })
   };
+  updateLanguageSyncControls();
 
   try {
     // Dialogue persistence intentionally disabled: refresh must start clean.
@@ -1369,9 +1376,13 @@ async function analyzeSelectedDialogue(file) {
   return state.dialogue;
 }
 
+function languageClockTime(videoTime = els.video.currentTime) {
+  return languageTimelineTime(videoTime, state.languageSyncOffset);
+}
+
 function renderSubtitle() {
   const segments = state.dialogue?.segments || [];
-  const now = Number(els.video.currentTime) || 0;
+  const now = languageClockTime();
 
   if (!state.subtitlesEnabled || !segments.length) {
     els.subtitleOverlay?.classList.add('hidden');
@@ -1452,7 +1463,7 @@ async function resumeDubBoundaryHold() {
   if (state.decisionDubHold) { cancelDubBoundaryHold(); return; }
   hold.resuming = true;
   for (const audio of dubChannels.values()) {
-    audio._vqAnchorVideoTime = Number(els.video.currentTime);
+    audio._vqAnchorVideoTime = languageClockTime();
     audio._vqAnchorAudioTime = audio.currentTime;
   }
   try {
@@ -1464,7 +1475,7 @@ async function resumeDubBoundaryHold() {
   } catch {
     if (isDubBoundaryHoldCurrent(hold)) {
       cancelDubBoundaryHold();
-      beginDubBuffer(activeDubSegments(dubTimeline(), els.video.currentTime)[0], false);
+      beginDubBuffer(activeDubSegments(dubTimeline(), languageClockTime())[0], false);
     }
   }
 }
@@ -1656,8 +1667,8 @@ async function prepareDubAudio(segment, priority = 0) {
   preparedDubAudio.set(id, audio);
   // Keep only a handful of decoded media elements, including the active line.
   for (const [key, old] of preparedDubAudio) {
-    if (preparedDubAudio.size <= Math.max(6, activeDubSegments(dubTimeline(), els.video.currentTime).length + 3)) break;
-    if (key === id || dubChannels.has(key) || activeDubSegments(dubTimeline(), els.video.currentTime).some(row => getDubSegmentId(row) === key)) continue;
+    if (preparedDubAudio.size <= Math.max(6, activeDubSegments(dubTimeline(), languageClockTime()).length + 3)) break;
+    if (key === id || dubChannels.has(key) || activeDubSegments(dubTimeline(), languageClockTime()).some(row => getDubSegmentId(row) === key)) continue;
     preparedDubAudio.delete(key);
     old.pause();
     old._vqCancelReady?.();
@@ -1687,9 +1698,12 @@ function finishDubPlaybackAtVideoEnd() {
 }
 
 function startDubClock() {
-  if (dubPlaybackTimer !== null || !state.dubbingEnabled) return;
+  if (dubPlaybackTimer !== null || (!state.dubbingEnabled && !state.subtitlesEnabled)) return;
   // timeupdate can be as sparse as four events per second on mobile.
-  dubPlaybackTimer = setInterval(() => void syncDubPlayback(), 50);
+  dubPlaybackTimer = setInterval(() => {
+    if (state.subtitlesEnabled) renderSubtitle();
+    if (state.dubbingEnabled) void syncDubPlayback();
+  }, 50);
 }
 
 function stopDubClock() {
@@ -1706,7 +1720,7 @@ function recordAiUsage(usage) {
 }
 
 function getDubSegmentAt(videoTime) {
-  return dialogueSegmentAt(dubTimeline(), videoTime, 0.12);
+  return dialogueSegmentAt(dubTimeline(), languageClockTime(videoTime), 0.12);
 }
 
 function dubTimeline() {
@@ -1905,7 +1919,7 @@ function stopDubPlayback() {
   dubChannels.clear();
   state.activeDubSegmentId = null;
   updateDubMix();
-  if (!state.dubbingEnabled) stopDubClock();
+  if (!state.dubbingEnabled && !state.subtitlesEnabled) stopDubClock();
 }
 
 function resetDubState() {
@@ -1942,7 +1956,7 @@ function resetDubState() {
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  nextDialogueSegments(dubTimeline(), videoTime, 3)
+  nextDialogueSegments(dubTimeline(), languageClockTime(videoTime), 3)
     .forEach((segment, index) => void prepareDubAudio(segment, 20 - index));
 }
 
@@ -1986,7 +2000,7 @@ async function prepareCompleteDubTimeline(segments = [], concurrency = 1, onProg
 
 function primeLanguageTracksAt(videoTime, count = 2) {
   if (!state.dubbingEnabled) return;
-  dialogueSegmentsForTarget(dubTimeline(), videoTime, count)
+  dialogueSegmentsForTarget(dubTimeline(), languageClockTime(videoTime), count)
     .forEach((segment, index) => void prepareDubAudio(segment, 50 - index));
 }
 
@@ -2000,7 +2014,7 @@ function primeAdultPositionLanguage(position) {
   ];
   const segments = dialogueSegmentsForTargets(
     dubTimeline(),
-    targetTimes,
+    targetTimes.map(languageClockTime),
     12
   );
   void (async () => {
@@ -2061,7 +2075,7 @@ async function syncDubPlayback() {
   state.dubStartingToken = token;
   const current = () => state.dubStartingToken === token && generation === state.dubSyncGeneration && state.dubbingEnabled;
   try {
-    const videoTime = Math.max(0, Number(els.video.currentTime) || 0);
+    const videoTime = languageClockTime();
     const active = activeDubSegments(dubTimeline(), videoTime);
     // A decoder retry resumes unheard samples even if its caption has ended.
     // Explicit seeks and source changes clear these recovery entries.
@@ -2106,7 +2120,7 @@ async function syncDubPlayback() {
     });
     const prepared = await prepareDubGroupForPlayback(pending);
     if (!prepared || !current() || els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked) return;
-    const now = Math.max(0, Number(els.video.currentTime) || 0);
+    const now = languageClockTime();
     const stillActive = new Set(activeDubSegments(dubTimeline(), now).map(getDubSegmentId));
     for (const segment of pending) {
       const id = getDubSegmentId(segment);
@@ -2134,7 +2148,7 @@ async function syncDubPlayback() {
     updateDubMix();
     if (starts.length) dubMixer.update({ enabled: true, keepOriginal: state.keepOriginalAudioEnabled, speaking: true });
     await Promise.all(starts.map(([id, audio]) => playDubAudio(audio, id, generation)));
-    if (current()) prefetchDubSegmentsAround(now);
+    if (current()) prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
   } finally {
     if (state.dubStartingToken === token) state.dubStartingToken = null;
   }
@@ -2205,7 +2219,42 @@ els.subtitleToggleBtn?.addEventListener('click', () => {
   els.subtitleToggleBtn.textContent =
     `TR ALTYAZI: ${state.subtitlesEnabled ? 'AÇIK' : 'KAPALI'}`;
   renderSubtitle();
+  if (state.subtitlesEnabled && !els.video.paused) startDubClock();
+  if (!state.subtitlesEnabled && !state.dubbingEnabled) stopDubClock();
 });
+
+let languageSyncSave = Promise.resolve();
+function updateLanguageSyncControls() {
+  els.languageSyncControls?.classList.toggle('hidden', !state.dialogue?.segments?.length);
+  if (els.languageSyncValue) {
+    const offset = Number(state.languageSyncOffset) || 0;
+    els.languageSyncValue.textContent = `Ses/yazı ${offset > 0 ? '+' : ''}${offset.toFixed(2).replace('.', ',')} sn`;
+  }
+}
+
+function adjustLanguageSync(delta) {
+  const previous = Number(state.languageSyncOffset) || 0;
+  const offset = Math.max(-10, Math.min(10, Math.round((previous + delta) * 4) / 4));
+  if (offset === previous) return;
+  state.languageSyncOffset = offset;
+  updateLanguageSyncControls();
+  state.dubSyncGeneration += 1;
+  stopDubPlayback();
+  state.dubPlayedSegmentIds.clear();
+  state.dubResumeTime = languageClockTime();
+  resyncLanguageTracks();
+  if (!els.video.paused) startDubClock();
+  const id = state.activeSavedGameId;
+  if (id) {
+    languageSyncSave = languageSyncSave.then(() => savedGames?.setSyncOffset(id, offset))
+      .catch(error => {
+        if (els.analysisOutput) els.analysisOutput.textContent =
+          `Ses eşitlemesi bu kayda yazılamadı: ${error?.message || error}`;
+      });
+  }
+}
+els.languageEarlierBtn?.addEventListener('click', () => adjustLanguageSync(0.25));
+els.languageLaterBtn?.addEventListener('click', () => adjustLanguageSync(-0.25));
 
 els.dubToggleBtn?.addEventListener('click', () => {
   if (state.dubBuffer) { void retryDubBuffer(true); return; }
@@ -6403,6 +6452,7 @@ function clearPreviousGameResidue() {
   }
   state.analysis = null;
   state.dialogue = null;
+  state.languageSyncOffset = 0;
   state.dubbingEnabled = false;
   state.subtitlesEnabled = false;
   state.analysisFingerprint = '';
@@ -6430,6 +6480,7 @@ function clearPreviousGameResidue() {
   els.playerSection?.classList.add('hidden');
   els.analysisCard?.classList.add('hidden');
   els.subtitleOverlay?.classList.add('hidden');
+  updateLanguageSyncControls();
   els.dubToggleBtn?.classList.add('hidden');
   if (els.video) {
     releaseVideoObjectUrl();
@@ -6721,7 +6772,8 @@ function captureSavedGame() {
       dubStableSpeakerGenders: [...state.dubStableSpeakerGenders],
       subtitlesEnabled: state.subtitlesEnabled,
       dubbingEnabled: state.dubbingEnabled,
-      keepOriginalAudioEnabled: state.keepOriginalAudioEnabled
+      keepOriginalAudioEnabled: state.keepOriginalAudioEnabled,
+      languageSyncOffset: state.languageSyncOffset
     }
   };
 }
@@ -6764,6 +6816,7 @@ async function openSavedGame(game) {
   state.videoObjectUrl = url;
   state.analysis = game.payload.analysis;
   state.dialogue = game.payload.dialogue;
+  state.languageSyncOffset = Number(game.payload.languageSyncOffset) || 0;
   state.dubCache = new Map(game.payload.dubCache || []);
   state.dubSpeakerVoices = new Map((game.payload.dubSpeakerVoices || []).map(row => [row.speakerId, row]));
   state.dubVoicePlanRequest = null;
@@ -6782,6 +6835,7 @@ async function openSavedGame(game) {
   els.fileMeta.textContent = `${game.title} · kayıtlı video · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
   els.subtitleToggleBtn.classList.toggle('hidden', !state.dialogue?.segments?.length);
   els.subtitleToggleBtn.textContent = `TR ALTYAZI: ${state.subtitlesEnabled ? 'AÇIK' : 'KAPALI'}`;
+  updateLanguageSyncControls();
   els.dubToggleBtn.classList.toggle('hidden', !state.dubCache.size);
   delete els.dubToggleBtn.dataset.unavailable;
   els.dubToggleBtn.title = '';

@@ -31,6 +31,9 @@ export function validateGame(game) {
     throw new Error('Kayıtta geçersiz dublaj sesi var.');
   }
   if (p.dubSpeakerVoices != null && !Array.isArray(p.dubSpeakerVoices)) throw new Error('Kayıttaki konuşmacı sesleri geçersiz.');
+  if (p.languageSyncOffset != null && (!Number.isFinite(p.languageSyncOffset) || Math.abs(p.languageSyncOffset) > 10)) {
+    throw new Error('Kayıttaki ses eşitleme değeri geçersiz.');
+  }
   if (p.dubSpeakerVoices?.length) validateDubVoicePlan(buildDubSpeakerRoster(p.dialogue?.dubSegments || p.dialogue?.segments || [], p.dialogue?.speakers || []), p.dubSpeakerVoices);
   return game;
 }
@@ -57,7 +60,8 @@ export function prepareGame(input, previous = null) {
       dubStableSpeakerGenders: input.payload?.dubStableSpeakerGenders || [],
       subtitlesEnabled: Boolean(input.payload?.subtitlesEnabled),
       dubbingEnabled: Boolean(input.payload?.dubbingEnabled),
-      keepOriginalAudioEnabled: input.payload?.keepOriginalAudioEnabled !== false
+      keepOriginalAudioEnabled: input.payload?.keepOriginalAudioEnabled !== false,
+      languageSyncOffset: Number(input.payload?.languageSyncOffset) || 0
     })
   };
   return validateGame(game);
@@ -171,6 +175,22 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
     },
     remove(id) {
       return transaction(STORES, 'readwrite', tx => { for (const store of STORES) tx.objectStore(store).delete(id); });
+    },
+    updateLanguageSync(id, offset) {
+      if (!Number.isFinite(offset) || Math.abs(offset) > 10) throw new Error('Ses eşitleme değeri geçersiz.');
+      return transaction(['games', 'payloads'], 'readwrite', (tx, done, fail) => {
+        const request = tx.objectStore('payloads').get(id);
+        request.onsuccess = () => {
+          if (!request.result) { fail(new Error('Kayıt bulunamadı.')); return; }
+          tx.objectStore('payloads').put({ ...request.result,
+            payload: { ...request.result.payload, languageSyncOffset: offset } });
+          const meta = tx.objectStore('games').get(id);
+          meta.onsuccess = () => {
+            if (meta.result) tx.objectStore('games').put({ ...meta.result, updatedAt: new Date().toISOString() });
+            done(true);
+          };
+        };
+      });
     },
     async close() { if (connection) (await connection).close(); connection = null; }
   };

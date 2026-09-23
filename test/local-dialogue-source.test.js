@@ -27,7 +27,7 @@ function fixture({ decodeFails = false, uploadFails = false, compact = false, re
   const scope = vm.createContext({ canDecodeDialogueLocally, normalizeDialogueSegments, File, Blob, FormData, performance, els, AbortController,
     state: { analysisSession: session, selectedRemoteVideo: { proxyUrl: '/proxy?token=old-token' } },
     console: { warn() {} }, localStorage: { removeItem() {} }, recordAiUsage() {},
-    buildDubBlocks: segments => segments,
+    buildDubBlocks: segments => segments, updateLanguageSyncControls() {},
     setInterval: callback => { timers.set(++timerId, callback); return timerId; },
     clearInterval: id => { cleared.push(id); timers.delete(id); },
     extractMp4Audio: async (file, options) => { remuxes++; return remux ? remux(file, options) : compact ? compactAudio : null; },
