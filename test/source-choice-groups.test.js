@@ -9,6 +9,19 @@ const clip = (index, extra = {}) => ({ id: `clip-${index}`, sourceVerified: true
   partnerTrackId: 'person-a', participantTrackIds: ['person-a', 'person-b'],
   loopStartTime: index * 5, loopEndTime: index * 5 + 5, ...extra });
 
+test('many distinct labels in one verified occurrence form compact coherent cards', () => {
+  const movements = Array.from({ length: 20 }, (_, index) => clip(index, {
+    label: `Kaynak hareket ${index + 1}`, sourcePositionId: 'same-occurrence'
+  }));
+  const position = { id: 'parent', occurrenceId: 'same-occurrence', partnerTrackId: 'person-a',
+    startTime: 0, endTime: 100, movements,
+    sourceRanges: [{ id: 'same-occurrence', startTime: 0, endTime: 100 }] };
+  const cards = buildVerifiedMovementChoices(movements, 'Kaynak pozisyonu', 5, position);
+  assert.ok(cards.length <= 5);
+  assert.ok(cards.every(card => card.variants.length >= 3 && card.variants.length <= 5));
+  assert.deepEqual(cards.flatMap(card => card.variants), movements);
+});
+
 test('eighteen compatible source clips form several bounded cards without losing or changing a clip', () => {
   const clips = Array.from({ length: 18 }, (_, i) => clip(i));
   const before = structuredClone(clips);

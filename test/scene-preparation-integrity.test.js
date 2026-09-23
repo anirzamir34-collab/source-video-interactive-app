@@ -19,6 +19,17 @@ test('verified action time repairs zeroed position and loop metadata', () => {
     valid.loopStartTime, valid.loopEndTime], [8, 15, 10.2, 11.8]);
 });
 
+test('conversation and ordinary posture cannot open the sex panel', () => {
+  assert.equal(gameplay.playableAdultPanelFamily({ sourceVerified: true, adultScene: false,
+    label: 'Twister oyununu izle', actionType: 'other', receiverBodyOrientation: 'standing',
+    positionConfigurationConfidence: 0.95, positionEvidence: 'Ayakta duruyor.' }), '');
+  assert.equal(gameplay.playableAdultPanelFamily({ sourceVerified: true, adultScene: true,
+    label: 'Kanepede konuş', actionType: 'other', receiverBodyOrientation: 'seated',
+    positionId: '', positionLabel: '' }), '');
+  assert.equal(gameplay.playableAdultPanelFamily({ sourceVerified: true, adultScene: true,
+    label: 'Kaynakta doğrulanan hareket', actionType: 'position', positionId: 'oral' }), 'oral');
+});
+
 // Run the actual graph preparation with a neutral classifier stub. These tests
 // concern provenance and timeline integrity, not visual classification quality.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -38,6 +49,7 @@ function prepare(actions, overrides = {}) {
   const scope = vm.createContext({
     ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole, sourceIdentityLabel,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
+    playableAdultPanelFamily: item => item.sourceVerified && item.adultScene && item.positionId ? 'chapter' : '',
     canonicalAdultPosition: () => ({ id: 'chapter', label: 'Chapter' }),
     adultCategoryFor: () => ({ id: 'chapter', label: 'Chapter' }),
     activityOccurrenceNamespace: () => 'unclear',
@@ -56,6 +68,30 @@ function prepare(actions, overrides = {}) {
 test('preparation never fabricates a verified full-parent clip from rejected evidence', () => {
   const state = prepare([action('rejected', 10, 30, { accepted: false })]);
   assert.equal(state.adultScenes.length, 0);
+});
+
+test('ordinary observation and opening dialogue stay outside the panel', () => {
+  const ordinary = action('watch', 48, 55, { adultScene: false, adultSceneId: '',
+    positionId: '', positionLabel: '', actionType: 'other', label: 'Twister oyununu izle' });
+  const talk = action('talk', 332, 344, { positionId: '', positionLabel: '',
+    actionType: 'other', label: 'Kanepede konuş', adultSceneStartTime: 332,
+    adultSceneEndTime: 420 });
+  const kiss = action('kiss', 344, 362, { positionId: '', positionLabel: '',
+    actionType: 'kiss', adultSceneStartTime: 332, adultSceneEndTime: 420 });
+  const dialogue = action('listen', 362, 380, { positionId: '', positionLabel: '',
+    actionType: 'other', label: 'Kuralları dinle', adultSceneStartTime: 332,
+    adultSceneEndTime: 420 });
+  const core = action('core', 390, 408, { actionType: 'position', positionId: 'oral',
+    positionStartTime: 390, positionEndTime: 408, adultSceneStartTime: 332,
+    adultSceneEndTime: 420 });
+  const state = prepare([ordinary, talk, kiss, dialogue, core], {
+    playableAdultPanelFamily: gameplay.playableAdultPanelFamily
+  });
+  assert.equal(state.adultScenes.length, 1);
+  assert.equal(state.adultScenes[0].startTime, 332);
+  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => item.id), ['talk', 'kiss', 'listen']);
+  assert.equal(state.adultScenes[0].positions[0].startTime, 390);
+  assert.equal(state.adultAnalysisTrace.actions[0].route, 'NOT_ROUTED');
 });
 
 test('preparation routes a verified same-cast introduction into its adjacent scene without changing source times', () => {

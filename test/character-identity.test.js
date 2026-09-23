@@ -112,6 +112,9 @@ test('unnamed participants use only observed visual descriptions', () => {
   assert.equal(partner.identityResolution, 'described');
   assert.equal(bindActionCharacter({ label: 'Dinle', primaryCharacterId: 'OTHER_MALE' }, context)
     .primaryCharacterLabel, 'Beyaz gömlekli');
+  const speaker = bindActionCharacter({ label: 'Dinle', primaryCharacterId: 'OTHER_MALE' },
+    { characters: [{ ...context.characters[1], evidence: 'Sarı kazaklı misafir erkek (spk:2).' }] });
+  assert.equal(speaker.primaryCharacterLabel, 'Sarı kazaklı');
 });
 
 test('an explicit addressed character is preserved in a group scene', () => {

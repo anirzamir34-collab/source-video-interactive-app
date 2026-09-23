@@ -395,6 +395,7 @@ test('the scene control occupies space only while an existing clip is available'
 });
 
 async function startFirstChapter(f) {
+  f.els.video.time = 20;
   f.addFemaleLust(35);
   await flush();
   assert.equal(f.state.activePositionId, 'one');
@@ -410,6 +411,10 @@ test('first full threshold opens the panel and plays the first local clip automa
   await flush();
   assert.equal(f.state.adultSexUnlocked, false);
   f.addFemaleLust(1);
+  await flush();
+  assert.equal(f.state.adultSexUnlocked, false);
+  f.els.video.time = 20;
+  f.addFemaleLust(0);
   await flush();
   assert.equal(f.state.adultSexUnlocked, true);
   assert.equal(f.state.activeMovementId, 'one-0');
@@ -520,6 +525,7 @@ for (const mode of ['error', 'blocked']) {
 test('failed chapter playback cannot count as a visit or open the following chapter', async () => {
   const f = runtimeFixture();
   f.els.video.mode = 'error';
+  f.els.video.time = 19.8;
   f.addFemaleLust(35);
   await flush();
   assert.equal(f.state.adultVisitedPositionIds.size, 0);

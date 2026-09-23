@@ -26,6 +26,7 @@ import {
   positionOccurrenceForMovement,
   monotonicAdultPhase,
   normalizeSourceActionTimes,
+  playableAdultPanelFamily,
   maleOrgasmPlaybackMultiplier,
   movementBelongsToVerifiedPosition,
   nearestAvailableTempo,
@@ -85,7 +86,7 @@ import {
   selectDiverseStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
-import { bindActionCharacter } from './character-identity.js';
+import { bindActionCharacter, verifiedCharacterName, verifiedVisualDescription } from './character-identity.js';
 import {
   adaptiveAnalysisChunkPlan,
   extractStoryboard
@@ -3536,7 +3537,7 @@ function prepareAdultScenes() {
       // or activityEvidence. The canonical family in its label is enough to
       // route it into the dedicated adult panel; never require model-only
       // metadata that would otherwise leak the action into normal choices.
-      const family = verifiedAdultPositionFamily(action);
+      const family = playableAdultPanelFamily(action);
       if (!family) {
         row.sceneCandidateReason = 'REJECTED_NO_CANONICAL_POSITION_FAMILY';
         return false;
@@ -3573,7 +3574,8 @@ function prepareAdultScenes() {
       sceneMap.set(sceneId, {
         id: sceneId,
         sourceSceneIds: [sceneId],
-        title: 'Etkileşimli Sahne',
+        title: action.storyEvidenceLevel === 'fact' && action.storyEvidence && action.sceneTitle
+          ? String(action.sceneTitle).trim() : 'Etkileşimli Sahne',
         startTime: Number(action.adultSceneStartTime ?? action.startTime),
         endTime: Number(action.adultSceneEndTime ?? action.endTime),
         postSceneTime: Number(action.postSceneTime ?? action.adultSceneEndTime ?? action.endTime),
@@ -3586,6 +3588,8 @@ function prepareAdultScenes() {
     }
 
     const scene = sceneMap.get(sceneId);
+    if (scene.title === 'Etkileşimli Sahne' && action.storyEvidenceLevel === 'fact' &&
+        action.storyEvidence && action.sceneTitle) scene.title = String(action.sceneTitle).trim();
     scene.startTime = Math.min(scene.startTime, Number(action.adultSceneStartTime ?? action.startTime));
     scene.endTime = Math.max(scene.endTime, Number(action.adultSceneEndTime ?? action.endTime));
     scene.postSceneTime = Math.max(
@@ -3641,7 +3645,7 @@ function prepareAdultScenes() {
     const hasPositionEvidence = Boolean(
       action.positionId ||
       action.positionLabel ||
-      verifiedAdultPositionFamily(action)
+      playableAdultPanelFamily(action)
     );
     if (!hasPositionEvidence) {
       const actionType = String(action.actionType || '').toLowerCase();
@@ -3659,25 +3663,28 @@ function prepareAdultScenes() {
       }
       const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
       const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition'].includes(actionType);
+      const sourceDialogue = actionType === 'other' &&
+        !/\b(?:pozisyon|seks|oral)\b/iu.test(action.label || '');
       const labelWarmup = /\b(op|opus|dokun|oksa|soyun|cikar|saril|elle|elini|tenine)\b/.test(labelKey);
       const startTime = Math.max(scene.startTime, Number(action.startTime));
       const endTime = Math.min(scene.endTime, Number(action.endTime));
 
       if (
         action.sourceVerified === true &&
-        (explicitWarmup || (actionType === 'other' && labelWarmup)) &&
+        (explicitWarmup || sourceDialogue || (actionType === 'other' && labelWarmup)) &&
         action.label &&
         Number.isFinite(startTime) &&
         Number.isFinite(endTime) &&
         endTime - startTime >= 2
       ) {
         traceRow.route = 'FOREPLAY';
-        traceRow.routeReason = 'EXPLICIT_OR_LABEL_WARMUP';
+        traceRow.routeReason = sourceDialogue ? 'SOURCE_DIALOGUE_OVERLAY' : 'EXPLICIT_OR_LABEL_WARMUP';
         scene.foreplay.push({
           id: action.actionId || `${sceneId}:warmup-${index}`,
           label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           sourceVerified: true,
+          nonIntimate: sourceDialogue,
           startTime,
           endTime,
           maleProgressRate: Number(action.maleProgressRate || 1),
@@ -3713,7 +3720,8 @@ function prepareAdultScenes() {
     const routeNamespace = activityOccurrenceNamespace(action);
     const partnerTrackId = String(action.partnerTrackId || '').trim();
     const partnerNamespace = partnerTrackId || 'partner-unknown';
-    const positionKey = `${category.id}:${canonical.id}:${routeNamespace}:${partnerNamespace}:${occurrenceId}`;
+    const subjectTrackId = String(action.subjectTrackId || '').trim();
+    const positionKey = `${category.id}:${canonical.id}:${routeNamespace}:${subjectTrackId || 'actor-unknown'}:${partnerNamespace}:${occurrenceId}`;
     traceRow.route = 'POSITION';
     traceRow.routeReason = canonical.correctedFromAction
       ? 'LABEL_FAMILY_OVERRULED_INCONSISTENT_POSITION_METADATA'
@@ -3733,6 +3741,7 @@ function prepareAdultScenes() {
         adultParticipantCount: Number(action.adultParticipantCount || 0),
         participantTrackIds: [...(action.participantTrackIds || [])],
         partnerTrackId,
+        subjectTrackId,
         partnerLabel: String(action.partnerLabel || '').trim(),
         partnerEvidence: String(action.partnerEvidence || '').trim(),
         receiverBodyOrientation: String(action.receiverBodyOrientation || 'unclear'),
@@ -3858,13 +3867,11 @@ function prepareAdultScenes() {
       // the first verified position. A later partner switch must never be
       // offered as the first choice and seek the player hundreds of seconds
       // forward in the source timeline.
-      const firstCorePositions = positions.filter(position =>
-        !['oral', 'manual'].includes(String(position.familyId || '')));
-      const playableForeplay = initialWarmupBeforeFirstPosition(foreplay,
-        firstCorePositions.length ? firstCorePositions : positions)
-        .filter(item => Number(item.endTime) > Number(scene.startTime));
-      const interactionStart = playableForeplay.length
-        ? Math.min(positionStart, ...playableForeplay.map(item => Number(item.startTime)))
+      const playableForeplay = foreplay.filter(item =>
+        item.sourceVerified === true && Number(item.endTime) > Number(item.startTime));
+      const openingForeplay = initialWarmupBeforeFirstPosition(playableForeplay, positions);
+      const interactionStart = openingForeplay.length
+        ? Math.min(positionStart, ...openingForeplay.map(item => Number(item.startTime)))
         : positionStart;
       return {
         ...scene,
@@ -3897,17 +3904,15 @@ function prepareAdultScenes() {
 
   state.adultScenes.forEach(scene => {
     const firstCoreStart = scene.positions
-      .filter(position => !['oral', 'manual'].includes(String(position.familyId || '')))
       .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
     // Merging source fragments must not move a later introduction into the
     // first-entry gate of this encounter.
-    scene.foreplay = scene.foreplay.filter(item => Number(item.endTime) <= firstCoreStart + 0.05);
+    scene.foreplay = scene.foreplay.filter(item => Number(item.endTime) <= firstCoreStart + 0.05 ||
+      Number(item.startTime) >= firstCoreStart - 0.05);
     scene.positions = scene.positions.map(position => {
-      const stimulation = ['oral', 'manual'].includes(String(position.familyId || ''));
-      const beforeFirstCore = stimulation && Number(position.endTime) <= firstCoreStart + 0.05;
       return {
         ...position,
-        progressionRole: beforeFirstCore ? 'foreplay' : stimulation ? 'bonus' : 'core'
+        progressionRole: 'core'
       };
     });
     scene.positions = consolidateVerifiedPositions(scene.positions, {
@@ -4030,6 +4035,9 @@ function unlockNextAdultPositionFromLust() {
   if (currentAdultFlow() < 99.9 || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision) return null;
   const firstUnlock = !state.adultSexUnlocked;
   const positions = state.adultScene?.positions || [];
+  const firstCoreStart = Math.min(...positions.filter(position => !isWarmupPosition(position))
+    .map(position => Number(position.startTime)));
+  if (firstUnlock && Number(els.video?.currentTime) < firstCoreStart - 0.3) return null;
   const latestUnlocked = positions.filter(position =>
     !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id)
   ).sort((a, b) => Number(b.startTime) - Number(a.startTime))[0];
@@ -4411,16 +4419,18 @@ function renderAdultWarmupChoices(scene) {
   refreshAdultCompactDock();
 }
 
-function renderAdultApproachChoices(scene) {
+function renderAdultApproachChoices(scene, later = false) {
   const flow = currentAdultFlow();
   const approachPool = [
-    ...initialWarmupBeforeFirstPosition(scene?.foreplay || [],
-      (scene?.positions || []).filter(position => !isWarmupPosition(position))).map(item => ({
+    ...(later ? (scene?.foreplay || []).filter(item => Number(item.startTime) >=
+      Math.min(...(scene?.positions || []).map(position => Number(position.startTime))))
+      : initialWarmupBeforeFirstPosition(scene?.foreplay || [],
+        (scene?.positions || []).filter(position => !isWarmupPosition(position)))).map(item => ({
       kind: 'foreplay', id: item.id, label: item.label,
       startTime: item.startTime, endTime: item.endTime,
       playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
     })),
-    ...(scene?.positions || []).filter(isWarmupPosition).flatMap(position => {
+    ...(!later ? (scene?.positions || []).filter(isWarmupPosition) : []).flatMap(position => {
       const firstCoreStart = Math.min(...(scene.positions || []).filter(item => !isWarmupPosition(item)).map(item => Number(item.startTime)));
       const movements = (position.movements || []).filter(item =>
         positionOccurrenceForMovement(position, item) && Number(item.loopEndTime) <= firstCoreStart + 0.05);
@@ -4448,7 +4458,8 @@ function renderAdultApproachChoices(scene) {
   els.choices.classList.remove('hidden');
   const heading = document.createElement('div');
   heading.className = 'approach-status';
-  heading.innerHTML = `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>İlk gerçek pozisyon Lust dolunca açılır.</small>`;
+  heading.innerHTML = later ? '<strong>SAHNE SEÇENEKLERİ</strong>' :
+    `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>İlk gerçek pozisyon kaynak anında açılır.</small>`;
   els.choices.appendChild(heading);
   const compactChoiceLabel = value => String(value || '')
     .replace(/\s+sekansını oynat/giu, '')
@@ -4555,6 +4566,11 @@ function renderAdultProgressiveUI(force = false) {
   const hasCoreUnlocked = availablePositions.some(position => !isBonusPosition(position));
   const hasBonusUnlocked = availablePositions.some(isBonusPosition);
   const phase = setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
+  const videoTime = Number(els.video?.currentTime) || 0;
+  const laterOverlay = state.adultSexUnlocked && !state.activeMovementId &&
+    !sourcePositionAtTime(scene.positions || [], videoTime) &&
+    (scene.positions || []).some(position => Number(position.startTime) < videoTime) &&
+    (scene.positions || []).some(position => Number(position.startTime) > videoTime + 0.04);
 
   const signature = [
     phase,
@@ -4562,6 +4578,7 @@ function renderAdultProgressiveUI(force = false) {
     state.activePositionId || '',
     state.activeAdultCategory || '',
     state.activeAdultPartnerTrackId || '',
+    laterOverlay ? 'overlay' : '',
     phase === 'foreplay' ? Math.floor(Math.max(Number(els.video?.currentTime) || 0,
       Number(state.adultTimelineFloor) || 0) / 3) : '',
     Math.round(currentAdultFlow())
@@ -4579,13 +4596,13 @@ function renderAdultProgressiveUI(force = false) {
   state.adultUiSignature = signature;
   state.adultLastUiPhase = phase;
 
-  if (phase === 'foreplay') {
+  if (phase === 'foreplay' || laterOverlay) {
     if (els.discoveryGateText) els.discoveryGateText.textContent = `İlk seks pozisyonu için Lust ${Math.round(currentAdultFlow())}/100`;
     if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = 'Önce kaynak videodaki yakınlaşma, oral ve manuel seçenekleri oynatılır.';
     els.discoveryGate?.classList.remove('hidden');
     els.adultInteractionPanel.classList.add('hidden');
     els.adultPanelToggleBtn?.classList.add('hidden');
-    renderAdultApproachChoices(scene);
+    renderAdultApproachChoices(scene, laterOverlay);
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');
@@ -4742,28 +4759,37 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
   const unlocked = unlockedAdultPositions(scene).filter(item => !isWarmupPosition(item));
-  const partners = [...new Map(unlocked.filter(item => item.groupScene && item.partnerTrackId)
-    .map(item => [item.partnerTrackId, item.partnerLabel || item.partnerTrackId])).entries()];
-  const showPartners = partners.length > 1;
-  if (!showPartners) state.activeAdultPartnerTrackId = null;
+  const characters = state.analysis?.storyContext?.characters || [];
+  const protagonists = [...new Set(unlocked.filter(item => item.groupScene)
+    .map(item => item.subjectTrackId).filter(Boolean))].filter(trackId => {
+    const character = characters.find(item => item.participantTrackId === trackId);
+    return character && /(?:erkek|adam|male|man)/iu.test(
+      [character.sourceRole, character.role, character.description, character.evidence].join(' '));
+  });
+  const showPartners = protagonists.length > 1;
+  if (!showPartners || !protagonists.includes(state.activeAdultPartnerTrackId)) {
+    state.activeAdultPartnerTrackId = protagonists.includes('MAIN_MALE') ? 'MAIN_MALE' : protagonists[0] || null;
+  }
   if (els.groupPartnerTabs) els.groupPartnerTabs.innerHTML = '';
   els.groupPartnerSection?.classList.toggle('hidden', !showPartners);
   if (showPartners) {
-    for (const [trackId, label] of [['', 'Tüm kişiler'], ...partners]) {
+    for (const trackId of protagonists) {
+      const character = characters.find(item => item.participantTrackId === trackId);
+      const label = verifiedCharacterName(character) || verifiedVisualDescription(character) || 'Erkek karakter';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'position-tab';
       button.textContent = label;
-      button.classList.toggle('active', (state.activeAdultPartnerTrackId || '') === trackId);
+      button.classList.toggle('active', state.activeAdultPartnerTrackId === trackId);
       button.addEventListener('click', () => {
-        state.activeAdultPartnerTrackId = trackId || null;
+        state.activeAdultPartnerTrackId = trackId;
         selectAdultCategory(categoryId, false);
       });
       els.groupPartnerTabs?.appendChild(button);
     }
   }
   const positions = unlocked
-    .filter(item => !state.activeAdultPartnerTrackId || item.partnerTrackId === state.activeAdultPartnerTrackId)
+    .filter(item => !showPartners || item.subjectTrackId === state.activeAdultPartnerTrackId)
     .filter(item => !isWarmupPosition(item))
     .filter(item => {
       if (categoryId === 'all') return true;
@@ -4851,6 +4877,7 @@ function commitAdultSelectionProgress(selectionToken) {
 
 function applyAdultPreludeProgress(item) {
   if (!item) return;
+  if (item.nonIntimate) return;
   const repeatCount = Number(state.adultPreludePlayCounts.get(item.id) || 0);
   state.adultComboCount = repeatCount === 0
     ? Math.min(6, state.adultComboCount + 1)
@@ -4872,7 +4899,6 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scene?.foreplay?.find(entry => entry.id === preludeId);
   if (!item || item.sourceVerified !== true || !els.video || state.adultOutcomePhase !== 'idle') return;
-  if (state.adultSexUnlocked) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
   logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
@@ -5714,7 +5740,7 @@ if (els.video?.requestVideoFrameCallback) {
 
 function isUnownedTimelineChoice(action) {
   if (action?.sourceVerified !== true) return false;
-  const family = verifiedAdultPositionFamily(action);
+  const family = playableAdultPanelFamily(action);
   if (family) {
     const explicitContact = ['kiss', 'touch', 'clothing', 'body_transition'].includes(action.actionType);
     if (!explicitContact || action.positionId || action.positionLabel) return false;

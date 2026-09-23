@@ -73,6 +73,7 @@ function fixture() {
     orderedLockedAdultPositions: () => [], findAdultSceneAt: () => null,
     futureActions: () => [], selectDiverseStoryActions: list => list, findAdultSceneForTimeline: () => null,
     verifiedAdultPositionFamily: () => null, storyChoiceLabelForAction: action => action.label,
+    playableAdultPanelFamily: () => '',
     escapeHtml: value => String(value)
   });
   vm.runInContext(handlers, scope);

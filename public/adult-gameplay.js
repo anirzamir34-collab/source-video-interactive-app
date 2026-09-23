@@ -211,6 +211,18 @@ export function verifiedAdultPositionFamily(action = {}) {
   return resolveVerifiedAdultPosition(action).family;
 }
 
+export function playableAdultPanelFamily(action = {}) {
+  // A standing posture or a sofa mentioned in dialogue is not an adult act.
+  // Both the encounter and the action must identify a playable interval.
+  if (action.sourceVerified !== true || action.adultScene !== true) return '';
+  const type = String(action.actionType || '').toLowerCase();
+  if (['other', 'body_transition', 'camera_transition', 'partner_transition',
+    'kiss', 'clothing', 'outcome', 'aftermath'].includes(type)) return '';
+  if (!action.positionId && !action.positionLabel &&
+      !['position', 'tempo_change', 'movement', 'rhythm'].includes(type)) return '';
+  return verifiedAdultPositionFamily(action);
+}
+
 export function adultPositionFamilyFromBodyConfiguration(action = {}) {
   return verifiedBodyConfigurationFamily(action);
 }
@@ -750,18 +762,20 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
   for (const position of sorted) {
     if (!position?.familyId) continue;
     const partnerKey = String(position.partnerTrackId || '').trim() || 'partner-unknown';
+    const subjectKey = String(position.subjectTrackId || '').trim();
     const role = String(position.progressionRole || '').trim();
     const route = Number(position.activityTypeConfidence || 0) >= 0.78
       ? String(position.activityType || '') : '';
     const routeSuffix = route && route !== 'unclear' ? `:${route}` : '';
-    const roleSuffix = (role ? `:${role}` : '') + routeSuffix;
+    const roleSuffix = (role ? `:${role}` : '') + routeSuffix +
+      (subjectKey && subjectKey !== 'MAIN_MALE' ? `:${subjectKey}` : '');
     const positionId = partnerKey === 'partner-unknown'
       ? `position:${position.familyId}${roleSuffix}`
       : `position:${position.familyId}:${partnerKey}${roleSuffix}`;
     const occurrenceId = partnerKey === 'partner-unknown'
       ? `${String(position.familyId)}${roleSuffix}`
       : `${position.familyId}:${partnerKey}${roleSuffix}`;
-    const key = `${String(position.familyId)}::${partnerKey}::${role}::${routeSuffix}`;
+    const key = `${String(position.familyId)}::${subjectKey}::${partnerKey}::${role}::${routeSuffix}`;
     const sourceId = String(position.id || key);
     // A second normalization pass must preserve the original ranges and IDs.
     // Replacing them with the parent envelope would make gaps playable.
@@ -915,7 +929,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       deep: 'DERİN', hard: 'SERT', intense: 'YOĞUN'
     }[energyFlavor];
     return {
-      key: `${resolvedTempo}:${energyFlavor}`,
+      key: `${resolvedTempo}:${intensityBand}`,
       tempo: resolvedTempo,
       intensityBand,
       energyFlavor,

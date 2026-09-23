@@ -20,12 +20,14 @@ export function verifiedCharacterName(character) {
 export function verifiedVisualDescription(character) {
   if (character?.identityConflict || character?.evidenceLevel !== 'fact' ||
       Number(character?.confidence) < 0.68) return '';
-  const evidence = text(character?.evidence);
+  const evidence = text(character?.evidence).replace(/\s*\(spk:\d+\)/giu, '');
   // Use only a directly supplied visual descriptor. Never turn a track ID,
   // generic gender, or a claimed relationship into a character name.
-  const phrase = evidence.match(/^([^,.;]{5,65})[,.;]/u)?.[1]?.trim() || '';
+  const first = value => value.match(/^([^,.;]{5,75})(?:[,.;]|$)/u)?.[1]?.trim() || '';
+  const phrase = [first(evidence), first(text(character?.description))]
+    .find(value => /(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü)(?=\s|$)/iu.test(value)) || '';
   if (!/(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü)(?=\s|$)/iu.test(phrase)) return '';
-  return phrase.replace(/\s+(?:diğer\s+)?(?:kadın|erkek|kişi)$/iu, '').trim();
+  return phrase.replace(/\s+(?:misafir\s+|diğer\s+)?(?:kadın|erkek|kişi|kız)$/iu, '').trim();
 }
 
 export function mergeCharacterRecords(records = []) {
