@@ -177,7 +177,8 @@ export function forwardLocalMovementClips(position = {}, cursor = 0, horizonSeco
   const horizon = floor + Math.max(0, Number(horizonSeconds) || 0);
   return (Array.isArray(position?.movements) ? position.movements : [])
     .filter(item => item?.sourceVerified === true && positionOccurrenceForMovement(position, item))
-    .filter(item => Number(item.loopStartTime) >= floor - 0.05 &&
+    .filter(item => Number(item.loopEndTime) > floor + 0.05 &&
+      Number(item.loopStartTime) >= floor - 2.05 &&
       Number(item.loopStartTime) <= horizon + 0.05)
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 }

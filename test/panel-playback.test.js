@@ -114,6 +114,15 @@ function fixture() {
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+test('selecting the current frame resumes without another seek request', async () => {
+  const f = fixture();
+  f.els.video.mode = 'stalled';
+  assert.equal(await f.seekAdultLoop(10), true);
+  assert.equal(f.els.video.seeking, false);
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.els.video.playCalls, 1);
+});
+
 test('stalled panel seek never starts playback or reports a successful transition', async () => {
   const f = fixture();
   f.els.video.mode = 'stalled';
@@ -413,10 +422,8 @@ test('first full threshold opens the panel and plays the first local clip automa
   assert.equal(f.state.adultSexUnlocked, false);
   f.addFemaleLust(1);
   await flush();
-  assert.equal(f.state.adultSexUnlocked, false);
-  f.els.video.time = 20;
-  f.addFemaleLust(0);
-  await flush();
+  // The first verified clip is ten seconds ahead. Full progress opens it now,
+  // even though the introduction ended before the position's source boundary.
   assert.equal(f.state.adultSexUnlocked, true);
   assert.equal(f.state.activeMovementId, 'one-0');
   assert.equal(f.els.video.currentTime, 20);
