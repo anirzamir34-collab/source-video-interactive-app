@@ -28,9 +28,7 @@ export function groupSourceChoiceCards(clips, {
     .filter(clip => clip?.sourceVerified === true && clip.id && clipRange(clip))
     .sort((a, b) => clipRange(a).startTime - clipRange(b).startTime || String(a.id).localeCompare(String(b.id)));
   const requestedTarget = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
-  // preferredCount is a ceiling, not a demand. Roughly four verified
-  // movements per card keeps rich scenes compact without stuffing a whole
-  // occurrence into one option.
+  // A card is a coherent source packet, not a separate button for each clip.
   const target = Math.min(requestedTarget, Math.max(1, Math.ceil(source.length / 4)));
   const groups = new Map();
   for (const clip of source) {
@@ -56,7 +54,7 @@ export function groupSourceChoiceCards(clips, {
       stableContext ? [] : [...(clip.participantTrackIds || [])].map(text).sort(),
       stableContext ? '' : text(clip.receiverBodyOrientation),
       stableContext ? '' : text(clip.receiverSupport), band,
-      stableContext ? label.toLocaleLowerCase('tr-TR')
+      stableContext ? ''
         : hasScope && kind && kind !== 'other' ? kind : label.toLocaleLowerCase('tr-TR'),
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);
@@ -70,7 +68,7 @@ export function groupSourceChoiceCards(clips, {
   for (const group of groups.values()) {
     const groupSize = [...group.packets.values()].reduce((sum, packet) => sum + packet.length, 0);
     const proportionalCards = Math.max(1, Math.round(target * groupSize / Math.max(1, source.length)));
-    const capacity = groupSize <= 2 ? groupSize : Math.max(3, Math.min(6, Math.ceil(groupSize / proportionalCards)));
+    const capacity = groupSize <= 2 ? groupSize : Math.max(3, Math.min(5, Math.ceil(groupSize / proportionalCards)));
     let pending = [];
     const flush = () => {
       if (!pending.length) return;
