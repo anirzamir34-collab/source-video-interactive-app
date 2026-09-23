@@ -125,7 +125,7 @@ test('preparation displays actual copied bytes and stops its clock after complet
     onProgress({ phase: 'packing', loaded: 1024 * 1024, total: 2 * 1024 * 1024 });
     assert.match(f.els.analysisTitle.textContent, /%50/);
     assert.match(f.els.analysisOutput.textContent, /1\.0 \/ 2\.0 MB/);
-    assert.match(f.els.analysisOutput.textContent, /60 saniyede/);
+    assert.match(f.els.analysisOutput.textContent, /120 saniyede/);
     return f.compactAudio;
   } });
   assert.equal(await f.scope.prepareDialoguePayload(f.original), f.compactAudio);

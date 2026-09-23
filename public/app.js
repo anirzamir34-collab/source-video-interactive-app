@@ -93,6 +93,7 @@ import {
   extractStoryboard
 } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
+import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 
 import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from './dubbing-audio.js';
 import { createDubRequestQueue } from './dubbing-queue.js';
@@ -1236,7 +1237,7 @@ async function prepareDialoguePayload(file, session = state.analysisSession) {
     els.analysisOutput.textContent = (total
       ? `Hazırlanan ses: ${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n`
       : 'Video cihazda kalıyor; ses kanalı bulunuyor.\n') +
-      `${elapsed} sn geçti. Cihazda hazırlama 60 saniyede tamamlanamazsa sunucuda devam edilecek.`;
+      `${elapsed} sn geçti. Cihazda hazırlama 120 saniyede tamamlanamazsa sunucuda devam edilecek.`;
   };
   showPreparation();
   const preparationTimer = setInterval(showPreparation, 1000);
@@ -1256,7 +1257,7 @@ async function prepareDialoguePayload(file, session = state.analysisSession) {
       // A stuck file read must not start another full-file local decoder.
       // Reuse the original bytes with the existing server audio preparation.
       els.analysisTitle.textContent = 'Ses hazırlığı sunucuda devam edecek';
-      els.analysisOutput.textContent = 'Cihazda ses hazırlama 60 saniyede tamamlanamadı. Mevcut video sunucuya yüklenerek devam edilecek.';
+      els.analysisOutput.textContent = 'Cihazda ses hazırlama 120 saniyede tamamlanamadı. Mevcut video sunucuya yüklenerek devam edilecek.';
       if (session) { session.audioSource = file; session.audioFile = file; }
       return file;
     }
@@ -6799,8 +6800,68 @@ async function openSavedGame(game) {
   els.playerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+async function repairSavedGame(game, onProgress = () => {}) {
+  const previous = game.payload.analysis;
+  const gaps = repairableAnalysisGaps(previous, game.duration);
+  if (!gaps.length) throw new Error('Bu kayıtta eksik analiz aralığı yok.');
+  const repairs = [];
+  for (let index = 0; index < gaps.length; index++) {
+    const gap = gaps[index];
+    onProgress(`Eksik bölüm ${index + 1}/${gaps.length}: ${gap.startTime.toFixed(1)}–${gap.endTime.toFixed(1)} sn · kareler hazırlanıyor…`);
+    const storyboard = await extractStoryboard(game.video, () => {}, undefined, { timeRange: gap });
+    const form = new FormData();
+    storyboard.sheets.forEach((sheet, sheetIndex) => form.append('storyboards', sheet,
+      `repair-${index + 1}-${sheetIndex + 1}.jpg`));
+    form.append('duration', String(game.duration));
+    form.append('timestamps', JSON.stringify(storyboard.timestamps));
+    form.append('motionProfile', JSON.stringify(storyboard.motionProfile));
+    form.append('sceneBoundaries', JSON.stringify(storyboard.sceneBoundaries));
+    form.append('chunkStart', String(gap.startTime));
+    form.append('chunkEnd', String(gap.endTime));
+    form.append('chunkIndex', String(index));
+    form.append('chunkCount', String(gaps.length));
+    form.append('qualityMode', 'ultra');
+    form.append('storyContextMemory', JSON.stringify(previous.storyContext || {}));
+    form.append('dialogueContext', JSON.stringify((game.payload.dialogue?.segments || []).filter(item =>
+      Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
+    form.append('dialogueSpeakerContext', JSON.stringify(game.payload.dialogue?.speakers || []));
+    form.append('sensoryAudioContext', JSON.stringify((game.payload.dialogue?.nonSpeechEvents || []).filter(item =>
+      Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
+    onProgress(`Eksik bölüm ${index + 1}/${gaps.length} analiz ediliyor…`);
+    const headers = geminiRequestHeaders();
+    let result;
+    try {
+      const response = await fetch('/api/gemini-storyboard-analyze', {
+        method: 'POST', headers, body: form,
+        signal: AbortSignal.timeout(240000)
+      });
+      result = await response.json();
+      recordAiUsage(result?.aiUsage);
+      if (response.ok && result?.available) {
+        const corrected = normalizeChunkActionTimes(result.actions, gap.startTime, gap.endTime);
+        result = { ...result, actions: corrected.actions };
+        const normalized = normalizeAnalysis({ ...result,
+          storyContext: mergeStoryContexts([{ storyContext: previous.storyContext }, result]),
+          videoDuration: game.duration });
+        result.actions = normalized.actions.map((action, actionIndex) => ({
+          ...action, actionId: `repair-${Math.round(gap.startTime * 1000)}-${actionIndex + 1}`
+        }));
+      } else if (result?.reason === 'GEMINI_CREDITS_DEPLETED') {
+        throw Object.assign(new Error(result.message || 'Analiz kredisi tükendi; kayıt değiştirilmedi.'),
+          { code: 'GEMINI_CREDITS_DEPLETED' });
+      }
+    } catch (error) {
+      if (error?.code === 'GEMINI_CREDITS_DEPLETED') throw error;
+      result = { available: false, message: error.message || 'Bağlantı hatası' };
+      onProgress(`Bölüm ${index + 1} tamamlanamadı; mevcut analiz korunuyor. Diğer eksik bölümler deneniyor…`);
+    }
+    repairs.push({ gap, result });
+  }
+  return mergeRepairedAnalysis(previous, repairs, game.duration);
+}
+
 savedGames = mountSavedGames({
-  root: $('savedGames'), capture: captureSavedGame, openGame: openSavedGame,
+  root: $('savedGames'), capture: captureSavedGame, openGame: openSavedGame, repairGame: repairSavedGame,
   isBusy: () => state.analysisInProgress || state.urlResolutionInProgress,
   onBusy: busy => { state.savedGameBusy = busy; updateAnalyzeAvailability(); },
   onSaved: record => { state.activeSavedGameId = record.id; },

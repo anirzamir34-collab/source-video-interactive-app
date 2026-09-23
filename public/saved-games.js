@@ -1,4 +1,5 @@
 import { buildDubSpeakerRoster, validateDubVoicePlan } from './dub-speakers.js';
+import { repairableAnalysisGaps } from './analysis-gap-repair.js';
 
 // Store media separately so opening the shelf never reads every video into memory.
 const DATABASE = 'videoquest-saved-games';
@@ -68,6 +69,7 @@ function summary(game) {
     ...meta, videoBytes: video.size,
     totalBytes: video.size + new Blob([JSON.stringify(payload)]).size,
     actionCount: payload.analysis?.actions.length || 0,
+    analysisGapCount: repairableAnalysisGaps(payload.analysis, game.duration).length,
     dialogueCount: payload.dialogue?.segments.length || 0,
     dubCount: payload.dubCache.length
   };
@@ -117,6 +119,18 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
         const request = tx.objectStore('games').getAll();
         request.onsuccess = () => done(request.result);
       });
+      // Records written before gap counts were added need their small payload
+      // inspected once; never load their video bytes just to draw the shelf.
+      const legacy = rows.filter(row => row.analysisGapCount == null);
+      if (legacy.length) {
+        const payloads = await transaction(['payloads'], 'readonly', (tx, done) => {
+          const request = tx.objectStore('payloads').getAll();
+          request.onsuccess = () => done(request.result);
+        });
+        const byId = new Map(payloads.map(row => [row.id, row.payload]));
+        legacy.forEach(row => { row.analysisGapCount = repairableAnalysisGaps(
+          byId.get(row.id)?.analysis, row.duration).length; });
+      }
       return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
     async save(input, existingId = null) {

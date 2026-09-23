@@ -35,6 +35,22 @@ test('reopening the database restores URL video bytes, analysis, dialogue and au
   await reopened.close();
 });
 
+test('the saved-game shelf counts explicit gaps and updates that same record after repair', async () => {
+  const store = createGameStore({ indexedDB: new IDBFactory() });
+  const input = fixture();
+  input.payload.analysis.analysisGaps = [{ startTime: 20, endTime: 30 }];
+  const saved = await store.save(input);
+  assert.equal((await store.list())[0].analysisGapCount, 1);
+  const loaded = await store.load(saved.id);
+  loaded.payload.analysis.analysisGaps = [];
+  loaded.payload.analysis.actions.push({ id: 'repaired', startTime: 20, endTime: 30, sourceVerified: true });
+  const updated = await store.save(loaded, saved.id);
+  assert.equal(updated.id, saved.id);
+  assert.equal((await store.list())[0].analysisGapCount, 0);
+  assert.deepEqual(await bytes((await store.load(saved.id)).video), await bytes(input.video));
+  await store.close();
+});
+
 test('device files and dialogue-only analyses can be saved and replayed', async () => {
   const store = createGameStore({ indexedDB: new IDBFactory() });
   const input = fixture({ sourceKind: 'file' });
