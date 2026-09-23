@@ -4763,8 +4763,10 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
   const protagonists = [...new Set(unlocked.filter(item => item.groupScene)
     .map(item => item.subjectTrackId).filter(Boolean))].filter(trackId => {
     const character = characters.find(item => item.participantTrackId === trackId);
-    return character && /(?:erkek|adam|male|man)/iu.test(
-      [character.sourceRole, character.role, character.description, character.evidence].join(' '));
+    const role = String(character?.sourceRole || character?.role || '').toLocaleLowerCase('tr-TR');
+    return character?.evidenceLevel === 'fact' &&
+      /(?:^|\s)(?:erkek|adam|baba|male|man)(?:\s|$)/iu.test(role) &&
+      !/(?:kadın|kız|female|woman)/iu.test(role);
   });
   const showPartners = protagonists.length > 1;
   if (!showPartners || !protagonists.includes(state.activeAdultPartnerTrackId)) {
