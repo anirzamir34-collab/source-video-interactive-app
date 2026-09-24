@@ -1,4 +1,4 @@
-import { partitionProtagonistActions } from './protagonist-ownership.js';
+import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import {
   adultPositionFamily,
   assignAdultSceneOccurrenceIds,
@@ -3267,9 +3267,9 @@ function normalizeAnalysis(body) {
     storyContext,
     warnings: Array.isArray(body?.warnings) ? body.warnings : [],
     actions: ownership.playable,
-    unownedSourceIntervals: ownership.excluded.map(action => ({
+    unownedSourceIntervals: mergeUnownedIntervals(ownership.excluded.map(action => ({
       startTime: action.startTime, endTime: action.endTime
-    })),
+    }))),
   };
 }
 
@@ -3278,8 +3278,8 @@ function initializeInteractive(analysis) {
   const requestedStart = Number(
     analysis.playStartTime ??
     analysis.introEndTime ??
-    analysis.unownedSourceIntervals?.[0]?.startTime ??
-    analysis.actions?.[0]?.startTime ??
+    Math.min(analysis.unownedSourceIntervals?.[0]?.startTime ?? Infinity,
+      analysis.actions?.[0]?.startTime ?? Infinity) ??
     0
   );
 
@@ -5969,14 +5969,27 @@ function renderChoices() {
     return;
   }
 
-  const unowned = (state.analysis?.unownedSourceIntervals || []).find(interval =>
+  const intervals = state.analysis?.unownedSourceIntervals || [];
+  const unowned = intervals.find(interval =>
     Number(interval.endTime) > state.gameCursorTime + 0.05 &&
-    Number(interval.startTime) <= state.gameCursorTime + 0.3 &&
     (routeTime === null || Number(interval.startTime) < routeTime - 0.05));
   if (unowned) {
     const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration) || 0;
-    const target = routeTime ?? duration;
-    if (target > state.gameCursorTime + 0.1) {
+    if (Number(unowned.startTime) > state.gameCursorTime + 0.3) {
+      void resumeAnalysisGap(Number(unowned.startTime));
+      return;
+    }
+    const end = Math.min(duration || Infinity, Number(unowned.endTime));
+    const nextRoute = [
+      ...(state.analysis?.actions || []).filter(action => action.sourceVerified &&
+        !state.consumedActionIds.has(action.actionId)).map(action => Number(action.startTime)),
+      ...(state.adultScenes || []).filter(scene => !state.completedAdultSceneIds?.has(scene.id))
+        .map(scene => Number(scene.startTime))
+    ].filter(time => Number.isFinite(time) && time >= end - 0.05);
+    const nextUnowned = intervals.find(interval => Number(interval.startTime) >= end - 0.05);
+    const skipTarget = Math.min(duration || Infinity, ...nextRoute,
+      Number(nextUnowned?.startTime) || Infinity);
+    if (end > state.gameCursorTime + 0.1) {
       els.choices.replaceChildren();
       els.choices.classList.remove('hidden');
       const message = document.createElement('div');
@@ -5985,11 +5998,11 @@ function renderChoices() {
       const watch = document.createElement('button');
       watch.className = 'choice';
       watch.textContent = 'Bölümü izle';
-      watch.addEventListener('click', () => void resumeAnalysisGap(target));
+      watch.addEventListener('click', () => void resumeAnalysisGap(end));
       const skip = document.createElement('button');
       skip.className = 'choice';
-      skip.textContent = 'Sonraki seçime geç';
-      skip.addEventListener('click', () => void navigateTimelineTo(target));
+      skip.textContent = 'Sahneyi geç';
+      skip.addEventListener('click', () => void navigateTimelineTo(Number.isFinite(skipTarget) ? skipTarget : end));
       els.choices.append(message, watch, skip);
       setGameState('DECISION_PENDING');
       return;
@@ -6856,8 +6869,8 @@ async function openSavedGame(game) {
     const ownership = partitionProtagonistActions(savedAnalysis.actions || [],
       savedAnalysis.storyContext, savedAnalysis.mainMaleTrackId);
     state.analysis = { ...savedAnalysis, actions: ownership.playable,
-      unownedSourceIntervals: [...(savedAnalysis.unownedSourceIntervals || []),
-        ...ownership.excluded.map(action => ({ startTime: action.startTime, endTime: action.endTime }))] };
+      unownedSourceIntervals: mergeUnownedIntervals([...(savedAnalysis.unownedSourceIntervals || []),
+        ...ownership.excluded.map(action => ({ startTime: action.startTime, endTime: action.endTime }))]) };
   } else state.analysis = savedAnalysis;
   state.dialogue = game.payload.dialogue;
   state.languageSyncOffset = Number(game.payload.languageSyncOffset) || 0;
