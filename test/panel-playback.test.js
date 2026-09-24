@@ -350,6 +350,18 @@ test('a grouped introduction card selects another existing clip on each click an
   assert.equal(f.state.activeMovementId, 'opening-1');
 });
 
+test('an empty introduction menu leaves a visible source playback control', () => {
+  const f = runtimeFixture();
+  f.state.adultScene.foreplay = [];
+  f.state.adultScene.positions = [chapter('main', 60)];
+  f.state.adultTimelineFloor = 0;
+  f.els.video.time = 0;
+  f.els.video.paused = true;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.equal(f.els.choices.children.at(-1).textContent, 'Videoya devam et');
+  assert.equal(f.els.video.paused, true);
+});
+
 test('forward control moves past a finished clip when its active id was cleared', () => {
   const f = runtimeFixture();
   const position = chapter('navigation', 30);

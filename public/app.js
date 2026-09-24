@@ -3459,7 +3459,7 @@ function isBonusPosition(position) {
 // one gameplay graph so progression can reveal them instead of ending early.
 const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 180;
 
-function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
+function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const merged = [];
@@ -3472,6 +3472,9 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
     }
 
     const gap = Number(scene.startTime) - Number(previous.endTime);
+    const unownedBarrier = unownedIntervals.some(interval =>
+      Number(interval.endTime) > Number(previous.endTime) + 0.05 &&
+      Number(interval.startTime) < Number(scene.startTime) - 0.05);
     const narrativeBarrier = gap >= 30 && nonAdultActions.some(action => {
       const start = Number(action.startTime);
       const end = Number(action.endTime);
@@ -3481,7 +3484,7 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = []) {
         Number.isFinite(start) && Number.isFinite(end) &&
         Math.min(end, Number(scene.startTime)) - Math.max(start, Number(previous.endTime)) >= 0.5;
     });
-    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier) {
+    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier || unownedBarrier) {
       merged.push({ ...scene });
       continue;
     }
@@ -3961,7 +3964,8 @@ function prepareAdultScenes() {
   // incorrectly reveals every later position.
   state.adultScenes = mergeAdultSceneFragments(
     state.adultScenes,
-    actions.filter(action => !action?.adultScene && !String(action?.adultSceneId || '').trim())
+    actions.filter(action => !action?.adultScene && !String(action?.adultSceneId || '').trim()),
+    state.analysis?.unownedSourceIntervals || []
   );
 
   state.adultScenes.forEach(scene => {
@@ -4560,17 +4564,12 @@ function renderAdultApproachChoices(scene, later = false) {
       state.adultUiSignature = '';
       queueMicrotask(() => renderAdultProgressiveUI(true));
     } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId) {
-      if (later) {
-        const continueButton = document.createElement('button');
-        continueButton.type = 'button';
-        continueButton.className = 'choice-btn';
-        continueButton.textContent = 'Videoya devam et';
-        continueButton.addEventListener('click', () => void resumePanelPlayback());
-        els.choices.appendChild(continueButton);
-      } else if (Number(els.video.currentTime) < Math.min(...(scene?.positions || [])
-        .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)))) {
-        void resumePanelPlayback();
-      }
+      const continueButton = document.createElement('button');
+      continueButton.type = 'button';
+      continueButton.className = 'choice-btn';
+      continueButton.textContent = 'Videoya devam et';
+      continueButton.addEventListener('click', () => void resumePanelPlayback());
+      els.choices.appendChild(continueButton);
     }
   }
 }
