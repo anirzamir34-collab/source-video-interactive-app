@@ -115,6 +115,36 @@ test('partial analysis plays through a failed range and restores the next verifi
   assert.equal(f.els.choices.children.length, 1);
 });
 
+test('unowned chapters offer a watch or skip decision at each source boundary', async () => {
+  const f = fixture();
+  f.state.analysis = {
+    videoDuration: 100,
+    actions: [{ actionId: 'later', label: 'Kapıyı aç', startTime: 80, endTime: 85, sourceVerified: true }],
+    unownedSourceIntervals: [{ startTime: 10, endTime: 20 }, { startTime: 40, endTime: 50 }]
+  };
+  f.renderChoices();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.paused, false);
+  f.els.video.time = 10;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.els.choices.children[1].textContent, 'Bölümü izle');
+  assert.equal(f.els.choices.children[2].textContent, 'Sahneyi geç');
+  f.els.choices.children[1].dispatchEvent(new Event('click'));
+  await new Promise(resolve => setImmediate(resolve));
+  f.els.video.time = 20;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.paused, false, 'watching continues in source order to the next chapter');
+  f.els.video.time = 40;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.els.choices.children[1].textContent, 'Bölümü izle');
+  f.els.choices.children[2].dispatchEvent(new Event('click'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.state.gameCursorTime, 80);
+  assert.equal(f.els.video.currentTime, 80);
+  assert.equal(f.els.choices.children.length, 1);
+});
+
 test('a final failed range continues to the real media end instead of waiting forever', async () => {
   const f = fixture();
   f.state.analysis = {

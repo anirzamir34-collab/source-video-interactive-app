@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { bindActionCharacter, verifiedCharacterName } from '../public/character-identity.js';
 import { mergeStoryContexts, storyChoiceLabelForAction } from '../public/story-engine.js';
 import { mergeSecondPassReview } from '../public/engine-hardening.js';
-import { partitionProtagonistActions } from '../public/protagonist-ownership.js';
+import { mergeUnownedIntervals, partitionProtagonistActions } from '../public/protagonist-ownership.js';
 
 const named = (id, participantTrackId, displayName) => ({
   id, participantTrackId, displayName, evidenceLevel: 'fact', confidence: 0.94,
@@ -215,7 +215,7 @@ test('real analysis normalization applies stable character mapping to main and e
   const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const begin = source.indexOf('function normalizeAnalysis(');
   const end = source.indexOf('\nfunction initializeInteractive(', begin);
-  const scope = vm.createContext({ bindActionCharacter, mergeStoryContexts, partitionProtagonistActions,
+  const scope = vm.createContext({ bindActionCharacter, mergeStoryContexts, partitionProtagonistActions, mergeUnownedIntervals,
     assignPositionOccurrenceIds() {}, normalizeOutcomeUnlockProgress: () => 82,
     ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test' });
   vm.runInContext(source.slice(begin, end), scope);
