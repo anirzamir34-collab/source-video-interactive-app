@@ -1,3 +1,4 @@
+import { partitionProtagonistActions } from './protagonist-ownership.js';
 import {
   adultPositionFamily,
   assignAdultSceneOccurrenceIds,
@@ -1389,7 +1390,10 @@ function renderSubtitle() {
     return;
   }
 
-  const active = activeDubSegments(segments, now, 0.015);
+  const heldVoice = dubBoundaryHold && state.dubbingEnabled
+    ? [...dubBoundaryHold.ids].map(id => dubChannels.get(id)?._vqSegment).filter(Boolean)
+    : [];
+  const active = heldVoice.length ? heldVoice : activeDubSegments(segments, now, 0.015);
   if (!active.length) {
     els.subtitleOverlay?.classList.add('hidden');
     return;
@@ -1470,6 +1474,7 @@ async function resumeDubBoundaryHold() {
     await els.video.play();
     if (!isDubBoundaryHoldCurrent(hold)) return;
     cancelDubBoundaryHold();
+    renderSubtitle();
     startDubClock();
     void syncDubPlayback();
   } catch {
@@ -2108,7 +2113,7 @@ async function syncDubPlayback() {
       dubChannels.delete(id);
     }
     state.activeDubSegmentId = dubChannels.keys().next().value || null;
-    if (mustHold) {
+    if (mustHold || waitingForTail.size) {
       await Promise.all([...overdue].filter(id => dubChannels.get(id)?.paused)
         .map(id => playDubAudio(dubChannels.get(id), id, generation)));
       if (current() && !els.video.paused && !state.dubPlaybackBlocked) beginDubBoundaryHold(overdue);
@@ -3242,7 +3247,8 @@ function normalizeAnalysis(body) {
     .sort((a, b) => a.startTime - b.startTime)
     .map(action => bindActionCharacter(action, storyContext));
 
-  assignPositionOccurrenceIds(cleaned);
+  const ownership = partitionProtagonistActions(cleaned, storyContext, body?.mainMaleTrackId);
+  assignPositionOccurrenceIds(ownership.playable);
 
   return {
     schemaVersion: Number(body?.schemaVersion || ANALYSIS_SCHEMA_VERSION),
@@ -3260,7 +3266,10 @@ function normalizeAnalysis(body) {
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
     storyContext,
     warnings: Array.isArray(body?.warnings) ? body.warnings : [],
-    actions: cleaned,
+    actions: ownership.playable,
+    unownedSourceIntervals: ownership.excluded.map(action => ({
+      startTime: action.startTime, endTime: action.endTime
+    })),
   };
 }
 
@@ -3269,6 +3278,7 @@ function initializeInteractive(analysis) {
   const requestedStart = Number(
     analysis.playStartTime ??
     analysis.introEndTime ??
+    analysis.unownedSourceIntervals?.[0]?.startTime ??
     analysis.actions?.[0]?.startTime ??
     0
   );
@@ -5959,6 +5969,33 @@ function renderChoices() {
     return;
   }
 
+  const unowned = (state.analysis?.unownedSourceIntervals || []).find(interval =>
+    Number(interval.endTime) > state.gameCursorTime + 0.05 &&
+    Number(interval.startTime) <= state.gameCursorTime + 0.3 &&
+    (routeTime === null || Number(interval.startTime) < routeTime - 0.05));
+  if (unowned) {
+    const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration) || 0;
+    const target = routeTime ?? duration;
+    if (target > state.gameCursorTime + 0.1) {
+      els.choices.replaceChildren();
+      els.choices.classList.remove('hidden');
+      const message = document.createElement('div');
+      message.className = 'meta';
+      message.textContent = 'Bu bölümde baş karakter doğrulanamadı.';
+      const watch = document.createElement('button');
+      watch.className = 'choice';
+      watch.textContent = 'Bölümü izle';
+      watch.addEventListener('click', () => void resumeAnalysisGap(target));
+      const skip = document.createElement('button');
+      skip.className = 'choice';
+      skip.textContent = 'Sonraki seçime geç';
+      skip.addEventListener('click', () => void navigateTimelineTo(target));
+      els.choices.append(message, watch, skip);
+      setGameState('DECISION_PENDING');
+      return;
+    }
+  }
+
   els.choices.classList.remove('hidden');
   els.choices.innerHTML = '';
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
@@ -6814,7 +6851,14 @@ async function openSavedGame(game) {
   state.selectedSourceKind = game.sourceKind;
   state.analysisSession = null;
   state.videoObjectUrl = url;
-  state.analysis = game.payload.analysis;
+  const savedAnalysis = game.payload.analysis;
+  if (savedAnalysis) {
+    const ownership = partitionProtagonistActions(savedAnalysis.actions || [],
+      savedAnalysis.storyContext, savedAnalysis.mainMaleTrackId);
+    state.analysis = { ...savedAnalysis, actions: ownership.playable,
+      unownedSourceIntervals: [...(savedAnalysis.unownedSourceIntervals || []),
+        ...ownership.excluded.map(action => ({ startTime: action.startTime, endTime: action.endTime }))] };
+  } else state.analysis = savedAnalysis;
   state.dialogue = game.payload.dialogue;
   state.languageSyncOffset = Number(game.payload.languageSyncOffset) || 0;
   state.dubCache = new Map(game.payload.dubCache || []);

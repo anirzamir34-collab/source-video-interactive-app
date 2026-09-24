@@ -827,7 +827,7 @@ test('waiting 800ms for a tail does not seek past the next replies first syllabl
     first.currentTime = 1.1;
     f.video.currentTime = 2.01;
     await f.sync();
-    f.video.currentTime = 2.8;
+    assert.equal(f.video.paused, true, 'source clock waits for the preceding voice');
     first.end();
     await tick();
     assert.equal(f.state.activeDubSegmentId, 'b');
@@ -842,9 +842,11 @@ test('an explicit seek clears tail waiting and still maps into the selected sent
     f.active().currentTime = 1.1;
     f.video.currentTime = 2.01;
     await f.sync();
+    assert.equal(f.video.paused, true);
     f.video.currentTime = 2.8;
     f.event('seeking');
     f.event('seeked');
+    f.event('play');
     await tick();
     assert.equal(f.state.activeDubSegmentId, 'b');
     assert.ok(Math.abs(f.active().currentTime - .8) < 1e-6);
