@@ -2,7 +2,7 @@ import { MAX_VIDEO_BYTES, MAX_MEMORY_VIDEO_BYTES } from './media-limits.js';
 import { openVideoDownload } from './video-range-stream.js';
 
 const DIRECTORY = 'videoquest-temporary-downloads';
-const WRITE_BATCH_BYTES = 1024 * 1024;
+const WRITE_BATCH_BYTES = 4 * 1024 * 1024;
 const lockName = name => `${DIRECTORY}:${name}`;
 const storageError = () => Object.assign(new Error('Video için cihazda yeterli boş depolama alanı yok. Yer açıp tekrar dene.'), { code: 'VIDEO_STORAGE_FULL' });
 const directError = () => Object.assign(new Error('Video doğrudan tarayıcıya indirilemedi. Kaynak erişimi engelliyor veya bağlantı yanıt vermiyor olabilir. Videoyu tarayıcıda açıp indir, ardından cihazından seç.'), { code: 'DIRECT_VIDEO_BLOCKED' });
