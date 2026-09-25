@@ -136,6 +136,13 @@ test('completed mobile upload is not aborted while waiting for the server respon
   assert.equal((await result).nextChunk, 1);
 });
 
+test('fast links use large dialogue upload chunks to reduce mobile round trips', () => {
+  const uploadSection = section('async function uploadDialogueWithProgress(', '\nasync function prepareDialoguePayload(');
+  assert.match(uploadSection, /8 \* 1024 \* 1024/);
+  assert.match(uploadSection, /saveData/);
+  assert.match(uploadSection, /effectiveType/);
+});
+
 test('HTTP upload errors expose status and do not retry permanent authorization failures', async () => {
   let request;
   const f = fixture(functions('sendDialogueChunk'), {
@@ -427,7 +434,7 @@ test('URL import downloads the complete source directly before enabling a local 
   const f = urlFixture(async (url, options) => {
     requests.push(url);
     if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
-      type: 'video', sourceUrl, proxyUrl: '/api/video-proxy?token=never', directDownload: false }) };
+      type: 'video', sourceUrl, proxyUrl: '/api/video-proxy?token=never', remoteToken: 'never', directDownload: false }) };
     assert.equal(url, sourceUrl);
     assert.equal(options.credentials, 'omit');
     assert.equal(options.headers.Range, 'bytes=0-0');
@@ -449,6 +456,7 @@ test('URL import downloads the complete source directly before enabling a local 
     assert.equal(cleared, 1);
     assert.equal(await f.scope.state.selectedFile.text(), 'exact original video');
     assert.equal(f.scope.state.selectedRemoteVideo, null);
+    assert.equal(f.scope.state.selectedRemoteToken, 'never');
     assert.match(f.scope.els.video.src, /^blob:/);
     assert.equal(f.scope.state.urlResolutionInProgress, false);
     assert.equal(f.scope.els.videoInput.disabled, false);
