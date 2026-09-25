@@ -2,7 +2,7 @@ const PART_BYTES = 2 * 1024 * 1024;
 const MIN_BYTES = 8 * 1024 * 1024;
 const CONNECTIONS = 4;
 const LARGE_FILE_BYTES = 64 * 1024 * 1024;
-const LARGE_PART_BYTES = 4 * 1024 * 1024;
+const LARGE_PART_BYTES = 8 * 1024 * 1024;
 const LARGE_CONNECTIONS = 6;
 
 function rangeOf(response) {
@@ -151,7 +151,7 @@ export async function openVideoDownload(url, {
         inflight.shift();
         stream.enqueue(result.bytes);
         // Keep network reads running while the consumer writes this part.
-        // At most 24 MiB is prefetched, plus the 4 MiB handed to the writer.
+        // At most 48 MiB is prefetched, plus the 8 MiB handed to the writer.
         fillWindow();
       } catch (error) {
         const parentAborted = signal?.aborted;
