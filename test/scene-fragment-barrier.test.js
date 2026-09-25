@@ -17,3 +17,13 @@ test('an excluded source interval separates nearby interactive chapters', () => 
   assert.equal(context.mergeAdultSceneFragments(scenes).length, 1);
   assert.equal(context.mergeAdultSceneFragments(scenes, [], [{ startTime: 22, endTime: 33 }]).length, 2);
 });
+
+test('a distant return and verified intervening dialogue keep chapters separate', () => {
+  const first = chapter('first', 10, 20);
+  const distant = chapter('distant', 60, 70);
+  assert.equal(context.mergeAdultSceneFragments([first, distant]).length, 2);
+  const nearby = chapter('nearby', 30, 40);
+  assert.equal(context.mergeAdultSceneFragments([first, nearby], [{
+    sourceVerified: true, actionType: 'dialogue', startTime: 22, endTime: 26
+  }]).length, 2);
+});
