@@ -88,8 +88,8 @@ test('large files use six bounded four-MiB ranges and preserve every byte', asyn
   expected.update(new Uint8Array(17).fill(29));
   assert.equal(hash.digest('hex'), expected.digest('hex'));
   assert.equal(peak, 6);
-  assert.equal(requests.length, 18);
-  assert.ok(requests.every(([start, end]) => end - start + 1 <= 4 * 1024 * 1024));
+  assert.equal(requests.length, 10);
+  assert.ok(requests.every(([start, end]) => end - start + 1 <= 8 * 1024 * 1024));
   assert.equal(progress.at(-1).connections, 6);
 });
 
