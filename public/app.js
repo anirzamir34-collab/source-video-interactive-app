@@ -2555,6 +2555,10 @@ els.analyzeBtn.addEventListener('click', async () => {
         `Diyalog analizi başarısız: ${error.message}`;
 
       if (modes.dubbing || !modes.motion) {
+        // A frame-preparation job may already be running in parallel with
+        // server-side audio. Settle it before leaving so failures never become
+        // detached/unhandled promises.
+        if (fastStoryboardPreparation) await fastStoryboardPreparation.catch(() => null);
         setGameState('ERROR');
         return;
       }
@@ -6728,7 +6732,7 @@ document.getElementById('chooseDownloadedVideoBtn')?.addEventListener('click', (
 async function downloadUrlVideo(proxyUrl, sourceUrl, options = {}) {
   const startedAt = performance.now();
   return videoDownloads.download(proxyUrl, {
-    parallel: options.allowDirect !== false,
+    parallel: options.parallel !== false,
     ...options,
     directUrl: options.allowDirect === false ? '' : sourceUrl,
     directOnly: false,
@@ -6761,7 +6765,8 @@ async function ensureSelectedRemoteFile({ onProgress } = {}) {
   const task = { remote, controller: new AbortController(), promise: null };
   task.promise = (async () => {
     const blob = await downloadUrlVideo(remote.proxyUrl, remote.sourceUrl, {
-      allowDirect: !['hls', 'dash'].includes(remote.type),
+      allowDirect: remote.directDownload === true ||
+        (remote.directDownload == null && !['hls', 'dash'].includes(remote.type)),
       signal: task.controller.signal,
       expectedSize: remote.size || 0,
       onProgress: progress => {
@@ -6828,7 +6833,7 @@ async function resolveVideoUrl() {
     const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
     setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Cihaza indiriliyor...`);
     const blob = pendingBlob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl, {
-      allowDirect: result.type === 'video'
+      allowDirect: result.directDownload === true
     });
 
     if (!blob.size) throw new Error('Video boş geldi.');
