@@ -1314,55 +1314,19 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
   let processingTimer = null;
   let upload;
 
-  // URL imports already exist at the source and on Render. Ask Render to pull
-  // only the audio and encode a compact 64 kbps mono MP3 there instead of
-  // uploading a second copy from the phone.
-  if (remoteToken) {
-    els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
-    els.analysisOutput.textContent = 'Telefon ses yüklemiyor; kaynak videonun sesi doğrudan sunucuda ayrılıyor.';
-    const form = new FormData();
-    form.append('remoteToken', remoteToken);
-    form.append('duration', String(duration));
-    form.append('protagonistProfile', protagonistProfile);
-    const processingStartedAt = performance.now();
-    const showProcessing = () => {
-      els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-      els.analysisTitle.textContent = 'Sunucuda ses + Gemini analizi';
-      els.analysisOutput.textContent =
-        `Telefon yüklemesi atlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
-        `${Math.round((performance.now() - processingStartedAt) / 1000)} sn geçti`;
-    };
-    showProcessing();
-    processingTimer = setInterval(showProcessing, 1000);
-    try {
-      const response = await fetch('/api/gemini-dialogue-analyze', {
-        method: 'POST',
-        headers: geminiRequestHeaders(),
-        body: form
-      });
-      const body = await response.json().catch(() => ({}));
-      upload = { ok: response.ok, status: response.status, body };
-      if (!response.ok && (response.status === 410 || body.reason === 'VIDEO_SESSION_EXPIRED')) {
-        // The source token can expire after a long idle period. Fall back to
-        // the local file without losing the analysis run.
-        if (session) session.remoteToken = '';
-        state.selectedRemoteToken = '';
-        upload = null;
-      }
-    } finally {
-      if (processingTimer !== null) clearInterval(processingTimer);
-      processingTimer = null;
-    }
-  }
+  // Prefer the already-downloaded local source first. If we can isolate audio
+  // locally (M4A/WAV), uploading that compact audio is usually much faster than
+  // asking Render to download the entire remote video again.
+  els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
+  els.analysisOutput.textContent =
+    `Konuşma sesi hazırlanıyor...\n` +
+    `${(file.size / 1024 / 1024).toFixed(1)} MB`;
 
-  if (!upload) {
-    els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
-    els.analysisOutput.textContent =
-      `Konuşma sesi hazırlanıyor...\n` +
-      `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+  const dialogueFile = await prepareDialoguePayload(file, session);
+  const audioOnly = dialogueFile instanceof Blob && String(dialogueFile.type || '').startsWith('audio/');
 
+  if (audioOnly || !remoteToken) {
     const form = new FormData();
-    const dialogueFile = await prepareDialoguePayload(file, session);
     form.append('video', dialogueFile, dialogueFile.name || 'dialogue.wav');
     form.append('duration', String(duration));
     form.append('protagonistProfile', protagonistProfile);
@@ -1372,7 +1336,6 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
         form,
         ({ loaded, total, percent, speed }) => {
           els.analysisState.textContent = 'AUDIO_UPLOAD';
-          const audioOnly = dialogueFile.type.startsWith('audio/');
           els.analysisTitle.textContent = `${audioOnly ? 'Yalnızca konuşma sesi' : 'Cihazdaki video'} sunucuya yükleniyor · %${percent}`;
           const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
           els.analysisOutput.textContent =
@@ -1395,6 +1358,38 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
       );
     } finally {
       if (processingTimer !== null) clearInterval(processingTimer);
+      processingTimer = null;
+    }
+  } else {
+    // Only fall back to server-side source extraction when local isolation
+    // failed and the alternative would be uploading the entire video.
+    els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
+    els.analysisOutput.textContent = 'Yerel ses ayrılamadı; kaynak videonun sesi sunucuda hazırlanıyor.';
+    const form = new FormData();
+    form.append('remoteToken', remoteToken);
+    form.append('duration', String(duration));
+    form.append('protagonistProfile', protagonistProfile);
+    const processingStartedAt = performance.now();
+    const showProcessing = () => {
+      els.analysisState.textContent = 'DIALOGUE_PROCESSING';
+      els.analysisTitle.textContent = 'Sunucuda ses + Gemini analizi';
+      els.analysisOutput.textContent =
+        `Tam video yüklemesi atlandı. Sunucuda ses ve konuşma analizi sürüyor...\n` +
+        `${Math.round((performance.now() - processingStartedAt) / 1000)} sn geçti`;
+    };
+    showProcessing();
+    processingTimer = setInterval(showProcessing, 1000);
+    try {
+      const response = await fetch('/api/gemini-dialogue-analyze', {
+        method: 'POST',
+        headers: geminiRequestHeaders(),
+        body: form
+      });
+      const body = await response.json().catch(() => ({}));
+      upload = { ok: response.ok, status: response.status, body };
+    } finally {
+      if (processingTimer !== null) clearInterval(processingTimer);
+      processingTimer = null;
     }
   }
 
