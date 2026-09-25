@@ -434,7 +434,7 @@ test('URL import downloads the complete source directly before enabling a local 
   const f = urlFixture(async (url, options) => {
     requests.push(url);
     if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
-      type: 'video', sourceUrl, proxyUrl: '/api/video-proxy?token=never', remoteToken: 'never', directDownload: false }) };
+      type: 'video', sourceUrl, proxyUrl: '/api/video-proxy?token=never', remoteToken: 'never', directDownload: true }) };
     assert.equal(url, sourceUrl);
     assert.equal(options.credentials, 'omit');
     assert.equal(options.headers.Range, 'bytes=0-0');
@@ -473,7 +473,8 @@ test('blocked browser downloads and manifests automatically download via Render 
     const f = urlFixture(async url => {
       requests.push(url);
       if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
-        type, sourceUrl, pageUrl, proxyUrl: '/api/video-proxy?token=never' }) };
+        type, sourceUrl, pageUrl, proxyUrl: '/api/video-proxy?token=never',
+        directDownload: type === 'video' }) };
       if (url === sourceUrl) throw new TypeError('CORS denied');
       assert.equal(url, '/api/video-proxy?token=never');
       return new Response('original video bytes', { headers: { 'content-type': 'video/mp4' } });
@@ -497,7 +498,8 @@ test('failure of both download routes offers manual import and preserves the pre
   const f = urlFixture(async url => {
     requests.push(url);
     if (url === '/api/resolve-video-url') return { ok: true, json: async () => ({ ok: true,
-      type: 'video', sourceUrl: 'https://cdn.example.com/a.mp4', pageUrl: 'https://example.com/watch', proxyUrl: '/proxy' }) };
+      type: 'video', sourceUrl: 'https://cdn.example.com/a.mp4', pageUrl: 'https://example.com/watch',
+      proxyUrl: '/proxy', directDownload: true }) };
     if (url === '/proxy') return new Response(JSON.stringify({ message: 'source unavailable' }), { status: 502 });
     throw new TypeError('CORS denied');
   }, { showBrowserDownloadHelp: (...args) => help.push(args) });
@@ -556,6 +558,23 @@ test('download without content length is still bounded and its reader released',
   await assert.rejects(f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4'), /600 MB/);
   assert.equal(cancelled, true);
   assert.equal(released, true);
+});
+
+test('proxy downloads stay parallel even when direct browser download is disabled', async () => {
+  const calls = [];
+  const f = fixture(functions('downloadUrlVideo'), {
+    setUrlStatus() {},
+    videoDownloads: {
+      download: async (proxy, options) => {
+        calls.push({ proxy, options });
+        return new Blob(['video'], { type: 'video/mp4' });
+      }
+    }
+  });
+  await f.scope.downloadUrlVideo('/proxy', 'https://cdn.example.com/video.mp4', { allowDirect: false });
+  assert.equal(calls[0].proxy, '/proxy');
+  assert.equal(calls[0].options.parallel, true);
+  assert.equal(calls[0].options.directUrl, '');
 });
 
 test('normal download returns exact bytes and releases its reader', async () => {
