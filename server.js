@@ -1253,6 +1253,7 @@ app.post('/api/resolve-video-url', async (req, res) => {
     return res.json({
       ok: true, type: resolved.type, sourceUrl: resolved.sourceUrl, pageUrl: resolved.pageUrl,
       proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`,
+      remoteToken: token,
       directDownload: resolved.type === 'video' && !resolved.cookie && new URL(resolved.sourceUrl).protocol === 'https:',
       cached: cacheHit, resolveMs: Date.now() - startedAt
     });
