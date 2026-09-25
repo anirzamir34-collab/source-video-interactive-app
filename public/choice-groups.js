@@ -4,13 +4,26 @@ const text = value => String(value || '').trim();
 export const sourceActionLabel = value => text(value)
   .replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/iu, '').trim();
 
+function stableParticipantLabelForTrack(value, trackId) {
+  const label = text(value);
+  const track = text(trackId);
+  const labelMatch = /^(?:karakter|partner)\s+([a-z0-9]+)$/iu.exec(label);
+  const trackMatch = /^(?:partner|character|char|person)[_-]?([a-z0-9]+)$/iu.exec(track);
+  if (!labelMatch || !trackMatch) return '';
+  return labelMatch[1].toLocaleLowerCase('tr-TR') === trackMatch[1].toLocaleLowerCase('tr-TR')
+    ? label : '';
+}
+
 export function sourceIdentityLabel(value, clip = {}) {
   const label = sourceActionLabel(value);
   if (!label || clip?.relationshipResolution === 'verified') return label;
+  const candidate = text(clip.primaryCharacterLabel);
+  const stableParticipant = stableParticipantLabelForTrack(candidate, clip.partnerTrackId);
   const identity = ['verified', 'described'].includes(clip?.identityResolution)
-    ? text(clip.primaryCharacterLabel)
-    : '';
-  if (!identity || /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity) ||
+    ? candidate
+    : stableParticipant;
+  if (!identity ||
+      (!stableParticipant && /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity)) ||
       label.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))) return label;
   return `${label} · ${identity}`;
 }
