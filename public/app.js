@@ -3457,7 +3457,8 @@ function isBonusPosition(position) {
 // One encounter is often split into several model scene ids even though the
 // source continues with other verified positions. Keep nearby occurrences in
 // one gameplay graph so progression can reveal them instead of ending early.
-const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 180;
+// Only nearby source chapters can share one timeline panel.
+const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 18;
 
 function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
@@ -3475,7 +3476,7 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
     const unownedBarrier = unownedIntervals.some(interval =>
       Number(interval.endTime) > Number(previous.endTime) + 0.05 &&
       Number(interval.startTime) < Number(scene.startTime) - 0.05);
-    const narrativeBarrier = gap >= 30 && nonAdultActions.some(action => {
+    const narrativeBarrier = gap > 0.25 && nonAdultActions.some(action => {
       const start = Number(action.startTime);
       const end = Number(action.endTime);
       const actionType = String(action.actionType || '').toLowerCase();
@@ -3982,7 +3983,7 @@ function prepareAdultScenes() {
       };
     });
     scene.positions = consolidateVerifiedPositions(scene.positions, {
-      mergeDistantReturns: true
+      mergeDistantReturns: false
     }).map(position => {
       const controlClipIds = isWarmupPosition(position) ? new Set() : exclusiveControlClipIds(position);
       return {
