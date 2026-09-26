@@ -1846,6 +1846,7 @@ app.post(
     let originalVideoPath;
     let uploadedFile = null;
     let remoteFile = null;
+    let inlineAudioPart = null;
     let retainUploadedFile = false;
     let dialogueSucceeded = false;
     const preparationController = new AbortController();
@@ -1908,16 +1909,31 @@ app.post(
           await fs.promises.unlink(originalVideoPath).catch(() => {});
         }
         dialogueStage('gemini-upload-start');
-        uploadedFile = await ai.files.upload({
-          file: tempPath,
-          config: {
+        try {
+          uploadedFile = await ai.files.upload({
+            file: tempPath,
+            config: {
+              mimeType: req.file.mimetype,
+              displayName: req.file.originalname || 'videoquest-dialogue-video',
+              httpOptions: { timeout: 120000 }
+            }
+          });
+          dialogueStage('gemini-upload-ready');
+          remoteFile = uploadedFile;
+        } catch (error) {
+          const audioSize = (await fs.promises.stat(tempPath)).size;
+          // The Files API can fail at upload initialization even though model
+          // requests remain available. Inline audio stays below the 20 MB
+          // request ceiling, including base64 expansion and the prompt.
+          if (Number(error?.status) !== 404 || !req.file.mimetype.startsWith('audio/') ||
+              audioSize > 14 * 1024 * 1024) throw error;
+          inlineAudioPart = { inlineData: {
             mimeType: req.file.mimetype,
-            displayName: req.file.originalname || 'videoquest-dialogue-video',
-            httpOptions: { timeout: 120000 }
-          }
-        });
-        dialogueStage('gemini-upload-ready');
-        remoteFile = uploadedFile;
+            data: (await fs.promises.readFile(tempPath)).toString('base64')
+          } };
+          dialogueStage('gemini-inline-audio-ready');
+          console.warn('[gemini-dialogue-fallback] file upload returned 404; using bounded inline audio');
+        }
       }
 
       const processingDeadline = Date.now() + 20 * 60 * 1000;
@@ -1925,8 +1941,8 @@ app.post(
         await wait(4000);
         remoteFile = await ai.files.get({ name: remoteFile.name });
       }
-      if (!remoteFile || remoteFile.state === 'FAILED') throw new Error('GEMINI_VIDEO_PROCESSING_FAILED');
-      if (remoteFile.state === 'PROCESSING') throw new Error('GEMINI_VIDEO_PROCESSING_TIMEOUT');
+      if ((!remoteFile && !inlineAudioPart) || remoteFile?.state === 'FAILED') throw new Error('GEMINI_VIDEO_PROCESSING_FAILED');
+      if (remoteFile?.state === 'PROCESSING') throw new Error('GEMINI_VIDEO_PROCESSING_TIMEOUT');
 
       const prompt = `
 Analyze audible dialogue and separately observe non-speech human vocal reactions in this video.
@@ -2016,9 +2032,9 @@ Rules:
 - Never add dialogue that is not audible in the source video.
 `;
 
-      const audioMime = String(remoteFile.mimeType || req.file.mimetype || '').toLowerCase();
+      const audioMime = String(remoteFile?.mimeType || req.file?.mimetype || '').toLowerCase();
       let asr = null;
-      if (audioMime.startsWith('audio/')) {
+      if (audioMime.startsWith('audio/') && remoteFile?.uri) {
         try {
           dialogueStage('transcribe-start');
           asr = await transcribeDialogueGemini35(ai, remoteFile);
@@ -2050,10 +2066,10 @@ Rules:
               role: 'user',
               parts: [
                 {
-                  fileData: {
+                  ...(inlineAudioPart || { fileData: {
                     fileUri: remoteFile.uri,
                     mimeType: remoteFile.mimeType || req.file.mimetype
-                  }
+                  } })
                 },
                 { text: prompt + transcriptGrounding }
               ]

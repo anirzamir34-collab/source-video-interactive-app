@@ -18,7 +18,7 @@ async function run(errors) {
     process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
     req: { file: { mimetype: 'audio/wav' } }, prompt: 'Analyze speech', transcriptGrounding: '',
     dialogueUsage: {}, addGeminiUsage() {}, console: { warn() {} },
-    dialogueStage() {},
+    dialogueStage() {}, inlineAudioPart: null,
     wait: async delay => { delays.push(delay); },
     ai: { models: { generateContent: async request => {
       requests.push(request);
@@ -40,6 +40,38 @@ test('transient 500 errors retry against the same uploaded audio URI without dow
     assert.ok(result.requests.every(request => request.contents[0].parts[0].fileData.fileUri === 'already-uploaded-audio'));
     assert.equal(result.parsed.segments[0].originalText, 'Hello');
   }
+});
+
+test('a Files API 404 uses bounded inline audio without uploading again', async () => {
+  const start = source.indexOf("        dialogueStage('gemini-upload-start');");
+  const end = source.indexOf('      const processingDeadline', start);
+  assert.ok(start >= 0 && end > start);
+  const upload = source.slice(start, end).replace(/^      }\s*$/m, '');
+  const audio = Buffer.from('small encoded speech');
+  const stages = [];
+  const scope = vm.createContext({
+    req: { file: { mimetype: 'audio/mpeg', originalname: 'speech.mp3' } }, tempPath: '/tmp/speech.mp3',
+    uploadedFile: null, remoteFile: null, inlineAudioPart: null,
+    fs: { promises: { stat: async () => ({ size: audio.length }), readFile: async () => audio } },
+    dialogueStage: stage => stages.push(stage), console: { warn() {} },
+    ai: { files: { upload: async () => { throw Object.assign(new Error('Not found'), { status: 404 }); } } }
+  });
+  await vm.runInContext(`(async () => { ${upload}; return inlineAudioPart; })()`, scope).then(part => {
+    assert.equal(part.inlineData.mimeType, 'audio/mpeg');
+    assert.equal(part.inlineData.data, audio.toString('base64'));
+  });
+  assert.ok(stages.includes('gemini-inline-audio-ready'));
+
+  const oversized = vm.createContext({
+    req: { file: { mimetype: 'audio/mpeg', originalname: 'large.mp3' } },
+    tempPath: '/tmp/large.mp3', uploadedFile: null, remoteFile: null, inlineAudioPart: null,
+    fs: { promises: { stat: async () => ({ size: 15 * 1024 * 1024 }),
+      readFile: () => assert.fail('oversized audio must not be read into memory') } },
+    dialogueStage() {}, console: { warn() {} },
+    ai: { files: { upload: async () => { throw Object.assign(new Error('Not found'), { status: 404 }); } } }
+  });
+  await assert.rejects(vm.runInContext(`(async () => { ${upload} })()`, oversized),
+    error => error.status === 404);
 });
 
 test('repeated transient failure is bounded; quota and invalid-input errors are not retried', async () => {
