@@ -23,7 +23,8 @@ export function sourceIdentityLabel(value, clip = {}) {
     ? candidate
     : stableParticipant;
   if (!identity ||
-      (!stableParticipant && /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity)) ||
+      ((!stableParticipant || clip?.identityResolution === 'verified') &&
+        /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity)) ||
       label.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))) return label;
   return `${label} · ${identity}`;
 }

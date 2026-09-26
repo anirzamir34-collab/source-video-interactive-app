@@ -18,6 +18,7 @@ async function run(errors) {
     process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
     req: { file: { mimetype: 'audio/wav' } }, prompt: 'Analyze speech', transcriptGrounding: '',
     dialogueUsage: {}, addGeminiUsage() {}, console: { warn() {} },
+    dialogueStage() {},
     wait: async delay => { delays.push(delay); },
     ai: { models: { generateContent: async request => {
       requests.push(request);

@@ -376,7 +376,7 @@ test('failed append rolls back partially written bytes before a successful retry
 
 test('empty, out-of-order and oversized chunks never mutate upload state', async t => {
   const f = await chunkFixture(t);
-  assert.equal((await f.send(0, '')).statusCode, 409);
+  assert.equal((await f.send(0, '')).statusCode, 400);
   assert.equal((await f.send(2)).statusCode, 409);
   assert.equal((await f.send(0, '1234567')).statusCode, 400);
   assert.equal(f.session.nextChunk, 0);

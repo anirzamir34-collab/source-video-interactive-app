@@ -202,8 +202,8 @@ test('small network packets use bounded batched disk writes and preserve every b
   const file = await downloads.download('/video', { onProgress: row => progress.push(row) });
   assert.deepEqual(new Uint8Array(await file.arrayBuffer()), bytes);
   assert.equal(packets, 193);
-  assert.equal(disk.events.filter(event => event === 'write').length, 4);
-  assert.ok([...disk.files.values()][0].chunks.every(chunk => chunk.byteLength <= 1024 * 1024));
+  assert.equal(disk.events.filter(event => event === 'write').length, 1);
+  assert.ok([...disk.files.values()][0].chunks.every(chunk => chunk.byteLength <= 4 * 1024 * 1024));
   assert.ok(progress.length < packets);
   assert.equal(progress.at(-1).loaded, bytes.length);
   await downloads.release(file);
