@@ -102,8 +102,10 @@ function fixture() {
     logEngineEvent: (type, data) => state.events.push({ type, data }),
     primeLanguageTracksAt() {}, resyncLanguageTracks: () => { state.resyncs += 1; },
     setAdultMachinePhase() {}, persistRuntimeSnapshot() {}, renderChoices() {},
-    orderedLockedAdultPositions: () => [], isWarmupPosition: () => false,
-    selectAdultPosition: () => { throw Error('Exit must not route to another clip'); },
+    orderedLockedAdultPositions: () => (state.adultScene?.positions || [])
+      .filter(position => !state.adultUnlockedPositionIds.has(position.id)),
+    isWarmupPosition: () => false,
+    selectAdultPosition: id => { state.selectedPositionId = id; },
     navigateTimelineTo: async target => { state.navigationTargets.push(target); },
     currentAdultFlow: () => 0, renderAdultProgressiveUI() {}, findAdultSceneAt: () => null
   });
@@ -205,19 +207,27 @@ test('old play rejection cannot cover a later selection with a recovery message'
 });
 
 for (const phase of ['idle', 'outcome', 'aftermath', 'orgasm-decision']) {
-  test(`scene skip exits during ${phase}, even with unplayed options`, () => {
+  test(`scene skip advances an unplayed chapter during ${phase}`, () => {
     const f = fixture();
     f.state.adultOutcomePhase = phase;
     f.state.adultScene.positions = [{ id: 'clip-2', startTime: 30, endTime: 40 }];
     f.state.adultUnlockedPositionIds.add('clip-2');
     f.skipCurrentScene();
-    assert.equal(f.state.adultMode, false);
-    assert.equal(f.state.adultScene, null);
-    assert.equal(f.state.completedAdultSceneIds.has('chapter-1'), true);
-    assert.deepEqual(f.state.navigationTargets, [100]);
-    assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
+    assert.equal(f.state.adultMode, true);
+    assert.equal(f.state.selectedPositionId, 'clip-2');
+    assert.equal(f.state.completedAdultSceneIds.has('chapter-1'), false);
+    assert.deepEqual(f.state.navigationTargets, []);
   });
 }
+
+test('scene skip reveals the next locked chapter before leaving', () => {
+  const f = fixture();
+  f.state.adultScene.positions = [{ id: 'next', startTime: 50, endTime: 60 }];
+  f.skipCurrentScene();
+  assert.equal(f.state.adultUnlockedPositionIds.has('next'), true);
+  assert.equal(f.state.selectedPositionId, 'next');
+  assert.equal(f.state.adultMode, true);
+});
 
 test('scene exit cancels a pending seek and removes its recovery state', async () => {
   const f = fixture();
@@ -759,7 +769,7 @@ test('missing, unverified or other-partner endings never fabricate or play an en
 test('leaving the scene cancels a queued automatic first entry', async () => {
   const f = runtimeFixture();
   f.addFemaleLust(35);
-  f.skipCurrentScene();
+  f.finishAdultScene({ force: true });
   await flush();
   assert.equal(f.state.adultMode, false);
   assert.equal(f.els.video.playCalls, 0);

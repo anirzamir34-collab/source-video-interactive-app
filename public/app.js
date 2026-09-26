@@ -5517,7 +5517,7 @@ function handleSourceEnded() {
 }
 
 function skipCurrentScene() {
-  finishAdultScene({ force: true });
+  finishAdultScene();
 }
 
 function finishAdultScene(options = {}) {
@@ -5563,9 +5563,9 @@ function finishAdultScene(options = {}) {
     const start = Number(action.startTime);
     const actionSceneId = String(action.adultSceneId || '').trim();
     const insideMergedEncounter = start >= Number(scene.startTime) - 0.15 &&
-      start < Number(scene.endTime) + 0.15;
+      start < Number(scene.endTime) - 0.01;
     const sameScene = sceneSourceIds.has(actionSceneId) || insideMergedEncounter;
-    return sameScene && start < Number(scene.endTime) + 0.15;
+    return sameScene && start < Number(scene.endTime) - 0.01;
   });
   sceneActions.forEach(action => state.consumedActionIds.add(action.actionId));
   const lastSceneActionIndex = (state.analysis?.actions || []).reduce(
@@ -5606,7 +5606,7 @@ function finishAdultScene(options = {}) {
     return;
   }
 
-  void navigateTimelineTo(state.gameCursorTime, { resumeWhenEmpty: true });
+  void navigateTimelineTo(state.gameCursorTime, { resumeUntilNextRoute: true });
 }
 
 function clearPanelPlaybackRecovery() {
@@ -6257,7 +6257,11 @@ async function navigateTimelineTo(target, { resumeWhenEmpty = false, resumeUntil
     state.navigationSeeking = false;
     setGameState('DECISION_PENDING');
     renderChoices();
-    if (resumeUntilNextRoute && !state.adultMode && state.gameState === 'DECISION_PENDING') {
+    const choiceAtBoundary = (state.analysis?.actions || []).some(action =>
+      action.sourceVerified === true && !state.consumedActionIds.has(action.actionId) &&
+      Math.abs(Number(action.startTime) - reached) <= 0.15);
+    if (resumeUntilNextRoute && !choiceAtBoundary && !state.adultMode &&
+        state.gameState === 'DECISION_PENDING') {
       const nextRoute = nextVerifiedRouteTime();
       const nextUnowned = (state.analysis?.unownedSourceIntervals || [])
         .map(interval => Number(interval.startTime))

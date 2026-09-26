@@ -94,6 +94,61 @@ test('scene exit resumes adjacent source footage when no choices remain', async 
   assert.equal(f.state.navigationSeeking, false);
 });
 
+test('leaving a chapter plays an unanalyzed gap before the next chapter', async () => {
+  const f = fixture();
+  f.els.video.duration = 400;
+  f.state.analysis = {
+    partial: true, videoDuration: 400,
+    analysisGaps: [{ startTime: 236.3, endTime: 315.1 }],
+    actions: [{ actionId: 'next', label: 'Yeni bölüm', startTime: 315.1,
+      endTime: 327.5, sourceVerified: true }]
+  };
+  f.state.adultScene = { id: 'chapter-1', startTime: 145, endTime: 236.3, positions: [] };
+  f.state.adultMode = true;
+  f.finishAdultScene({ force: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.currentTime, 236.3);
+  assert.equal(f.els.video.paused, false);
+  f.els.video.time = 315.1;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameCursorTime, 315.1);
+  assert.equal(f.els.choices.children.length, 1);
+});
+
+test('leaving a chapter also bridges an unlabeled gap without partial metadata', async () => {
+  const f = fixture();
+  f.els.video.duration = 400;
+  f.state.analysis = { videoDuration: 400, actions: [
+    { actionId: 'next', label: 'Yeni bölüm', startTime: 315.1,
+      endTime: 327.5, sourceVerified: true }
+  ] };
+  f.state.adultScene = { id: 'chapter-1', startTime: 145, endTime: 236.3, positions: [] };
+  f.state.adultMode = true;
+  f.finishAdultScene({ force: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.currentTime, 236.3);
+  assert.equal(f.els.video.paused, false);
+  f.els.video.time = 315.1;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameCursorTime, 315.1);
+  assert.equal(f.els.choices.children.length, 1);
+});
+
+test('an immediate verified choice remains available at the chapter boundary', async () => {
+  const f = fixture();
+  f.state.analysis = { videoDuration: 100, actions: [
+    { actionId: 'adjacent', label: 'Kapıyı aç', startTime: 24,
+      endTime: 30, sourceVerified: true }
+  ] };
+  f.state.adultScene = { id: 'chapter-1', startTime: 0, endTime: 24, positions: [] };
+  f.state.adultMode = true;
+  f.finishAdultScene({ force: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.currentTime, 24);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.els.choices.children.length, 1);
+});
+
 test('partial analysis plays through a failed range and restores the next verified choice', async () => {
   const f = fixture();
   f.state.analysis = {
