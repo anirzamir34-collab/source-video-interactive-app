@@ -6113,15 +6113,6 @@ function renderChoices() {
       return;
     }
     const end = Math.min(duration || Infinity, Number(unowned.endTime));
-    const nextRoute = [
-      ...(state.analysis?.actions || []).filter(action => action.sourceVerified &&
-        !state.consumedActionIds.has(action.actionId)).map(action => Number(action.startTime)),
-      ...(state.adultScenes || []).filter(scene => !state.completedAdultSceneIds?.has(scene.id))
-        .map(scene => Number(scene.startTime))
-    ].filter(time => Number.isFinite(time) && time >= end - 0.05);
-    const nextUnowned = intervals.find(interval => Number(interval.startTime) >= end - 0.05);
-    const skipTarget = Math.min(duration || Infinity, ...nextRoute,
-      Number(nextUnowned?.startTime) || Infinity);
     if (end > state.gameCursorTime + 0.1) {
       els.choices.replaceChildren();
       els.choices.classList.remove('hidden');
@@ -6135,7 +6126,7 @@ function renderChoices() {
       const skip = document.createElement('button');
       skip.className = 'choice';
       skip.textContent = 'Sahneyi geç';
-      skip.addEventListener('click', () => void navigateTimelineTo(Number.isFinite(skipTarget) ? skipTarget : end));
+      skip.addEventListener('click', () => void navigateTimelineTo(end, { resumeUntilNextRoute: true }));
       els.choices.append(message, watch, skip);
       setGameState('DECISION_PENDING');
       return;
@@ -6246,7 +6237,7 @@ async function resumeSourceVideo() {
   }
 }
 
-async function navigateTimelineTo(target, { resumeWhenEmpty = false } = {}) {
+async function navigateTimelineTo(target, { resumeWhenEmpty = false, resumeUntilNextRoute = false } = {}) {
   cancelTimelineNavigation();
   const controller = new AbortController();
   state.navigationSeekController = controller;
@@ -6266,6 +6257,16 @@ async function navigateTimelineTo(target, { resumeWhenEmpty = false } = {}) {
     state.navigationSeeking = false;
     setGameState('DECISION_PENDING');
     renderChoices();
+    if (resumeUntilNextRoute && !state.adultMode && state.gameState === 'DECISION_PENDING') {
+      const nextRoute = nextVerifiedRouteTime();
+      const nextUnowned = (state.analysis?.unownedSourceIntervals || [])
+        .map(interval => Number(interval.startTime))
+        .filter(time => Number.isFinite(time) && time > reached + 0.05)
+        .sort((a, b) => a - b)[0];
+      const boundary = Math.min(nextRoute ?? Infinity, nextUnowned ?? Infinity);
+      if (Number.isFinite(boundary)) await resumeAnalysisGap(boundary);
+      else await resumeSourceVideo();
+    }
     if (resumeWhenEmpty && !state.adultMode &&
         els.choices.querySelector('[data-playback-recovery="continue"]')) {
       await resumeSourceVideo();
@@ -6274,7 +6275,7 @@ async function navigateTimelineTo(target, { resumeWhenEmpty = false } = {}) {
     if (controller.signal.aborted) return;
     state.navigationSeeking = false;
     setGameState('DECISION_PENDING');
-    showPlaybackRecovery(error.message, () => void navigateTimelineTo(target, { resumeWhenEmpty }));
+    showPlaybackRecovery(error.message, () => void navigateTimelineTo(target, { resumeWhenEmpty, resumeUntilNextRoute }));
   } finally {
     if (state.navigationSeekController === controller) state.navigationSeekController = null;
   }

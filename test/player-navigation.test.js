@@ -140,9 +140,30 @@ test('unowned chapters offer a watch or skip decision at each source boundary', 
   assert.equal(f.els.choices.children[1].textContent, 'Bölümü izle');
   f.els.choices.children[2].dispatchEvent(new Event('click'));
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.state.gameCursorTime, 50);
+  assert.equal(f.els.video.currentTime, 50);
+  assert.equal(f.els.video.paused, false, 'skipping a chapter keeps intervening source footage');
+  f.els.video.time = 80;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
   assert.equal(f.state.gameCursorTime, 80);
-  assert.equal(f.els.video.currentTime, 80);
   assert.equal(f.els.choices.children.length, 1);
+});
+
+test('skipping the last unowned chapter resumes remaining footage instead of seeking to the media end', async () => {
+  const f = fixture();
+  f.state.analysis = {
+    videoDuration: 100, actions: [],
+    unownedSourceIntervals: [{ startTime: 10, endTime: 25 }]
+  };
+  f.state.gameCursorTime = 10;
+  f.els.video.time = 10;
+  f.renderChoices();
+  f.els.choices.children[2].dispatchEvent(new Event('click'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.currentTime, 25);
+  assert.equal(f.state.gameCursorTime, 25);
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.gameState, 'SEGMENT_PLAYING');
 });
 
 test('a final failed range continues to the real media end instead of waiting forever', async () => {
