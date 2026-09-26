@@ -5020,7 +5020,8 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
       .trim();
     button.dataset.positionId = position.id;
     button.disabled = !forwardLocalMovementClips(position,
-      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length;
+      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0))
+      .some(item => item.id === (position.entryMovementId || position.movements[0]?.id));
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
       button.classList.add('unlock-reveal');
@@ -5036,7 +5037,13 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     positions.find(item => forwardLocalMovementClips(item,
       Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length);
 
-  if (selected) selectAdultPosition(selected.id, shouldSeek);
+  if (selected) {
+    const entryId = selected.entryMovementId || selected.movements[0]?.id;
+    const canPlayEntry = forwardLocalMovementClips(selected,
+      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0))
+      .some(item => item.id === entryId);
+    selectAdultPosition(selected.id, shouldSeek && canPlayEntry);
+  }
 }
 
 function cancelAdultSeek() {
@@ -5277,7 +5284,13 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   if (!position || state.adultOutcomePhase !== 'idle') return;
   const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
   const localMovements = forwardLocalMovementClips(position, cursor);
-  if (shouldSeek && !localMovements.length) {
+  // The parent tab plays its one verified entry clip only. Later clips belong
+  // to the movement cards; choosing a tab mid-position must never turn the
+  // parent into an implicit "next movement" control.
+  const entryMovementId = position.entryMovementId || position.movements[0]?.id || '';
+  const entryMovement = position.movements.find(item => item.id === entryMovementId);
+  const playableEntry = localMovements.find(item => item.id === entryMovement?.id) || null;
+  if (shouldSeek && !playableEntry) {
     logEngineEvent('POSITION_FORWARD_RANGE_BLOCKED', { positionId: position.id, cursor });
     return;
   }
@@ -5310,8 +5323,6 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // The main tab owns only the verified position entry. All later returns and
   // movements from the same canonical position live under its subchoices.
   const verifiedMovements = localMovements;
-  const entryMovement = verifiedMovements[0] || null;
-  const entryMovementId = entryMovement?.id || '';
   const movementPool = verifiedMovements.filter(item => item.id !== entryMovementId &&
     !position.controlClipIds?.includes(item.id));
   const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5, position);
@@ -5375,7 +5386,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // Rendering must not arm a clip or cancel a pending selection. Only an
   // explicit play request (including the first unlock) may change playback.
   if (!shouldSeek) return;
-  const movement = entryMovement;
+  const movement = playableEntry;
 
   if (movement) {
     selectAdultMovement(

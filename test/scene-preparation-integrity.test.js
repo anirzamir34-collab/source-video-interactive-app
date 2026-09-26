@@ -95,6 +95,27 @@ test('ordinary observation and opening dialogue stay outside the panel', () => {
   assert.equal(state.adultAnalysisTrace.actions[0].route, 'NOT_ROUTED');
 });
 
+test('a verified introduction with a different scene ID opens the panel before its first position', () => {
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A' };
+  const warmup = [action('approach', 217.5, 230, { ...cast, adultSceneId: 'intro',
+    adultSceneStartTime: 217.5, adultSceneEndTime: 319.3, actionType: 'kiss',
+    positionId: '', positionLabel: '' }),
+  action('continue', 230, 319.3, { ...cast, adultSceneId: 'intro',
+    adultSceneStartTime: 217.5, adultSceneEndTime: 319.3, actionType: 'touch',
+    positionId: '', positionLabel: '' }),
+  action('transition', 319.3, 328, { ...cast, adultSceneId: 'main',
+    adultSceneStartTime: 319.3, adultSceneEndTime: 400, actionType: 'body_transition',
+    positionId: '', positionLabel: '' })];
+  const core = action('core', 328, 346, { ...cast, adultSceneId: 'main', actionType: 'position',
+    adultSceneStartTime: 319.3, adultSceneEndTime: 400,
+    positionStartTime: 328, positionEndTime: 346 });
+  const state = prepare([...warmup, core]);
+  assert.equal(state.adultScenes.length, 1);
+  assert.equal(state.adultScenes[0].startTime, 217.5);
+  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => item.id),
+    ['approach', 'continue', 'transition']);
+});
+
 test('preparation routes a verified same-cast introduction into its adjacent scene without changing source times', () => {
   const intro = action('intro', 5, 10, { actionType: 'touch', positionId: '', positionLabel: '',
     adultScene: false, adultSceneId: '', adultSceneStartTime: undefined, adultSceneEndTime: undefined,

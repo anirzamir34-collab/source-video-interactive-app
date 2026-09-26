@@ -591,8 +591,13 @@ test('one position tab exposes later verified returns and switches occurrence on
   f.selectAdultPosition('one', false);
   assert.deepEqual(
     new Set(first.activeMovementChoices.flatMap(item => item.variants).map(item => item.id)),
-    new Set(['return-1'])
+    new Set(['return-0', 'return-1'])
   );
+  const tabPlayCalls = f.els.video.playCalls;
+  f.selectAdultPosition('one', true);
+  await flush();
+  assert.equal(f.els.video.playCalls, tabPlayCalls);
+  assert.equal(f.els.video.currentTime, 119.8);
   f.selectAdultMovement('return-0', true);
   await flush();
   assert.equal(f.state.activeAdultOccurrenceId, 'source-return');

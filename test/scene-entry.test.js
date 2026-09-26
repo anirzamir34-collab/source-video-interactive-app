@@ -22,6 +22,18 @@ test('adjacent verified introductions acquire scene membership without changing 
   assert.equal(JSON.stringify(rows), original);
 });
 
+test('a continuous verified introduction crosses a provider scene ID change into the first position', () => {
+  const rows = [action(217, 230, { adultScene: true, adultSceneId: 'intro' }),
+    action(230, 319, { adultScene: true, adultSceneId: 'intro' }),
+    action(319, 328, { adultScene: true, adultSceneId: 'main' }),
+    action(328, 346, { adultScene: true, adultSceneId: 'main', kind: 'chapter' })];
+  const result = matchSceneIntroductions(rows, [{ action: rows[3], sceneId: 'main' }], eligible);
+  assert.deepEqual([...result.keys()], [rows[2], rows[1], rows[0]]);
+  assert.equal(result.get(rows[0]), 'main');
+  rows[1].endTime = 318;
+  assert.equal(matchSceneIntroductions(rows, [{ action: rows[3], sceneId: 'main' }], eligible).has(rows[0]), false);
+});
+
 test('dialogue, cast changes, unverified data, scene conflicts and long gaps bound introductions', () => {
   for (const extra of [{ kind: 'dialogue' }, { partnerTrackId: 'c' }, { sourceVerified: false },
     { confidence: .2 }, { confidence: undefined }, { adultSceneId: 'other' }, { endTime: 4 }]) {

@@ -22,7 +22,12 @@ export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45)
           !Number.isFinite(start) || !Number.isFinite(end) || end <= start ||
           end > nextStart + 0.15 || nextStart - end > maxGap ||
           participants(action).join('|') !== cast.join('|') ||
-          (action.adultSceneId && action.adultSceneId !== sceneId) ||
+          // A provider may change the scene ID exactly between an uninterrupted
+          // introduction and its first position. The verified cast and adjacent
+          // source intervals, rather than the provider's label, establish the
+          // connection. Do not bridge gaps or ordinary dialogue this way.
+          (action.adultSceneId && action.adultSceneId !== sceneId &&
+            !(action.adultScene === true && nextStart - end <= 0.15)) ||
           (result.has(action) && result.get(action) !== sceneId)) break;
       result.set(action, sceneId);
       nextStart = start;
