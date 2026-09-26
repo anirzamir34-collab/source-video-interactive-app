@@ -136,11 +136,12 @@ test('completed mobile upload is not aborted while waiting for the server respon
   assert.equal((await result).nextChunk, 1);
 });
 
-test('fast links use large dialogue upload chunks to reduce mobile round trips', () => {
+test('fast links use four parallel dialogue upload streams while constrained links stay serial', () => {
   const uploadSection = section('async function uploadDialogueWithProgress(', '\nasync function prepareDialoguePayload(');
-  assert.match(uploadSection, /8 \* 1024 \* 1024/);
-  assert.match(uploadSection, /saveData/);
-  assert.match(uploadSection, /effectiveType/);
+  assert.match(uploadSection, /4 \* 1024 \* 1024/);
+  assert.match(uploadSection, /maxConnections = constrained \? 1/);
+  assert.match(uploadSection, /effectiveType === '3g' \? 2 : 4/);
+  assert.match(uploadSection, /Promise\.all\(workers\)/);
 });
 
 test('HTTP upload errors expose status and do not retry permanent authorization failures', async () => {
@@ -396,6 +397,7 @@ function urlFixture(fetch, overrides = {}) {
     state, fetch, videoUrlInput: { value: 'https://example.com/new' }, resolveUrlBtn: {},
     setUrlStatus() {}, updateAnalyzeAvailability() {}, renderDebug() {},
     hideBrowserDownloadHelp() {}, showBrowserDownloadHelp() {},
+    urlVideoCache: { get: async () => null, put: async () => null, update: async () => true, removeExpired: async () => {} },
     clearPreviousGameResidue: () => assert.fail('failed resolution must keep previous source'), ...overrides
   });
 }

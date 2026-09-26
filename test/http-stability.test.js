@@ -85,6 +85,35 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
     assert.equal(invalid.status, 400);
     await invalid.json();
   });
+  await t.test('parallel audio chunks may arrive out of order and are written at exact offsets', async () => {
+    const start = await request('/api/dialogue-upload/start', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ totalSize: 12, fileName: 'parallel.wav', mimeType: 'audio/wav' })
+    });
+    const { uploadId } = await start.json();
+    const filePath = `/tmp/videoquest-dialogue/${uploadId}.part`;
+    t.after(() => fs.unlink(filePath).catch(() => {}));
+    const chunk = (index, offset, body) => request(`/api/dialogue-upload/${uploadId}/chunk`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie,
+        'Content-Type': 'application/octet-stream',
+        'x-chunk-index': String(index),
+        'x-chunk-offset': String(offset)
+      },
+      body
+    });
+    const results = await Promise.all([
+      chunk(2, 8, 'IJKL'),
+      chunk(0, 0, 'ABCD'),
+      chunk(1, 4, 'EFGH')
+    ]);
+    const payloads = await Promise.all(results.map(response => response.json()));
+    assert.ok(payloads.some(item => item.complete === true));
+    assert.equal(await fs.readFile(filePath, 'utf8'), 'ABCDEFGHIJKL');
+  });
+
   await t.test('late upload middleware errors retain their format and status', async () => {
     const form = new FormData();
     form.append('video', new Blob(['not-video'], { type: 'text/plain' }), 'test.txt');

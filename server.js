@@ -1461,6 +1461,9 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
       totalSize,
       receivedSize: 0,
       nextChunk: 0,
+      receivedChunks: new Map(),
+      inflightRanges: new Map(),
+      activeWrites: 0,
       updatedAt: Date.now()
     });
 
@@ -1485,27 +1488,81 @@ app.post(
   async (req, res) => {
     const uploadId = String(req.params.uploadId || '');
     const session = dialogueUploadSessions.get(uploadId);
-
-    if (!session) {
-      return res.status(404).json({
-        available: false,
-        reason: 'UPLOAD_SESSION_NOT_FOUND'
-      });
-    }
+    if (!session) return res.status(404).json({ available: false, reason: 'UPLOAD_SESSION_NOT_FOUND' });
 
     const chunkIndex = Number(req.headers['x-chunk-index']);
-
+    const body = Buffer.isBuffer(req.body) ? req.body : null;
     if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
-      return res.status(400).json({
-        available: false,
-        reason: 'INVALID_CHUNK_INDEX'
-      });
+      return res.status(400).json({ available: false, reason: 'INVALID_CHUNK_INDEX' });
+    }
+    if (!body?.length) return res.status(400).json({ available: false, reason: 'INVALID_CHUNK_BODY' });
+
+    const offsetHeader = req.headers['x-chunk-offset'];
+    const parallelMode = offsetHeader !== undefined && offsetHeader !== '';
+    if (parallelMode) {
+      const offset = Number(offsetHeader);
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset + body.length > session.totalSize) {
+        return res.status(400).json({ available: false, reason: 'INVALID_CHUNK_OFFSET' });
+      }
+      const previous = session.receivedChunks?.get(chunkIndex);
+      if (previous) {
+        if (previous.offset !== offset || previous.length !== body.length) {
+          return res.status(409).json({ available: false, reason: 'CHUNK_ID_CONFLICT' });
+        }
+        return res.json({
+          available: true,
+          duplicate: true,
+          receivedSize: session.receivedSize,
+          complete: session.receivedSize === session.totalSize
+        });
+      }
+      const overlaps = range => offset < range.offset + range.length && range.offset < offset + body.length;
+      for (const range of session.receivedChunks?.values?.() || []) {
+        if (overlaps(range)) return res.status(409).json({ available: false, reason: 'CHUNK_RANGE_OVERLAP' });
+      }
+      for (const [otherIndex, range] of session.inflightRanges?.entries?.() || []) {
+        if (otherIndex !== chunkIndex && overlaps(range)) {
+          return res.status(409).json({ available: false, reason: 'CHUNK_RANGE_OVERLAP' });
+        }
+      }
+      if (session.inflightRanges?.has(chunkIndex)) {
+        return res.status(409).json({ available: false, reason: 'CHUNK_WRITE_IN_PROGRESS', retryable: true });
+      }
+      session.inflightRanges ||= new Map();
+      session.receivedChunks ||= new Map();
+      session.inflightRanges.set(chunkIndex, { offset, length: body.length });
+      session.activeWrites = Math.max(0, Number(session.activeWrites) || 0) + 1;
+      session.updatedAt = Date.now();
+      let handle;
+      try {
+        handle = await fs.promises.open(session.filePath, 'r+');
+        const { bytesWritten } = await handle.write(body, 0, body.length, offset);
+        if (bytesWritten !== body.length) throw new Error('CHUNK_SHORT_WRITE');
+        session.receivedChunks.set(chunkIndex, { offset, length: body.length });
+        session.receivedSize += body.length;
+        session.updatedAt = Date.now();
+        return res.json({
+          available: true,
+          receivedSize: session.receivedSize,
+          complete: session.receivedSize === session.totalSize
+        });
+      } catch (error) {
+        return res.status(500).json({
+          available: false,
+          reason: 'CHUNK_WRITE_FAILED',
+          message: error.message || String(error)
+        });
+      } finally {
+        try { await handle?.close(); } catch {}
+        session.inflightRanges.delete(chunkIndex);
+        session.activeWrites = Math.max(0, Number(session.activeWrites) - 1);
+        session.updatedAt = Date.now();
+      }
     }
 
     if (session.writing) {
       return res.status(409).json({ available: false, reason: 'CHUNK_WRITE_IN_PROGRESS', retryable: true });
     }
-
     if (chunkIndex < session.nextChunk) {
       return res.json({
         available: true,
@@ -1514,8 +1571,7 @@ app.post(
         nextChunk: session.nextChunk
       });
     }
-
-    if (chunkIndex !== session.nextChunk || !Buffer.isBuffer(req.body) || !req.body.length) {
+    if (chunkIndex !== session.nextChunk) {
       return res.status(409).json({
         available: false,
         reason: 'CHUNK_ORDER_MISMATCH',
@@ -1523,22 +1579,16 @@ app.post(
         nextChunk: session.nextChunk
       });
     }
-
-    if (session.receivedSize + req.body.length > session.totalSize) {
-      return res.status(400).json({
-        available: false,
-        reason: 'UPLOAD_SIZE_EXCEEDED'
-      });
+    if (session.receivedSize + body.length > session.totalSize) {
+      return res.status(400).json({ available: false, reason: 'UPLOAD_SIZE_EXCEEDED' });
     }
-
     session.writing = true;
     session.updatedAt = Date.now();
     try {
-      await fs.promises.appendFile(session.filePath, req.body);
-      session.receivedSize += req.body.length;
+      await fs.promises.appendFile(session.filePath, body);
+      session.receivedSize += body.length;
       session.nextChunk += 1;
       session.updatedAt = Date.now();
-
       return res.json({
         available: true,
         receivedSize: session.receivedSize,
@@ -1546,8 +1596,6 @@ app.post(
         complete: session.receivedSize === session.totalSize
       });
     } catch (error) {
-      // appendFile can fail after writing some bytes. Remove that partial tail
-      // before accepting a retry of the same index.
       try { await fs.promises.truncate(session.filePath, session.receivedSize); }
       catch {
         dialogueUploadSessions.delete(uploadId);
@@ -1569,7 +1617,7 @@ setInterval(() => {
   const expiry = Date.now() - 60 * 60 * 1000;
 
   for (const [uploadId, session] of dialogueUploadSessions) {
-    if (session.writing || session.updatedAt >= expiry) continue;
+    if (session.writing || Number(session.activeWrites) > 0 || session.updatedAt >= expiry) continue;
 
     dialogueUploadSessions.delete(uploadId);
     fs.promises.unlink(session.filePath).catch(() => {});
@@ -1771,7 +1819,8 @@ app.post(
     const uploadSession = dialogueUploadSessions.get(uploadId);
 
     if (!req.file && uploadSession) {
-      if (uploadSession.writing || uploadSession.receivedSize !== uploadSession.totalSize) {
+      if (uploadSession.writing || Number(uploadSession.activeWrites) > 0 ||
+          uploadSession.receivedSize !== uploadSession.totalSize) {
         return res.status(409).json({
           available: false,
           reason: 'UPLOAD_INCOMPLETE',
@@ -1793,6 +1842,9 @@ app.post(
     let tempPath = req.file?.path;
     let originalVideoPath;
     let uploadedFile = null;
+    let remoteFile = null;
+    let retainUploadedFile = false;
+    let dialogueSucceeded = false;
     const preparationController = new AbortController();
     const stopPreparation = () => { if (!res.writableEnded) preparationController.abort(); };
     res.once('close', stopPreparation);
@@ -1806,57 +1858,67 @@ app.post(
         });
       }
 
-      const remoteToken = String(req.body?.remoteToken || '').trim();
-      if (!req.file && remoteToken) {
-        req.file = await prepareRemoteDialogueAudio(remoteToken, req.body?.duration);
-        tempPath = req.file.path;
-      }
-
-      if (!req.file || !tempPath) {
-        return res.status(400).json({
-          available: false,
-          reason: 'VIDEO_REQUIRED',
-          message: 'Diyalog analizi için video gerekli.'
-        });
-      }
-
-      if (req.file.mimetype.startsWith('video/')) {
-        originalVideoPath = tempPath;
-        req.file = await prepareLocalDialogueAudio(req.file, {
-          ffmpegPath, signal: preparationController.signal
-        });
-        tempPath = req.file.path;
-        await fs.promises.unlink(originalVideoPath).catch(() => {});
-      }
-
       const ai = new GoogleGenAI({ apiKey });
+      retainUploadedFile = String(req.body?.retainAudioForReuse || '') === '1';
+      const audioReuseToken = String(req.body?.audioReuseToken || '').trim();
 
-      uploadedFile = await ai.files.upload({
-        file: tempPath,
-        config: {
-          mimeType: req.file.mimetype,
-          displayName: req.file.originalname || 'videoquest-dialogue-video'
+      if (audioReuseToken && !req.file) {
+        try {
+          remoteFile = await ai.files.get({ name: audioReuseToken });
+        } catch {
+          return res.status(410).json({
+            available: false,
+            reason: 'AUDIO_REUSE_EXPIRED',
+            message: '24 saatlik ses önbelleği artık kullanılamıyor; ses yeniden hazırlanacak.'
+          });
         }
-      });
+        if (!remoteFile || remoteFile.state === 'FAILED') {
+          return res.status(410).json({
+            available: false,
+            reason: 'AUDIO_REUSE_EXPIRED',
+            message: '24 saatlik ses önbelleği artık kullanılamıyor; ses yeniden hazırlanacak.'
+          });
+        }
+      }
 
-      let remoteFile = uploadedFile;
+      if (!remoteFile) {
+        const remoteToken = String(req.body?.remoteToken || '').trim();
+        if (!req.file && remoteToken) {
+          req.file = await prepareRemoteDialogueAudio(remoteToken, req.body?.duration);
+          tempPath = req.file.path;
+        }
+        if (!req.file || !tempPath) {
+          return res.status(400).json({
+            available: false,
+            reason: 'VIDEO_REQUIRED',
+            message: 'Diyalog analizi için video gerekli.'
+          });
+        }
+        if (req.file.mimetype.startsWith('video/')) {
+          originalVideoPath = tempPath;
+          req.file = await prepareLocalDialogueAudio(req.file, {
+            ffmpegPath, signal: preparationController.signal
+          });
+          tempPath = req.file.path;
+          await fs.promises.unlink(originalVideoPath).catch(() => {});
+        }
+        uploadedFile = await ai.files.upload({
+          file: tempPath,
+          config: {
+            mimeType: req.file.mimetype,
+            displayName: req.file.originalname || 'videoquest-dialogue-video'
+          }
+        });
+        remoteFile = uploadedFile;
+      }
+
       const processingDeadline = Date.now() + 20 * 60 * 1000;
-
-      while (
-        remoteFile?.state === 'PROCESSING' &&
-        Date.now() < processingDeadline
-      ) {
+      while (remoteFile?.state === 'PROCESSING' && Date.now() < processingDeadline) {
         await wait(4000);
         remoteFile = await ai.files.get({ name: remoteFile.name });
       }
-
-      if (!remoteFile || remoteFile.state === 'FAILED') {
-        throw new Error('GEMINI_VIDEO_PROCESSING_FAILED');
-      }
-
-      if (remoteFile.state === 'PROCESSING') {
-        throw new Error('GEMINI_VIDEO_PROCESSING_TIMEOUT');
-      }
+      if (!remoteFile || remoteFile.state === 'FAILED') throw new Error('GEMINI_VIDEO_PROCESSING_FAILED');
+      if (remoteFile.state === 'PROCESSING') throw new Error('GEMINI_VIDEO_PROCESSING_TIMEOUT');
 
       const prompt = `
 Analyze audible dialogue and separately observe non-speech human vocal reactions in this video.
@@ -2215,9 +2277,12 @@ Rules:
         source: req.body?.remoteToken ? 'remote-audio' : 'upload',
         aiRequests: dialogueUsage.requests
       }));
+      dialogueSucceeded = true;
       return res.json({
         available: true,
         hasDialogue: segments.length > 0,
+        audioReuseToken: remoteFile?.name || '',
+        audioReuseMimeType: remoteFile?.mimeType || req.file?.mimetype || '',
         sourceLanguage: String(parsed.sourceLanguage || 'unknown'),
         summaryTr: String(parsed.summaryTr || ''),
         speakers: [...speakerProfiles.values()],
@@ -2260,7 +2325,8 @@ Rules:
         }
       }
 
-      if (uploadedFile?.name && process.env.KEEP_GEMINI_FILES !== 'true') {
+      if (uploadedFile?.name && !(retainUploadedFile && dialogueSucceeded) &&
+          process.env.KEEP_GEMINI_FILES !== 'true') {
         try {
           const cleanupAi = new GoogleGenAI({ apiKey });
           await cleanupAi.files.delete({ name: uploadedFile.name });

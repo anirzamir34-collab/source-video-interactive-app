@@ -111,6 +111,7 @@ import {
 import { dubSpeakerKey, buildDubSpeakerRoster, validateDubVoicePlan } from './dub-speakers.js';
 import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from './dub-overlap.js';
 import { createVideoDownloader } from './video-download.js';
+import { createUrlVideoCache } from './url-video-cache.js';
 import { normalizeDialogueSegments } from './dialogue-integrity.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel } from './choice-groups.js';
@@ -119,6 +120,8 @@ import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits
 import { extractMp4Audio } from './mp4-audio.js';
 
 const videoDownloads = createVideoDownloader();
+const urlVideoCache = createUrlVideoCache();
+void urlVideoCache.removeExpired().catch(error => console.warn('24 saatlik video önbelleği temizlenemedi:', error));
 let savedGames;
 
 const $ = (id) => document.getElementById(id);
@@ -134,6 +137,9 @@ const state = {
   savedPlaybackOnly: false,
   selectedRemoteVideo: null,
   selectedRemoteToken: '',
+  urlCacheKey: '',
+  audioReuseToken: '',
+  urlCacheSavePromise: null,
   remoteFileDownload: null,
   videoObjectUrl: '',
   analysisSession: null,
@@ -848,6 +854,9 @@ els.videoInput.addEventListener('change', () => {
   state.selectedSourceKind = 'file';
   state.selectedRemoteVideo = null;
   state.selectedRemoteToken = '';
+  state.urlCacheKey = '';
+  state.audioReuseToken = '';
+  state.urlCacheSavePromise = null;
   state.analysisSession = null;
   if (file) {
     hideBrowserDownloadHelp();
@@ -1005,14 +1014,15 @@ function sendDialogueChunk({
   uploadId,
   chunk,
   chunkIndex,
-  completedBytes,
+  chunkOffset = null,
+  completedBytes = 0,
   totalBytes,
   startedAt,
-  onProgress
+  onProgress,
+  onChunkProgress
 }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const attemptStartedAt = performance.now();
     let settled = false;
     let stallTimer = null;
     let uploadComplete = false;
@@ -1035,93 +1045,74 @@ function sendDialogueChunk({
       }, 45000);
     };
 
-    xhr.open(
-      'POST',
-      `/api/dialogue-upload/${encodeURIComponent(uploadId)}/chunk`
-    );
+    xhr.open('POST', `/api/dialogue-upload/${encodeURIComponent(uploadId)}/chunk`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
-    // The upload may already be at 100% while Render is still accepting and
-    // writing the request. Do not let the progress watchdog abort that wait.
+    if (Number.isSafeInteger(chunkOffset) && chunkOffset >= 0) {
+      xhr.setRequestHeader('X-Chunk-Offset', String(chunkOffset));
+    }
     xhr.timeout = 120000;
     xhr.responseType = 'json';
     armStallTimer();
 
     xhr.upload.addEventListener('progress', event => {
       armStallTimer();
-      const loaded = Math.min(
-        totalBytes,
-        completedBytes + (event.loaded || 0)
-      );
-      const elapsed = Math.max(
-        (performance.now() - startedAt) / 1000,
-        0.1
-      );
-
-      onProgress({
+      if (typeof onChunkProgress === 'function') {
+        onChunkProgress(Math.min(chunk.size, Number(event.loaded) || 0));
+        return;
+      }
+      const loaded = Math.min(totalBytes, completedBytes + (event.loaded || 0));
+      const elapsed = Math.max((performance.now() - startedAt) / 1000, 0.1);
+      onProgress?.({
         loaded,
         total: totalBytes,
         percent: Math.min(100, Math.round(loaded / totalBytes * 100)),
         speed: (loaded / 1024 / 1024) / elapsed
       });
     });
-
     xhr.upload.addEventListener('load', () => {
       uploadComplete = true;
       clearTimeout(stallTimer);
       stallTimer = null;
     });
-
     xhr.addEventListener('load', () => {
       const body = xhr.response || {};
-
       if (xhr.status >= 200 && xhr.status < 300 && body.available) {
         finish(resolve, body);
       } else {
         const retryable = xhr.status === 0 || xhr.status === 408 || xhr.status === 409 ||
           xhr.status === 425 || xhr.status === 429 || xhr.status >= 500;
-        finish(
-          reject,
-          chunkError(
-            body.message ||
-            body.reason ||
-            `Parça yükleme hatası: HTTP ${xhr.status}`,
-            { code: body.reason || 'CHUNK_UPLOAD_HTTP_ERROR', status: xhr.status, retryable }
-          )
-        );
+        finish(reject, chunkError(
+          body.message || body.reason || `Parça yükleme hatası: HTTP ${xhr.status}`,
+          { code: body.reason || 'CHUNK_UPLOAD_HTTP_ERROR', status: xhr.status, retryable }
+        ));
       }
     });
-
-    xhr.addEventListener('error', () => {
-      finish(reject, chunkError('Parça sunucuya ulaşamadı.', { code: 'CHUNK_NETWORK_ERROR', retryable: true }));
-    });
-
-    xhr.addEventListener('timeout', () => {
-      finish(reject, chunkError('Sunucu bu parçaya 120 saniye içinde yanıt vermedi.', { code: 'CHUNK_RESPONSE_TIMEOUT', retryable: true }));
-    });
-
-    xhr.addEventListener('abort', () => {
-      finish(reject, chunkError('Takılan parça iptal edilip yeniden başlatıldı.', { code: 'CHUNK_UPLOAD_ABORTED', retryable: true }));
-    });
-
+    xhr.addEventListener('error', () => finish(reject,
+      chunkError('Parça sunucuya ulaşamadı.', { code: 'CHUNK_NETWORK_ERROR', retryable: true })));
+    xhr.addEventListener('timeout', () => finish(reject,
+      chunkError('Sunucu bu parçaya 120 saniye içinde yanıt vermedi.', { code: 'CHUNK_RESPONSE_TIMEOUT', retryable: true })));
+    xhr.addEventListener('abort', () => finish(reject,
+      chunkError('Takılan parça iptal edilip yeniden başlatıldı.', { code: 'CHUNK_UPLOAD_ABORTED', retryable: true })));
     xhr.send(chunk);
   });
 }
 
-async function uploadDialogueWithProgress(
-  form,
-  onProgress,
-  onUploadComplete
-) {
+async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
   const file = form.get('video');
   const duration = String(form.get('duration') || '0');
   const protagonistProfile = String(form.get('protagonistProfile') || '');
-
-  if (!(file instanceof Blob)) {
-    throw new Error('Yüklenecek ses dosyası bulunamadı.');
-  }
-
+  const retainAudioForReuse = String(form.get('retainAudioForReuse') || '');
+  if (!(file instanceof Blob)) throw new Error('Yüklenecek ses dosyası bulunamadı.');
   await waitUntilPageVisible();
+
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const effectiveType = String(connection?.effectiveType || '').toLowerCase();
+  const constrained = connection?.saveData === true || ['slow-2g', '2g'].includes(effectiveType);
+  const chunkSize = constrained ? 2 * 1024 * 1024 : 4 * 1024 * 1024;
+  const chunkCount = Math.ceil(file.size / chunkSize);
+  const maxConnections = constrained ? 1 : effectiveType === '3g' ? 2 : 4;
+  const connections = Math.max(1, Math.min(maxConnections, chunkCount));
 
   const startResponse = await fetch('/api/dialogue-upload/start', {
     method: 'POST',
@@ -1132,63 +1123,60 @@ async function uploadDialogueWithProgress(
       mimeType: dialogueUploadMimeType(file)
     })
   });
-
   const startBody = await startResponse.json();
-
   if (!startResponse.ok || !startBody.available) {
-    throw new Error(
-      startBody.message ||
-      startBody.reason ||
-      `Yükleme başlatılamadı: HTTP ${startResponse.status}`
-    );
+    throw new Error(startBody.message || startBody.reason || `Yükleme başlatılamadı: HTTP ${startResponse.status}`);
   }
 
   const uploadId = startBody.uploadId;
-  // Reduce request/response round trips on fast mobile/Wi-Fi links while
-  // retaining smaller retry units on constrained connections. The server raw
-  // parser accepts up to 10 MiB, so the fast path stays safely below that.
-  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  const constrained = connection?.saveData === true ||
-    ['slow-2g', '2g'].includes(String(connection?.effectiveType || '').toLowerCase());
-  const chunkSize = constrained
-    ? 2 * 1024 * 1024
-    : file.size >= 8 * 1024 * 1024
-      ? 8 * 1024 * 1024
-      : 4 * 1024 * 1024;
-  const chunkCount = Math.ceil(file.size / chunkSize);
   const startedAt = performance.now();
+  const loadedByChunk = new Array(chunkCount).fill(0);
+  let cursor = 0;
+  const report = () => {
+    const loaded = Math.min(file.size, loadedByChunk.reduce((sum, value) => sum + value, 0));
+    const elapsed = Math.max((performance.now() - startedAt) / 1000, 0.1);
+    onProgress({
+      loaded,
+      total: file.size,
+      percent: Math.min(100, Math.round(loaded / file.size * 100)),
+      speed: (loaded / 1024 / 1024) / elapsed,
+      connections
+    });
+  };
 
-  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+  const uploadOne = async chunkIndex => {
     const start = chunkIndex * chunkSize;
     const end = Math.min(file.size, start + chunkSize);
     const chunk = file.slice(start, end);
     let retryCount = 0;
-
     while (true) {
       await waitUntilPageVisible();
-
+      loadedByChunk[chunkIndex] = 0;
+      report();
       try {
         await sendDialogueChunk({
           uploadId,
           chunk,
           chunkIndex,
-          completedBytes: start,
+          chunkOffset: start,
           totalBytes: file.size,
           startedAt,
-          onProgress
+          onChunkProgress: loaded => {
+            loadedByChunk[chunkIndex] = Math.min(chunk.size, loaded);
+            report();
+          }
         });
-        break;
+        loadedByChunk[chunkIndex] = chunk.size;
+        report();
+        return;
       } catch (error) {
         retryCount += 1;
-
         if (error.retryable === false || retryCount >= 5) throw error;
-
         els.analysisTitle.textContent =
           `Parça yeniden deneniyor (${retryCount}/5) · ${chunkIndex + 1}/${chunkCount}`;
         els.analysisOutput.textContent =
           `${error.message || 'Parça gönderilemedi.'}\n` +
           `${navigator.onLine === false ? 'Telefon çevrimdışı görünüyor. Bağlantı gelince devam edilecek.' : 'Bağlantı açık; aynı parça yeniden gönderilecek.'}`;
-
         if (navigator.onLine === false) {
           await new Promise(resolve => window.addEventListener('online', resolve, { once: true }));
         } else {
@@ -1196,41 +1184,31 @@ async function uploadDialogueWithProgress(
         }
       }
     }
+  };
 
-    const loaded = end;
-    const elapsed = Math.max(
-      (performance.now() - startedAt) / 1000,
-      0.1
-    );
-
-    onProgress({
-      loaded,
-      total: file.size,
-      percent: Math.min(100, Math.round(loaded / file.size * 100)),
-      speed: (loaded / 1024 / 1024) / elapsed
-    });
-  }
-
+  const workers = Array.from({ length: connections }, async () => {
+    while (true) {
+      const chunkIndex = cursor++;
+      if (chunkIndex >= chunkCount) return;
+      await uploadOne(chunkIndex);
+    }
+  });
+  await Promise.all(workers);
   onUploadComplete();
 
   const finishForm = new FormData();
   finishForm.append('uploadId', uploadId);
   finishForm.append('duration', duration);
   finishForm.append('protagonistProfile', protagonistProfile);
+  if (retainAudioForReuse) finishForm.append('retainAudioForReuse', retainAudioForReuse);
 
   const response = await fetch('/api/gemini-dialogue-analyze', {
     method: 'POST',
     headers: geminiRequestHeaders(),
     body: finishForm
   });
-
   const body = await response.json();
-
-  return {
-    ok: response.ok,
-    status: response.status,
-    body
-  };
+  return { ok: response.ok, status: response.status, body };
 }
 
 async function prepareDialoguePayload(file, session = state.analysisSession) {
@@ -1303,82 +1281,36 @@ async function prepareDialoguePayload(file, session = state.analysisSession) {
 async function analyzeSelectedDialogue(file, session = state.analysisSession) {
   els.analysisCard.classList.remove('hidden');
   els.analysisState.textContent = 'AUDIO_ANALYSIS';
-
   if (!file) throw new Error('Diyalog analizi için video bulunamadı.');
+
   const duration = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
   const protagonistProfile = String(els.protagonistInput?.value || '').trim();
   const remoteToken = state.selectedSourceKind === 'url'
     ? String(session?.remoteToken || state.selectedRemoteToken || '').trim()
     : '';
-
+  const reusableAudio = state.selectedSourceKind === 'url'
+    ? String(state.audioReuseToken || '').trim()
+    : '';
   let processingTimer = null;
   let upload;
 
-  // Prefer the already-downloaded local source first. If we can isolate audio
-  // locally (M4A/WAV), uploading that compact audio is usually much faster than
-  // asking Render to download the entire remote video again.
-  els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
-  els.analysisOutput.textContent =
-    `Konuşma sesi hazırlanıyor...\n` +
-    `${(file.size / 1024 / 1024).toFixed(1)} MB`;
-
-  const dialogueFile = await prepareDialoguePayload(file, session);
-  const audioOnly = dialogueFile instanceof Blob && String(dialogueFile.type || '').startsWith('audio/');
-
-  if (audioOnly || !remoteToken) {
+  if (reusableAudio) {
+    els.analysisTitle.textContent = '24 saatlik ses önbelleği kullanılıyor';
+    els.analysisOutput.textContent = 'Ses tekrar yüklenmiyor; daha önce hazırlanan Gemini ses dosyası kullanılıyor.';
     const form = new FormData();
-    form.append('video', dialogueFile, dialogueFile.name || 'dialogue.wav');
+    form.append('audioReuseToken', reusableAudio);
     form.append('duration', String(duration));
     form.append('protagonistProfile', protagonistProfile);
-
-    try {
-      upload = await uploadDialogueWithProgress(
-        form,
-        ({ loaded, total, percent, speed }) => {
-          els.analysisState.textContent = 'AUDIO_UPLOAD';
-          els.analysisTitle.textContent = `${audioOnly ? 'Yalnızca konuşma sesi' : 'Cihazdaki video'} sunucuya yükleniyor · %${percent}`;
-          const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
-          els.analysisOutput.textContent =
-            (audioOnly ? 'Video cihazda kalıyor; sadece ses gönderiliyor.\n' : 'Ses cihazda ayrılamadığı için video sunucuya gönderiliyor.\n') +
-            `Gerçek yükleme ilerlemesi: %${percent}\n` +
-            `${(loaded / 1024 / 1024).toFixed(1)} / ` +
-            `${(total / 1024 / 1024).toFixed(1)} MB\n` +
-            `Ortalama yükleme hızı: ${speedText} MB/sn`;
-        },
-        () => {
-          const processingStartedAt = performance.now();
-          const showProcessing = () => {
-            els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-            els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
-            els.analysisOutput.textContent = `Yükleme tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n${Math.round((performance.now() - processingStartedAt) / 1000)} sn geçti`;
-          };
-          showProcessing();
-          processingTimer = setInterval(showProcessing, 1000);
-        }
-      );
-    } finally {
-      if (processingTimer !== null) clearInterval(processingTimer);
-      processingTimer = null;
-    }
-  } else {
-    // Only fall back to server-side source extraction when local isolation
-    // failed and the alternative would be uploading the entire video.
-    els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
-    els.analysisOutput.textContent = 'Yerel ses ayrılamadı; kaynak videonun sesi sunucuda hazırlanıyor.';
-    const form = new FormData();
-    form.append('remoteToken', remoteToken);
-    form.append('duration', String(duration));
-    form.append('protagonistProfile', protagonistProfile);
-    const processingStartedAt = performance.now();
-    const showProcessing = () => {
+    const startedAt = performance.now();
+    const show = () => {
       els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-      els.analysisTitle.textContent = 'Sunucuda ses + Gemini analizi';
+      els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
       els.analysisOutput.textContent =
-        `Tam video yüklemesi atlandı. Sunucuda ses ve konuşma analizi sürüyor...\n` +
-        `${Math.round((performance.now() - processingStartedAt) / 1000)} sn geçti`;
+        `Ses yüklemesi atlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
+        `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
     };
-    showProcessing();
-    processingTimer = setInterval(showProcessing, 1000);
+    show();
+    processingTimer = setInterval(show, 1000);
     try {
       const response = await fetch('/api/gemini-dialogue-analyze', {
         method: 'POST',
@@ -1386,10 +1318,95 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
         body: form
       });
       const body = await response.json().catch(() => ({}));
-      upload = { ok: response.ok, status: response.status, body };
+      if (response.ok && body.available) {
+        upload = { ok: true, status: response.status, body };
+      } else if (response.status === 410 || body.reason === 'AUDIO_REUSE_EXPIRED') {
+        state.audioReuseToken = '';
+        if (state.urlCacheKey) void urlVideoCache.update(state.urlCacheKey, { audioReuseToken: '' }).catch(() => {});
+      } else {
+        upload = { ok: response.ok, status: response.status, body };
+      }
     } finally {
       if (processingTimer !== null) clearInterval(processingTimer);
       processingTimer = null;
+    }
+  }
+
+  if (!upload) {
+    els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
+    els.analysisOutput.textContent =
+      `Konuşma sesi hazırlanıyor...\n` +
+      `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+
+    const dialogueFile = await prepareDialoguePayload(file, session);
+    const audioOnly = dialogueFile instanceof Blob && String(dialogueFile.type || '').startsWith('audio/');
+
+    if (audioOnly || !remoteToken) {
+      const form = new FormData();
+      form.append('video', dialogueFile, dialogueFile.name || 'dialogue.wav');
+      form.append('duration', String(duration));
+      form.append('protagonistProfile', protagonistProfile);
+      if (state.urlCacheKey) form.append('retainAudioForReuse', '1');
+      try {
+        upload = await uploadDialogueWithProgress(
+          form,
+          ({ loaded, total, percent, speed, connections = 1 }) => {
+            els.analysisState.textContent = 'AUDIO_UPLOAD';
+            els.analysisTitle.textContent = `${audioOnly ? 'Yalnızca konuşma sesi' : 'Cihazdaki video'} sunucuya yükleniyor · %${percent}`;
+            const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
+            els.analysisOutput.textContent =
+              (audioOnly ? 'Video cihazda kalıyor; sadece ses gönderiliyor.\n' : 'Ses cihazda ayrılamadığı için video sunucuya gönderiliyor.\n') +
+              `Gerçek yükleme ilerlemesi: %${percent}\n` +
+              `${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n` +
+              `Ortalama yükleme hızı: ${speedText} MB/sn${connections > 1 ? ` · ${connections} paralel bağlantı` : ''}`;
+          },
+          () => {
+            const startedAt = performance.now();
+            const show = () => {
+              els.analysisState.textContent = 'DIALOGUE_PROCESSING';
+              els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
+              els.analysisOutput.textContent =
+                `Yükleme tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
+                `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
+            };
+            show();
+            processingTimer = setInterval(show, 1000);
+          }
+        );
+      } finally {
+        if (processingTimer !== null) clearInterval(processingTimer);
+        processingTimer = null;
+      }
+    } else {
+      els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
+      els.analysisOutput.textContent = 'Yerel ses ayrılamadı; kaynak videonun sesi sunucuda hazırlanıyor.';
+      const form = new FormData();
+      form.append('remoteToken', remoteToken);
+      form.append('duration', String(duration));
+      form.append('protagonistProfile', protagonistProfile);
+      if (state.urlCacheKey) form.append('retainAudioForReuse', '1');
+      const startedAt = performance.now();
+      const show = () => {
+        els.analysisState.textContent = 'DIALOGUE_PROCESSING';
+        els.analysisTitle.textContent = 'Sunucuda ses + Gemini analizi';
+        els.analysisOutput.textContent =
+          `Tam video yüklemesi atlandı. Sunucuda ses ve konuşma analizi sürüyor...\n` +
+          `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
+      };
+      show();
+      processingTimer = setInterval(show, 1000);
+      try {
+        const response = await fetch('/api/gemini-dialogue-analyze', {
+          method: 'POST',
+          headers: geminiRequestHeaders(),
+          body: form
+        });
+        const body = await response.json().catch(() => ({}));
+        upload = { ok: response.ok, status: response.status, body };
+      } finally {
+        if (processingTimer !== null) clearInterval(processingTimer);
+        processingTimer = null;
+      }
     }
   }
 
@@ -1399,6 +1416,14 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
 
   if (!upload.ok || !body.available) {
     throw new Error(body.error || body.message || `HTTP ${upload.status}`);
+  }
+
+  if (state.urlCacheKey && body.audioReuseToken) {
+    state.audioReuseToken = String(body.audioReuseToken);
+    if (state.urlCacheSavePromise) await state.urlCacheSavePromise.catch(() => null);
+    void urlVideoCache.update(state.urlCacheKey, {
+      audioReuseToken: state.audioReuseToken
+    }).catch(error => console.warn('Ses önbelleği bilgisi kaydedilemedi:', error));
   }
 
   const segments = normalizeDialogueSegments(body.segments, Number(els.video.duration));
@@ -2331,8 +2356,7 @@ els.video.addEventListener('timeupdate', renderSubtitle);
 els.video.addEventListener('seeked', renderSubtitle);
 
 function analysisSourceKey(file, remote) {
-  // The transport can change from a URL to a downloaded File during analysis.
-  // Keep the same session identity so completed chapters/dialogue survive retry.
+  if (state.urlCacheKey) return `url:${state.urlCacheKey}`;
   return remote
     ? `remote:${remote.sourceUrl || remote.proxyUrl || ''}`
     : `file:${file?.name}:${file?.size}:${file?.lastModified}`;
@@ -6568,6 +6592,9 @@ function clearPreviousGameResidue() {
   state.analysis = null;
   state.dialogue = null;
   state.selectedRemoteToken = '';
+  state.urlCacheKey = '';
+  state.audioReuseToken = '';
+  state.urlCacheSavePromise = null;
   state.languageSyncOffset = 0;
   state.dubbingEnabled = false;
   state.subtitlesEnabled = false;
@@ -6808,6 +6835,28 @@ async function resolveVideoUrl() {
   let resolved;
 
   try {
+    const cached = await urlVideoCache.get(pageUrl).catch(() => null);
+    if (cached?.file) {
+      const file = cached.file;
+      const objectUrl = URL.createObjectURL(file);
+      clearPreviousGameResidue();
+      state.selectedFile = file;
+      state.selectedSourceKind = 'url';
+      state.selectedRemoteVideo = null;
+      state.selectedRemoteToken = '';
+      state.urlCacheKey = pageUrl;
+      state.audioReuseToken = cached.audioReuseToken || '';
+      state.analysisSession = null;
+      state.videoObjectUrl = objectUrl;
+      els.video.src = objectUrl;
+      els.fileMeta.textContent =
+        `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB • 24 saatlik cihaz önbelleği`;
+      updateAnalyzeAvailability();
+      renderDebug();
+      setUrlStatus('Video cihazdaki 24 saatlik önbellekten açıldı; tekrar indirilmedi.', 'success');
+      return;
+    }
+
     const resolveResponse = await fetch('/api/resolve-video-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -6843,7 +6892,13 @@ async function resolveVideoUrl() {
     state.selectedSourceKind = 'url';
     state.selectedRemoteVideo = null;
     state.selectedRemoteToken = String(result.remoteToken || '').trim();
+    state.urlCacheKey = pageUrl;
+    state.audioReuseToken = '';
     state.analysisSession = null;
+    state.urlCacheSavePromise = urlVideoCache.put(pageUrl, file).catch(error => {
+      console.warn('24 saatlik video önbelleği kaydedilemedi:', error);
+      return null;
+    });
     state.videoObjectUrl = objectUrl;
     els.video.src = state.videoObjectUrl;
     els.fileMeta.textContent =
@@ -6851,7 +6906,7 @@ async function resolveVideoUrl() {
     updateAnalyzeAvailability();
     renderDebug();
 
-    setUrlStatus('Video cihazda hazır. “Seçili analizleri başlat” ile devam et.', 'success');
+    setUrlStatus('Video cihazda hazır ve 24 saatlik önbelleğe alınıyor. Tekrar testte yeniden indirilmeyecek.', 'success');
   } catch (error) {
     setUrlStatus(error?.message || 'Video bağlantısı işlenemedi.', 'error');
     if (resolved && !['VIDEO_SIZE_LIMIT', 'VIDEO_STORAGE_FULL'].includes(error.code)) {
@@ -6930,6 +6985,9 @@ async function openSavedGame(game) {
   state.selectedFile = file;
   state.selectedRemoteVideo = null;
   state.selectedRemoteToken = '';
+  state.urlCacheKey = '';
+  state.audioReuseToken = '';
+  state.urlCacheSavePromise = null;
   state.selectedSourceKind = game.sourceKind;
   state.analysisSession = null;
   state.videoObjectUrl = url;
