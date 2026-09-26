@@ -1695,7 +1695,7 @@ async function transcribeDialogueGemini35(ai, remoteFile) {
         mode: { type: 'verbatim', diarization_mode: 'speaker', timestamp_granularities: ['word'] }
       }
     }
-  });
+  }, { timeout_ms: 90000 });
   const words = extractTranscribeWordAnnotations(interaction);
   return { transcriptText: String(interaction?.output_text || '').trim(), words, segments: groupTranscribeWords(words) };
 }
@@ -1751,7 +1751,7 @@ async function prepareRemoteDialogueAudio(remoteToken, duration = 0) {
       headers.Origin = new URL(referer).origin;
     }
     if (session.cookie) headers.Cookie = session.cookie;
-    const { response } = await fetchPublicUrl(session.sourceUrl, { headers, timeoutMs: 0 });
+    const { response } = await fetchPublicUrl(session.sourceUrl, { headers, timeoutMs: 90000 });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
       throw new Error(`REMOTE_AUDIO_SOURCE_HTTP_${response.status}`);
@@ -1776,7 +1776,7 @@ async function prepareRemoteDialogueAudio(remoteToken, duration = 0) {
       const timeout = setTimeout(() => {
         ffmpegProcess.kill('SIGTERM');
         finish(new Error('REMOTE_AUDIO_PREPARATION_TIMEOUT'));
-      }, 20 * 60 * 1000);
+      }, 90 * 1000);
       timeout.unref();
       ffmpegProcess.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-3000); });
       ffmpegProcess.once('error', finish);
@@ -1814,6 +1814,9 @@ app.post(
   dialogueUpload.single('video'),
   async (req, res) => {
     const dialogueStartedAt = Date.now();
+    const dialogueStage = stage => console.info('[dialogue-stage]', JSON.stringify({
+      stage, elapsedMs: Date.now() - dialogueStartedAt
+    }));
     const dialogueUsage = emptyGeminiUsage();
     const uploadId = String(req.body?.uploadId || '');
     const uploadSession = dialogueUploadSessions.get(uploadId);
@@ -1884,7 +1887,9 @@ app.post(
       if (!remoteFile) {
         const remoteToken = String(req.body?.remoteToken || '').trim();
         if (!req.file && remoteToken) {
+          dialogueStage('remote-audio-start');
           req.file = await prepareRemoteDialogueAudio(remoteToken, req.body?.duration);
+          dialogueStage('remote-audio-ready');
           tempPath = req.file.path;
         }
         if (!req.file || !tempPath) {
@@ -1902,13 +1907,16 @@ app.post(
           tempPath = req.file.path;
           await fs.promises.unlink(originalVideoPath).catch(() => {});
         }
+        dialogueStage('gemini-upload-start');
         uploadedFile = await ai.files.upload({
           file: tempPath,
           config: {
             mimeType: req.file.mimetype,
-            displayName: req.file.originalname || 'videoquest-dialogue-video'
+            displayName: req.file.originalname || 'videoquest-dialogue-video',
+            httpOptions: { timeout: 120000 }
           }
         });
+        dialogueStage('gemini-upload-ready');
         remoteFile = uploadedFile;
       }
 
@@ -2012,7 +2020,9 @@ Rules:
       let asr = null;
       if (audioMime.startsWith('audio/')) {
         try {
+          dialogueStage('transcribe-start');
           asr = await transcribeDialogueGemini35(ai, remoteFile);
+          dialogueStage('transcribe-ready');
         } catch (error) {
           // Interactions/transcribe may be unavailable for an account, region or
           // model rollout. It is an enhancement, not a hard dependency: the
@@ -2033,6 +2043,7 @@ Rules:
       let lastDialogueError = null;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
+          dialogueStage(`dialogue-model-start-${attempt}`);
           const response = await ai.models.generateContent({
             model: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
             contents: [{
@@ -2050,9 +2061,11 @@ Rules:
             config: {
               responseMimeType: 'application/json',
               temperature: 0.05,
-              maxOutputTokens: 16384
+              maxOutputTokens: 16384,
+              httpOptions: { timeout: 180000 }
             }
           });
+          dialogueStage(`dialogue-model-ready-${attempt}`);
           addGeminiUsage(dialogueUsage, response?.usageMetadata);
           const raw = String(response.text || '').trim();
           if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
