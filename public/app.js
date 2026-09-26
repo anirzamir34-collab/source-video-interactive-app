@@ -121,7 +121,10 @@ import { extractMp4Audio } from './mp4-audio.js';
 
 const videoDownloads = createVideoDownloader();
 const urlVideoCache = createUrlVideoCache();
-void urlVideoCache.removeExpired().catch(error => console.warn('24 saatlik video önbelleği temizlenemedi:', error));
+const cleanExpiredUrlVideos = () =>
+  urlVideoCache.removeExpired().catch(error => console.warn('24 saatlik video önbelleği temizlenemedi:', error));
+void cleanExpiredUrlVideos();
+setInterval(() => { void cleanExpiredUrlVideos(); }, 15 * 60 * 1000);
 let savedGames;
 
 const $ = (id) => document.getElementById(id);
