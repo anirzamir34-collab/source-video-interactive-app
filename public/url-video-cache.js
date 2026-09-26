@@ -115,7 +115,7 @@ export function createUrlVideoCache({
     });
     return row;
   }
-  async function update(key, { audioReuseToken } = {}) {
+  async function update(key, { audioReuseToken, remoteToken } = {}) {
     const normalizedKey = String(key || '').trim();
     if (!normalizedKey) return false;
     return transaction('readwrite', (store, done) => {
@@ -128,6 +128,7 @@ export function createUrlVideoCache({
           return;
         }
         if (audioReuseToken !== undefined) row.audioReuseToken = String(audioReuseToken || '');
+        if (remoteToken !== undefined) row.remoteToken = String(remoteToken || '');
         store.put(row);
         done(true);
       };

@@ -1288,7 +1288,7 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
 
   const duration = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
   const protagonistProfile = String(els.protagonistInput?.value || '').trim();
-  const remoteToken = state.selectedSourceKind === 'url'
+  let remoteToken = state.selectedSourceKind === 'url'
     ? String(session?.remoteToken || state.selectedRemoteToken || '').trim()
     : '';
   const reusableAudio = state.selectedSourceKind === 'url'
@@ -1336,6 +1336,28 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
   }
 
   if (!upload) {
+    if (!remoteToken && state.selectedSourceKind === 'url' && state.urlCacheKey) {
+      // Older 24-hour cache entries predate remote-token persistence. Refresh
+      // only the source session; keep the cached video on the device.
+      els.analysisTitle.textContent = 'Video kaynağı yeniden bağlanıyor';
+      els.analysisOutput.textContent = 'Video yeniden indirilmiyor; ses için kaynak bağlantısı yenileniyor.';
+      try {
+        const response = await fetch('/api/resolve-video-url', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(20000),
+          body: JSON.stringify({ url: state.urlCacheKey })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (response.ok && result.ok && result.remoteToken) {
+          remoteToken = String(result.remoteToken);
+          state.selectedRemoteToken = remoteToken;
+          if (session) session.remoteToken = remoteToken;
+          void urlVideoCache.update(state.urlCacheKey, { remoteToken }).catch(() => {});
+        }
+      } catch (error) {
+        console.warn('Kaynak bağlantısı yenilenemedi; cihazdaki ses kullanılacak:', error);
+      }
+    }
     els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
     els.analysisOutput.textContent =
       `Konuşma sesi hazırlanıyor...\n` +
