@@ -51,3 +51,21 @@ test('failed or cancelled audio preparation never leaves partial derived files',
     assert.equal(fs.readFileSync(input, 'utf8'), 'invalid media');
   }
 });
+
+test('oversized audio fallback transcodes the complete track to compact inline-ready MP3', {
+  skip: !fs.existsSync(ffmpegPath) || !fs.existsSync(ffprobe), timeout: 15000
+}, async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vq-inline-audio-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const input = path.join(dir, 'source.mp3');
+  execFileSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-nostdin',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100',
+    '-t', '3', '-c:a', 'libmp3lame', '-b:a', '192k', input], { timeout: 8000 });
+  const compact = await prepareLocalDialogueAudio({ path: input }, {
+    ffmpegPath, audioInput: true, bitrate: '32k'
+  });
+  assert.ok(compact.size > 0 && compact.size < fs.statSync(input).size);
+  const metadata = JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-show_streams', '-of', 'json', compact.path]));
+  assert.equal(metadata.streams[0].codec_name, 'mp3');
+  assert.ok(Number(metadata.streams[0].duration) >= 3);
+});

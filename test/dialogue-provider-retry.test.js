@@ -66,12 +66,21 @@ test('a Files API 404 uses bounded inline audio without uploading again', async 
     req: { file: { mimetype: 'audio/mpeg', originalname: 'large.mp3' } },
     tempPath: '/tmp/large.mp3', uploadedFile: null, remoteFile: null, inlineAudioPart: null,
     fs: { promises: { stat: async () => ({ size: 15 * 1024 * 1024 }),
-      readFile: () => assert.fail('oversized audio must not be read into memory') } },
+      readFile: async path => {
+        assert.equal(path, '/tmp/large.mp3.dialogue.mp3');
+        return audio;
+      }, unlink: async () => {} } },
+    ffmpegPath: '/ffmpeg', preparationController: new AbortController(),
+    prepareLocalDialogueAudio: async (_file, options) => {
+      assert.equal(options.audioInput, true);
+      assert.equal(options.bitrate, '32k');
+      return { path: '/tmp/large.mp3.dialogue.mp3', size: audio.length, mimetype: 'audio/mpeg' };
+    },
     dialogueStage() {}, console: { warn() {} },
     ai: { files: { upload: async () => { throw Object.assign(new Error('Not found'), { status: 404 }); } } }
   });
-  await assert.rejects(vm.runInContext(`(async () => { ${upload} })()`, oversized),
-    error => error.status === 404);
+  const compressed = await vm.runInContext(`(async () => { ${upload}; return inlineAudioPart; })()`, oversized);
+  assert.equal(compressed.inlineData.data, audio.toString('base64'));
 });
 
 test('repeated transient failure is bounded; quota and invalid-input errors are not retried', async () => {

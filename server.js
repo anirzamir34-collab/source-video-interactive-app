@@ -1921,12 +1921,24 @@ app.post(
           dialogueStage('gemini-upload-ready');
           remoteFile = uploadedFile;
         } catch (error) {
-          const audioSize = (await fs.promises.stat(tempPath)).size;
+          let audioSize = (await fs.promises.stat(tempPath)).size;
           // The Files API can fail at upload initialization even though model
           // requests remain available. Inline audio stays below the 20 MB
           // request ceiling, including base64 expansion and the prompt.
-          if (Number(error?.status) !== 404 || !req.file.mimetype.startsWith('audio/') ||
-              audioSize > 14 * 1024 * 1024) throw error;
+          if (Number(error?.status) !== 404 || !req.file.mimetype.startsWith('audio/')) throw error;
+          if (audioSize > 14 * 1024 * 1024) {
+            const previousPath = tempPath;
+            req.file = await prepareLocalDialogueAudio(req.file, {
+              ffmpegPath, signal: preparationController.signal,
+              audioInput: true, bitrate: '32k'
+            });
+            tempPath = req.file.path;
+            await fs.promises.unlink(previousPath).catch(() => {});
+            audioSize = req.file.size;
+          }
+          if (audioSize > 14 * 1024 * 1024) {
+            throw new Error('Ses doğrudan analiz için çok uzun; kısa bölümlere ayırıp yeniden dene.');
+          }
           inlineAudioPart = { inlineData: {
             mimeType: req.file.mimetype,
             data: (await fs.promises.readFile(tempPath)).toString('base64')

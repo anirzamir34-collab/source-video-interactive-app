@@ -1336,9 +1336,10 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
   }
 
   if (!upload) {
-    if (!remoteToken && state.selectedSourceKind === 'url' && state.urlCacheKey) {
+    const refreshRemoteToken = async () => {
+      if (state.selectedSourceKind !== 'url' || !state.urlCacheKey) return false;
       // Older 24-hour cache entries predate remote-token persistence. Refresh
-      // only the source session; keep the cached video on the device.
+      // the source session after server restarts without downloading the video.
       els.analysisTitle.textContent = 'Video kaynağı yeniden bağlanıyor';
       els.analysisOutput.textContent = 'Video yeniden indirilmiyor; ses için kaynak bağlantısı yenileniyor.';
       try {
@@ -1353,10 +1354,15 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
           state.selectedRemoteToken = remoteToken;
           if (session) session.remoteToken = remoteToken;
           void urlVideoCache.update(state.urlCacheKey, { remoteToken }).catch(() => {});
+          return true;
         }
       } catch (error) {
         console.warn('Kaynak bağlantısı yenilenemedi; cihazdaki ses kullanılacak:', error);
       }
+      return false;
+    };
+    if (!remoteToken && state.selectedSourceKind === 'url' && state.urlCacheKey) {
+      await refreshRemoteToken();
     }
     els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
     els.analysisOutput.textContent =
@@ -1369,11 +1375,6 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
     if (remoteToken) {
       els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
       els.analysisOutput.textContent = 'Telefonundan ses yüklenmiyor; kaynak videonun sesi sunucuda hazırlanıyor.';
-      const remoteForm = new FormData();
-      remoteForm.append('remoteToken', remoteToken);
-      remoteForm.append('duration', String(duration));
-      remoteForm.append('protagonistProfile', protagonistProfile);
-      if (state.urlCacheKey) remoteForm.append('retainAudioForReuse', '1');
       const startedAt = performance.now();
       const show = () => {
         els.analysisState.textContent = 'DIALOGUE_PROCESSING';
@@ -1385,11 +1386,21 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
       show();
       processingTimer = setInterval(show, 1000);
       try {
-        const response = await fetch('/api/gemini-dialogue-analyze', {
-          method: 'POST', headers: geminiRequestHeaders(), body: remoteForm
-        });
-        const body = await response.json().catch(() => ({}));
-        upload = { ok: response.ok, status: response.status, body };
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const remoteForm = new FormData();
+          remoteForm.append('remoteToken', remoteToken);
+          remoteForm.append('duration', String(duration));
+          remoteForm.append('protagonistProfile', protagonistProfile);
+          if (state.urlCacheKey) remoteForm.append('retainAudioForReuse', '1');
+          const response = await fetch('/api/gemini-dialogue-analyze', {
+            method: 'POST', headers: geminiRequestHeaders(), body: remoteForm
+          });
+          const body = await response.json().catch(() => ({}));
+          upload = { ok: response.ok, status: response.status, body };
+          if (attempt === 0 && response.status === 410 &&
+              body.reason === 'VIDEO_SESSION_EXPIRED' && await refreshRemoteToken()) continue;
+          break;
+        }
       } catch (error) {
         console.warn('Sunucuda kaynak sesi hazırlanamadı; telefon sesine geçiliyor:', error);
       } finally {
