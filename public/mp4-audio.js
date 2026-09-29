@@ -7,6 +7,7 @@ import { MAX_AUDIO_BYTES } from './media-limits.js';
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
 const PACK_BYTES = 1024 * 1024;
 const MAX_PACK_SLICES = 2048;
+const MAX_SOURCE_SPAN = 4 * 1024 * 1024;
 const PREPARATION_TIMEOUT_MS = 15 * 60 * 1000;
 const invalid = () => { throw new Error('MP4_AUDIO_UNSUPPORTED'); };
 const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -106,21 +107,51 @@ export async function packAudioChunks(file, chunks, audioBytes, packBytes = PACK
     await new Promise(resolve => setTimeout(resolve, 0));
     signal?.throwIfAborted();
   };
-  for (const chunk of chunks) {
+  for (let index = 0; index < chunks.length;) {
     signal?.throwIfAborted();
+    const chunk = chunks[index];
     if (!Number.isSafeInteger(chunk.start) || chunk.start < 0 ||
         !Number.isSafeInteger(chunk.size) || chunk.size <= 0 || chunk.start + chunk.size > file.size) invalid();
-    let source = chunk.start;
-    let remaining = chunk.size;
+    let groupEnd = index + 1;
+    let groupBytes = chunk.size;
+    const start = chunk.start;
+    let end = start + chunk.size;
+    while (groupEnd < chunks.length && groupEnd - index < MAX_PACK_SLICES) {
+      const next = chunks[groupEnd];
+      if (!Number.isSafeInteger(next.start) || !Number.isSafeInteger(next.size) ||
+          next.size <= 0 || next.start < end || next.start + next.size > file.size ||
+          next.start + next.size - start > MAX_SOURCE_SPAN) break;
+      end = next.start + next.size;
+      groupBytes += next.size;
+      groupEnd++;
+    }
+    // Nearby audio packets share one source read. The span is bounded, and
+    // sparse video packets retain the audio-only Blob path below.
+    const coalesced = groupEnd - index >= 8 && groupBytes * 512 >= end - start;
+    let audio = null;
+    if (coalesced) {
+      const source = new Uint8Array(await readBlob(file.slice(start, end), signal));
+      signal?.throwIfAborted();
+      audio = new Uint8Array(groupBytes);
+      let at = 0;
+      for (let i = index; i < groupEnd; i++) {
+        const current = chunks[i];
+        audio.set(source.subarray(current.start - start, current.start - start + current.size), at);
+        at += current.size;
+      }
+    }
+    let source = coalesced ? 0 : chunk.start;
+    let remaining = coalesced ? groupBytes : chunk.size;
     while (remaining > 0) {
       const count = Math.min(remaining, packBytes - queued);
       if (copied + queued + count > audioBytes) invalid();
-      slices.push(file.slice(source, source + count));
+      slices.push(coalesced ? audio.subarray(source, source + count) : file.slice(source, source + count));
       queued += count;
       source += count;
       remaining -= count;
       if (queued === packBytes || slices.length === MAX_PACK_SLICES) await flush();
     }
+    index = coalesced ? groupEnd : index + 1;
   }
   if (queued) await flush();
   if (copied !== audioBytes) invalid();

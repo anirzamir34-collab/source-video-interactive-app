@@ -132,13 +132,39 @@ test('packing sparse audio uses bounded batch reads, not one async file read per
   const parts = await packAudioChunks(file, chunks, chunks.length, 1024, {
     onProgress: value => progress.push(value)
   });
-  assert.ok(reads.length <= 5, `${reads.length} file reads for only 4097 audio bytes`);
-  assert.ok(reads.every(size => size <= 1024));
+  assert.ok(reads.length <= 10, `${reads.length} bounded reads for 4097 audio bytes`);
+  assert.ok(reads.every(size => size <= 4 * 1024 * 1024));
   assert.equal(progress.at(-1)?.loaded, 4097);
   assert.equal(progress.at(-1)?.total, 4097);
   assert.ok(progress.every((row, i) => !i || row.loaded > progress[i - 1].loaded));
   assert.deepEqual(new Uint8Array(await new Blob(parts).arrayBuffer()),
     Uint8Array.from(chunks, chunk => bytes[chunk.start]));
+});
+
+test('nearby interleaved audio is gathered with bounded contiguous source reads', async () => {
+  const packetCount = 4096;
+  const packetSize = 1024;
+  const audioSize = 128;
+  const bytes = new Uint8Array(packetCount * packetSize);
+  const chunks = [];
+  for (let i = 0; i < packetCount; i++) {
+    bytes.fill(i % 251, i * packetSize, i * packetSize + audioSize);
+    chunks.push({ start: i * packetSize, size: audioSize });
+  }
+  const file = new File([bytes], 'interleaved.mp4');
+  let reads = 0;
+  const slice = file.slice.bind(file);
+  file.slice = (...args) => {
+    reads++;
+    assert.ok(args[1] - args[0] <= 4 * 1024 * 1024);
+    return slice(...args);
+  };
+  const parts = await packAudioChunks(file, chunks, packetCount * audioSize);
+  assert.ok(reads < 10, `${reads} source reads for ${packetCount} audio chunks`);
+  const result = new Uint8Array(await new Blob(parts).arrayBuffer());
+  for (let i = 0; i < packetCount; i++) {
+    assert.ok(result.subarray(i * audioSize, (i + 1) * audioSize).every(byte => byte === i % 251));
+  }
 });
 
 test('a never-settling Android file read releases preparation at its deadline', async () => {
