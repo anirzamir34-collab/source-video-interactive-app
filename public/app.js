@@ -1234,7 +1234,7 @@ async function prepareDialoguePayload(file, session = state.analysisSession) {
     els.analysisOutput.textContent = (total
       ? `Hazırlanan ses: ${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n`
       : 'Video cihazda kalıyor; ses kanalı bulunuyor.\n') +
-      `${elapsed} sn geçti. Cihazda hazırlama 120 saniyede tamamlanamazsa sunucuda devam edilecek.`;
+      `${elapsed} sn geçti. Cihazda hazırlama için 15 dakika tanınıyor; video cihazda kalıyor.`;
   };
   showPreparation();
   const preparationTimer = setInterval(showPreparation, 1000);
@@ -1254,7 +1254,7 @@ async function prepareDialoguePayload(file, session = state.analysisSession) {
       // A stuck file read must not start another full-file local decoder.
       // Reuse the original bytes with the existing server audio preparation.
       els.analysisTitle.textContent = 'Ses hazırlığı sunucuda devam edecek';
-      els.analysisOutput.textContent = 'Cihazda ses hazırlama 120 saniyede tamamlanamadı. Mevcut video sunucuya yüklenerek devam edilecek.';
+      els.analysisOutput.textContent = 'Cihazda ses hazırlama 15 dakikada tamamlanamadı. Mevcut video sunucuya yüklenerek devam edilecek.';
       if (session) { session.audioSource = file; session.audioFile = file; }
       return file;
     }
