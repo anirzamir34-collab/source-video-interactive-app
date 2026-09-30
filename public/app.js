@@ -4043,6 +4043,34 @@ function prepareAdultScenes() {
       return;
     }
 
+    // Oral/manual are verified warm-up activities, not sex-position tabs.
+    // Keep each source interval as a normal approach choice so they can build
+    // Lust and disappear from the core position list entirely.
+    if (['oral', 'manual'].includes(String(canonical.id || '').toLowerCase())) {
+      const startTime = Number(action.loopStartTime ?? action.startTime);
+      const endTime = Number(action.loopEndTime ?? action.endTime);
+      if (action.sourceVerified === true && action.label &&
+          Number.isFinite(startTime) && Number.isFinite(endTime) &&
+          endTime - startTime >= 2) {
+        traceRow.route = 'FOREPLAY';
+        traceRow.routeReason = 'ORAL_MANUAL_WARMUP';
+        traceRow.canonicalFamily = canonical.id;
+        traceRow.canonicalLabel = canonical.label;
+        scene.foreplay.push({
+          id: action.actionId || `${sceneId}:warmup-${index}`,
+          label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
+            { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
+          sourceVerified: true,
+          nonIntimate: false,
+          startTime,
+          endTime,
+          maleProgressRate: Number(action.maleProgressRate || 1),
+          femaleProgressRate: Number(action.femaleProgressRate || 1)
+        });
+      }
+      return;
+    }
+
     const correctedStart = canonical.correctedFromAction
       ? Number(action.startTime)
       : Number(action.positionStartTime ?? action.startTime);
