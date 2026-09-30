@@ -598,6 +598,22 @@ export function monotonicAdultPhase(proposed = 'foreplay', previous = 'foreplay'
   return proposedRank >= previousRank ? proposed : previous;
 }
 
+export function warmupLustScale({
+  warmupDurationSeconds = 0,
+  warmupChoiceCount = 0,
+  unlockPoints = DEFAULT_POSITION_UNLOCK_PROGRESS
+} = {}) {
+  const duration = Math.max(0, Number(warmupDurationSeconds) || 0);
+  const choices = Math.max(0, Math.floor(Number(warmupChoiceCount) || 0));
+  const target = Math.max(1, Number(unlockPoints) || DEFAULT_POSITION_UNLOCK_PROGRESS);
+  // Estimate the Lust a player can earn while naturally traversing the opening.
+  // Long openings are scaled down so the meter approaches 100 near the first
+  // verified core position instead of filling minutes too early.
+  const naturalPotential = duration * 0.24 + choices * 3;
+  if (naturalPotential <= target) return 1;
+  return clamp(target / naturalPotential, 0.12, 1);
+}
+
 export function computeWarmupSelectionDelta({
   repeatCount = 0,
   comboCount = 0,
@@ -990,6 +1006,7 @@ export function summarizeAdultSceneGraph(scenes = []) {
       familyId: String(position?.familyId || ''),
       occurrenceId: String(position?.occurrenceId || ''),
       label: String(position?.label || ''),
+      progressionRole: String(position?.progressionRole || ''),
       startTime: Number(position?.startTime),
       endTime: Number(position?.endTime),
       duration: Number((Number(position?.endTime) - Number(position?.startTime)).toFixed(3)),

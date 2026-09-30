@@ -18,6 +18,7 @@ import {
   dedupeVerifiedTimelineActions,
   expandVerifiedMovementVariants,
   computeWarmupSelectionDelta,
+  warmupLustScale,
   findAdultSceneForTimeline,
   isOutcomeUnlocked,
   groupVerifiedMovementsByTempo,
@@ -206,6 +207,14 @@ test('selection progress rewards novelty and reduces repeated farming', () => {
   assert.ok(novel.male > repeated.male);
   assert.ok(novel.female > repeated.female);
   assert.ok(repeated.male >= 0.4);
+});
+
+test('long opening sequences automatically slow Lust pacing toward the first core position', () => {
+  const shortOpening = warmupLustScale({ warmupDurationSeconds: 35, warmupChoiceCount: 3 });
+  const longOpening = warmupLustScale({ warmupDurationSeconds: 375, warmupChoiceCount: 25 });
+  assert.equal(shortOpening, 1);
+  assert.ok(longOpening < 0.3);
+  assert.ok(longOpening >= 0.12);
 });
 
 test('warmup progress can build lust but repeated farming loses value', () => {

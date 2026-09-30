@@ -2643,8 +2643,9 @@ function scoreElevenVoice(voice, gender) {
       !/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score -= 350;
   if (voice?.category === 'premade' &&
       !/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score -= 80;
-  if (/conversational|natural|warm|soft|calm|professional/.test(description)) score += 18;
-  if (/narration|news|storyteller/.test(description)) score -= 8;
+  if (/conversational|conversation|natural|casual|dialogue|dialog/.test(description)) score += 80;
+  if (/warm|soft|calm|professional/.test(description)) score += 30;
+  if (/narration|news|storyteller|audiobook|announcer/.test(description)) score -= 100;
   if (/^(?:bella|george)$/.test(name)) score -= 250;
   if (voice?.is_owner === true) score += 20;
   return score;
@@ -2708,10 +2709,13 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
   const voice = voiceSet.voices.find(item => item.voice_id === requested);
   if (!voice?.voice_id) throw Object.assign(new Error('Karaktere atanmış ses kullanılamıyor; başka sesle değiştirilmedi. Dublaj seslerini yeniden hazırla.'),
     { status: 422, code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
-  // Keep the same natural delivery across short and long conversational turns.
-  const deliveryText = String(text || '').trim();
+  // Keep the same Turkish conversational voice, while allowing the source
+  // emotion to influence delivery. V3 audio tags affect acting, not the words.
+  const plainText = String(text || '').trim();
+  const deliveryTag = elevenV3DeliveryTag(emotion);
+  const deliveryText = deliveryTag ? `${deliveryTag} ${plainText}` : plainText;
   const voiceSettings = { stability: 0.5,
-    similarity_boost: 0.75, use_speaker_boost: true };
+    similarity_boost: 0.85, use_speaker_boost: true };
   const accountHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
   // Identical short replies in different scenes need their own generation.
   // Context scopes reuse; it is not added to spoken text or acting prompts.
@@ -2721,7 +2725,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
     ...['originalText', 'previousText', 'nextText'].map(key => String(context[key] || '').trim().slice(0, 1200)),
     String(emotion || '').trim().toLowerCase().slice(0, 80)];
   const cacheKey = crypto.createHash('sha256')
-    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, deliveryContext, 'natural-dialogue-v3']))
+    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, deliveryContext, 'natural-dialogue-v4']))
     .digest('hex');
   pruneElevenLabsAudioCache();
   const cached = elevenLabsAudioCache.get(cacheKey);
@@ -2744,7 +2748,9 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
           text: deliveryText,
           model_id: 'eleven_v3',
           language_code: 'tr',
-          voice_settings: voiceSettings
+          voice_settings: voiceSettings,
+          previous_text: String(context.previousText || '').trim() || undefined,
+          next_text: String(context.nextText || '').trim() || undefined
         })
       }
     );

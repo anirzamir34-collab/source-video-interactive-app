@@ -13,6 +13,7 @@ import {
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
   computeWarmupSelectionDelta,
+  warmupLustScale,
   expandVerifiedMovementVariants,
   exclusiveControlClipIds,
   findAdultSceneForTimeline,
@@ -1807,7 +1808,7 @@ async function prepareDubAudio(segment, priority = 0) {
   preparedDubAudio.set(id, audio);
   // Keep only a handful of decoded media elements, including the active line.
   for (const [key, old] of preparedDubAudio) {
-    if (preparedDubAudio.size <= Math.max(6, activeDubSegments(dubTimeline(), languageClockTime()).length + 3)) break;
+    if (preparedDubAudio.size <= Math.max(12, activeDubSegments(dubTimeline(), languageClockTime()).length + 6)) break;
     if (key === id || dubChannels.has(key) || activeDubSegments(dubTimeline(), languageClockTime()).some(row => getDubSegmentId(row) === key)) continue;
     preparedDubAudio.delete(key);
     old.pause();
@@ -2096,8 +2097,8 @@ function resetDubState() {
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  nextDialogueSegments(dubTimeline(), languageClockTime(videoTime), 3)
-    .forEach((segment, index) => void prepareDubAudio(segment, 20 - index));
+  nextDialogueSegments(dubTimeline(), languageClockTime(videoTime), 6)
+    .forEach((segment, index) => void prepareDubAudio(segment, 30 - index));
 }
 
 async function prepareCompleteDubTimeline(segments = [], concurrency = 1, onProgress = null) {
@@ -2510,8 +2511,8 @@ els.analyzeBtn.addEventListener('click', async () => {
       throw new Error(`Dublaj eksik kaldı: ${ready}/${dubSegments.length} blok hazır${reason}. Video dublajsız başlatılmadı.`);
     }
     dialogue.dubCoverage = { ready, total: dubSegments.length, complete: true };
-    const initialSegments = nextDialogueSegments(dubSegments, 0, 2);
-    await Promise.all(initialSegments.map(segment => prepareDubAudio(segment)));
+    const initialSegments = nextDialogueSegments(dubSegments, 0, 6);
+    await Promise.all(initialSegments.map((segment, index) => prepareDubAudio(segment, 40 - index)));
     dubPreparation = null;
     dubPreparationPlan = null;
   };
@@ -4122,18 +4123,25 @@ function prepareAdultScenes() {
   );
 
   state.adultScenes.forEach(scene => {
-    const firstCoreStart = scene.positions
-      .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
-    // Merging source fragments must not move a later introduction into the
-    // first-entry gate of this encounter.
-    scene.foreplay = scene.foreplay.filter(item => Number(item.endTime) <= firstCoreStart + 0.05 ||
-      Number(item.startTime) >= firstCoreStart - 0.05);
     scene.positions = scene.positions.map(position => {
+      const family = String(position?.familyId || '').toLowerCase();
+      const category = String(position?.categoryId || '').toLowerCase();
+      const warmupActivity = ['oral', 'manual'].includes(family) ||
+        ['oral', 'manual'].includes(category);
       return {
         ...position,
-        progressionRole: 'core'
+        progressionRole: warmupActivity ? 'foreplay' : 'core'
       };
     });
+    const firstCoreStart = scene.positions
+      .filter(position => !isWarmupPosition(position))
+      .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
+    // Merging source fragments must not move a later introduction into the
+    // first-entry gate of this encounter. Oral/manual are opening activities,
+    // not sex-position tabs, so they remain available as approach choices.
+    scene.foreplay = scene.foreplay.filter(item => !Number.isFinite(firstCoreStart) ||
+      Number(item.endTime) <= firstCoreStart + 0.05 ||
+      Number(item.startTime) >= firstCoreStart - 0.05);
     scene.positions = consolidateVerifiedPositions(scene.positions, {
       mergeDistantReturns: false
     }).map(position => {
@@ -4263,6 +4271,33 @@ function currentAdultFlow() {
   return (raw / ADULT_LUST_UNLOCK_THRESHOLD) * 100;
 }
 
+function currentWarmupLustScale(scene = state.adultScene) {
+  if (!scene) return 1;
+  const coreStarts = (scene.positions || [])
+    .filter(position => !isWarmupPosition(position))
+    .map(position => Number(position.startTime))
+    .filter(Number.isFinite);
+  if (!coreStarts.length) return 1;
+  const firstCoreStart = Math.min(...coreStarts);
+  const warmupStarts = [
+    Number(scene.startTime),
+    ...(scene.foreplay || []).map(item => Number(item.startTime)),
+    ...(scene.positions || []).filter(isWarmupPosition).map(item => Number(item.startTime))
+  ].filter(Number.isFinite);
+  const warmupStart = warmupStarts.length ? Math.min(...warmupStarts) : firstCoreStart;
+  const warmupActionCount = (scene.foreplay || [])
+    .filter(item => Number(item.startTime) < firstCoreStart + 0.05).length;
+  const warmupPositionChoiceCount = (scene.positions || [])
+    .filter(isWarmupPosition)
+    .reduce((sum, position) => sum + Math.max(1,
+      Number(position.movementChoices?.length) || Number(position.movements?.length) || 0), 0);
+  return warmupLustScale({
+    warmupDurationSeconds: Math.max(0, firstCoreStart - warmupStart),
+    warmupChoiceCount: warmupActionCount + warmupPositionChoiceCount,
+    unlockPoints: ADULT_LUST_UNLOCK_THRESHOLD
+  });
+}
+
 function orderedLockedAdultPositions(scene = state.adultScene) {
   return (scene?.positions || [])
     .filter(position => !isWarmupPosition(position))
@@ -4273,24 +4308,15 @@ function orderedLockedAdultPositions(scene = state.adultScene) {
 function unlockNextAdultPositionFromLust() {
   if (currentAdultFlow() < 99.9 || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision) return null;
   const firstUnlock = !state.adultSexUnlocked;
-  const positions = state.adultScene?.positions || [];
-  // A full meter may open the first nearby verified segment. Requiring the
-  // playhead to reach the segment first can strand a paused introduction.
-  const latestUnlocked = positions.filter(position =>
-    !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id)
-  ).sort((a, b) => Number(b.startTime) - Number(a.startTime))[0];
-  // Each cycle opens one chronological step. The previous step must actually
-  // have started playback; clicking locked/stalled cards cannot skip it.
-  if (!firstUnlock && (!latestUnlocked || !state.adultVisitedPositionIds.has(latestUnlocked.id))) return null;
   const locked = orderedLockedAdultPositions();
-  const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
   const coreVisited = (state.adultScene?.positions || []).some(position =>
     !isWarmupPosition(position) && !isBonusPosition(position) &&
     state.adultVisitedPositionIds.has(position.id)
   );
+  // Lust is the unlock gate. Do not also require the previous card's final
+  // variant or a nearby playhead; those constraints made 100/100 look stuck.
   const next = locked.find(position =>
-    (!state.adultSexUnlocked ? !isBonusPosition(position) : coreVisited) &&
-    forwardLocalMovementClips(position, cursor).length
+    firstUnlock ? !isBonusPosition(position) : (!isBonusPosition(position) || coreVisited)
   );
   if (!next) return null;
   state.adultUnlockedPositionIds.add(next.id);
@@ -4302,18 +4328,7 @@ function unlockNextAdultPositionFromLust() {
     positionId: next.id,
     bonus: isBonusPosition(next)
   });
-  if (firstUnlock) {
-    const scene = state.adultScene;
-    const token = state.adultSelectionToken;
-    // Defer until the current playback/progress handler has finished. A newer
-    // user selection or scene exit supersedes this automatic first entry.
-    queueMicrotask(() => {
-      if (!state.adultMode || state.adultScene !== scene || token !== state.adultSelectionToken ||
-          state.adultOutcomePhase !== 'idle') return;
-      renderAdultProgressiveUI(true);
-      selectAdultPosition(next.id, true);
-    });
-  }
+  // Unlock only. The player decides whether and when to enter the new position.
   return next;
 }
 
@@ -4324,8 +4339,6 @@ function addFemaleLust(amount) {
     Math.max(0, Number(state.femaleSceneProgress) || 0) + Math.max(0, Number(amount) || 0)
   );
   if (state.femaleSceneProgress + 0.001 < ADULT_LUST_UNLOCK_THRESHOLD) return null;
-  const active = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
-  if (state.adultSexUnlocked && (!active || isWarmupPosition(active))) return null;
   return unlockNextAdultPositionFromLust();
 }
 
@@ -4688,9 +4701,20 @@ function renderAdultApproachChoices(scene, later = false) {
       }));
     })
   ];
+  const activePrelude = (scene?.foreplay || []).find(item => item.id === state.activeAdultPreludeId);
+  const activeWarmupPosition = (scene?.positions || []).find(item =>
+    item.id === state.activePositionId && isWarmupPosition(item));
+  const activeWarmupMovement = activeWarmupPosition?.movements?.find(item => item.id === state.activeMovementId);
+  const projectedFloor = Math.max(
+    Number(state.adultTimelineFloor) || 0,
+    Number(els.video?.currentTime) || 0,
+    Number(activePrelude?.endTime) || 0,
+    Number(activeWarmupMovement?.loopEndTime) || 0
+  );
   const candidates = selectSequentialApproachChoices(approachPool, {
-    timelineFloor: Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0),
-    limit: 5
+    timelineFloor: projectedFloor,
+    limit: 5,
+    maxForwardSeconds: 36
   });
 
   state.adultApproachChoices = candidates;
@@ -5146,7 +5170,7 @@ function applyAdultPreludeProgress(item) {
   });
 
   state.adultPreludePlayCounts.set(item.id, repeatCount + 1);
-  addFemaleLust(delta.female);
+  addFemaleLust(delta.female * currentWarmupLustScale());
   renderAdultProgress();
 }
 
@@ -5197,7 +5221,7 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   if (movement) {
     state.adultMovementPlayCounts.set(movement.id, repeatCount + 1);
   }
-  addFemaleLust(delta.female);
+  addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
   if (!isWarmupPosition(position)) {
     // Tapping a card never advances orgasm. Only verified core playback does.
     const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
@@ -5333,15 +5357,21 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
   const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
-  const localMovements = forwardLocalMovementClips(position, cursor);
-  // The parent tab plays its one verified entry clip only. Later clips belong
-  // to the movement cards; choosing a tab mid-position must never turn the
-  // parent into an implicit "next movement" control.
-  const entryMovementId = position.entryMovementId || position.movements[0]?.id || '';
-  const entryMovement = position.movements.find(item => item.id === entryMovementId);
-  const playableEntry = localMovements.find(item => item.id === entryMovement?.id) || null;
+  const forwardMovements = forwardLocalMovementClips(position, cursor);
+  const unlockedCore = !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id);
+  const verifiedPositionMovements = (position.movements || [])
+    .filter(item => item?.sourceVerified === true && positionOccurrenceForMovement(position, item))
+    .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
+  const localMovements = unlockedCore ? verifiedPositionMovements : forwardMovements;
+  // An unlocked position is an explicit user-selectable destination. Its own
+  // verified entry may be farther than the passive 18-second discovery window.
+  const entryMovementId = position.entryMovementId || verifiedPositionMovements[0]?.id || '';
+  const entryMovement = verifiedPositionMovements.find(item => item.id === entryMovementId);
+  const playableEntry = unlockedCore
+    ? (entryMovement || verifiedPositionMovements[0] || null)
+    : (forwardMovements.find(item => item.id === entryMovement?.id) || null);
   if (shouldSeek && !playableEntry) {
-    logEngineEvent('POSITION_FORWARD_RANGE_BLOCKED', { positionId: position.id, cursor });
+    logEngineEvent('POSITION_VERIFIED_ENTRY_MISSING', { positionId: position.id, cursor });
     return;
   }
   primeAdultPositionLanguage(position);
@@ -5475,9 +5505,13 @@ function selectAdultMovement(
     });
     return;
   }
-  if (shouldSeek && !forwardLocalMovementClips(position,
+  const forwardPlayable = forwardLocalMovementClips(position,
     Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0))
-    .some(item => item.id === movement.id)) {
+    .some(item => item.id === movement.id);
+  const alreadyPlayed = Number(state.adultMovementPlayCounts.get(movement.id) || 0) > 0;
+  const sameOccurrenceReplay = alreadyPlayed &&
+    (!state.activeAdultOccurrenceId || state.activeAdultOccurrenceId === movementOccurrence.id);
+  if (shouldSeek && !forwardPlayable && !sameOccurrenceReplay) {
     logEngineEvent('MOVEMENT_FORWARD_RANGE_BLOCKED', { movementId: movement.id });
     return;
   }
@@ -5882,7 +5916,7 @@ function updateAdultPlayback(now, mediaTime) {
       femaleRate: item.femaleProgressRate || 1,
       warmup: true
     });
-    addFemaleLust(progress.lust);
+    addFemaleLust(progress.lust * currentWarmupLustScale());
     renderAdultProgress();
     return;
   }
@@ -5921,14 +5955,15 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
+  const warmupMovement = isWarmupPosition(position);
   const progress = adultPlaybackProgressDelta({
     elapsed,
     maleRate: movement.maleProgressRate || 1,
     femaleRate: movement.femaleProgressRate || 1,
-    warmup: false
+    warmup: warmupMovement
   });
-  addFemaleLust(progress.lust);
-  if (!isWarmupPosition(position)) {
+  addFemaleLust(progress.lust * (warmupMovement ? currentWarmupLustScale() : 1));
+  if (!warmupMovement) {
     const movementRate = averageAdultProgress(
       Number(movement.maleProgressRate || 1),
       Number(movement.femaleProgressRate || 1)
