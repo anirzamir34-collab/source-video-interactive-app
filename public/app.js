@@ -2661,7 +2661,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   state.dubbingEnabled = false;
   updateDubMix();
   state.subtitlesEnabled = false;
-  if (!reusableSession) resetDubState();
+  if (modes.dubbing || !reusableSession) resetDubState();
   els.video.muted = false;
   els.subtitleOverlay?.classList.add('hidden');
 
@@ -3893,7 +3893,8 @@ function prepareAdultScenes() {
   const introductions = matchSceneIntroductions(actions,
     actions.filter(action => traceByAction.get(action).sceneCandidate)
       .map(action => ({ action, sceneId: sceneIdFor(action) })),
-    action => ['kiss', 'touch', 'clothing', 'body_transition'].includes(action.actionType) &&
+    action => ['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm']
+      .includes(String(action.actionType || '').toLowerCase()) &&
       !action.positionId && !action.positionLabel &&
       !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
         !isAdultSocialRelationshipRole(action.relationshipRoleLabel)));
@@ -3998,7 +3999,8 @@ function prepareAdultScenes() {
         return;
       }
       const labelKey = normalizeAdultLabel(action.label || action.movementType || '');
-      const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition'].includes(actionType);
+      const explicitWarmup = ['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm']
+        .includes(actionType);
       const sourceDialogue = actionType === 'other' &&
         !/\b(?:pozisyon|seks|oral)\b/iu.test(action.label || '');
       const labelWarmup = /\b(op|opus|dokun|oksa|soyun|cikar|saril|elle|elini|tenine)\b/.test(labelKey);
@@ -5210,9 +5212,9 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
       .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
       .trim();
     button.dataset.positionId = position.id;
-    button.disabled = !forwardLocalMovementClips(position,
-      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0))
-      .some(item => item.id === (position.entryMovementId || position.movements[0]?.id));
+    const hasVerifiedEntry = (position.movements || []).some(item =>
+      item?.sourceVerified === true && positionOccurrenceForMovement(position, item));
+    button.disabled = !hasVerifiedEntry;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
       button.classList.add('unlock-reveal');
@@ -5225,14 +5227,12 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
   });
 
   const selected = positions.find(item => item.id === state.activePositionId) ||
-    positions.find(item => forwardLocalMovementClips(item,
-      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0)).length);
+    positions.find(item => (item.movements || []).some(movement =>
+      movement?.sourceVerified === true && positionOccurrenceForMovement(item, movement)));
 
   if (selected) {
-    const entryId = selected.entryMovementId || selected.movements[0]?.id;
-    const canPlayEntry = forwardLocalMovementClips(selected,
-      Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0))
-      .some(item => item.id === entryId);
+    const canPlayEntry = (selected.movements || []).some(movement =>
+      movement?.sourceVerified === true && positionOccurrenceForMovement(selected, movement));
     selectAdultPosition(selected.id, shouldSeek && canPlayEntry);
   }
 }
