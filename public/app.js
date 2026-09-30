@@ -113,7 +113,7 @@ import { dubSpeakerKey, buildDubSpeakerRoster, validateDubVoicePlan } from './du
 import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from './dub-overlap.js';
 import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
-import { normalizeDialogueSegments } from './dialogue-integrity.js';
+import { normalizeDialogueTimeline } from './dialogue-integrity.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel } from './choice-groups.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
@@ -173,6 +173,9 @@ const state = {
   dubVoicePlanRequest: null,
   dubStableSpeakerGenders: new Map(),
   dubPlayedSegmentIds: new Set(),
+  dubSkippedSegmentIds: new Set(),
+  dubSegmentMetadata: new Map(),
+  dubDiagnostics: null,
   decisionDubHold: false,
   aiUsage: {
     requests: 0,
@@ -1605,50 +1608,15 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
     }
   }
 
-  const rawDialogueSegments = Array.isArray(body.segments) ? body.segments : [];
   const durationSeconds = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
-  const repairedDialogueSegments = (() => {
-    if (durationSeconds < 180 || rawDialogueSegments.length < 3) return rawDialogueSegments;
-    const times = rawDialogueSegments.flatMap(item => [Number(item?.startTime), Number(item?.endTime)])
-      .filter(Number.isFinite);
-    if (!times.length || Math.max(...times) > 15) return rawDialogueSegments;
-    const convert = value => {
-      const number = Number(value);
-      if (!Number.isFinite(number)) return number;
-      const minutes = Math.floor(number);
-      const seconds = Math.round((number - minutes) * 100);
-      return minutes * 60 + Math.min(59, Math.max(0, seconds));
-    };
-    const convertedMax = Math.max(...times.map(convert));
-    const minuteEvidence = times.filter(value => {
-      const fraction = Math.round((value - Math.floor(value)) * 100);
-      return value >= 1 && fraction >= 10 && fraction <= 59;
-    }).length >= Math.max(2, Math.floor(times.length * 0.2));
-    if (!minuteEvidence || convertedMax > durationSeconds + 5 ||
-        convertedMax < Math.min(90, durationSeconds * 0.15)) return rawDialogueSegments;
-    logEngineEvent('DIALOGUE_TIMELINE_REPAIRED', {
-      mode: 'minute-dot-second',
-      rawMax: Math.max(...times),
-      convertedMax,
-      duration: durationSeconds
-    });
-    return rawDialogueSegments.map(item => ({
-      ...item,
-      startTime: convert(item.startTime),
-      endTime: convert(item.endTime)
-    }));
-  })();
-  const segments = normalizeDialogueSegments(repairedDialogueSegments, durationSeconds);
+  const normalizedDialogue = normalizeDialogueTimeline(body, durationSeconds);
+  if (normalizedDialogue.timestampRepair?.repaired) {
+    logEngineEvent('DIALOGUE_TIMELINE_REPAIRED', normalizedDialogue.timestampRepair);
+  }
   state.dialogue = {
-    ...body,
-    segments,
-    // Captions remain individually timed, while adjacent pieces of the same
-    // spoken sentence become one TTS utterance. This prevents a voice from
-    // stopping between subtitle rows or restarting with a clipped syllable.
-    dubSegments: buildDubBlocks(segments, {
-      mergeAdjacent: true,
-      maxGap: 0.5,
-      maxDuration: 18
+    ...normalizedDialogue,
+    dubSegments: buildDubBlocks(normalizedDialogue.segments, {
+      mergeAdjacent: true, maxGap: 0.5, maxDuration: 18
     })
   };
   updateLanguageSyncControls();
@@ -1702,6 +1670,47 @@ let dubBoundaryHold = null;
 const preparedDubAudio = new Map();
 const dubMixer = createDubMixer(els.video);
 let dubPlaybackTimer = null;
+
+function getDubDiagnostics() {
+  return state.dubDiagnostics ||= {
+    preparedIds: new Set(), playedIds: new Set(), firstPlaybackEvents: [],
+    playbackEventCount: 0, playbackFailureReason: ''
+  };
+}
+
+function dubbingDebugReport() {
+  const diagnostics = getDubDiagnostics();
+  const timeline = dubTimeline();
+  return {
+    dubbingEnabled: state.dubbingEnabled,
+    provider: state.dubProviderLock || 'unknown',
+    selectedModel: [...(state.dubSegmentMetadata?.values() || [])].find(row => row.model)?.model || '',
+    generatedSegmentCount: state.dubCache?.size || 0,
+    cachedSegmentCount: state.dubCache?.size || 0,
+    decodedPreparedSegmentCount: diagnostics.preparedIds.size,
+    readySegmentCount: [...preparedDubAudio.values()].filter(audio => audio.readyState >= 2 && !audio.error).length,
+    playedSegmentCount: diagnostics.playedIds.size,
+    playbackEventCount: diagnostics.playbackEventCount,
+    firstPlaybackEvents: diagnostics.firstPlaybackEvents,
+    repairedTimestamps: state.dialogue?.timestampRepair || null,
+    failureReason: state.dubFailureReason || '',
+    playbackFailureReason: diagnostics.playbackFailureReason,
+    playbackBlocked: Boolean(state.dubPlaybackBlocked),
+    videoTime: Number(els.video.currentTime) || 0,
+    timeline: timeline.map(segment => {
+      const id = getDubSegmentId(segment);
+      return {
+        segmentId: id, speakerId: dubSpeakerKey(segment),
+        startTime: segment.startTime, endTime: segment.endTime,
+        ...(state.dubSegmentMetadata?.get(id) || {}),
+        voiceId: state.dubSegmentMetadata?.get(id)?.voiceId || state.dubSpeakerVoices?.get(dubSpeakerKey(segment))?.voiceId || '',
+        cached: state.dubCache?.has(id) || false,
+        prepared: diagnostics.preparedIds.has(id), played: diagnostics.playedIds.has(id),
+        active: activeDubSegments(timeline, languageClockTime()).includes(segment)
+      };
+    })
+  };
+}
 
 function cancelDubBoundaryHold() {
   if (dubBoundaryHold) clearTimeout(dubBoundaryHold.timer);
@@ -1829,9 +1838,18 @@ async function retryDubBuffer(useOriginal = false) {
     state.dubbingEnabled = true;
   }
   try {
-    await els.video.play();
+    // Invoke every blocked voice's play() in the click task, before the
+    // first await consumes transient browser activation. A video gesture alone
+    // does not authorize a new HTMLAudioElement on every mobile browser.
+    const sourcePlayback = els.video.play();
+    const voiceStarts = state.dubbingEnabled ? [...dubChannels]
+      .filter(([, audio]) => audio.paused && !audio.ended)
+      .map(([id, audio]) => playDubAudio(audio, id, state.dubSyncGeneration, sourcePlayback)) : [];
+    await Promise.all([sourcePlayback, ...voiceStarts]);
     if (state.dubbingEnabled) { startDubClock(); void syncDubPlayback(); }
-  } catch {
+  } catch (error) {
+    dubChannels.forEach(audio => audio.pause());
+    getDubDiagnostics().playbackFailureReason = `${error?.name || 'DUB_SOURCE_PLAY_ERROR'}:${error?.message || String(error)}`;
     // Keep an actionable control if the browser requires a fresh play gesture.
     if (buffer.generation !== state.dubSyncGeneration || buffer.controller !== state.dubRequestController ||
         buffer.selectionToken !== state.adultSelectionToken || buffer.playbackGeneration !== state.playbackGeneration) return;
@@ -1930,6 +1948,14 @@ async function prepareDubAudio(segment, priority = 0) {
       for (const event of ['canplay', 'error']) audio.removeEventListener(event, done);
       const ready = !cancelled && audio.readyState >= 2 && !audio.error;
       if (!ready && preparedDubAudio.get(id) === audio) preparedDubAudio.delete(id);
+      const diagnostics = getDubDiagnostics();
+      if (ready) {
+        diagnostics.preparedIds.add(id);
+        logEngineEvent('DUB_AUDIO_PREPARED', { segmentId: id, duration: Number(audio.duration) || 0 });
+      } else if (!cancelled) {
+        diagnostics.playbackFailureReason = audio.error ? `DUB_DECODE_ERROR:${audio.error.code}` : 'DUB_DECODE_TIMEOUT';
+        logEngineEvent('DUB_DECODE_FAILED', { segmentId: id, reason: diagnostics.playbackFailureReason });
+      }
       resolve(ready ? audio : null);
     };
     for (const event of ['canplay', 'error']) audio.addEventListener(event, done);
@@ -1949,6 +1975,8 @@ async function prepareDubAudio(segment, priority = 0) {
     audio.pause();
     dubChannels.delete(id);
     if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
+    getDubDiagnostics().playbackFailureReason = `DUB_DECODE_ERROR:${audio.error?.code || 'unknown'}`;
+    logEngineEvent('DUB_PLAYBACK_FAILED', { segmentId: id, reason: getDubDiagnostics().playbackFailureReason });
     state.dubPlayedSegmentIds.delete(id);
     dubRecoveryOffsets.set(id, { segment, offset: Math.max(0, Number(audio.currentTime) || 0) });
     preparedDubAudio.delete(id);
@@ -2123,17 +2151,22 @@ async function ensureDubSegment(segment, priority = 0) {
         const body = await response.json().catch(() => ({}));
         if (!isCurrent()) return null;
         if (response.ok && body?.available && body?.audioBase64) {
+          if (body.provider && body.provider !== 'elevenlabs') {
+            throw Object.assign(new Error('Dublaj sağlayıcısı eşleşmedi; yanıt oynatılmadı.'), { code: 'DUB_PROVIDER_MISMATCH' });
+          }
           if (state.dubFailureReason && els.dubToggleBtn) {
             delete els.dubToggleBtn.dataset.unavailable;
             els.dubToggleBtn.title = '';
             els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
           }
           state.dubFailureReason = '';
-          state.dubProviderLock = 'elevenlabs';
           if (body.voiceId !== assignment.voiceId || (body.speakerId && body.speakerId !== assignment.speakerId)) {
             throw Object.assign(new Error('Dublaj yanıtının konuşmacı sesi eşleşmedi; yanlış ses oynatılmadı.'), { code: 'DUB_VOICE_MISMATCH' });
           }
-          const source = `data:${body.mimeType || 'audio/wav'};base64,${body.audioBase64}`;
+          state.dubProviderLock = 'elevenlabs';
+          state.dubSegmentMetadata ||= new Map();
+          state.dubSegmentMetadata.set(segmentId, { provider: 'elevenlabs', model: body.model || '', voiceId: body.voiceId });
+          const source = `data:${body.mimeType || 'audio/mpeg'};base64,${body.audioBase64}`;
           state.dubCache.set(segmentId, source);
           logEngineEvent('DUB_PROVIDER_USED', { provider: 'elevenlabs', segmentId, voiceId: body.voiceId });
           return source;
@@ -2151,7 +2184,7 @@ async function ensureDubSegment(segment, priority = 0) {
       } catch (error) {
         if (!isCurrent()) return null;
         lastFailure = { error };
-        if (error.code === 'DUB_VOICE_MISMATCH') break;
+        if (['DUB_VOICE_MISMATCH', 'DUB_PROVIDER_MISMATCH'].includes(error.code)) break;
         if (attempt < 4) {
           await new Promise(resolve => setTimeout(resolve, attempt * 1200));
           continue;
@@ -2228,10 +2261,14 @@ function resetDubState() {
   state.activeDubSegmentId = null;
   state.dubFailureReason = '';
   state.dubProviderLock = '';
+  state.dubDiagnostics = null;
+  state.dubSegmentMetadata = new Map();
+  state.dubSkippedSegmentIds = new Set();
   state.dubQueue.clear();
   state.dubQueue = createDubRequestQueue(2);
   state.dubStableSpeakerGenders.clear();
   state.dubPlayedSegmentIds.clear();
+  state.dubSkippedSegmentIds?.clear();
   state.dubSpeakerVoices = new Map();
   state.dubVoicePlanRequest = null;
   state.decisionDubHold = false;
@@ -2328,10 +2365,12 @@ function resyncLanguageTracks() {
   void syncDubPlayback();
 }
 
-async function playDubAudio(audio, segmentId, generation) {
+async function playDubAudio(audio, segmentId, generation, sourcePlayback = null) {
   try {
     audio._vqPlayGeneration = generation;
+    if (audio.muted || audio.volume <= 0) throw Object.assign(new Error('Dublaj çıkışı sessiz; ses seviyesini açıp yeniden dene.'), { name: 'DUB_OUTPUT_MUTED' });
     await audio.play();
+    if (sourcePlayback) await sourcePlayback;
     if (generation !== state.dubSyncGeneration || dubChannels.get(segmentId) !== audio ||
         !state.dubbingEnabled || (els.video.paused && !state.decisionDubHold) ||
         state.dubVideoWaiting || els.video.seeking) {
@@ -2340,8 +2379,18 @@ async function playDubAudio(audio, segmentId, generation) {
     }
     // A queued or blocked play() is not a heard sentence.
     state.dubPlayedSegmentIds.add(segmentId);
-    logEngineEvent('DUB_PLAYBACK_STARTED', { segmentId, videoTime: Number(els.video.currentTime) || 0,
-      audioTime: Number(audio.currentTime) || 0, duration: Number(audio.duration) || 0 });
+    const diagnostics = getDubDiagnostics();
+    diagnostics.playedIds.add(segmentId);
+    diagnostics.playbackEventCount += 1;
+    diagnostics.playbackFailureReason = '';
+    const event = { segmentId, videoTime: Number(els.video.currentTime) || 0,
+      audioTime: Number(audio.currentTime) || 0, duration: Number(audio.duration) || 0,
+      provider: state.dubSegmentMetadata?.get(segmentId)?.provider || state.dubProviderLock || 'unknown',
+      model: state.dubSegmentMetadata?.get(segmentId)?.model || '',
+      voiceId: state.dubSegmentMetadata?.get(segmentId)?.voiceId || state.dubSpeakerVoices?.get(dubSpeakerKey(audio._vqSegment))?.voiceId || '' };
+    if (event.provider === 'elevenlabs') state.dubProviderLock = 'elevenlabs';
+    if (diagnostics.firstPlaybackEvents.length < 10) diagnostics.firstPlaybackEvents.push(event);
+    logEngineEvent('DUB_PLAYBACK_STARTED', event);
     dubRecoveryOffsets.delete(segmentId);
     state.dubResumeTime = null;
     if (state.dubBuffer?.segment === audio._vqSegment) cancelDubBuffer();
@@ -2352,6 +2401,7 @@ async function playDubAudio(audio, segmentId, generation) {
     // pause()/seek() may legitimately interrupt a pending play promise.
     if (error?.name !== 'AbortError') {
       state.dubPlaybackBlocked = true;
+      getDubDiagnostics().playbackFailureReason = `${error?.name || 'DUB_PLAY_ERROR'}:${error?.message || String(error)}`;
       logEngineEvent('DUB_PLAYBACK_BLOCKED', { message: error?.message || String(error) });
       beginDubBuffer(audio._vqSegment, false);
     }
@@ -2409,7 +2459,7 @@ async function syncDubPlayback() {
     }
     const pending = active.filter(segment => {
       const id = getDubSegmentId(segment);
-      return !waitingForTail.has(id) && !dubChannels.has(id) && !state.dubPlayedSegmentIds.has(id);
+      return !waitingForTail.has(id) && !dubChannels.has(id) && !state.dubPlayedSegmentIds.has(id) && !state.dubSkippedSegmentIds?.has(id);
     });
     const prepared = await prepareDubGroupForPlayback(pending);
     if (!prepared || !current() || els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked) return;
@@ -2426,7 +2476,12 @@ async function syncDubPlayback() {
       const offset = dubRecoveryOffsets.get(id)?.offset ??
         (state.dubResumeTime !== null
           ? Math.min(audio.duration, elapsed * sourceRate) : 0);
-      if (offset >= audio.duration - 0.02) { state.dubPlayedSegmentIds.add(id); continue; }
+      if (offset >= audio.duration - 0.02) {
+        state.dubSkippedSegmentIds ||= new Set();
+        state.dubSkippedSegmentIds.add(id);
+        logEngineEvent('DUB_SEEK_PAST_AUDIO', { segmentId: id, offset, duration: audio.duration });
+        continue;
+      }
       audio.currentTime = offset;
       audio._vqSpeechEnd = dubSpeechEnd(segment, dubTimeline());
       audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, dubSpeechEnd(segment, dubTimeline()) - now));
@@ -2468,6 +2523,7 @@ els.video.addEventListener('seeking', () => {
   state.dubResumeTime = Math.max(0, Number(els.video.currentTime) || 0);
   stopDubPlayback();
   state.dubPlayedSegmentIds.clear();
+  state.dubSkippedSegmentIds?.clear();
 });
 els.video.addEventListener('seeked', () => {
   renderSubtitle();
@@ -2534,6 +2590,7 @@ function adjustLanguageSync(delta) {
   state.dubSyncGeneration += 1;
   stopDubPlayback();
   state.dubPlayedSegmentIds.clear();
+  state.dubSkippedSegmentIds?.clear();
   state.dubResumeTime = languageClockTime();
   resyncLanguageTracks();
   if (!els.video.paused) startDubClock();
@@ -2560,6 +2617,7 @@ els.dubToggleBtn?.addEventListener('click', () => {
   }
   state.dubPlaybackBlocked = false;
   state.dubPlayedSegmentIds.clear();
+  state.dubSkippedSegmentIds?.clear();
   state.dubResumeTime = Math.max(0, Number(els.video.currentTime) || 0);
   updateDubMix();
   if (!els.video.paused) startDubClock();
@@ -2662,7 +2720,10 @@ els.analyzeBtn.addEventListener('click', async () => {
     }
     dialogue.dubCoverage = { ready, total: dubSegments.length, complete: true };
     const initialSegments = nextDialogueSegments(dubSegments, 0, 6);
-    await Promise.all(initialSegments.map((segment, index) => prepareDubAudio(segment, 40 - index)));
+    const prepared = await Promise.all(initialSegments.map((segment, index) => prepareDubAudio(segment, 40 - index)));
+    if (prepared.some(audio => !audio)) {
+      throw new Error(`Dublaj üretildi ancak ses çözümlenemedi: ${getDubDiagnostics().playbackFailureReason || 'DUB_DECODE_FAILED'}`);
+    }
     dubPreparation = null;
     dubPreparationPlan = null;
   };
@@ -4390,19 +4451,7 @@ function adultAnalysisTraceText() {
     ...state.adultAnalysisTrace,
     audioContext: {
       ...state.adultAnalysisTrace.audioContext,
-      dubbingEnabled: state.dubbingEnabled,
-      provider: state.dubProviderLock || '',
-      cachedSegmentCount: state.dubCache.size,
-      playedSegmentCount: state.dubPlayedSegmentIds.size,
-      failureReason: state.dubFailureReason || '',
-      playbackBlocked: Boolean(state.dubPlaybackBlocked),
-      videoTime: Number(els.video.currentTime) || 0,
-      timeline: dubTimeline().map(segment => ({
-        segmentId: getDubSegmentId(segment), speakerId: dubSpeakerKey(segment),
-        startTime: segment.startTime, endTime: segment.endTime,
-        cached: state.dubCache.has(getDubSegmentId(segment)),
-        played: state.dubPlayedSegmentIds.has(getDubSegmentId(segment))
-      })),
+      ...dubbingDebugReport(),
       events: state.engineEvents.filter(event => /^DUB_/.test(String(event.type || ''))).slice(-100)
     }
   } : null;
@@ -7261,6 +7310,8 @@ function captureSavedGame() {
       analysis: state.analysis,
       dialogue: state.dialogue,
       dubCache: [...state.dubCache],
+      dubSegmentMetadata: [...state.dubSegmentMetadata],
+      dubProviderLock: state.dubProviderLock,
       dubSpeakerVoices: [...state.dubSpeakerVoices.values()],
       dubStableSpeakerGenders: [...state.dubStableSpeakerGenders],
       subtitlesEnabled: state.subtitlesEnabled,
@@ -7319,9 +7370,12 @@ async function openSavedGame(game) {
       unownedSourceIntervals: mergeUnownedIntervals([...(savedAnalysis.unownedSourceIntervals || []),
         ...ownership.excluded.map(action => ({ startTime: action.startTime, endTime: action.endTime }))]) };
   } else state.analysis = savedAnalysis;
-  state.dialogue = game.payload.dialogue;
+  state.dialogue = normalizeDialogueTimeline(game.payload.dialogue, game.duration);
   state.languageSyncOffset = Number(game.payload.languageSyncOffset) || 0;
   state.dubCache = new Map(game.payload.dubCache || []);
+  state.dubSegmentMetadata = new Map(game.payload.dubSegmentMetadata || []);
+  state.dubProviderLock = game.payload.dubProviderLock || '';
+  state.dubDiagnostics = null;
   state.dubSpeakerVoices = new Map((game.payload.dubSpeakerVoices || []).map(row => [row.speakerId, row]));
   state.dubVoicePlanRequest = null;
   state.dubStableSpeakerGenders = new Map(game.payload.dubStableSpeakerGenders || []);

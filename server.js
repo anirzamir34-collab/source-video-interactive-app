@@ -1,3 +1,4 @@
+import { parseModelJson } from './public/model-json.js';
 import { GoogleGenAI } from "@google/genai";
 import express from 'express';
 import multer from 'multer';
@@ -14,7 +15,7 @@ import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 import { MAX_VIDEO_BYTES, dialogueUploadLimit } from './public/media-limits.js';
 import { allocateSpeakerVoices } from './lib/voice-allocation.js';
-import { uniqueTimedSpeech, normalizeDialogueSegments } from './public/dialogue-integrity.js';
+import { uniqueTimedSpeech, normalizeDialogueSegments, repairDialogueTimestamps } from './public/dialogue-integrity.js';
 import { prepareLocalDialogueAudio } from './lib/dialogue-media.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 
@@ -221,49 +222,6 @@ async function readJsonSafe(response) {
     return text ? JSON.parse(text) : null;
   } catch {
     return { raw: text };
-  }
-}
-
-function stripTrailingJsonCommas(value) {
-  const input = String(value || '');
-  let output = '';
-  let inString = false;
-  let escaped = false;
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    if (inString) {
-      output += char;
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-      output += char;
-      continue;
-    }
-    if (char === ',') {
-      let cursor = index + 1;
-      while (cursor < input.length && /\s/.test(input[cursor])) cursor += 1;
-      if (input[cursor] === '}' || input[cursor] === ']') continue;
-    }
-    output += char;
-  }
-  return output;
-}
-
-function parseModelJson(value) {
-  const cleaned = String(value || '').trim()
-    .replace(/^\`\`\`json\s*/i, '')
-    .replace(/\`\`\`\s*$/i, '');
-  if (!cleaned) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
-  try {
-    return JSON.parse(cleaned);
-  } catch (firstError) {
-    const repaired = stripTrailingJsonCommas(cleaned);
-    if (repaired !== cleaned) return JSON.parse(repaired);
-    throw firstError;
   }
 }
 
@@ -1782,48 +1740,6 @@ function extractTranscribeWordAnnotations(interaction) {
   return uniqueTimedSpeech(words, { textField: 'text', tolerance: 0.015 });
 }
 
-function repairMinuteDotSecondDialogueTimes(segments = [], duration = 0) {
-  const rows = Array.isArray(segments) ? segments : [];
-  const videoDuration = Math.max(0, Number(duration) || 0);
-  if (videoDuration < 180 || rows.length < 3) return rows;
-
-  const times = rows.flatMap(item => [Number(item?.startTime), Number(item?.endTime)])
-    .filter(Number.isFinite);
-  if (!times.length) return rows;
-  const rawMax = Math.max(...times);
-  if (rawMax > 15) return rows;
-
-  const convert = value => {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return number;
-    const minutes = Math.floor(number);
-    const seconds = Math.round((number - minutes) * 100);
-    return minutes * 60 + Math.min(59, Math.max(0, seconds));
-  };
-  const converted = times.map(convert);
-  const convertedMax = Math.max(...converted);
-  const plausible = convertedMax <= videoDuration + 5 &&
-    convertedMax >= Math.min(90, videoDuration * 0.15);
-  const minuteStyleEvidence = times.filter(value => {
-    const fraction = Math.round((value - Math.floor(value)) * 100);
-    return value >= 1 && fraction >= 10 && fraction <= 59;
-  }).length >= Math.max(2, Math.floor(times.length * 0.2));
-  if (!plausible || !minuteStyleEvidence) return rows;
-
-  console.info('[dialogue-time-repair]', JSON.stringify({
-    mode: 'minute-dot-second',
-    rawMax,
-    convertedMax,
-    duration: videoDuration,
-    segments: rows.length
-  }));
-  return rows.map(item => ({
-    ...item,
-    startTime: convert(item.startTime),
-    endTime: convert(item.endTime)
-  }));
-}
-
 function groupTranscribeWords(words) {
   const groups = [];
   const bySpeaker = new Map();
@@ -2281,7 +2197,7 @@ Rules:
           addGeminiUsage(dialogueUsage, response?.usageMetadata);
           const raw = String(response.text || '').trim();
           if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
-          parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
+          parsed = parseModelJson(raw);
           break;
         } catch (error) {
           lastDialogueError = error;
@@ -2322,7 +2238,7 @@ Rules:
               addGeminiUsage(dialogueUsage, translationResponse?.usageMetadata);
               const raw = String(translationResponse.text || '').trim();
               if (!raw) throw new Error('GEMINI_EMPTY_TEXT_TRANSLATION');
-              translatedBatch = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
+              translatedBatch = parseModelJson(raw);
               break;
             } catch (error) {
               lastDialogueError = error;
@@ -2342,6 +2258,17 @@ Rules:
       }
 
       if (!parsed) throw lastDialogueError || new Error('GEMINI_DIALOGUE_JSON_PARSE_FAILED');
+
+      // Repair multimodal timestamps before combining them with ASR seconds.
+      // A mixed timeline would hide collapsed supplemental speech from detection.
+      const duration = Math.max(0, Number(req.body?.duration || 0));
+      const dialogueTimeRepair = repairDialogueTimestamps(parsed.segments, duration, {
+        timestampUnit: parsed.timestampUnit
+      });
+      parsed.segments = dialogueTimeRepair.segments;
+      if (dialogueTimeRepair.report.repaired) {
+        console.info('[dialogue-time-repair]', JSON.stringify(dialogueTimeRepair.report));
+      }
 
       if (asr?.segments?.length) {
         const enriched = new Map((Array.isArray(parsed.segments) ? parsed.segments : []).map(item => [String(item.segmentId || ''), item]));
@@ -2366,7 +2293,7 @@ Rules:
                 config: { responseMimeType: 'application/json', temperature: 0.02, maxOutputTokens: 8192 }
               });
               addGeminiUsage(dialogueUsage, response?.usageMetadata);
-              const recovered = JSON.parse(String(response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
+              const recovered = parseModelJson(response.text);
               recoveredSegments = recovered.segments || [];
               break;
             } catch (error) {
@@ -2390,7 +2317,7 @@ Rules:
 
         const groundedSegments = asr.segments.map(grounded => {
           const item = enriched.get(grounded.segmentId) || {};
-          return { ...item, segmentId: grounded.segmentId, speakerId: grounded.speakerId, startTime: grounded.startTime, endTime: grounded.endTime, originalText: grounded.originalText, turkishText: String(item.turkishText).trim() };
+          return { ...item, timestampUnit: 'seconds', segmentId: grounded.segmentId, speakerId: grounded.speakerId, startTime: grounded.startTime, endTime: grounded.endTime, originalText: grounded.originalText, turkishText: String(item.turkishText).trim() };
         });
 
         // The multimodal pass can recover whispers and overlapping lines missed
@@ -2427,7 +2354,6 @@ Rules:
         parsed.transcriptionEngine = process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe';
       }
 
-      const duration = Math.max(0, Number(req.body?.duration || 0));
       const parsedSpeakers = Array.isArray(parsed.speakers) ? parsed.speakers : [];
       const speakerProfiles = new Map();
       let neutralFemaleCount = 0;
@@ -2447,11 +2373,7 @@ Rules:
         speakerProfiles.set(speakerId, { ...item, speakerId, gender, speakerName });
       }
 
-      const repairedParsedSegments = repairMinuteDotSecondDialogueTimes(
-        Array.isArray(parsed.segments) ? parsed.segments : [],
-        duration
-      );
-      const segments = normalizeDialogueSegments(repairedParsedSegments
+      const segments = normalizeDialogueSegments((Array.isArray(parsed.segments) ? parsed.segments : [])
         .map((segment, index) => {
           const speakerId = String(segment.speakerId || 'speaker-uncertain');
           const gender = ['female', 'male'].includes(segment.gender)
@@ -2526,7 +2448,9 @@ Rules:
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
         transcriptionEngine: String(parsed.transcriptionEngine || 'gemini-3.8-flash-fallback'),
         translationEngine: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
-        dubbingEngine: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
+        timestampUnit: 'seconds',
+        timestampRepair: dialogueTimeRepair.report,
+        dubbingEngine: 'eleven_v3',
         aiUsage: dialogueUsage,
         performance: { processingMs }
       });
@@ -2821,10 +2745,17 @@ function scoreElevenVoice(voice, gender) {
       !/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score -= 80;
   if (/conversational|conversation|natural|casual|dialogue|dialog/.test(description)) score += 80;
   if (/warm|soft|calm|professional/.test(description)) score += 30;
-  if (/narration|news|storyteller|audiobook|announcer/.test(description)) score -= 100;
+  if (/narration|narrator|news|storyteller|audiobook|announcer/.test(description)) score -= 3000;
   if (/^(?:bella|george)$/.test(name)) score -= 250;
   if (voice?.is_owner === true) score += 20;
   return score;
+}
+
+function isElevenDialogueVoice(voice) {
+  const metadata = [voice?.name, voice?.description,
+    ...Object.values(voice?.labels || {}), ...Object.values(voice?.sharing?.labels || {})]
+    .filter(Boolean).join(' ').toLowerCase();
+  return !/\b(?:robotic|robot|narration|narrator|news|newscaster|announcer|audiobook|storyteller)\b/.test(metadata);
 }
 
 async function elevenLabsVoices(apiKey, force = false) {
@@ -2848,6 +2779,7 @@ async function elevenLabsVoices(apiKey, force = false) {
   const pick = (gender, excludedVoiceId = '') => {
     const candidates = [...voices]
       .filter(voice => voice.voice_id !== excludedVoiceId)
+      .filter(isElevenDialogueVoice)
       .filter(voice => elevenVoiceGender(voice) !== (gender === 'male' ? 'female' : 'male'));
     const withoutLegacy = candidates.filter(voice => !/^(?:bella|george)$/i.test(String(voice?.name || '')));
     return (withoutLegacy.length ? withoutLegacy : candidates)
@@ -2885,13 +2817,13 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
   const voice = voiceSet.voices.find(item => item.voice_id === requested);
   if (!voice?.voice_id) throw Object.assign(new Error('Karaktere atanmış ses kullanılamıyor; başka sesle değiştirilmedi. Dublaj seslerini yeniden hazırla.'),
     { status: 422, code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
-  // Keep the same Turkish conversational voice, while allowing the source
-  // emotion to influence delivery. V3 audio tags affect acting, not the words.
+  // Keep the assigned conversational voice throughout the source video.
   const plainText = String(text || '').trim();
-  const deliveryTag = elevenV3DeliveryTag(emotion);
-  const deliveryText = deliveryTag ? `${deliveryTag} ${plainText}` : plainText;
-  const voiceSettings = { stability: 0.38,
-    similarity_boost: 0.9, use_speaker_boost: true };
+  // V3 accepts discrete stability modes (0, 0.5, 1). Speaker boost is
+  // unavailable for V3. Keep source words clean; unverified acting tags can
+  // become audible interjections instead of the requested dialogue.
+  const deliveryText = plainText;
+  const voiceSettings = { stability: 0.5 };
   const accountHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
   // Identical short replies in different scenes need their own generation.
   // Context scopes reuse; it is not added to spoken text or acting prompts.
@@ -2901,7 +2833,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
     ...['originalText', 'previousText', 'nextText'].map(key => String(context[key] || '').trim().slice(0, 1200)),
     String(emotion || '').trim().toLowerCase().slice(0, 80)];
   const cacheKey = crypto.createHash('sha256')
-    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3_conversational', 'mp3_44100_128', voiceSettings, deliveryContext, 'natural-dialogue-v7']))
+    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, deliveryContext, 'natural-dialogue-v7']))
     .digest('hex');
   pruneElevenLabsAudioCache();
   const cached = elevenLabsAudioCache.get(cacheKey);
@@ -2922,7 +2854,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
         headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
         body: JSON.stringify({
           text: deliveryText,
-          model_id: 'eleven_v3_conversational',
+          model_id: 'eleven_v3',
           language_code: 'tr',
           voice_settings: voiceSettings
         })
@@ -2932,6 +2864,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
     if (!audioBytes.length) throw Object.assign(new Error('ElevenLabs boş ses yanıtı döndürdü; replik yeniden hazırlanmalı.'),
       { status: 502, code: 'ELEVENLABS_EMPTY_AUDIO' });
     const value = {
+      model: 'eleven_v3',
       voiceId: voice.voice_id,
       voiceName: voice.name || (gender === 'male' ? 'Erkek sesi' : 'Kadın sesi'),
       audioBase64: audioBytes.toString('base64')
@@ -3003,7 +2936,7 @@ app.post('/api/elevenlabs-voice-plan', async (req, res) => {
   if (!apiKey) return res.status(400).json({ available: false, reason: 'ELEVENLABS_NOT_CONFIGURED' });
   try {
     const catalog = await elevenLabsVoices(apiKey);
-    const assignments = allocateSpeakerVoices(req.body?.speakers, catalog.voices, {
+    const assignments = allocateSpeakerVoices(req.body?.speakers, catalog.voices.filter(isElevenDialogueVoice), {
       previous: req.body?.previous || [], genderOf: elevenVoiceGender, score: scoreElevenVoice
     });
     return res.json({ available: true, assignments });
@@ -3037,6 +2970,7 @@ app.post('/api/elevenlabs-dub-segment', async (req, res) => {
     return res.json({
       available: true,
       provider: 'elevenlabs',
+      model: audio.model,
       speakerId,
       gender,
       voiceId: audio.voiceId,

@@ -1,0 +1,22 @@
+name: VideoQuest reliability tests
+on:
+  push:
+    branches: [main, codex/videoquest-reliability-tests]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install media test dependency
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - name: Complete test suite
+        run: npm test

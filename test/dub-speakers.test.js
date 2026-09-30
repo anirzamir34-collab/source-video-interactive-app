@@ -65,6 +65,12 @@ test('insufficient voices never fall back to shared gender voices or partial ass
   assert.throws(() => validateDubVoicePlan(speakers, plan), /ayrı ve sabit/);
 });
 
+test('client rejects a returned voice plan with mismatched known speaker gender', () => {
+  const plan = allocateSpeakerVoices(speakers, voices, options);
+  plan[0].gender = 'male';
+  assert.throws(() => validateDubVoicePlan(speakers, plan), /ayrı ve sabit/);
+});
+
 test('unknown catalog metadata cannot outrank a known matching voice or silently replace it', () => {
   const roster = [{ speakerId: 'a', gender: 'male' }];
   const unknown = { voice_id: 'unknown', gender: 'uncertain' };

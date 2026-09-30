@@ -31,10 +31,16 @@ export function validateGame(game) {
     throw new Error('Kayıtta geçersiz dublaj sesi var.');
   }
   if (p.dubSpeakerVoices != null && !Array.isArray(p.dubSpeakerVoices)) throw new Error('Kayıttaki konuşmacı sesleri geçersiz.');
+  if (p.dubSegmentMetadata != null && (!Array.isArray(p.dubSegmentMetadata) ||
+      p.dubSegmentMetadata.some(entry => !Array.isArray(entry) || entry.length !== 2 ||
+        typeof entry[0] !== 'string' || !entry[1] || typeof entry[1] !== 'object' || Array.isArray(entry[1]) ||
+        ['provider', 'model', 'voiceId'].some(key => entry[1][key] != null && typeof entry[1][key] !== 'string')))) {
+    throw new Error('Kayıttaki dublaj sağlayıcı bilgileri geçersiz.');
+  }
   if (p.languageSyncOffset != null && (!Number.isFinite(p.languageSyncOffset) || Math.abs(p.languageSyncOffset) > 10)) {
     throw new Error('Kayıttaki ses eşitleme değeri geçersiz.');
   }
-  if (p.dubSpeakerVoices?.length) validateDubVoicePlan(buildDubSpeakerRoster(p.dialogue?.dubSegments || p.dialogue?.segments || [], p.dialogue?.speakers || []), p.dubSpeakerVoices);
+  if (p.dubSpeakerVoices?.length) validateDubVoicePlan(buildDubSpeakerRoster(p.dialogue?.segments || p.dialogue?.dubSegments || [], p.dialogue?.speakers || []), p.dubSpeakerVoices);
   return game;
 }
 
@@ -55,6 +61,8 @@ export function prepareGame(input, previous = null) {
       analysis: input.payload?.analysis || null,
       dialogue: input.payload?.dialogue || null,
       dubCache: input.payload?.dubCache || [],
+      dubSegmentMetadata: input.payload?.dubSegmentMetadata || [],
+      dubProviderLock: input.payload?.dubProviderLock === 'elevenlabs' ? 'elevenlabs' : '',
       dubVoiceIds: input.payload?.dubVoiceIds || {},
       dubSpeakerVoices: input.payload?.dubSpeakerVoices || [],
       dubStableSpeakerGenders: input.payload?.dubStableSpeakerGenders || [],

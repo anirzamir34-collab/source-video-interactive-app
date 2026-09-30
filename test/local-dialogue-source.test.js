@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { canDecodeDialogueLocally } from '../public/media-limits.js';
-import { normalizeDialogueSegments } from '../public/dialogue-integrity.js';
+import { normalizeDialogueSegments, normalizeDialogueTimeline } from '../public/dialogue-integrity.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const start = source.indexOf('async function prepareDialoguePayload(');
 const end = source.indexOf('\nfunction renderSubtitle(', start);
-const code = source.slice(start, end);
+const keyStart = source.indexOf('function dialogueUploadClientKey(');
+const keyEnd = source.indexOf('async function uploadDialogueWithProgress(', keyStart);
+const code = source.slice(keyStart, keyEnd) + source.slice(start, end);
 
 function fixture({ decodeFails = false, uploadFails = false, compact = false, remux } = {}) {
   const original = new File(['original-video-bytes'], 'source.mp4', { type: 'video/mp4' });
@@ -24,7 +26,7 @@ function fixture({ decodeFails = false, uploadFails = false, compact = false, re
   const element = () => ({ textContent: '', classList: { remove() {} } });
   const els = { analysisCard: element(), analysisTitle: element(), analysisOutput: element(),
     analysisState: element(), video: { duration: NaN }, protagonistInput: { value: '' } };
-  const scope = vm.createContext({ canDecodeDialogueLocally, normalizeDialogueSegments, File, Blob, FormData, performance, els, AbortController,
+  const scope = vm.createContext({ canDecodeDialogueLocally, normalizeDialogueSegments, normalizeDialogueTimeline, File, Blob, FormData, performance, els, AbortController,
     state: { analysisSession: session, selectedRemoteVideo: { proxyUrl: '/proxy?token=old-token' } },
     console: { warn() {} }, localStorage: { removeItem() {} }, recordAiUsage() {},
     buildDubBlocks: segments => segments, updateLanguageSyncControls() {},
@@ -74,7 +76,7 @@ test('local speech upload preserves duration across object-URL reload and ignore
   assert.equal(f.requests[0].get('duration'), '123');
   assert.equal(f.requests[0].has('remoteToken'), false);
   assert.equal(f.timers.size, 0);
-  assert.match(f.els.analysisOutput.textContent, /Yükleme tamamlandı/);
+  assert.match(f.els.analysisOutput.textContent, /yüklemesi tamamlandı/);
 });
 
 test('retrying reuses prepared speech, while selecting another local file extracts new audio', async () => {

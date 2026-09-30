@@ -1,6 +1,83 @@
 const clean = value => String(value || '').trim().replace(/\s+/g, ' ');
 const textKey = value => clean(value).normalize('NFKC').toLocaleLowerCase('tr-TR').replace(/[\p{P}\p{S}]/gu, '').trim();
 
+export function dubSegmentKey(segment, fallbackIndex = 0) {
+  if (!segment) return '';
+  const stableId = String(segment.segmentId || '').trim();
+  if (stableId) return stableId;
+
+  const start = Number(segment.startTime) || 0;
+  const end = Number(segment.endTime) || start;
+  const speaker = String(segment.speakerId || segment.gender || 'speaker');
+  const text = String(segment.turkishText || '').trim().slice(0, 48);
+  return `dub-${fallbackIndex}-${start.toFixed(3)}-${end.toFixed(3)}-${speaker}-${text}`;
+}
+
+// A decimal alone is ambiguous: 3.04 can be seconds or 03:04. Require
+// collection-wide evidence of impossible speech durations before repairing
+// legacy output. Dedicated ASR seconds always take precedence.
+export function repairDialogueTimestamps(rows = [], duration = 0, { timestampUnit = '' } = {}) {
+  const segments = Array.isArray(rows) ? rows : [];
+  const limit = Number(duration);
+  const unchanged = reason => ({ segments, report: { repaired: false, reason } });
+  if (timestampUnit === 'seconds' || (!timestampUnit && segments.some(row => row?.timestampUnit === 'seconds'))) return unchanged('explicit-seconds');
+  const explicit = timestampUnit === 'minute.second';
+  if (!Number.isFinite(limit) || limit <= 0) return unchanged('unknown-duration');
+  if (!explicit && (limit < 300 || segments.length < 6)) return unchanged('insufficient-evidence');
+  const decimal = value => {
+    if (value == null || value === '' || typeof value === 'boolean') return NaN;
+    const n = Number(value);
+    const hundredths = Math.round(n * 100);
+    if (!Number.isFinite(n) || n < 0 || Math.abs(n * 100 - hundredths) > 0.000001 || hundredths % 100 > 59) return NaN;
+    return Math.floor(hundredths / 100) * 60 + hundredths % 100;
+  };
+  const converted = segments.map(row => ({ ...row,
+    startTime: decimal(row?.startTime), endTime: decimal(row?.endTime) }));
+  if (converted.some(row => !Number.isFinite(row.startTime) || !Number.isFinite(row.endTime) ||
+      row.endTime <= row.startTime || row.endTime > limit)) return unchanged('invalid-minute-second-range');
+  const rawMax = Math.max(...segments.map(row => Number(row.endTime)));
+  const convertedMax = Math.max(...converted.map(row => row.endTime));
+  if (!explicit) {
+    if (rawMax > Math.min(20, limit / 40) || convertedMax < 120) return unchanged('not-collapsed');
+    let impossible = 0;
+    for (let i = 0; i < segments.length; i += 1) {
+      const row = segments[i];
+      const words = clean(row.originalText || row.turkishText).split(/\s+/u).filter(Boolean).length;
+      const rawLength = Number(row.endTime) - Number(row.startTime);
+      const repairedLength = converted[i].endTime - converted[i].startTime;
+      if (words && rawLength > 0 && rawLength < words * 0.06 && repairedLength >= words * 0.06) impossible += 1;
+    }
+    if (impossible < Math.ceil(segments.length * 0.8)) return unchanged('plausible-seconds');
+  }
+  converted.sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
+  return { segments: converted, report: {
+    repaired: true, mode: 'minute.second', rawMax, convertedMax, videoDuration: limit,
+    timestamps: segments.map(row => ({ segmentId: row.segmentId,
+      originalStartTime: Number(row.startTime), originalEndTime: Number(row.endTime),
+      startTime: decimal(row.startTime), endTime: decimal(row.endTime) }))
+  } };
+}
+
+// Preserve cached block IDs and sentence grouping so repaired timestamps do
+// not orphan previously generated audio or create new spoken text.
+export function normalizeDialogueTimeline(dialogue, duration) {
+  if (!dialogue) return dialogue;
+  const pinIds = rows => (Array.isArray(rows) ? rows : []).map((row, index) =>
+    row && typeof row === 'object' ? { ...row, segmentId: dubSegmentKey(row, index) } : row);
+  const result = repairDialogueTimestamps(pinIds(dialogue.segments), duration, dialogue);
+  const blockResult = Array.isArray(dialogue.dubSegments)
+    ? repairDialogueTimestamps(pinIds(dialogue.dubSegments), duration, {
+      timestampUnit: result.report.repaired ? 'minute.second' : dialogue.timestampUnit
+    }) : null;
+  return { ...dialogue,
+    segments: normalizeDialogueSegments(result.segments, duration),
+    ...(blockResult ? { dubSegments: normalizeDialogueSegments(blockResult.segments, duration) } : {}),
+    timestampUnit: 'seconds',
+    timestampRepair: result.report.repaired ? result.report :
+      (blockResult?.report.repaired ? blockResult.report : (dialogue.timestampRepair || result.report))
+  };
+}
+
 // Normalize spacing without guessing which words were really spoken.
 export function naturalizeTurkishSpeech(value) {
   // Text alone cannot distinguish a real repetition from an ASR error.

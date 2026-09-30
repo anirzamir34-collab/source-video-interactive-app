@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from '../public/dub-overlap.js';
 import { dubSpeakerKey } from '../public/dub-speakers.js';
+import { normalizeDialogueTimeline } from '../public/dialogue-integrity.js';
 import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from '../public/dubbing-audio.js';
 import { dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget,
   isDubStartTimely, mapVideoTimeToDubTime, dubSegmentKey, languageTimelineTime } from '../public/playback-logic.js';
@@ -12,6 +13,126 @@ const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'ut
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const deferred = () => { let resolve; let reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const line = (id, startTime, endTime) => ({ segmentId: id, startTime, endTime, turkishText: 'Merhaba.' });
+
+test('generated legacy dub cache becomes eligible and actually plays at repaired source time', async () => {
+  const raw = Array.from({ length: 19 }, (_, i) => ({ ...line(`line-${i}`, Number((3.04 + i * .01).toFixed(2)),
+    Number((3.05 + i * .01).toFixed(2))), originalText: 'Hello there, everyone.', turkishText: 'Herkese merhaba, hoş geldiniz.' }));
+  const dialogue = normalizeDialogueTimeline({ segments: raw, dubSegments: raw }, 900);
+  const f = fixture(dialogue.dubSegments);
+  try {
+    f.state.dialogue = dialogue;
+    f.state.savedPlaybackOnly = true;
+    f.state.dubCache = new Map(dialogue.dubSegments.map(row => [row.segmentId, row.segmentId]));
+    f.state.dubSegmentMetadata = new Map(dialogue.dubSegments.map(row => [row.segmentId,
+      { provider: 'elevenlabs', model: 'eleven_v3', voiceId: 'speaker-fixed-voice' }]));
+    vm.runInContext(functions('ensureDubSegment'), f.scope);
+    f.video.paused = true;
+    f.video.currentTime = 183;
+    const before = f.scope.dubbingDebugReport();
+    assert.equal(before.generatedSegmentCount, 19);
+    assert.equal(before.decodedPreparedSegmentCount, 0);
+    assert.equal(before.playedSegmentCount, 0);
+    f.video.paused = false;
+    f.video.currentTime = 184;
+    await f.sync();
+    const report = f.scope.dubbingDebugReport();
+    assert.equal(f.active().paused, false);
+    assert.equal(report.provider, 'elevenlabs');
+    assert.equal(report.selectedModel, 'eleven_v3');
+    assert.ok(report.decodedPreparedSegmentCount >= 1);
+    assert.equal(report.playedSegmentCount, 1);
+    assert.equal(report.firstPlaybackEvents[0].voiceId, 'speaker-fixed-voice');
+    assert.equal(report.firstPlaybackEvents[0].videoTime, 184);
+    f.video.currentTime = 250;
+    f.event('seeking');
+    assert.equal(f.scope.dubbingDebugReport().playedSegmentCount, 1, 'seek invalidation does not erase historical playback evidence');
+  } finally { f.close(); }
+});
+
+test('browser activation reaches blocked audio in the retry click before any await', async () => {
+  let inGesture = false;
+  const f = fixture([line('a', 1, 3)], { browserEvents: true, playGate: () => {
+    if (!inGesture) throw Object.assign(new Error('requires transient activation'), { name: 'NotAllowedError' });
+  } });
+  try {
+    await f.sync();
+    assert.equal(f.state.dubPlayedSegmentIds.size, 0);
+    assert.match(f.scope.dubbingDebugReport().playbackFailureReason, /NotAllowedError/);
+    inGesture = true;
+    const retried = f.scope.retryDubBuffer();
+    inGesture = false;
+    await retried;
+    await tick();
+    assert.equal(f.active().paused, false);
+    assert.equal(f.scope.dubbingDebugReport().playedSegmentCount, 1);
+    assert.equal(f.scope.dubbingDebugReport().playbackFailureReason, '');
+  } finally { f.close(); }
+});
+
+test('muted dub output is reported as a playback failure until a real retry can be heard', async () => {
+  const segments = [line('a', 1, 3)];
+  const f = fixture(segments);
+  try {
+    const audio = await f.scope.prepareDubAudio(segments[0]);
+    audio.muted = true;
+    await f.sync();
+    assert.equal(f.scope.dubbingDebugReport().playedSegmentCount, 0);
+    assert.match(f.scope.dubbingDebugReport().playbackFailureReason, /DUB_OUTPUT_MUTED/);
+    audio.muted = false;
+    await f.scope.retryDubBuffer();
+    await tick();
+    assert.equal(f.scope.dubbingDebugReport().playedSegmentCount, 1);
+  } finally { f.close(); }
+});
+
+test('debug trace retains the first ten starts and counts later playback across seeks', async () => {
+  const segments = Array.from({ length: 12 }, (_, i) => line(`a-${i}`, i * 3 + 1, i * 3 + 3));
+  const f = fixture(segments);
+  try {
+    for (const segment of segments) {
+      f.video.currentTime = segment.startTime;
+      f.event('seeking');
+      f.event('seeked');
+      await tick();
+    }
+    const report = f.scope.dubbingDebugReport();
+    assert.equal(report.playedSegmentCount, 12);
+    assert.equal(report.playbackEventCount, 12);
+    assert.equal(report.firstPlaybackEvents.length, 10);
+    assert.equal(report.firstPlaybackEvents[0].segmentId, 'a-0');
+    assert.equal(report.firstPlaybackEvents.at(-1).segmentId, 'a-9');
+  } finally { f.close(); }
+});
+
+test('cached bytes that fail decoding expose recovery without claiming playback', async () => {
+  const f = fixture([line('a', 1, 3)]);
+  f.scope.Audio.prototype.load = function () {
+    if (!this.src) return;
+    this.readyState = 0; this.error = { code: 3 };
+    queueMicrotask(() => this.dispatchEvent(new Event('error')));
+  };
+  try {
+    await f.sync();
+    assert.equal(f.video.paused, true);
+    assert.equal(f.state.dubBuffer.loading, false);
+    assert.equal(f.scope.dubbingDebugReport().decodedPreparedSegmentCount, 0);
+    assert.equal(f.scope.dubbingDebugReport().playedSegmentCount, 0);
+    assert.equal(f.scope.dubbingDebugReport().playbackFailureReason, 'DUB_DECODE_ERROR:3');
+  } finally { f.close(); }
+});
+
+test('seeking past a short audio file never reports an unheard segment as played', async () => {
+  const f = fixture([line('a', 1, 5)], { durations: { a: .25 } });
+  try {
+    f.video.currentTime = 2;
+    f.event('seeking');
+    f.event('seeked');
+    await tick();
+    assert.equal(f.state.dubPlayedSegmentIds.size, 0);
+    assert.equal(f.scope.dubbingDebugReport().playedSegmentCount, 0);
+    assert.equal(f.state.dubSkippedSegmentIds.has('a'), true);
+  } finally { f.close(); }
+});
 
 test('one shared language clock moves subtitles and dubbing earlier without moving the video', () => {
   assert.equal(languageTimelineTime(10, 1.25), 11.25);

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { dubSpeakerKey } from '../public/dub-speakers.js';
 import { createVideoDownloader } from '../public/video-download.js';
-import { canDecodeDialogueLocally } from '../public/media-limits.js';
+import { canDecodeDialogueLocally, dialogueUploadMimeType } from '../public/media-limits.js';
 import { createDubRequestQueue } from '../public/dubbing-queue.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -169,12 +169,26 @@ test('device dialogue upload uses one stable logical upload key and reused start
   assert.match(block, /if \(completedChunks\.has\(chunkIndex\)\) continue/);
 });
 
-test('fast links use four parallel dialogue upload streams while constrained links stay serial', () => {
-  const uploadSection = section('async function uploadDialogueWithProgress(', '\nasync function prepareDialoguePayload(');
-  assert.match(uploadSection, /4 \* 1024 \* 1024/);
-  assert.match(uploadSection, /maxConnections = constrained \? 1/);
-  assert.match(uploadSection, /effectiveType === '3g' \? 2 : 4/);
-  assert.match(uploadSection, /Promise\.all\(workers\)/);
+test('dialogue upload bounds concurrency and keeps compact or constrained uploads serial', async () => {
+  for (const [sizeMb, effectiveType, saveData, expectedConnections] of
+    [[20, '4g', false, 2], [20, '3g', false, 1], [20, '2g', false, 1], [20, '4g', true, 1], [5, '4g', false, 1]]) {
+    const file = new Blob([new Uint8Array(sizeMb * 1024 * 1024)], { type: 'audio/mpeg' });
+    const form = new FormData(); form.set('video', file);
+    let active = 0, maximum = 0, sent = 0;
+    const f = fixture(functions('uploadDialogueWithProgress'), {
+      navigator: { connection: { effectiveType, saveData } },
+      waitUntilPageVisible: async () => {}, geminiRequestHeaders: () => ({}), dialogueUploadMimeType,
+      fetch: async url => ({ ok: true, json: async () => url.endsWith('/start')
+        ? { available: true, uploadId: 'one' } : { available: true } }),
+      sendDialogueChunk: async ({ chunk }) => {
+        active++; maximum = Math.max(maximum, active); sent += chunk.size;
+        await tick(); active--;
+      }
+    });
+    await f.scope.uploadDialogueWithProgress(form, () => {}, () => {});
+    assert.equal(maximum, expectedConnections);
+    assert.equal(sent, file.size, 'each source byte is uploaded once');
+  }
 });
 
 test('HTTP upload errors expose status and do not retry permanent authorization failures', async () => {
@@ -222,6 +236,19 @@ function dubbingFixture() {
   return { ...f, state, pending };
 }
 function voiceResponse(audio = 'new-audio') { return { ok: true, json: async () => ({ available: true, audioBase64: audio, voiceId: 'new-voice' }) }; }
+
+test('a different provider cannot populate an ElevenLabs dub cache', async () => {
+  const f = dubbingFixture();
+  const segment = { id: 'one', turkishText: 'Merhaba.' };
+  f.state.dialogue.segments = [segment];
+  const request = f.scope.ensureDubSegment(segment);
+  await tick();
+  f.pending[0].resolve({ ok: true, json: async () => ({ available: true, provider: 'other-provider', audioBase64: 'audio', voiceId: 'new-voice' }) });
+  assert.equal(await request, null);
+  assert.equal(f.state.dubCache.size, 0);
+  assert.equal(f.pending.length, 1);
+  assert.equal(f.state.dubFailureReason, 'DUB_PROVIDER_MISMATCH');
+});
 
 test('mismatched provider voice is neither cached nor retried as a transient error', async () => {
   const f = dubbingFixture();
@@ -636,6 +663,7 @@ test('storyboard transfer enforces its smaller limit and reports bytes without c
 test('storyboard transfer has an overall deadline even when waiting for response headers', async () => {
   let signal;
   const f = fixture(functions('downloadUrlVideo'), {
+    setUrlStatus() {},
     fetch: (_url, options) => new Promise((_resolve, reject) => {
       signal = options.signal;
       signal.addEventListener('abort', () => reject(signal.reason), { once: true });

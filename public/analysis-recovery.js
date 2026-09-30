@@ -1,3 +1,5 @@
+import { parseModelJson } from './model-json.js';
+
 // Shared transport/coverage rules. Missing provider data is never an action.
 export function storyboardFailureReason(error) {
   const code = String(error?.code || '');
@@ -24,7 +26,7 @@ export function parseStoryboardResponse(response) {
   if (!raw) throw responseError('GEMINI_EMPTY_RESPONSE');
   const json = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   let parsed;
-  try { parsed = JSON.parse(json); }
+  try { parsed = parseModelJson(raw); }
   catch {
     if (/\b(?:I|we)\s+(?:cannot|can't|can’t|am unable|are unable)\b|\b(?:request|prompt|content|images?|material)\b.{0,180}\b(?:not allowed|cannot|can't|unable|prohibited|policy|policies|restricted)\b/is.test(raw)) {
       throw responseError('GEMINI_CONTENT_RESTRICTED');

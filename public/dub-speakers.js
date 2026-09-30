@@ -29,8 +29,10 @@ export function validateDubVoicePlan(roster, assignments) {
   const used = new Set();
   const ids = new Set(roster.map(row => row.speakerId));
   for (const item of assignments) {
+    const expectedGender = genderOf(roster.find(row => row.speakerId === item?.speakerId)?.gender);
     if (!item || !ids.has(item.speakerId) || plan.has(item.speakerId) ||
-        typeof item.voiceId !== 'string' || !item.voiceId.trim() || used.has(item.voiceId)) {
+        typeof item.voiceId !== 'string' || !item.voiceId.trim() || used.has(item.voiceId) ||
+        (expectedGender !== 'uncertain' && genderOf(item.gender) !== expectedGender)) {
       throw new Error('Her konuşmacıya ayrı ve sabit bir ses atanamadı. Ses eşlemesini yeniden dene.');
     }
     used.add(item.voiceId);

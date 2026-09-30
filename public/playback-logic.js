@@ -1,4 +1,4 @@
-import { normalizeDialogueSegments } from './dialogue-integrity.js';
+import { normalizeDialogueSegments, dubSegmentKey } from './dialogue-integrity.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
@@ -238,17 +238,7 @@ export function decisionBoundaryAfterDialogue(
   return Math.min(duration, Math.max(actionEnd, ...activeEnds));
 }
 
-export function dubSegmentKey(segment, fallbackIndex = 0) {
-  if (!segment) return '';
-  const stableId = String(segment.segmentId || '').trim();
-  if (stableId) return stableId;
-
-  const start = Number(segment.startTime) || 0;
-  const end = Number(segment.endTime) || start;
-  const speaker = String(segment.speakerId || segment.gender || 'speaker');
-  const text = String(segment.turkishText || '').trim().slice(0, 48);
-  return `dub-${fallbackIndex}-${start.toFixed(3)}-${end.toFixed(3)}-${speaker}-${text}`;
-}
+export { dubSegmentKey } from './dialogue-integrity.js';
 
 export function languageTimelineTime(videoTime, offsetSeconds = 0) {
   const time = Number(videoTime);

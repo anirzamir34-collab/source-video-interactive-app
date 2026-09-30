@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { parseModelJson } from '../public/model-json.js';
 
 // Run the existing provider loop against simulated HTTP failures, retaining
 // the already uploaded media URI. No external API requests are made.
@@ -15,7 +16,7 @@ async function run(errors) {
   const requests = [];
   const delays = [];
   const scope = vm.createContext({
-    process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
+    parseModelJson, process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
     req: { file: { mimetype: 'audio/wav' } }, prompt: 'Analyze speech', transcriptGrounding: '',
     dialogueUsage: {}, addGeminiUsage() {}, console: { warn() {} },
     dialogueStage() {}, inlineAudioPart: null,
