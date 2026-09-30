@@ -1782,6 +1782,48 @@ function extractTranscribeWordAnnotations(interaction) {
   return uniqueTimedSpeech(words, { textField: 'text', tolerance: 0.015 });
 }
 
+function repairMinuteDotSecondDialogueTimes(segments = [], duration = 0) {
+  const rows = Array.isArray(segments) ? segments : [];
+  const videoDuration = Math.max(0, Number(duration) || 0);
+  if (videoDuration < 180 || rows.length < 3) return rows;
+
+  const times = rows.flatMap(item => [Number(item?.startTime), Number(item?.endTime)])
+    .filter(Number.isFinite);
+  if (!times.length) return rows;
+  const rawMax = Math.max(...times);
+  if (rawMax > 15) return rows;
+
+  const convert = value => {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return number;
+    const minutes = Math.floor(number);
+    const seconds = Math.round((number - minutes) * 100);
+    return minutes * 60 + Math.min(59, Math.max(0, seconds));
+  };
+  const converted = times.map(convert);
+  const convertedMax = Math.max(...converted);
+  const plausible = convertedMax <= videoDuration + 5 &&
+    convertedMax >= Math.min(90, videoDuration * 0.15);
+  const minuteStyleEvidence = times.filter(value => {
+    const fraction = Math.round((value - Math.floor(value)) * 100);
+    return value >= 1 && fraction >= 10 && fraction <= 59;
+  }).length >= Math.max(2, Math.floor(times.length * 0.2));
+  if (!plausible || !minuteStyleEvidence) return rows;
+
+  console.info('[dialogue-time-repair]', JSON.stringify({
+    mode: 'minute-dot-second',
+    rawMax,
+    convertedMax,
+    duration: videoDuration,
+    segments: rows.length
+  }));
+  return rows.map(item => ({
+    ...item,
+    startTime: convert(item.startTime),
+    endTime: convert(item.endTime)
+  }));
+}
+
 function groupTranscribeWords(words) {
   const groups = [];
   const bySpeaker = new Map();
@@ -2405,7 +2447,11 @@ Rules:
         speakerProfiles.set(speakerId, { ...item, speakerId, gender, speakerName });
       }
 
-      const segments = normalizeDialogueSegments((Array.isArray(parsed.segments) ? parsed.segments : [])
+      const repairedParsedSegments = repairMinuteDotSecondDialogueTimes(
+        Array.isArray(parsed.segments) ? parsed.segments : [],
+        duration
+      );
+      const segments = normalizeDialogueSegments(repairedParsedSegments
         .map((segment, index) => {
           const speakerId = String(segment.speakerId || 'speaker-uncertain');
           const gender = ['female', 'male'].includes(segment.gender)
