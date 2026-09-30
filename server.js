@@ -1476,7 +1476,10 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
             uploadId: existingKey.uploadId,
             receivedSize: existing.receivedSize,
             totalSize: existing.totalSize,
-            complete: existing.receivedSize === existing.totalSize && Number(existing.activeWrites) === 0,
+            activeWrites: Number(existing.activeWrites) || 0,
+            writing: existing.writing === true,
+            complete: existing.receivedSize === existing.totalSize &&
+              Number(existing.activeWrites) === 0 && existing.writing !== true,
             receivedChunks: [...(existing.receivedChunks?.keys?.() || [])]
           });
         }
@@ -1539,7 +1542,9 @@ app.get('/api/dialogue-upload/:uploadId/status', (req, res) => {
     totalSize: session.totalSize,
     complete: session.receivedSize === session.totalSize &&
       !session.writing && Number(session.activeWrites) === 0,
-    activeWrites: Number(session.activeWrites) || 0
+    activeWrites: Number(session.activeWrites) || 0,
+    writing: session.writing === true,
+    receivedChunks: [...(session.receivedChunks?.keys?.() || [])]
   });
 });
 
