@@ -1421,6 +1421,8 @@ const dialogueUpload = multer({
 });
 
 const dialogueUploadSessions = new Map();
+const dialogueUploadKeys = new Map();
+const DIALOGUE_UPLOAD_KEY_TTL_MS = 30 * 60 * 1000;
 const dialogueChunkParser = express.raw({
   type: 'application/octet-stream',
   limit: '10mb'
@@ -1432,6 +1434,7 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
     const fileName = String(req.body?.fileName || 'dialogue.wav')
       .replace(/[^a-zA-Z0-9._-]/g, '_');
     const mimeType = String(req.body?.mimeType || 'audio/wav');
+    const clientUploadKey = String(req.body?.clientUploadKey || '').trim().slice(0, 512);
     const maxSize = dialogueUploadLimit(mimeType);
 
     if (
@@ -1444,6 +1447,41 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
         reason: 'INVALID_AUDIO_SIZE',
         message: maxSize ? `Dosya boyutu geçersiz; bu biçim için sınır ${Math.round(maxSize / 1024 / 1024)} MB.` : 'Ses veya video biçimi desteklenmiyor.'
       });
+    }
+
+    if (clientUploadKey) {
+      const existingKey = dialogueUploadKeys.get(clientUploadKey);
+      if (existingKey && existingKey.expiresAt > Date.now()) {
+        if (existingKey.status === 'consumed') {
+          return res.status(409).json({
+            available: false,
+            reason: 'UPLOAD_ALREADY_CONSUMED',
+            message: 'Bu cihaz sesi bu analiz için zaten sunucuya gönderildi; ikinci kez yükleme başlatılmadı.'
+          });
+        }
+        const existing = dialogueUploadSessions.get(existingKey.uploadId);
+        if (existing) {
+          if (existing.totalSize !== totalSize || existing.mimeType !== mimeType) {
+            return res.status(409).json({
+              available: false,
+              reason: 'UPLOAD_KEY_CONFLICT',
+              message: 'Aynı yükleme kimliği farklı bir ses dosyasıyla kullanılamaz.'
+            });
+          }
+          existing.updatedAt = Date.now();
+          existingKey.expiresAt = Date.now() + DIALOGUE_UPLOAD_KEY_TTL_MS;
+          return res.json({
+            available: true,
+            reused: true,
+            uploadId: existingKey.uploadId,
+            receivedSize: existing.receivedSize,
+            totalSize: existing.totalSize,
+            complete: existing.receivedSize === existing.totalSize && Number(existing.activeWrites) === 0,
+            receivedChunks: [...(existing.receivedChunks?.keys?.() || [])]
+          });
+        }
+        dialogueUploadKeys.delete(clientUploadKey);
+      }
     }
 
     const uploadId = crypto.randomUUID();
@@ -1464,14 +1502,24 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
       receivedChunks: new Map(),
       inflightRanges: new Map(),
       activeWrites: 0,
+      clientUploadKey,
       updatedAt: Date.now()
     });
+    if (clientUploadKey) {
+      dialogueUploadKeys.set(clientUploadKey, {
+        uploadId,
+        status: 'active',
+        expiresAt: Date.now() + DIALOGUE_UPLOAD_KEY_TTL_MS
+      });
+    }
 
     return res.json({
       available: true,
+      reused: false,
       uploadId,
       receivedSize: 0,
-      nextChunk: 0
+      nextChunk: 0,
+      receivedChunks: []
     });
   } catch (error) {
     return res.status(500).json({
@@ -1480,6 +1528,19 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
       message: error.message || String(error)
     });
   }
+});
+
+app.get('/api/dialogue-upload/:uploadId/status', (req, res) => {
+  const session = dialogueUploadSessions.get(String(req.params.uploadId || ''));
+  if (!session) return res.status(404).json({ available: false, reason: 'UPLOAD_SESSION_NOT_FOUND' });
+  return res.json({
+    available: true,
+    receivedSize: session.receivedSize,
+    totalSize: session.totalSize,
+    complete: session.receivedSize === session.totalSize &&
+      !session.writing && Number(session.activeWrites) === 0,
+    activeWrites: Number(session.activeWrites) || 0
+  });
 });
 
 app.get('/api/dialogue-upload/:uploadId/chunk/:chunkIndex/status', (req, res) => {
@@ -1638,7 +1699,15 @@ setInterval(() => {
     if (session.writing || Number(session.activeWrites) > 0 || session.updatedAt >= expiry) continue;
 
     dialogueUploadSessions.delete(uploadId);
+    if (session.clientUploadKey) {
+      const keyEntry = dialogueUploadKeys.get(session.clientUploadKey);
+      if (keyEntry?.uploadId === uploadId) dialogueUploadKeys.delete(session.clientUploadKey);
+    }
     fs.promises.unlink(session.filePath).catch(() => {});
+  }
+
+  for (const [key, entry] of dialogueUploadKeys) {
+    if (entry.expiresAt <= Date.now()) dialogueUploadKeys.delete(key);
   }
 }, 10 * 60 * 1000).unref();
 
@@ -1856,6 +1925,13 @@ app.post(
         size: uploadSession.totalSize
       };
 
+      if (uploadSession.clientUploadKey) {
+        dialogueUploadKeys.set(uploadSession.clientUploadKey, {
+          uploadId,
+          status: 'consumed',
+          expiresAt: Date.now() + DIALOGUE_UPLOAD_KEY_TTL_MS
+        });
+      }
       dialogueUploadSessions.delete(uploadId);
     }
 

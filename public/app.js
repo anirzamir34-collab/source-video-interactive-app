@@ -1102,11 +1102,28 @@ function sendDialogueChunk({
   });
 }
 
+function dialogueUploadClientKey(session, sourceFile, dialogueFile) {
+  if (session?.dialogueUploadKey) return session.dialogueUploadKey;
+  const sourceKey = String(session?.sourceKey || '').slice(0, 260);
+  const sourceMeta = [
+    sourceFile?.name || '',
+    Number(sourceFile?.size) || 0,
+    Number(sourceFile?.lastModified) || 0,
+    dialogueFile?.name || '',
+    Number(dialogueFile?.size) || 0,
+    dialogueFile?.type || ''
+  ].join(':');
+  const key = `vq-upload:${sourceKey}:${sourceMeta}`.slice(0, 480);
+  if (session) session.dialogueUploadKey = key;
+  return key;
+}
+
 async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
   const file = form.get('video');
   const duration = String(form.get('duration') || '0');
   const protagonistProfile = String(form.get('protagonistProfile') || '');
   const retainAudioForReuse = String(form.get('retainAudioForReuse') || '');
+  const clientUploadKey = String(form.get('clientUploadKey') || '').trim();
   if (!(file instanceof Blob)) throw new Error('Yüklenecek ses dosyası bulunamadı.');
   await waitUntilPageVisible();
 
@@ -1124,18 +1141,29 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
     body: JSON.stringify({
       totalSize: file.size,
       fileName: file.name || 'dialogue.wav',
-      mimeType: dialogueUploadMimeType(file)
+      mimeType: dialogueUploadMimeType(file),
+      clientUploadKey
     })
   });
   const startBody = await startResponse.json();
   if (!startResponse.ok || !startBody.available) {
-    throw new Error(startBody.message || startBody.reason || `Yükleme başlatılamadı: HTTP ${startResponse.status}`);
+    const error = new Error(startBody.message || startBody.reason || `Yükleme başlatılamadı: HTTP ${startResponse.status}`);
+    error.code = startBody.reason || 'UPLOAD_START_FAILED';
+    error.retryable = false;
+    throw error;
   }
 
   const uploadId = startBody.uploadId;
   const startedAt = performance.now();
   const loadedByChunk = new Array(chunkCount).fill(0);
-  const completedChunks = new Set();
+  const completedChunks = new Set(
+    (Array.isArray(startBody.receivedChunks) ? startBody.receivedChunks : [])
+      .map(Number).filter(index => Number.isInteger(index) && index >= 0 && index < chunkCount)
+  );
+  for (const index of completedChunks) {
+    const start = index * chunkSize;
+    loadedByChunk[index] = Math.min(chunkSize, file.size - start);
+  }
   let cursor = 0;
   const report = () => {
     const loaded = Math.min(file.size, loadedByChunk.reduce((sum, value) => sum + value, 0));
@@ -1206,14 +1234,49 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
     }
   };
 
-  const workers = Array.from({ length: connections }, async () => {
+  if (startBody.reused === true) {
+    // Another accidental caller already owns the actual byte transfer. Observe
+    // that transfer instead of sending the same device audio a second time.
+    const waitStartedAt = performance.now();
     while (true) {
-      const chunkIndex = cursor++;
-      if (chunkIndex >= chunkCount) return;
-      await uploadOne(chunkIndex);
+      const response = await fetch(`/api/dialogue-upload/${encodeURIComponent(uploadId)}/status`, {
+        signal: AbortSignal.timeout(7000)
+      });
+      const status = await response.json().catch(() => ({}));
+      if (!response.ok || !status.available) {
+        const error = new Error(status.message || status.reason || 'Mevcut ses yüklemesinin durumu alınamadı.');
+        error.retryable = false;
+        throw error;
+      }
+      const received = Math.max(0, Math.min(file.size, Number(status.receivedSize) || 0));
+      // Status is byte-based because the first caller may still be writing
+      // chunks not represented in this caller's local per-chunk progress.
+      loadedByChunk.fill(0);
+      let remaining = received;
+      for (let index = 0; index < chunkCount && remaining > 0; index += 1) {
+        const size = Math.min(chunkSize, file.size - index * chunkSize);
+        loadedByChunk[index] = Math.min(size, remaining);
+        if (loadedByChunk[index] >= size) completedChunks.add(index);
+        remaining -= loadedByChunk[index];
+      }
+      report();
+      if (status.complete) break;
+      if (performance.now() - waitStartedAt > 180000) {
+        throw new Error('Mevcut tek ses yüklemesi beklenen sürede tamamlanmadı.');
+      }
+      await new Promise(resolve => setTimeout(resolve, 350));
     }
-  });
-  await Promise.all(workers);
+  } else {
+    const workers = Array.from({ length: connections }, async () => {
+      while (true) {
+        const chunkIndex = cursor++;
+        if (chunkIndex >= chunkCount) return;
+        if (completedChunks.has(chunkIndex)) continue;
+        await uploadOne(chunkIndex);
+      }
+    });
+    await Promise.all(workers);
+  }
   onUploadComplete();
 
   const finishForm = new FormData();
@@ -1307,6 +1370,9 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
   if (session) session.dialogueAnalysisPromise = task;
   try {
     return await task;
+  } catch (error) {
+    if (session) session.dialogueUploadKey = '';
+    throw error;
   } finally {
     if (session?.dialogueAnalysisPromise === task) session.dialogueAnalysisPromise = null;
   }
@@ -1322,9 +1388,11 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
   let remoteToken = state.selectedSourceKind === 'url'
     ? String(session?.remoteToken || state.selectedRemoteToken || '').trim()
     : '';
-  const reusableAudio = state.selectedSourceKind === 'url'
-    ? String(state.audioReuseToken || '').trim()
-    : '';
+  const reusableAudio = String(
+    session?.audioReuseToken ||
+    (state.selectedSourceKind === 'url' ? state.audioReuseToken : '') ||
+    ''
+  ).trim();
   let processingTimer = null;
   let upload;
 
@@ -1409,7 +1477,8 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
       form.append('video', dialogueFile, dialogueFile.name || 'dialogue.wav');
       form.append('duration', String(duration));
       form.append('protagonistProfile', protagonistProfile);
-      if (state.urlCacheKey) form.append('retainAudioForReuse', '1');
+      form.append('retainAudioForReuse', '1');
+      form.append('clientUploadKey', dialogueUploadClientKey(session, file, dialogueFile));
       try {
         upload = await uploadDialogueWithProgress(
           form,
@@ -1494,6 +1563,8 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
       form.append('video', dialogueFile, dialogueFile.name || file.name || 'video.mp4');
       form.append('duration', String(duration));
       form.append('protagonistProfile', protagonistProfile);
+      form.append('retainAudioForReuse', '1');
+      form.append('clientUploadKey', dialogueUploadClientKey(session, file, dialogueFile));
       try {
         upload = await uploadDialogueWithProgress(
           form,
@@ -1536,12 +1607,16 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
     throw new Error(body.error || body.message || `HTTP ${upload.status}`);
   }
 
-  if (state.urlCacheKey && body.audioReuseToken) {
-    state.audioReuseToken = String(body.audioReuseToken);
-    if (state.urlCacheSavePromise) await state.urlCacheSavePromise.catch(() => null);
-    void urlVideoCache.update(state.urlCacheKey, {
-      audioReuseToken: state.audioReuseToken
-    }).catch(error => console.warn('Ses önbelleği bilgisi kaydedilemedi:', error));
+  if (body.audioReuseToken) {
+    const token = String(body.audioReuseToken);
+    if (session) session.audioReuseToken = token;
+    if (state.urlCacheKey) {
+      state.audioReuseToken = token;
+      if (state.urlCacheSavePromise) await state.urlCacheSavePromise.catch(() => null);
+      void urlVideoCache.update(state.urlCacheKey, {
+        audioReuseToken: state.audioReuseToken
+      }).catch(error => console.warn('Ses önbelleği bilgisi kaydedilemedi:', error));
+    }
   }
 
   const segments = normalizeDialogueSegments(body.segments, Number(els.video.duration));

@@ -161,6 +161,14 @@ test('dialogue transport prepares local audio before considering remote-source f
   assert.doesNotMatch(block, /Sunucuda kaynak sesi hazırlanamadı; telefon sesine geçiliyor/);
 });
 
+test('device dialogue upload uses one stable logical upload key and reused starts do not resend bytes', () => {
+  const block = section('function dialogueUploadClientKey(', '\nasync function prepareDialoguePayload(');
+  assert.match(block, /clientUploadKey/);
+  assert.match(block, /startBody\.reused === true/);
+  assert.match(block, /\/api\/dialogue-upload\/\$\{encodeURIComponent\(uploadId\)\}\/status/);
+  assert.match(block, /if \(completedChunks\.has\(chunkIndex\)\) continue/);
+});
+
 test('fast links use four parallel dialogue upload streams while constrained links stay serial', () => {
   const uploadSection = section('async function uploadDialogueWithProgress(', '\nasync function prepareDialoguePayload(');
   assert.match(uploadSection, /4 \* 1024 \* 1024/);

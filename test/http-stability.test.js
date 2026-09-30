@@ -85,6 +85,34 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
     assert.equal(invalid.status, 400);
     await invalid.json();
   });
+  await t.test('duplicate device upload starts reuse one server upload session', async () => {
+    const body = JSON.stringify({
+      totalSize: 8,
+      fileName: 'device.wav',
+      mimeType: 'audio/wav',
+      clientUploadKey: 'device-test-one'
+    });
+    const first = await request('/api/dialogue-upload/start', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body
+    });
+    const firstBody = await first.json();
+    assert.equal(first.status, 200);
+    assert.equal(firstBody.reused, false);
+    const second = await request('/api/dialogue-upload/start', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body
+    });
+    const secondBody = await second.json();
+    assert.equal(second.status, 200);
+    assert.equal(secondBody.reused, true);
+    assert.equal(secondBody.uploadId, firstBody.uploadId);
+    const filePath = `/tmp/videoquest-dialogue/${firstBody.uploadId}.part`;
+    t.after(() => fs.unlink(filePath).catch(() => {}));
+  });
+
   await t.test('parallel audio chunks may arrive out of order and are written at exact offsets', async () => {
     const start = await request('/api/dialogue-upload/start', {
       method: 'POST',
