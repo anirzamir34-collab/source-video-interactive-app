@@ -1605,7 +1605,40 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
     }
   }
 
-  const segments = normalizeDialogueSegments(body.segments, Number(els.video.duration));
+  const rawDialogueSegments = Array.isArray(body.segments) ? body.segments : [];
+  const durationSeconds = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
+  const repairedDialogueSegments = (() => {
+    if (durationSeconds < 180 || rawDialogueSegments.length < 3) return rawDialogueSegments;
+    const times = rawDialogueSegments.flatMap(item => [Number(item?.startTime), Number(item?.endTime)])
+      .filter(Number.isFinite);
+    if (!times.length || Math.max(...times) > 15) return rawDialogueSegments;
+    const convert = value => {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return number;
+      const minutes = Math.floor(number);
+      const seconds = Math.round((number - minutes) * 100);
+      return minutes * 60 + Math.min(59, Math.max(0, seconds));
+    };
+    const convertedMax = Math.max(...times.map(convert));
+    const minuteEvidence = times.filter(value => {
+      const fraction = Math.round((value - Math.floor(value)) * 100);
+      return value >= 1 && fraction >= 10 && fraction <= 59;
+    }).length >= Math.max(2, Math.floor(times.length * 0.2));
+    if (!minuteEvidence || convertedMax > durationSeconds + 5 ||
+        convertedMax < Math.min(90, durationSeconds * 0.15)) return rawDialogueSegments;
+    logEngineEvent('DIALOGUE_TIMELINE_REPAIRED', {
+      mode: 'minute-dot-second',
+      rawMax: Math.max(...times),
+      convertedMax,
+      duration: durationSeconds
+    });
+    return rawDialogueSegments.map(item => ({
+      ...item,
+      startTime: convert(item.startTime),
+      endTime: convert(item.endTime)
+    }));
+  })();
+  const segments = normalizeDialogueSegments(repairedDialogueSegments, durationSeconds);
   state.dialogue = {
     ...body,
     segments,
@@ -4270,6 +4303,9 @@ function prepareAdultScenes() {
   );
 
   state.adultScenes.forEach(scene => {
+    scene.positions = consolidateVerifiedPositions(scene.positions, {
+      mergeDistantReturns: false
+    });
     scene.positions = scene.positions.map(position => {
       const family = String(position?.familyId || '').toLowerCase();
       const category = String(position?.categoryId || '').toLowerCase();
@@ -4861,7 +4897,7 @@ function renderAdultApproachChoices(scene, later = false) {
   const candidates = selectSequentialApproachChoices(approachPool, {
     timelineFloor: projectedFloor,
     limit: 5,
-    maxForwardSeconds: 36
+    maxForwardSeconds: 90
   });
 
   state.adultApproachChoices = candidates;
