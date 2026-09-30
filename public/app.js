@@ -1130,9 +1130,12 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
   const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
   const effectiveType = String(connection?.effectiveType || '').toLowerCase();
   const constrained = connection?.saveData === true || ['slow-2g', '2g'].includes(effectiveType);
-  const chunkSize = constrained ? 2 * 1024 * 1024 : 4 * 1024 * 1024;
+  const compactSingleRequest = file.size <= 9 * 1024 * 1024;
+  const chunkSize = compactSingleRequest
+    ? file.size
+    : constrained ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
   const chunkCount = Math.ceil(file.size / chunkSize);
-  const maxConnections = constrained ? 1 : effectiveType === '3g' ? 2 : 4;
+  const maxConnections = compactSingleRequest || constrained ? 1 : effectiveType === '3g' ? 1 : 2;
   const connections = Math.max(1, Math.min(maxConnections, chunkCount));
 
   const startResponse = await fetch('/api/dialogue-upload/start', {
@@ -1235,48 +1238,31 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
   };
 
   if (startBody.reused === true) {
-    // Another accidental caller already owns the actual byte transfer. Observe
-    // that transfer instead of sending the same device audio a second time.
-    const waitStartedAt = performance.now();
-    while (true) {
-      const response = await fetch(`/api/dialogue-upload/${encodeURIComponent(uploadId)}/status`, {
-        signal: AbortSignal.timeout(7000)
-      });
-      const status = await response.json().catch(() => ({}));
-      if (!response.ok || !status.available) {
-        const error = new Error(status.message || status.reason || 'Mevcut ses yüklemesinin durumu alınamadı.');
-        error.retryable = false;
-        throw error;
-      }
-      const received = Math.max(0, Math.min(file.size, Number(status.receivedSize) || 0));
-      // Status is byte-based because the first caller may still be writing
-      // chunks not represented in this caller's local per-chunk progress.
-      loadedByChunk.fill(0);
-      let remaining = received;
-      for (let index = 0; index < chunkCount && remaining > 0; index += 1) {
-        const size = Math.min(chunkSize, file.size - index * chunkSize);
-        loadedByChunk[index] = Math.min(size, remaining);
-        if (loadedByChunk[index] >= size) completedChunks.add(index);
-        remaining -= loadedByChunk[index];
+    const statusResponse = await fetch(`/api/dialogue-upload/${encodeURIComponent(uploadId)}/status`, {
+      signal: AbortSignal.timeout(7000)
+    });
+    const status = await statusResponse.json().catch(() => ({}));
+    if (statusResponse.ok && status.available) {
+      for (const index of Array.isArray(status.receivedChunks) ? status.receivedChunks : []) {
+        const n = Number(index);
+        if (!Number.isInteger(n) || n < 0 || n >= chunkCount) continue;
+        completedChunks.add(n);
+        const start = n * chunkSize;
+        loadedByChunk[n] = Math.min(chunkSize, file.size - start);
       }
       report();
-      if (status.complete) break;
-      if (performance.now() - waitStartedAt > 180000) {
-        throw new Error('Mevcut tek ses yüklemesi beklenen sürede tamamlanmadı.');
-      }
-      await new Promise(resolve => setTimeout(resolve, 350));
     }
-  } else {
-    const workers = Array.from({ length: connections }, async () => {
-      while (true) {
-        const chunkIndex = cursor++;
-        if (chunkIndex >= chunkCount) return;
-        if (completedChunks.has(chunkIndex)) continue;
-        await uploadOne(chunkIndex);
-      }
-    });
-    await Promise.all(workers);
   }
+
+  const workers = Array.from({ length: connections }, async () => {
+    while (true) {
+      const chunkIndex = cursor++;
+      if (chunkIndex >= chunkCount) return;
+      if (completedChunks.has(chunkIndex)) continue;
+      await uploadOne(chunkIndex);
+    }
+  });
+  await Promise.all(workers);
   onUploadComplete();
 
   const finishForm = new FormData();
