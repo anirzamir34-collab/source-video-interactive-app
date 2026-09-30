@@ -73,7 +73,6 @@ test('Eleven v3 delivery keeps neutral lines clean and maps grounded emotion con
   assert.equal(f.scope.elevenV3DeliveryTag('soft and relaxed'), '[softly]');
   assert.equal(f.scope.elevenV3DeliveryTag('unrecognized-state'), '');
   assert.match(source, /model_id:\s*'eleven_v3'/);
-  assert.match(source, /stability:.*\? 0\.65 : 0\.5/);
   assert.doesNotMatch(section('async function elevenLabsSynthesize(', '\n\nfunction elevenLabsErrorResponse('), /previous_text\s*:|next_text\s*:/);
   assert.doesNotMatch(source, /model_id:\s*'eleven_multilingual_v2'/);
 });
@@ -121,7 +120,7 @@ test('four speakers use their assigned voices even for identical text; cache nev
     assert.equal(calls[i].body.language_code, 'tr');
     assert.equal(calls[i].body.model_id, 'eleven_v3');
     assert.equal(calls[i].body.text, 'Merhaba.');
-    assert.equal(calls[i].body.voice_settings.stability, 0.65);
+    assert.equal(calls[i].body.voice_settings.stability, 0.5);
   }
   assert.equal((await synthesize('one')).cacheHit, true);
   assert.equal(calls.length, 4);
@@ -137,6 +136,22 @@ test('four speakers use their assigned voices even for identical text; cache nev
   await contextual({ ...sourceContext, segmentId: 'reply-2', startTime: 20, endTime: 21 });
   assert.equal(calls.length, 7, 'distinct source replies do not reuse the same generated take');
   assert.ok(calls.slice(5).every(call => call.body.text === 'Merhaba.' && !('previous_text' in call.body) && !('next_text' in call.body)));
+});
+
+test('empty ElevenLabs audio is rejected and not cached, allowing another attempt', async () => {
+  let attempts = 0;
+  const f = fixture(section('function elevenV3DeliveryTag(', '\n\nfunction elevenLabsErrorResponse('), {
+    crypto, elevenLabsAudioCache: new Map(), elevenLabsAudioInflight: new Map(),
+    ELEVENLABS_AUDIO_CACHE_TTL_MS: 60000, pruneElevenLabsAudioCache() {},
+    elevenLabsVoices: async () => ({ voices: [{ voice_id: 'test-voice' }] }),
+    elevenLabsRequest: async () => ({ arrayBuffer: async () => Buffer.from(++attempts === 1 ? '' : 'audio') })
+  });
+  const synthesize = () => f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Merhaba.', voiceId: 'test-voice' });
+  await assert.rejects(synthesize(), { code: 'ELEVENLABS_EMPTY_AUDIO' });
+  assert.equal(f.scope.elevenLabsAudioCache.size, 0);
+  assert.equal(f.scope.elevenLabsAudioInflight.size, 0);
+  assert.ok((await synthesize()).audioBase64);
+  assert.equal(attempts, 2);
 });
 
 test('remote dialogue audio uses compact speech-optimized MP3 settings', () => {

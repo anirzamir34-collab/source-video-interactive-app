@@ -2189,6 +2189,8 @@ async function playDubAudio(audio, segmentId, generation) {
     }
     // A queued or blocked play() is not a heard sentence.
     state.dubPlayedSegmentIds.add(segmentId);
+    logEngineEvent('DUB_PLAYBACK_STARTED', { segmentId, videoTime: Number(els.video.currentTime) || 0,
+      audioTime: Number(audio.currentTime) || 0, duration: Number(audio.duration) || 0 });
     dubRecoveryOffsets.delete(segmentId);
     state.dubResumeTime = null;
     if (state.dubBuffer?.segment === audio._vqSegment) cancelDubBuffer();
@@ -4193,7 +4195,27 @@ function prepareAdultScenes() {
 }
 
 function adultAnalysisTraceText() {
-  return JSON.stringify(state.adultAnalysisTrace || {
+  const report = state.adultAnalysisTrace ? {
+    ...state.adultAnalysisTrace,
+    audioContext: {
+      ...state.adultAnalysisTrace.audioContext,
+      dubbingEnabled: state.dubbingEnabled,
+      provider: state.dubProviderLock || '',
+      cachedSegmentCount: state.dubCache.size,
+      playedSegmentCount: state.dubPlayedSegmentIds.size,
+      failureReason: state.dubFailureReason || '',
+      playbackBlocked: Boolean(state.dubPlaybackBlocked),
+      videoTime: Number(els.video.currentTime) || 0,
+      timeline: dubTimeline().map(segment => ({
+        segmentId: getDubSegmentId(segment), speakerId: dubSpeakerKey(segment),
+        startTime: segment.startTime, endTime: segment.endTime,
+        cached: state.dubCache.has(getDubSegmentId(segment)),
+        played: state.dubPlayedSegmentIds.has(getDubSegmentId(segment))
+      })),
+      events: state.engineEvents.filter(event => /^DUB_/.test(String(event.type || ''))).slice(-100)
+    }
+  } : null;
+  return JSON.stringify(report || {
     reportVersion: 1,
     error: 'Henüz tamamlanmış bir analiz raporu yok.'
   }, null, 2);

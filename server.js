@@ -2708,9 +2708,9 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
   const voice = voiceSet.voices.find(item => item.voice_id === requested);
   if (!voice?.voice_id) throw Object.assign(new Error('Karaktere atanmış ses kullanılamıyor; başka sesle değiştirilmedi. Dublaj seslerini yeniden hazırla.'),
     { status: 422, code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
-  // Keep short replies stable without forcing Robust's flat delivery.
+  // Keep the same natural delivery across short and long conversational turns.
   const deliveryText = String(text || '').trim();
-  const voiceSettings = { stability: deliveryText.split(/\s+/u).length <= 4 ? 0.65 : 0.5,
+  const voiceSettings = { stability: 0.5,
     similarity_boost: 0.75, use_speaker_boost: true };
   const accountHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 20);
   // Identical short replies in different scenes need their own generation.
@@ -2748,10 +2748,13 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
         })
       }
     );
+    const audioBytes = Buffer.from(await response.arrayBuffer());
+    if (!audioBytes.length) throw Object.assign(new Error('ElevenLabs boş ses yanıtı döndürdü; replik yeniden hazırlanmalı.'),
+      { status: 502, code: 'ELEVENLABS_EMPTY_AUDIO' });
     const value = {
       voiceId: voice.voice_id,
       voiceName: voice.name || (gender === 'male' ? 'Erkek sesi' : 'Kadın sesi'),
-      audioBase64: Buffer.from(await response.arrayBuffer()).toString('base64')
+      audioBase64: audioBytes.toString('base64')
     };
     elevenLabsAudioCache.set(cacheKey, { value, expiresAt: Date.now() + ELEVENLABS_AUDIO_CACHE_TTL_MS });
     pruneElevenLabsAudioCache();
