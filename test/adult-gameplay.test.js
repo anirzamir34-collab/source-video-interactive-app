@@ -165,6 +165,28 @@ test('adult graph report exposes duplicate family tabs and movement variants', (
   assert.equal(report.scenes[0].positions[1].movementChoices[0].variantCount, 2);
 });
 
+test('adjacent same-family occurrences merge even when distant returns stay separate', () => {
+  const positions = consolidateVerifiedPositions([
+    {
+      id: 'm-a', familyId: 'missionary', progressionRole: 'core',
+      partnerTrackId: 'PARTNER_A', startTime: 713, endTime: 782.26,
+      sourceRanges: [{ id: 'a', startTime: 713, endTime: 782.26 }],
+      movements: [{ id: 'a1', sourceVerified: true, loopStartTime: 713, loopEndTime: 782.26 }]
+    },
+    {
+      id: 'm-b', familyId: 'missionary', progressionRole: 'core',
+      partnerTrackId: 'PARTNER_A', startTime: 782.263, endTime: 830,
+      sourceRanges: [{ id: 'b', startTime: 782.263, endTime: 830 }],
+      movements: [{ id: 'b1', sourceVerified: true, loopStartTime: 782.263, loopEndTime: 830 }]
+    }
+  ], { mergeDistantReturns: false });
+
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].startTime, 713);
+  assert.equal(positions[0].endTime, 830);
+  assert.deepEqual(positions[0].sourcePositionIds.sort(), ['a', 'b']);
+});
+
 test('same verified family returns merge into one tab across the encounter', () => {
   const positions = consolidateVerifiedPositions([
     {
