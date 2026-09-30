@@ -4906,7 +4906,7 @@ function renderAdultApproachChoices(scene, later = false) {
   const heading = document.createElement('div');
   heading.className = 'approach-status';
   heading.innerHTML = later ? '<strong>SAHNE SEÇENEKLERİ</strong>' :
-    `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>İlk gerçek pozisyon kaynak anında açılır.</small>`;
+    `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>Lust 100 olduğunda sıradaki doğrulanmış pozisyon hemen açılır.</small>`;
   els.choices.appendChild(heading);
   const compactChoiceLabel = value => String(value || '')
     .replace(/\s+sekansını oynat/giu, '')
@@ -5019,7 +5019,10 @@ function renderAdultProgressiveUI(force = false) {
   const hasBonusUnlocked = availablePositions.some(isBonusPosition);
   const phase = setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
   const videoTime = Number(els.video?.currentTime) || 0;
-  const laterOverlay = state.adultSexUnlocked && !state.activeMovementId &&
+  const hasUnlockedFutureCore = availablePositions.some(position =>
+    Number(position.startTime) > videoTime + 0.04);
+  const laterOverlay = state.adultSexUnlocked && !hasUnlockedFutureCore &&
+    !state.activeMovementId &&
     !sourcePositionAtTime(scene.positions || [], videoTime) &&
     (scene.positions || []).some(position => Number(position.startTime) < videoTime) &&
     (scene.positions || []).some(position => Number(position.startTime) > videoTime + 0.04);
@@ -5050,7 +5053,7 @@ function renderAdultProgressiveUI(force = false) {
 
   if (phase === 'foreplay' || laterOverlay) {
     if (els.discoveryGateText) els.discoveryGateText.textContent = `İlk seks pozisyonu için Lust ${Math.round(currentAdultFlow())}/100`;
-    if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = 'Önce kaynak videodaki yakınlaşma, oral ve manuel seçenekleri oynatılır.';
+    if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = 'Yakınlaşma, oral ve manuel seçenekleri Lust kazandırır; Lust 100 olunca yeni pozisyon beklemeden açılır.';
     els.discoveryGate?.classList.remove('hidden');
     els.adultInteractionPanel.classList.add('hidden');
     els.adultPanelToggleBtn?.classList.add('hidden');
