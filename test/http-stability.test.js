@@ -104,6 +104,15 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
       },
       body
     });
+    const status = async (index, offset, length) => {
+      const response = await request(`/api/dialogue-upload/${uploadId}/chunk/${index}/status?offset=${offset}&length=${length}`, { headers: { Cookie: cookie } });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    assert.equal((await status(0, 0, 4)).received, false);
+    await chunk(0, 0, 'ABCD');
+    assert.equal((await status(0, 0, 4)).received, true);
+    assert.equal((await status(0, 1, 4)).received, false);
     const results = await Promise.all([
       chunk(2, 8, 'IJKL'),
       chunk(0, 0, 'ABCD'),

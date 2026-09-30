@@ -1482,6 +1482,24 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
   }
 });
 
+app.get('/api/dialogue-upload/:uploadId/chunk/:chunkIndex/status', (req, res) => {
+  const session = dialogueUploadSessions.get(String(req.params.uploadId || ''));
+  if (!session) return res.status(404).json({ available: false, reason: 'UPLOAD_SESSION_NOT_FOUND' });
+  const index = Number(req.params.chunkIndex);
+  const offset = Number(req.query.offset);
+  const length = Number(req.query.length);
+  if (!Number.isSafeInteger(index) || index < 0 || !Number.isSafeInteger(offset) || offset < 0 ||
+      !Number.isSafeInteger(length) || length <= 0 || offset + length > session.totalSize) {
+    return res.status(400).json({ available: false, reason: 'INVALID_CHUNK_RANGE' });
+  }
+  const matches = range => range?.offset === offset && range?.length === length;
+  return res.json({
+    available: true,
+    received: matches(session.receivedChunks?.get(index)),
+    writing: matches(session.inflightRanges?.get(index))
+  });
+});
+
 app.post(
   '/api/dialogue-upload/:uploadId/chunk',
   dialogueChunkParser,

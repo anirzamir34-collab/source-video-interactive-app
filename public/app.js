@@ -1134,6 +1134,7 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
   const uploadId = startBody.uploadId;
   const startedAt = performance.now();
   const loadedByChunk = new Array(chunkCount).fill(0);
+  const completedChunks = new Set();
   let cursor = 0;
   const report = () => {
     const loaded = Math.min(file.size, loadedByChunk.reduce((sum, value) => sum + value, 0));
@@ -1143,7 +1144,9 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
       total: file.size,
       percent: Math.min(100, Math.round(loaded / file.size * 100)),
       speed: (loaded / 1024 / 1024) / elapsed,
-      connections
+      connections,
+      completedChunks: completedChunks.size,
+      chunkCount
     });
   };
 
@@ -1169,10 +1172,23 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
             report();
           }
         });
+        completedChunks.add(chunkIndex);
         loadedByChunk[chunkIndex] = chunk.size;
         report();
         return;
       } catch (error) {
+        if (error.retryable !== false) {
+          try {
+            const statusUrl = `/api/dialogue-upload/${encodeURIComponent(uploadId)}/chunk/${chunkIndex}/status?offset=${start}&length=${chunk.size}`;
+            const statusResponse = await fetch(statusUrl, { signal: AbortSignal.timeout(5000) });
+            if (statusResponse.ok && (await statusResponse.json()).received) {
+              completedChunks.add(chunkIndex);
+              loadedByChunk[chunkIndex] = chunk.size;
+              report();
+              return;
+            }
+          } catch { /* A failed status check leaves the existing retry path intact. */ }
+        }
         retryCount += 1;
         if (error.retryable === false || retryCount >= 5) throw error;
         els.analysisTitle.textContent =
@@ -1424,7 +1440,7 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
       try {
         upload = await uploadDialogueWithProgress(
           form,
-          ({ loaded, total, percent, speed, connections = 1 }) => {
+          ({ loaded, total, percent, speed, connections = 1, completedChunks = 0, chunkCount = 1 }) => {
             els.analysisState.textContent = 'AUDIO_UPLOAD';
             els.analysisTitle.textContent = `${audioOnly ? 'Yalnızca konuşma sesi' : 'Cihazdaki video'} sunucuya yükleniyor · %${percent}`;
             const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
@@ -1432,6 +1448,7 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
               (audioOnly ? 'Video cihazda kalıyor; sadece ses gönderiliyor.\n' : 'Ses cihazda ayrılamadığı için video sunucuya gönderiliyor.\n') +
               `Gerçek yükleme ilerlemesi: %${percent}\n` +
               `${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n` +
+              `Tamamlanan parça: ${completedChunks}/${chunkCount}\n` +
               `Ortalama yükleme hızı: ${speedText} MB/sn${connections > 1 ? ` · ${connections} paralel bağlantı` : ''}`;
           },
           () => {
