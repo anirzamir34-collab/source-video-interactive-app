@@ -224,6 +224,49 @@ async function readJsonSafe(response) {
   }
 }
 
+function stripTrailingJsonCommas(value) {
+  const input = String(value || '');
+  let output = '';
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (inString) {
+      output += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      output += char;
+      continue;
+    }
+    if (char === ',') {
+      let cursor = index + 1;
+      while (cursor < input.length && /\s/.test(input[cursor])) cursor += 1;
+      if (input[cursor] === '}' || input[cursor] === ']') continue;
+    }
+    output += char;
+  }
+  return output;
+}
+
+function parseModelJson(value) {
+  const cleaned = String(value || '').trim()
+    .replace(/^\`\`\`json\s*/i, '')
+    .replace(/\`\`\`\s*$/i, '');
+  if (!cleaned) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
+  try {
+    return JSON.parse(cleaned);
+  } catch (firstError) {
+    const repaired = stripTrailingJsonCommas(cleaned);
+    if (repaired !== cleaned) return JSON.parse(repaired);
+    throw firstError;
+  }
+}
+
 app.get('/api/external-health', async (_req, res) => {
   const startedAt = Date.now();
   try {
@@ -2201,7 +2244,13 @@ Rules:
         } catch (error) {
           lastDialogueError = error;
           const details = String(error?.message || error);
-          const retryable = details.includes('Unexpected end of JSON input') || details.includes('GEMINI_EMPTY_JSON_RESPONSE') || details.includes('503') || details.includes('UNAVAILABLE') || details.includes('high demand') ||
+          const retryable = error instanceof SyntaxError ||
+            details.includes('Unexpected end of JSON input') ||
+            details.includes('Expected double-quoted property name') ||
+            details.includes('Unexpected token') ||
+            details.includes('Expected property name') ||
+            details.includes('GEMINI_EMPTY_JSON_RESPONSE') ||
+            details.includes('503') || details.includes('UNAVAILABLE') || details.includes('high demand') ||
             [500, 502, 503, 504].includes(Number(error?.status || error?.code)) ||
             /"code"\s*:\s*(?:500|502|503|504)\b/.test(details);
           if (!retryable || attempt === 3) break;
