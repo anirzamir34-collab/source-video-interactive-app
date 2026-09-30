@@ -1299,6 +1299,20 @@ async function prepareDialoguePayload(file, session = state.analysisSession) {
 }
 
 async function analyzeSelectedDialogue(file, session = state.analysisSession) {
+  if (session?.dialogueAnalysisPromise) {
+    logEngineEvent('DIALOGUE_ANALYSIS_INFLIGHT_REUSED', {});
+    return session.dialogueAnalysisPromise;
+  }
+  const task = analyzeSelectedDialogueOnce(file, session);
+  if (session) session.dialogueAnalysisPromise = task;
+  try {
+    return await task;
+  } finally {
+    if (session?.dialogueAnalysisPromise === task) session.dialogueAnalysisPromise = null;
+  }
+}
+
+async function analyzeSelectedDialogueOnce(file, session = state.analysisSession) {
   els.analysisCard.classList.remove('hidden');
   els.analysisState.textContent = 'AUDIO_ANALYSIS';
   if (!file) throw new Error('Diyalog analizi için video bulunamadı.');
@@ -1355,10 +1369,8 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
   if (!upload) {
     const refreshRemoteToken = async () => {
       if (state.selectedSourceKind !== 'url' || !state.urlCacheKey) return false;
-      // Older 24-hour cache entries predate remote-token persistence. Refresh
-      // the source session after server restarts without downloading the video.
       els.analysisTitle.textContent = 'Video kaynağı yeniden bağlanıyor';
-      els.analysisOutput.textContent = 'Video yeniden indirilmiyor; ses için kaynak bağlantısı yenileniyor.';
+      els.analysisOutput.textContent = 'Video yeniden indirilmiyor; yalnız kaynak oturumu yenileniyor.';
       try {
         const response = await fetch('/api/resolve-video-url', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1374,65 +1386,25 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
           return true;
         }
       } catch (error) {
-        console.warn('Kaynak bağlantısı yenilenemedi; cihazdaki ses kullanılacak:', error);
+        console.warn('Kaynak bağlantısı yenilenemedi:', error);
       }
       return false;
     };
-    if (!remoteToken && state.selectedSourceKind === 'url' && state.urlCacheKey) {
-      await refreshRemoteToken();
-    }
+
     els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
     els.analysisOutput.textContent =
       `Konuşma sesi hazırlanıyor...\n` +
       `${(file.size / 1024 / 1024).toFixed(1)} MB`;
 
-    // A resolved URL can be read by the server. Preparing and uploading its
-    // audio on the phone wastes the user's upstream bandwidth (often the
-    // slowest part of this workflow).
-    if (remoteToken) {
-      els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
-      els.analysisOutput.textContent = 'Telefonundan ses yüklenmiyor; kaynak videonun sesi sunucuda hazırlanıyor.';
-      const startedAt = performance.now();
-      const show = () => {
-        els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-        els.analysisTitle.textContent = 'Sunucuda ses + Gemini analizi';
-        els.analysisOutput.textContent =
-          `Telefon yüklemesi atlandı. Sunucuda ses ve konuşma analizi sürüyor...\n` +
-          `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
-      };
-      show();
-      processingTimer = setInterval(show, 1000);
-      try {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const remoteForm = new FormData();
-          remoteForm.append('remoteToken', remoteToken);
-          remoteForm.append('duration', String(duration));
-          remoteForm.append('protagonistProfile', protagonistProfile);
-          if (state.urlCacheKey) remoteForm.append('retainAudioForReuse', '1');
-          const response = await fetch('/api/gemini-dialogue-analyze', {
-            method: 'POST', headers: geminiRequestHeaders(), body: remoteForm
-          });
-          const body = await response.json().catch(() => ({}));
-          upload = { ok: response.ok, status: response.status, body };
-          if (attempt === 0 && response.status === 410 &&
-              body.reason === 'VIDEO_SESSION_EXPIRED' && await refreshRemoteToken()) continue;
-          break;
-        }
-      } catch (error) {
-        console.warn('Sunucuda kaynak sesi hazırlanamadı; telefon sesine geçiliyor:', error);
-      } finally {
-        clearInterval(processingTimer);
-        processingTimer = null;
-      }
-      if (upload && (!upload.ok || !upload.body?.available)) {
-        console.warn('Sunucuda kaynak sesi hazırlanamadı; telefon sesine geçiliyor:', upload.body?.reason);
-        upload = null;
-      }
-    }
+    // Choose exactly one transport for this run:
+    // 1) locally isolated audio -> upload once;
+    // 2) if local isolation failed, let Render fetch source audio once;
+    // 3) only local files without a remote source may upload the full file.
+    const dialogueFile = await prepareDialoguePayload(file, session);
+    const audioOnly = dialogueFile instanceof Blob &&
+      String(dialogueFile.type || '').startsWith('audio/');
 
-    if (!upload) {
-      const dialogueFile = await prepareDialoguePayload(file, session);
-      const audioOnly = dialogueFile instanceof Blob && String(dialogueFile.type || '').startsWith('audio/');
+    if (audioOnly) {
       const form = new FormData();
       form.append('video', dialogueFile, dialogueFile.name || 'dialogue.wav');
       form.append('duration', String(duration));
@@ -1443,10 +1415,10 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
           form,
           ({ loaded, total, percent, speed, connections = 1, completedChunks = 0, chunkCount = 1 }) => {
             els.analysisState.textContent = 'AUDIO_UPLOAD';
-            els.analysisTitle.textContent = `${audioOnly ? 'Yalnızca konuşma sesi' : 'Cihazdaki video'} sunucuya yükleniyor · %${percent}`;
+            els.analysisTitle.textContent = `Yalnızca konuşma sesi sunucuya yükleniyor · %${percent}`;
             const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
             els.analysisOutput.textContent =
-              (audioOnly ? 'Video cihazda kalıyor; sadece ses gönderiliyor.\n' : 'Ses cihazda ayrılamadığı için video sunucuya gönderiliyor.\n') +
+              `Video cihazda kalıyor; ses bu analizde yalnızca bir kez gönderiliyor.\n` +
               `Gerçek yükleme ilerlemesi: %${percent}\n` +
               `${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n` +
               `Tamamlanan parça: ${completedChunks}/${chunkCount}\n` +
@@ -1458,7 +1430,91 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
               els.analysisState.textContent = 'DIALOGUE_PROCESSING';
               els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
               els.analysisOutput.textContent =
-                `Yükleme tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
+                `Tek ses yüklemesi tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
+                `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
+            };
+            show();
+            processingTimer = setInterval(show, 1000);
+          }
+        );
+      } finally {
+        if (processingTimer !== null) clearInterval(processingTimer);
+        processingTimer = null;
+      }
+    } else if (state.selectedSourceKind === 'url') {
+      if (!remoteToken && state.urlCacheKey) await refreshRemoteToken();
+      if (!remoteToken) {
+        throw new Error('Ses cihazda ayrılamadı ve kaynak oturumu yenilenemedi. Aynı sesi ikinci kez göndermemek için analiz durduruldu.');
+      }
+
+      els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
+      els.analysisOutput.textContent = 'Yerel ses ayrılamadı; telefon yüklemesi yapılmadan kaynak sesi sunucuda bir kez hazırlanıyor.';
+      const startedAt = performance.now();
+      const show = () => {
+        els.analysisState.textContent = 'DIALOGUE_PROCESSING';
+        els.analysisTitle.textContent = 'Sunucuda ses + Gemini analizi';
+        els.analysisOutput.textContent =
+          `Telefonundan ses gönderilmiyor. Tek kaynak oturumu kullanılıyor...\n` +
+          `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
+      };
+      show();
+      processingTimer = setInterval(show, 1000);
+      try {
+        const remoteForm = new FormData();
+        remoteForm.append('remoteToken', remoteToken);
+        remoteForm.append('duration', String(duration));
+        remoteForm.append('protagonistProfile', protagonistProfile);
+        if (state.urlCacheKey) remoteForm.append('retainAudioForReuse', '1');
+        let response = await fetch('/api/gemini-dialogue-analyze', {
+          method: 'POST', headers: geminiRequestHeaders(), body: remoteForm
+        });
+        let body = await response.json().catch(() => ({}));
+
+        // A 410 means the expired token was rejected before source audio was
+        // transferred. Refreshing it is safe and does not duplicate audio.
+        if (response.status === 410 && body.reason === 'VIDEO_SESSION_EXPIRED' &&
+            await refreshRemoteToken()) {
+          const retryForm = new FormData();
+          retryForm.append('remoteToken', remoteToken);
+          retryForm.append('duration', String(duration));
+          retryForm.append('protagonistProfile', protagonistProfile);
+          if (state.urlCacheKey) retryForm.append('retainAudioForReuse', '1');
+          response = await fetch('/api/gemini-dialogue-analyze', {
+            method: 'POST', headers: geminiRequestHeaders(), body: retryForm
+          });
+          body = await response.json().catch(() => ({}));
+        }
+        upload = { ok: response.ok, status: response.status, body };
+      } finally {
+        if (processingTimer !== null) clearInterval(processingTimer);
+        processingTimer = null;
+      }
+    } else {
+      const form = new FormData();
+      form.append('video', dialogueFile, dialogueFile.name || file.name || 'video.mp4');
+      form.append('duration', String(duration));
+      form.append('protagonistProfile', protagonistProfile);
+      try {
+        upload = await uploadDialogueWithProgress(
+          form,
+          ({ loaded, total, percent, speed, connections = 1, completedChunks = 0, chunkCount = 1 }) => {
+            els.analysisState.textContent = 'AUDIO_UPLOAD';
+            els.analysisTitle.textContent = `Cihazdaki video sunucuya yükleniyor · %${percent}`;
+            const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
+            els.analysisOutput.textContent =
+              `Ses ayrılamadığı için yerel dosya bu analizde yalnızca bir kez gönderiliyor.\n` +
+              `Gerçek yükleme ilerlemesi: %${percent}\n` +
+              `${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n` +
+              `Tamamlanan parça: ${completedChunks}/${chunkCount}\n` +
+              `Ortalama yükleme hızı: ${speedText} MB/sn${connections > 1 ? ` · ${connections} paralel bağlantı` : ''}`;
+          },
+          () => {
+            const startedAt = performance.now();
+            const show = () => {
+              els.analysisState.textContent = 'DIALOGUE_PROCESSING';
+              els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
+              els.analysisOutput.textContent =
+                `Tek yükleme tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
                 `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
             };
             show();

@@ -136,6 +136,31 @@ test('completed mobile upload is not aborted while waiting for the server respon
   assert.equal((await result).nextChunk, 1);
 });
 
+test('dialogue analysis is single-flight so concurrent callers cannot upload the same audio twice', async () => {
+  const gate = deferred();
+  let calls = 0;
+  const session = {};
+  const f = fixture(functions('analyzeSelectedDialogue'), {
+    state: { analysisSession: session },
+    logEngineEvent() {},
+    analyzeSelectedDialogueOnce() { calls++; return gate.promise; }
+  });
+  const first = f.scope.analyzeSelectedDialogue(new Blob(['video']), session);
+  const second = f.scope.analyzeSelectedDialogue(new Blob(['video']), session);
+  assert.equal(calls, 1);
+  gate.resolve({ segments: [] });
+  await Promise.all([first, second]);
+  assert.equal(session.dialogueAnalysisPromise, null);
+});
+
+test('dialogue transport prepares local audio before considering remote-source fallback', () => {
+  const block = section('async function analyzeSelectedDialogueOnce(', '\nfunction languageClockTime(');
+  const local = block.indexOf('const dialogueFile = await prepareDialoguePayload(file, session)');
+  const remote = block.indexOf("else if (state.selectedSourceKind === 'url')");
+  assert.ok(local >= 0 && remote > local);
+  assert.doesNotMatch(block, /Sunucuda kaynak sesi hazırlanamadı; telefon sesine geçiliyor/);
+});
+
 test('fast links use four parallel dialogue upload streams while constrained links stay serial', () => {
   const uploadSection = section('async function uploadDialogueWithProgress(', '\nasync function prepareDialoguePayload(');
   assert.match(uploadSection, /4 \* 1024 \* 1024/);
