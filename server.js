@@ -2855,7 +2855,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
     ...['originalText', 'previousText', 'nextText'].map(key => String(context[key] || '').trim().slice(0, 1200)),
     String(emotion || '').trim().toLowerCase().slice(0, 80)];
   const cacheKey = crypto.createHash('sha256')
-    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, deliveryContext, 'natural-dialogue-v4']))
+    .update(JSON.stringify([accountHash, voice.voice_id, deliveryText, 'eleven_v3', 'mp3_44100_128', voiceSettings, deliveryContext, 'natural-dialogue-v5']))
     .digest('hex');
   pruneElevenLabsAudioCache();
   const cached = elevenLabsAudioCache.get(cacheKey);
@@ -2878,9 +2878,7 @@ async function elevenLabsSynthesize({ apiKey, text, gender, voiceId = '', emotio
           text: deliveryText,
           model_id: 'eleven_v3',
           language_code: 'tr',
-          voice_settings: voiceSettings,
-          previous_text: String(context.previousText || '').trim() || undefined,
-          next_text: String(context.nextText || '').trim() || undefined
+          voice_settings: voiceSettings
         })
       }
     );
