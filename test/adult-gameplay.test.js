@@ -12,6 +12,7 @@ import {
   canUnlockCorePositions,
   canUnlockOutcome,
   buildVerifiedMovementChoices,
+  splitSparseMovementChoiceCards,
   summarizeMovementChoiceCoverage,
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
@@ -860,6 +861,21 @@ test('movement cards keep concrete action text and remove sensory metadata', () 
   }], 'Kovboy Pozisyonu', 3);
   assert.equal(choices[0].label, 'Öperek hızlı hareket et');
   assert.doesNotMatch(choices[0].label, /nefes|bakış|kesit|sekans|\d+:\d+/i);
+});
+
+test('one sparse card with several verified subclips becomes separate user-selectable cards', () => {
+  const original = [{
+    id: 'one-card',
+    label: 'Observed movement',
+    variants: [
+      { id: 'part-a', label: 'Observed movement · Sekans 1', sourceVerified: true, loopStartTime: 10, loopEndTime: 15 },
+      { id: 'part-b', label: 'Observed movement · Sekans 2', sourceVerified: true, loopStartTime: 15, loopEndTime: 20 }
+    ]
+  }];
+  const cards = splitSparseMovementChoiceCards(original, 5);
+  assert.equal(cards.length, 2);
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)), [['part-a'], ['part-b']]);
+  assert.deepEqual(cards.map(card => card.label), ['Observed movement · Bölüm 1', 'Observed movement · Bölüm 2']);
 });
 
 test('position-only evidence stays one honest playable card without generic cut labels', () => {
