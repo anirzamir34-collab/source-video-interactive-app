@@ -6334,13 +6334,30 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
   const forwardMovements = forwardLocalMovementClips(position, cursor);
   const unlockedCore = !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id);
-  const verifiedPositionMovements = (position.movements || [])
+  const occurrences = positionOccurrenceGroups(position);
+  const containingOccurrence = occurrences.find(group =>
+    cursor >= Number(group.startTime) - 0.05 && cursor < Number(group.endTime) - 0.04);
+  const retainedOccurrence = previousPositionId === position.id
+    ? occurrences.find(group => group.id === state.activeAdultOccurrenceId)
+    : null;
+  const targetOccurrence = containingOccurrence || retainedOccurrence ||
+    occurrences.find(group => Number(group.endTime) > cursor + 0.05) || occurrences[0] || null;
+  // A canonical tab may summarize several distant returns, but a movement
+  // selection must stay inside one continuous occurrence. This prevents the
+  // first unlocked tab from exposing a later return hundreds of seconds ahead.
+  const occurrenceMovements = targetOccurrence
+    ? movementsForPositionOccurrence(position, targetOccurrence.id)
+    : [];
+  const verifiedPositionMovements = occurrenceMovements
     .filter(item => item?.sourceVerified === true && positionOccurrenceForMovement(position, item))
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
-  const localMovements = unlockedCore ? verifiedPositionMovements : forwardMovements;
-  // An unlocked position is an explicit user-selectable destination. Its own
-  // verified entry may be farther than the passive 18-second discovery window.
-  const entryMovementId = position.entryMovementId || verifiedPositionMovements[0]?.id || '';
+  const localMovements = unlockedCore ? verifiedPositionMovements :
+    forwardMovements.filter(item => !targetOccurrence ||
+      positionOccurrenceForMovement(position, item)?.id === targetOccurrence.id);
+  // An unlocked position is an explicit user-selectable destination, but only
+  // into its selected continuous occurrence. Distant returns remain isolated.
+  const entryMovementId = verifiedPositionMovements.some(item => item.id === position.entryMovementId)
+    ? position.entryMovementId : verifiedPositionMovements[0]?.id || '';
   const entryMovement = verifiedPositionMovements.find(item => item.id === entryMovementId);
   const playableEntry = unlockedCore
     ? (entryMovement || verifiedPositionMovements[0] || null)
@@ -6370,7 +6387,11 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   state.activePositionId = position.id;
   if (changedPosition) {
     state.activeMovementId = null;
-    state.activeAdultOccurrenceId = positionOccurrenceForMovement(position, localMovements[0])?.id || null;
+    state.activeAdultOccurrenceId = targetOccurrence?.id ||
+      positionOccurrenceForMovement(position, localMovements[0])?.id || null;
+  } else if (targetOccurrence && state.activeAdultOccurrenceId !== targetOccurrence.id) {
+    state.activeAdultOccurrenceId = targetOccurrence.id;
+    state.activeMovementId = null;
   }
   if (changedPosition) resetAdultTapRhythm();
 
