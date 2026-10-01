@@ -2103,7 +2103,7 @@ function trimPreparedDubAudio() {
     if (!isDubPlaybackOwnerCurrent(group.owner)) { dubPreparationGroups.delete(group); continue; }
     for (const id of group.ids) activeIds.add(id);
   }
-  const limit = Math.max(12, activeIds.size + 6);
+  const limit = Math.max(16, activeIds.size + 8);
   for (const [id, audio] of preparedDubAudio) {
     if (preparedDubAudio.size <= limit) break;
     if (activeIds.has(id) || audio.readyState < 2) continue;
@@ -2499,7 +2499,7 @@ function resetDubState() {
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  getDubPlaybackScheduler().upcoming(languageClockTime(videoTime), 6)
+  getDubPlaybackScheduler().upcoming(languageClockTime(videoTime), 8)
     .forEach((row, index) => void prepareDubAudio(row.segment, 30 - index));
 }
 
@@ -2987,7 +2987,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       throw new Error(`Dublaj eksik kaldı: ${ready}/${dubSegments.length} blok hazır${reason}. Video dublajsız başlatılmadı.`);
     }
     dialogue.dubCoverage = { ready, total: dubSegments.length, complete: true };
-    const initialSegments = nextDialogueSegments(dubSegments, 0, 6);
+    const initialSegments = nextDialogueSegments(dubSegments, 0, 12);
     const prepared = await Promise.all(initialSegments.map((segment, index) => prepareDubAudio(segment, 40 - index)));
     if (prepared.some(audio => !audio)) {
       throw new Error(`Dublaj üretildi ancak ses çözümlenemedi: ${getDubDiagnostics().playbackFailureReason || 'DUB_DECODE_FAILED'}`);
