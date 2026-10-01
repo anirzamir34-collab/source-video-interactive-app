@@ -4119,7 +4119,7 @@ function isBonusPosition(position) {
 // source continues with other verified positions. Keep nearby occurrences in
 // one gameplay graph so progression can reveal them instead of ending early.
 // Only nearby source chapters can share one timeline panel.
-const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 18;
+const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 30;
 
 function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
@@ -4307,11 +4307,16 @@ function prepareAdultScenes() {
     }).map(sceneIdFor)
   );
 
-  const isIntroduction = action => ['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm']
-      .includes(String(action.actionType || '').toLowerCase()) &&
+  const isIntroduction = action => {
+    const actionType = String(action.actionType || '').toLowerCase();
+    const dialogueBridge = actionType === 'other' && (state.dialogue?.segments || []).some(segment =>
+      sourceSpeechOverlaps(action, segment));
+    return (['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm'].includes(actionType) ||
+      dialogueBridge) &&
       !traceByAction.get(action)?.sceneCandidate &&
       !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
         !isAdultSocialRelationshipRole(action.relationshipRoleLabel));
+  };
   const introductions = matchSceneIntroductions(actions,
     actions.filter(action => traceByAction.get(action).sceneCandidate)
       .map(action => ({ action, sceneId: sceneIdFor(action) })), isIntroduction, 45,
@@ -4699,7 +4704,7 @@ function prepareAdultScenes() {
   // incorrectly reveals every later position.
   state.adultScenes = mergeAdultSceneFragments(
     state.adultScenes,
-    actions.filter(action => !['FOREPLAY', 'POSITION', 'OUTCOME', 'AFTERMATH'].includes(traceByAction.get(action)?.route)),
+    actions,
     state.analysis?.unownedSourceIntervals || []
   );
 
@@ -4727,7 +4732,7 @@ function prepareAdultScenes() {
       Number(item.endTime) <= firstCoreStart + 0.05 ||
       Number(item.startTime) >= firstCoreStart - 0.05);
     scene.positions = consolidateVerifiedPositions(scene.positions, {
-      mergeDistantReturns: false
+      mergeDistantReturns: true
     }).map(position => {
       const controlClipIds = isWarmupPosition(position) ? new Set() : exclusiveControlClipIds(position);
       const occurrences = positionOccurrenceGroups(position);
@@ -6109,8 +6114,8 @@ function applyAdultPreludeProgress(item) {
   state.adultPreludePlayCounts.set(item.id, repeatCount + 1);
   const runtime = genericInteractionSnapshot();
   if (runtime.progressBudget && !runtime.progressBudgetConsumed) {
-    state.interactionRuntime = transitionInteraction(runtime, { type: 'playback',
-      startTime: Number(item.startTime), endTime: Math.min(Number(item.endTime), Number(item.startTime) + 0.05), playing: true });
+    state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
+      choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
   } else addFemaleLust(delta.female * currentWarmupLustScale());
   renderAdultProgress();
 }
@@ -6165,9 +6170,11 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   }
   const runtime = genericInteractionSnapshot();
   if (isWarmupPosition(position) && runtime.progressBudget && !runtime.progressBudgetConsumed && movement) {
-    state.interactionRuntime = transitionInteraction(runtime, { type: 'playback',
-      startTime: Number(movement.loopStartTime),
-      endTime: Math.min(Number(movement.loopEndTime), Number(movement.loopStartTime) + 0.05), playing: true });
+    state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
+      choiceId: movement.id, startTime: Number(movement.loopStartTime),
+      endTime: Number(movement.loopEndTime), playing: true,
+      sourcePositionId: movement.sourcePositionId,
+      sourceOccurrenceId: positionOccurrenceForMovement(position, movement)?.id || '' });
   } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
   if (!isWarmupPosition(position)) {
     // Tapping a card never advances orgasm. Only verified core playback does.
