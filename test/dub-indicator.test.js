@@ -16,3 +16,10 @@ test('requested dubbing exposes incomplete dialogue analysis instead of silently
 test('successful dialogue analysis restores an enabled dubbing indicator', () => {
   assert.match(source, /modes\.dubbing && dialogue\.segments\.length[\s\S]*?delete els\.dubToggleBtn\.dataset\.unavailable[\s\S]*?TR DUBLAJ: AÇIK/);
 });
+
+
+test('mobile dubbing primes a wider decoded buffer before playback', () => {
+  assert.match(source, /nextDialogueSegments\(dubSegments, 0, 12\)/);
+  assert.match(source, /upcoming\(languageClockTime\(videoTime\), 8\)/);
+  assert.match(source, /Math\.max\(16, activeIds\.size \+ 8\)/);
+});
