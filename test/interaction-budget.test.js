@@ -4,7 +4,7 @@ import {
   createInteractionState, createInteractionProgressBudget, computeInteractionProgress,
   observeInteractionPlayback, completeInteractionSelection, transitionInteraction,
   normalizeInteractionRuntime, selectVerifiedChoiceQueue, selectInteractionChoice,
-  selectInteractionGroup, advanceInteraction
+  selectInteractionGroup, advanceInteraction, unlockNextCoreGroup
 } from '../public/interaction-engine.js';
 
 const range = (id, startTime, endTime, occurrenceId = id) => ({
@@ -119,6 +119,33 @@ test('opening budget is consumed once and cannot refill the next group gate', ()
   assert.equal(completeInteractionSelection(state, 'a'), state);
   assert.equal(transitionInteraction(state, { type: 'source-time', currentTime: 181 }).progressionValue, 0);
   assert.deepEqual(state.unlockedGroupIds, ['next']);
+});
+
+test('after the active core family is unlocked, the next full meter unlocks the next distinct core group', () => {
+  const scene = {
+    id: 'multi-core',
+    choices: [row('approach', 0, 20)],
+    groups: [
+      row('missionary', 20, 40, { phase: 'CORE' }),
+      row('cowgirl', 50, 70, { phase: 'CORE' }),
+      row('spoon', 80, 100, { phase: 'CORE' })
+    ]
+  };
+  let state = createInteractionState(scene);
+  state = {
+    ...state,
+    currentTime: 30,
+    currentPhase: 'CORE',
+    activeGroupId: 'missionary',
+    unlockedGroupIds: ['missionary'],
+    revealedGroupIds: ['missionary'],
+    progressionValue: 100
+  };
+  state = unlockNextCoreGroup(state, 'progress-full');
+  assert.deepEqual(state.unlockedGroupIds, ['missionary', 'cowgirl']);
+  assert.equal(state.currentPhase, 'CORE');
+  assert.equal(state.unlockReason, 'progress-full');
+  assert.ok(!state.unlockedGroupIds.includes('spoon'));
 });
 
 test('full progress repairs a stale approach phase and hidden panel without seeking', () => {
