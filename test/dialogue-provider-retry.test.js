@@ -124,7 +124,8 @@ test('collapsed speech intervals are remeasured on the same uploaded audio befor
   assert.equal(result.parsed.segments[0].startTime, 184);
   assert.equal(result.parsed.segments.at(-1).startTime, 264);
   assert.ok(result.requests.every(request => request.contents[0].parts[0].fileData.fileUri === 'already-uploaded-audio'));
-  assert.match(result.requests[1].contents[0].parts[1].text, /measure each turn separately/);
+  assert.match(result.requests[1].contents[0].parts[1].text,
+    /Every startTime\/endTime MUST be absolute seconds within this source/);
 });
 test('three collapsed responses fail explicitly instead of caching a falsely successful transcript', async () => {
   const broken = JSON.stringify({ segments: Array.from({ length: 21 }, (_, i) => ({
