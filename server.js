@@ -2273,8 +2273,8 @@ app.post(
     };
     attachRetainedAnalysis();
 
-    const customGeminiApiKey = clientGeminiApiKey(req);
     const apiKey = resolveGeminiApiKey(req);
+    const customGeminiApiKey = String(req.get?.('x-gemini-api-key') || '').trim();
     if (!customGeminiApiKey && dialogueQuotaBlockedUntil > Date.now()) {
       const retryAfterSeconds = Math.max(1, Math.ceil((dialogueQuotaBlockedUntil - Date.now()) / 1000));
       return res.status(429).json({
