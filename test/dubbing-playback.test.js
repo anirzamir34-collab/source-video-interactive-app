@@ -1032,7 +1032,7 @@ test('17 cached clips with 16 prepared all actually start across sparse natural 
     assert.equal(initial.playedSegmentCount, 0);
     assert.equal(initial.detectedDialogueCount, 17);
     assert.equal(initial.generatedCount, 17);
-    assert.equal(initial.readyCount, 12);
+    assert.equal(initial.readyCount, 16);
     assert.equal(initial.dueCount, 0);
     assert.equal(initial.playedCount, 0, 'cached and prepared audio is not counted as actual playback');
     assert.equal(initial.missedWithoutSeekCount, 0);
