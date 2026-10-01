@@ -1983,7 +1983,10 @@ async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req
                   (lastDialogueError?.code === 'DIALOGUE_TIMING_INVALID'
                     ? (timingScope === 'window'
                       ? `\nThe previous response contained invalid timestamps. Listen to the SAME current audio window again. Every startTime/endTime MUST be seconds RELATIVE to this audio asset only: 0 <= startTime < endTime <= ${Number(duration).toFixed(3)}. Do not add the original video's source offset. Do not use minute.second notation. Do not invent replacement times from line order.`
-                      : `\nThe previous response contained invalid timestamps. Listen to the SAME complete source audio again. Every startTime/endTime MUST be absolute seconds within this source: 0 <= startTime < endTime <= ${Number(duration).toFixed(3)}. Do not copy one timestamp across several lines and do not invent replacement times from line order.`) : '') }
+                      : `\nThe previous response contained invalid timestamps. Listen to the SAME complete source audio again. Every startTime/endTime MUST be absolute seconds within this source: 0 <= startTime < endTime <= ${Number(duration).toFixed(3)}. Do not copy one timestamp across several lines and do not invent replacement times from line order.`)
+                    : lastDialogueError?.code === 'DIALOGUE_EMPTY_RECHECK'
+                      ? `\nThe previous pass returned no intelligible speech. Perform one final careful listening pass over the SAME bounded audio window, especially for quiet, whispered, breathy, overlapping and short spoken words. Return only speech you can actually hear. If there is still no intelligible speech, return an empty segments array again. Do not infer words from breathing, music, motion or context.`
+                      : '') }
               ]
             }],
             config: {
@@ -1999,6 +2002,9 @@ async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req
           if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
           const candidate = parseModelJson(raw);
           if (!Array.isArray(candidate?.segments)) throw new SyntaxError('GEMINI_DIALOGUE_SEGMENTS_REQUIRED');
+          if (timingScope === 'window' && candidate.segments.length === 0 && attempt === 1 && !asr?.segments?.length) {
+            throw Object.assign(new Error('DIALOGUE_EMPTY_RECHECK'), { code: 'DIALOGUE_EMPTY_RECHECK' });
+          }
           const candidateTimes = repairDialogueTimestamps(candidate.segments, duration, candidate);
           try {
             requireDialogueTiming(candidateTimes.segments, duration);
@@ -2039,6 +2045,7 @@ async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req
             details.includes('Expected property name') ||
             details.includes('GEMINI_EMPTY_JSON_RESPONSE') ||
             error?.code === 'DIALOGUE_TIMING_INVALID' ||
+            error?.code === 'DIALOGUE_EMPTY_RECHECK' ||
             details.includes('503') || details.includes('UNAVAILABLE') || details.includes('high demand') ||
             [500, 502, 503, 504].includes(Number(error?.status || error?.code)) ||
             /"code"\s*:\s*(?:500|502|503|504)\b/.test(details);
