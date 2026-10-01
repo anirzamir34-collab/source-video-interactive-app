@@ -230,6 +230,38 @@ test('window provider JSON recovery retries on the same retained asset and share
   assert.equal(result.parsed.segments[0].originalText, 'A brief reply.');
 });
 
+test('an empty bounded dialogue window gets one careful speech recheck before being accepted as silent', async () => {
+  const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function analyzeDialogueSourceAsset(');
+  const end = source.indexOf("\napp.post(\n  '/api/gemini-dialogue-analyze'", start);
+  assert.ok(start >= 0 && end > start);
+  const requests = [];
+  const scope = vm.createContext({ parseModelJson, requireDialogueTiming, repairDialogueTimestamps,
+    filterValidDialogueRanges,
+    process: { env: {} }, console: { warn() {}, info() {} }, wait: async () => {},
+    addGeminiUsage() {}, mapWithConcurrency: async (items, _n, worker) => Promise.all(items.map(worker)),
+    transcribeDialogueGemini35: async () => { throw new Error('Unavailable in mock account'); },
+    ai: { models: { generateContent: async request => {
+      requests.push(request);
+      return { text: requests.length === 1
+        ? JSON.stringify({ hasDialogue: false, segments: [] })
+        : JSON.stringify({ hasDialogue: true, segments: [line(12, 13, 'quiet reply')] }) };
+    } } },
+    remoteFile: { uri: 'retained-window-asset', mimeType: 'audio/mpeg' }
+  });
+  vm.runInContext(source.slice(start, end), scope);
+  const result = await vm.runInContext(`analyzeDialogueSourceAsset({
+    ai, remoteFile, req: { file: { mimetype: 'audio/mpeg' } },
+    prompt: 'Listen to this bounded audio window.', duration: 90,
+    timingScope: 'window', allowPartialInvalidRanges: true,
+    dialogueStage() {}, dialogueUsage: {}
+  })`, scope);
+  assert.equal(requests.length, 2);
+  assert.equal(result.parsed.segments.length, 1);
+  assert.equal(result.parsed.segments[0].originalText, 'quiet reply');
+  assert.match(requests[1].contents[0].parts.at(-1).text, /final careful listening pass/);
+});
+
 test('window dialogue keeps valid rows after bounded retries when only some timestamps remain invalid', async () => {
   const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const start = source.indexOf('async function analyzeDialogueSourceAsset(');
