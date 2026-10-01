@@ -775,8 +775,16 @@ async function checkAiUsageStatus() {
     });
     const body = await response.json();
     renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
+    const dialogueBlocked = !activeGeminiApiKey() && body.subtitles?.available === false &&
+      Number(body.subtitles?.retryAfterSeconds) > 0;
     renderQuotaBadge(els.dubQuotaStatus, activeElevenLabsApiKey()
-      ? { state: 'available', message: 'ElevenLabs anahtarı tanımlı. Kullanılabilir kota sağlayıcı isteğinde doğrulanır.' }
+      ? (dialogueBlocked
+        ? {
+            state: 'blocked',
+            retryAfterSeconds: body.subtitles.retryAfterSeconds,
+            message: 'ElevenLabs hazır; ancak Türkçe dublaj metni için gereken Gemini konuşma analizi kotası şu anda engelli.'
+          }
+        : { state: 'available', message: 'ElevenLabs anahtarı tanımlı. Kullanılabilir kota sağlayıcı isteğinde doğrulanır.' })
       : { state: 'unconfigured', message: 'Oynatıcı dublajı için ElevenLabs anahtarı gerekli.' });
   } catch {
     renderQuotaBadge(els.subtitleQuotaStatus, { state: 'unknown' });
@@ -2973,6 +2981,17 @@ els.analyzeBtn.addEventListener('click', async () => {
   const modes = selectedAnalysisModes();
   if (modes.dubbing && !activeElevenLabsApiKey()) {
     throw new Error('Türkçe dublaj için ElevenLabs anahtarı gerekli. Anahtarı ekle veya yalnız altyazı/hareket analizini seç.');
+  }
+  if ((modes.dubbing || modes.subtitles) && !activeGeminiApiKey()) {
+    const quotaResponse = await fetch('/api/ai-usage-status', {
+      cache: 'no-store',
+      headers: geminiRequestHeaders()
+    });
+    const quota = await quotaResponse.json().catch(() => ({}));
+    const retry = Number(quota?.subtitles?.retryAfterSeconds) || 0;
+    if (quota?.subtitles?.available === false && retry > 0) {
+      throw new Error(`Gemini konuşma analizi kotası dolu. Yaklaşık ${Math.ceil(retry / 60)} dk sonra yeniden dene veya üstteki Gemini alanına kotası olan başka bir API anahtarı ekle. ElevenLabs hazır olsa bile Türkçe dublaj için önce konuşmaların çözümlenmesi gerekiyor.`);
+    }
   }
   const sourceKey = analysisSourceKey(file, state.selectedRemoteVideo);
   const requestedProtagonist = String(els.protagonistInput?.value || '').trim();
