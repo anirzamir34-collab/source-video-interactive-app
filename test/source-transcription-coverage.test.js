@@ -238,12 +238,15 @@ test('server retained phone audio recovers a failed window without another devic
     once() {}, removeListener() {}, status(code) { this.statusCode = code; return this; },
     json(body) { this.body = body; this.writableEnded = true; return this; } });
   const req = () => ({ body: { uploadId: 'phone-upload', duration: '250' } });
-  const failed = response();
-  await route(req(), failed);
-  assert.equal(failed.statusCode, 502);
-  assert.equal(failed.body.reason, 'SOURCE_TRANSCRIPTION_INCOMPLETE');
-  assert.equal(failed.body.uploadId, 'phone-upload');
-  assert.equal(failed.body.partialSegments.length, 2);
+  const partial = response();
+  await route(req(), partial);
+  assert.equal(partial.statusCode, 200);
+  assert.equal(partial.body.available, true);
+  assert.equal(partial.body.coverageAudit.complete, false);
+  assert.equal(partial.body.coverageAudit.fatalCoverage, false);
+  assert.equal(partial.body.coverageAudit.processedWindowCount, 2);
+  assert.equal(partial.body.uploadId, 'phone-upload');
+  assert.equal(partial.body.segments.length, 2);
   assert.equal(modelUris.length, 5, 'one successful request per complete window and three bounded JSON attempts on the failed window');
   assert.equal(uploaded.length, 3);
   if (inlineFallback) {
