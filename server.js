@@ -15,7 +15,7 @@ import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 import { MAX_VIDEO_BYTES, dialogueUploadLimit } from './public/media-limits.js';
 import { allocateSpeakerVoices } from './lib/voice-allocation.js';
-import { uniqueTimedSpeech, normalizeDialogueSegments, repairDialogueTimestamps, requireDialogueTiming } from './public/dialogue-integrity.js';
+import { uniqueTimedSpeech, normalizeDialogueSegments, repairDialogueTimestamps, requireDialogueTiming, filterValidDialogueRanges } from './public/dialogue-integrity.js';
 import { prepareLocalDialogueAudio, probeLocalAudioDuration, prepareDialogueAudioWindow } from './lib/dialogue-media.js';
 import { transcribeSourceWindows, auditSourceTranscript } from './lib/source-transcription-windows.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
@@ -1936,7 +1936,8 @@ async function prepareRemoteDialogueAudio(remoteToken, duration = 0) {
 }
 
 
-async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req, prompt, duration, dialogueStage, dialogueUsage }) {
+async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req, prompt, duration, dialogueStage, dialogueUsage,
+  timingScope = 'source', allowPartialInvalidRanges = false }) {
       const audioMime = String(remoteFile?.mimeType || req.file?.mimetype || '').toLowerCase();
       let asr = null;
       if (audioMime.startsWith('audio/') && remoteFile?.uri) {
@@ -1980,7 +1981,9 @@ async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req
                 },
                 { text: prompt + transcriptGrounding +
                   (lastDialogueError?.code === 'DIALOGUE_TIMING_INVALID'
-                    ? '\nThe previous response reused invalid speech intervals. Listen to the SAME source audio again and measure each turn separately in absolute seconds. Do not copy the first timestamp or invent replacement times from line order.' : '') }
+                    ? (timingScope === 'window'
+                      ? `\nThe previous response contained invalid timestamps. Listen to the SAME current audio window again. Every startTime/endTime MUST be seconds RELATIVE to this audio asset only: 0 <= startTime < endTime <= ${Number(duration).toFixed(3)}. Do not add the original video's source offset. Do not use minute.second notation. Do not invent replacement times from line order.`
+                      : `\nThe previous response contained invalid timestamps. Listen to the SAME complete source audio again. Every startTime/endTime MUST be absolute seconds within this source: 0 <= startTime < endTime <= ${Number(duration).toFixed(3)}. Do not copy one timestamp across several lines and do not invent replacement times from line order.`) : '') }
               ]
             }],
             config: {
@@ -1997,9 +2000,35 @@ async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req
           const candidate = parseModelJson(raw);
           if (!Array.isArray(candidate?.segments)) throw new SyntaxError('GEMINI_DIALOGUE_SEGMENTS_REQUIRED');
           const candidateTimes = repairDialogueTimestamps(candidate.segments, duration, candidate);
-          requireDialogueTiming(candidateTimes.segments, duration);
-          parsed = candidate;
-          break;
+          try {
+            requireDialogueTiming(candidateTimes.segments, duration);
+            parsed = { ...candidate, segments: candidateTimes.segments };
+            break;
+          } catch (timingError) {
+            const maySalvage = allowPartialInvalidRanges &&
+              attempt === 3 &&
+              timingError?.code === 'DIALOGUE_TIMING_INVALID' &&
+              timingError?.timingIntegrity?.reason === 'INVALID_SOURCE_INTERVAL';
+            if (!maySalvage) throw timingError;
+            const filtered = filterValidDialogueRanges(candidateTimes.segments, duration);
+            if (!filtered.segments.length) throw timingError;
+            // Row-level filtering may remove out-of-window provider mistakes,
+            // but systemic timestamp collapse still remains fatal.
+            requireDialogueTiming(filtered.segments, duration);
+            parsed = {
+              ...candidate,
+              segments: filtered.segments,
+              timingRejectedSegments: filtered.rejectedSegments,
+              rejectedInvalidSegmentCount: filtered.rejectedCount,
+              warnings: [
+                ...(Array.isArray(candidate.warnings) ? candidate.warnings : []),
+                ...(filtered.rejectedCount
+                  ? [`Rejected ${filtered.rejectedCount} dialogue segment(s) with invalid source-window timestamps.`]
+                  : [])
+              ]
+            };
+            break;
+          }
         } catch (error) {
           lastDialogueError = error;
           const details = String(error?.message || error);
@@ -2548,6 +2577,8 @@ Rules:
             } } : null;
             const result = await analyzeDialogueSourceAsset({ ai, remoteFile: asset.remoteFile, inlineAudioPart, req,
               duration: span, dialogueStage, dialogueUsage,
+              timingScope: 'window',
+              allowPartialInvalidRanges: true,
               prompt: prompt + `\nSOURCE WINDOW: This actual audio asset is ${span} seconds long. Listen to its entire duration. Use seconds RELATIVE to this asset, starting at 0; do not add the source offset ${window.startTime}. Do not infer speech from gaps. Keep diarization labels local to this audio asset.\n`
             });
             return result.parsed;
