@@ -69,7 +69,7 @@ function fixture() {
     finishAction: action => { state.finishedAction = action; },
     document: { createElement: () => new Element(), querySelector: () => new Element() },
     setGameState: value => { state.gameState = value; },
-    setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, persistRuntimeSnapshot() {}, renderDebug() {},
+    setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, clearInteractionSelection() {}, persistRuntimeSnapshot() {}, renderDebug() {},
     orderedLockedAdultPositions: () => [], findAdultSceneAt: () => null,
     futureActions: () => [], selectDiverseStoryActions: list => list, findAdultSceneForTimeline: () => null,
     verifiedAdultPositionFamily: () => null, storyChoiceLabelForAction: action => action.label,

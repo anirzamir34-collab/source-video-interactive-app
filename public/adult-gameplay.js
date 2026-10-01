@@ -1,6 +1,7 @@
 import { groupSourceChoiceCards, sourceActionLabel, sourceIdentityLabel } from './choice-groups.js';
 import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
 import { knownPositionId, verifiedBodyConfigurationFamily } from './classification-integrity.js';
+import { progressionPacing } from './interaction-engine.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
@@ -62,6 +63,7 @@ export function initialWarmupBeforeFirstPosition(foreplay = [], positions = []) 
 
   const firstPositionStart = Math.min(...verifiedPositions.map(position => Number(position.startTime)));
   return (Array.isArray(foreplay) ? foreplay : []).filter(item => {
+    if (item?.sourceVerified !== true) return false;
     const startTime = Number(item?.startTime);
     const endTime = Number(item?.endTime);
     return Number.isFinite(startTime) && Number.isFinite(endTime) &&
@@ -72,14 +74,17 @@ export function initialWarmupBeforeFirstPosition(foreplay = [], positions = []) 
 export function selectSequentialApproachChoices(candidates = [], {
   timelineFloor = 0,
   limit = 5,
-  maxForwardSeconds = 18
+  maxForwardSeconds = 18,
+  activeEndTime = 0
 } = {}) {
   const floor = Math.max(0, Number(timelineFloor) || 0);
   const safeLimit = Math.max(1, Math.floor(Number(limit) || 5));
-  const horizon = floor + Math.max(0, Number(maxForwardSeconds) || 0);
+  const window = clamp(maxForwardSeconds, 0, 60);
+  const horizon = Math.min(floor + 60, Math.max(floor, Number(activeEndTime) || 0) + window);
   const seen = new Set();
   const forward = (Array.isArray(candidates) ? candidates : [])
     .filter(item => {
+      if (item?.sourceVerified !== true) return false;
       const startTime = Number(item?.startTime);
       const endTime = Number(item?.endTime);
       if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return false;
@@ -609,9 +614,8 @@ export function warmupLustScale({
   // Estimate the Lust a player can earn while naturally traversing the opening.
   // Long openings are scaled down so the meter approaches 100 near the first
   // verified core position instead of filling minutes too early.
-  const naturalPotential = duration * 0.24 + choices * 3;
-  if (naturalPotential <= target) return 1;
-  return clamp(target / naturalPotential, 0.12, 1);
+  return progressionPacing({ openingDuration: duration, verifiedChoiceCount: choices,
+    playbackPointsPerSecond: 0.24, selectionPoints: 3, target }).scale;
 }
 
 export function computeWarmupSelectionDelta({
@@ -796,8 +800,7 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
     const partnerKey = String(position.partnerTrackId || '').trim() || 'partner-unknown';
     const subjectKey = String(position.subjectTrackId || '').trim();
     const role = String(position.progressionRole || '').trim();
-    const route = Number(position.activityTypeConfidence || 0) >= 0.78
-      ? String(position.activityType || '') : '';
+    const route = String(position.routeNamespace ?? position.activityType ?? '');
     const routeSuffix = route && route !== 'unclear' ? `:${route}` : '';
     const roleSuffix = (role ? `:${role}` : '') + routeSuffix +
       (subjectKey && subjectKey !== 'MAIN_MALE' ? `:${subjectKey}` : '');

@@ -43,9 +43,29 @@ test('dialogue, cast changes, unverified data, scene conflicts and long gaps bou
 });
 
 test('source membership follows exact intervals, including returns, but never broad parent gaps', () => {
-  const position = { id: 'one', startTime: 0, endTime: 200, sourceRanges: [
+  const position = { id: 'one', sourceVerified: true, startTime: 0, endTime: 200, sourceRanges: [
     { startTime: 10, endTime: 20 }, { startTime: 90, endTime: 100 }] };
   for (const time of [10, 15, 90, 95]) assert.equal(sourcePositionAtTime([position], time), position);
   for (const time of [0, 20, 50, 100, NaN]) assert.equal(sourcePositionAtTime([position], time), null);
   assert.equal(sourcePositionAtTime([{ startTime: 0, endTime: 200 }], 50), null);
+});
+
+test('source boundary never reveals unverified groups or rejected ranges', () => {
+  const range = { id: 'source', startTime: 10, endTime: 20 };
+  for (const sourceVerified of [undefined, false, 'true']) {
+    assert.equal(sourcePositionAtTime([{ id: 'one', sourceVerified, sourceRanges: [range] }], 15), null);
+  }
+  assert.equal(sourcePositionAtTime([{ id: 'one', sourceVerified: true,
+    sourceRanges: [{ ...range, sourceVerified: false }] }], 15), null);
+});
+
+test('the first verified opening interval is retained with the same cast and adjacent source boundaries', () => {
+  const rows = [action(0, 45), action(45, 90), action(90, 130),
+    action(130, 150, { kind: 'chapter' })];
+  const before = JSON.stringify(rows);
+  const result = matchSceneIntroductions(rows, [{ action: rows[3], sceneId: 'chapter' }], eligible);
+  assert.equal(result.get(rows[0]), 'chapter');
+  assert.equal(JSON.stringify(rows), before);
+  rows[1].partnerTrackId = 'other';
+  assert.equal(matchSceneIntroductions(rows, [{ action: rows[3], sceneId: 'chapter' }], eligible).has(rows[0]), false);
 });

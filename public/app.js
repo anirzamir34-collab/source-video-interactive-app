@@ -120,6 +120,11 @@ import { sourceIdentityLabel } from './choice-groups.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
 import { extractMp4Audio } from './mp4-audio.js';
+import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
+  selectInteractionGroup, interactionTrace } from './interaction-engine.js';
+import { interactionEntryClip } from './interaction-timeline.js';
+import { mountInteractionPanel, resetInteractionSelection,
+  syncInteractionSurfaces } from './interaction-panel.js';
 
 const videoDownloads = createVideoDownloader();
 const urlVideoCache = createUrlVideoCache();
@@ -453,6 +458,7 @@ function guardPlayable(kind, action, options = {}) {
     ...options
   });
   if (!result.allowed) {
+    if (state.adultMode) state.interactionBlockedSeekReason = result.reason;
     logEngineEvent('ACTION_REJECTED', {
       kind,
       actionId: action?.id || action?.actionId || null,
@@ -4020,7 +4026,7 @@ function prepareAdultScenes() {
       .map(action => ({ action, sceneId: sceneIdFor(action) })),
     action => ['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm']
       .includes(String(action.actionType || '').toLowerCase()) &&
-      !action.positionId && !action.positionLabel &&
+      !traceByAction.get(action)?.sceneCandidate &&
       !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
         !isAdultSocialRelationshipRole(action.relationshipRoleLabel)));
   introductions.forEach((sceneId, action) => sceneOccurrenceByAction.set(action, sceneId));
@@ -4226,6 +4232,7 @@ function prepareAdultScenes() {
     if (!scene.positions.has(positionKey)) {
       scene.positions.set(positionKey, {
         id: positionKey,
+        sourceVerified: action.sourceVerified === true,
         familyId: canonical.id,
         occurrenceId,
         groupScene: action.groupScene === true,
@@ -4240,6 +4247,7 @@ function prepareAdultScenes() {
         positionConfigurationConfidence: Number(action.positionConfigurationConfidence || 0),
         positionEvidence: String(action.positionEvidence || ''),
         activityType: routeNamespace,
+        routeNamespace,
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
         label: sourceIdentityLabel(activityDisplayLabel(canonical.label, action),
           { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
@@ -4274,11 +4282,13 @@ function prepareAdultScenes() {
         Number(action.endTime),
         Number(action.loopEndTime ?? action.endTime)
       );
-      if (movementBelongsToVerifiedPosition(action, canonical.id)) {
+      if (action.sourceVerified === true && movementBelongsToVerifiedPosition(action, canonical.id)) {
+        position.sourceVerified = true;
         traceRow.movementAccepted = true;
         traceRow.movementReason = 'MOVEMENT_MATCHES_CANONICAL_POSITION';
         position.sourceRanges.push({
           id: position.id,
+          sourceVerified: action.sourceVerified === true,
           startTime: movementStart,
           endTime: movementEnd
         });
@@ -4307,7 +4317,10 @@ function prepareAdultScenes() {
           const previous = items[items.length - 1];
           const sameLabel = previous &&
             normalizeAdultLabel(previous.label) === normalizeAdultLabel(item.label);
-          if (previous && sameLabel && item.startTime <= previous.endTime + 0.25) {
+          if (previous && sameLabel && item.sourceVerified === true && previous.sourceVerified === true &&
+              item.startTime <= previous.endTime + 1e-7 &&
+              String(item.subjectTrackId || '') === String(previous.subjectTrackId || '') &&
+              String(item.partnerTrackId || '') === String(previous.partnerTrackId || '')) {
             previous.endTime = Math.max(previous.endTime, item.endTime);
             return items;
           }
@@ -4322,7 +4335,9 @@ function prepareAdultScenes() {
           const previous = items[items.length - 1];
           const sameLabel = previous &&
             normalizeAdultLabel(previous.label) === normalizeAdultLabel(item.label);
-          if (previous && sameLabel && item.startTime <= previous.endTime + 0.25) {
+          if (previous && sameLabel && item.sourceVerified === true && previous.sourceVerified === true &&
+              item.startTime <= previous.endTime + 1e-7 &&
+              String(item.partnerTrackId || '') === String(previous.partnerTrackId || '')) {
             previous.startTime = Math.min(previous.startTime, item.startTime);
             previous.endTime = Math.max(previous.endTime, item.endTime);
             return items;
@@ -4480,6 +4495,7 @@ function prepareAdultScenes() {
 function adultAnalysisTraceText() {
   const report = state.adultAnalysisTrace ? {
     ...state.adultAnalysisTrace,
+    interaction: genericInteractionTrace(),
     audioContext: {
       ...state.adultAnalysisTrace.audioContext,
       ...dubbingDebugReport(),
@@ -4529,6 +4545,206 @@ function adultTimeLabel(seconds) {
 
 const ADULT_LUST_UNLOCK_THRESHOLD = 35;
 
+// Compatibility adapter: existing source roles and identities are opaque.
+// The shared engine never infers a role or an action from a display label.
+function genericInteractionScene(scene = state.adultScene) {
+  const groups = (scene?.positions || []).map(position => {
+    const phase = isWarmupPosition(position) ? 'APPROACH' : 'CORE';
+    const occurrences = positionOccurrenceGroups(position);
+    const sourceRanges = occurrences.flatMap(occurrence => occurrence.sourceRanges.map(range => ({
+      ...range, occurrenceId: occurrence.id
+    })));
+    const movements = (position.movements || []).flatMap(movement => {
+      const occurrence = positionOccurrenceForMovement(position, movement);
+      if (!occurrence) return [];
+      const range = occurrence.sourceRanges.find(item => item.id === movement.sourcePositionId &&
+        Number(movement.loopStartTime) >= item.startTime && Number(movement.loopEndTime) <= item.endTime);
+      return range ? [{ ...movement, phase, groupId: position.id,
+        sourceOccurrenceId: occurrence.id, occurrenceId: occurrence.id,
+        sourceRanges: [{ ...range, startTime: movement.loopStartTime,
+          endTime: movement.loopEndTime, occurrenceId: occurrence.id }] }] : [];
+    });
+    return { ...position, phase, routeNamespace: position.routeNamespace ?? position.activityType,
+      sourceRanges, movements, sourceOccurrenceIds: occurrences.map(item => item.id),
+      entryClip: movements.find(item => item.id === position.entryMovementId) || movements[0] };
+  });
+  const standalone = (items, phase) => (items || []).map(item => ({
+    ...item, phase, occurrenceId: item.id,
+    sourceRanges: [{ id: item.id, startTime: item.startTime, endTime: item.endTime }]
+  }));
+  return { id: scene?.id || null, groups,
+    choices: [...standalone(scene?.foreplay, 'APPROACH'),
+      ...groups.filter(group => group.phase === 'APPROACH').flatMap(group => group.movements),
+      ...standalone(scene?.outcomes, 'OUTCOME'),
+      ...standalone(scene?.aftermath ? [scene.aftermath] : [], 'AFTERMATH')] };
+}
+
+function genericInteractionSnapshot() {
+  const scene = state.adultScene;
+  if (!state.interactionRuntime || state.interactionSceneSource !== scene ||
+      state.interactionPositionSource !== scene?.positions || state.interactionApproachSource !== scene?.foreplay ||
+      state.interactionOutcomeSource !== scene?.outcomes || state.interactionAftermathSource !== scene?.aftermath) {
+    state.interactionRuntime = createInteractionState(genericInteractionScene(scene), {
+      currentTime: Number(scene?.startTime) || 0,
+      playbackPointsPerSecond: 0.24 * 100 / ADULT_LUST_UNLOCK_THRESHOLD,
+      selectionPoints: 3 * 100 / ADULT_LUST_UNLOCK_THRESHOLD
+    });
+    state.interactionSceneSource = scene;
+    state.interactionPositionSource = scene?.positions;
+    state.interactionApproachSource = scene?.foreplay;
+    state.interactionOutcomeSource = scene?.outcomes;
+    state.interactionAftermathSource = scene?.aftermath;
+  }
+  const runtime = state.interactionRuntime;
+  return { ...runtime, progressionValue: currentAdultFlow(),
+    unlockedGroupIds: [...(state.adultUnlockedPositionIds || [])],
+    revealedGroupIds: [...(state.adultRevealedPositionIds || [])],
+    activeGroupId: state.activePositionId || null,
+    activeOccurrenceId: state.activeAdultOccurrenceId || null,
+    activeMovementId: state.activeMovementId || null,
+    panelVisible: Boolean(state.adultMode) };
+}
+
+function genericInteractionTrace() {
+  const runtime = genericInteractionSnapshot();
+  const panelVisible = Boolean(els.adultInteractionPanel &&
+    !els.adultInteractionPanel.classList.contains('hidden'));
+  const overlayVisible = Boolean(els.choices && !els.choices.classList.contains('hidden'));
+  return interactionTrace({ ...runtime, panelVisible,
+    blockedSeekReason: state.interactionBlockedSeekReason || runtime.blockedSeekReason }, {
+    overlayCount: Number(panelVisible) + Number(overlayVisible)
+  });
+}
+
+function clearInteractionSelection() {
+  resetInteractionSelection(state, {
+    selectionKeys: ['activePositionId', 'activeAdultOccurrenceId', 'activeMovementId',
+      'activeMovementChoiceId', 'activeAdultPreludeId', 'activeAdultOutcomeId',
+      'adultPendingSelectionProgress', 'activeAdultCategory', 'activeAdultPartnerTrackId',
+      'lastAdultMediaTime'],
+    rhythmDefaults: { adultTapTimes: [], adultTapTempo: 'unclear', adultTapCandidateTempo: 'unclear',
+      adultTapCandidateCount: 0, adultLastTempoSwitchAt: 0, adultRhythmHeld: false, adultRhythmArmed: false }
+  });
+  state.interactionRuntime = null;
+  state.interactionBlockedSeekReason = null;
+  state.interactionHoldControl?.reset?.();
+}
+
+function reconcileInteractionSource(mediaTime, { manual = false } = {}) {
+  if (!state.adultScene || state.adultLoopSeeking || els.video?.seeking) return;
+  const snapshot = genericInteractionSnapshot();
+  const rewind = Number(mediaTime) < snapshot.currentTime - 0.05;
+  const next = advanceInteraction(snapshot, mediaTime);
+  const matching = [...next.scene.groups, ...next.scene.choices].find(record =>
+    (record.sourceRanges || []).some(range => Number(mediaTime) >= range.startTime &&
+      Number(mediaTime) < range.endTime));
+  const activeSource = state.activeAdultPreludeId
+    ? state.adultScene.foreplay?.find(item => item.id === state.activeAdultPreludeId)
+    : state.adultScene.positions?.find(item => item.id === state.activePositionId)
+      ?.movements?.find(item => item.id === state.activeMovementId);
+  const activeStart = Number(activeSource?.loopStartTime ?? activeSource?.startTime);
+  const activeEnd = Number(activeSource?.loopEndTime ?? activeSource?.endTime);
+  const staleSelection = Boolean((state.activeAdultPreludeId || state.activeMovementId) &&
+    (!activeSource || activeSource.sourceVerified !== true ||
+      Number(mediaTime) < activeStart - 0.15));
+  if (manual || rewind || staleSelection) {
+    state.adultSelectionToken += 1;
+    clearInteractionSelection();
+    resetAdultTapRhythm();
+    state.adultTimelineFloor = Math.max(Number(state.adultScene.startTime) || 0, Number(mediaTime) || 0);
+    state.adultOutcomePhase = 'idle';
+    state.adultOrgasmDecision = null;
+    els.orgasmDecision?.classList.add('hidden');
+    state.interactionPhaseOverride = matching?.phase === 'APPROACH' ? 'APPROACH' : null;
+    state.adultPhaseMachine = matching?.phase === 'APPROACH' ? 'foreplay' : 'positions';
+    state.adultLastUiPhase = state.adultPhaseMachine;
+    state.activePositionId = next.activeGroupId;
+    state.activeAdultOccurrenceId = next.activeOccurrenceId;
+    state.adultUiSignature = '';
+  }
+  const current = next.scene.groups.find(group => group.phase === 'CORE' &&
+    group.sourceRanges.some(range => Number(mediaTime) >= range.startTime && Number(mediaTime) < range.endTime));
+  if (current) {
+    const newlyUnlocked = !state.adultUnlockedPositionIds.has(current.id);
+    state.adultUnlockedPositionIds.add(current.id);
+    state.adultRevealedPositionIds.add(current.id);
+    state.adultSexUnlocked = true;
+    state.interactionPhaseOverride = null;
+    if (!state.activeAdultPreludeId && !state.activeMovementId) {
+      state.activePositionId = current.id;
+      state.activeAdultOccurrenceId = current.sourceRanges.find(range =>
+        Number(mediaTime) >= range.startTime && Number(mediaTime) < range.endTime)?.occurrenceId || null;
+    }
+    if (newlyUnlocked) {
+      state.adultUiSignature = '';
+      logEngineEvent('SOURCE_BOUNDARY_PANEL_OPENED', { sceneId: state.adultScene.id,
+        positionId: current.id, unlockReason: 'source-boundary' });
+    }
+  }
+  if (!state.activeAdultPreludeId && !state.activeMovementId &&
+      (matching?.phase === 'OUTCOME' || matching?.phase === 'AFTERMATH')) {
+    state.adultOutcomePhase = matching.phase.toLowerCase();
+    state.activeAdultOutcomeId = matching.phase === 'OUTCOME' ? matching.id : null;
+    state.adultPhaseMachine = matching.phase.toLowerCase();
+    state.adultUiSignature = '';
+  }
+  state.interactionRuntime = { ...next,
+    unlockedGroupIds: [...state.adultUnlockedPositionIds],
+    revealedGroupIds: [...state.adultRevealedPositionIds] };
+  if (manual || rewind || staleSelection || !state.adultUiSignature) renderAdultProgressiveUI(true);
+}
+
+function reconcileInteractionSeek(mediaTime) {
+  const scene = findAdultSceneForTimeline(state.adultScenes, {
+    time: mediaTime, completedSceneIds: new Set()
+  });
+  if (scene && scene.id !== state.adultScene?.id) {
+    state.completedAdultSceneIds?.delete(scene.id);
+    cancelAdultSeek();
+    clearInteractionSelection();
+    state.adultMode = false;
+    state.adultScene = null;
+    enterAdultScene(scene, { forceStart: false, reason: 'manual-source-seek' });
+  } else if (!scene && (mediaTime < Number(state.adultScene?.startTime) ||
+      mediaTime >= Number(state.adultScene?.endTime))) {
+    cancelAdultSeek();
+    clearInteractionSelection();
+    state.adultMode = false;
+    state.adultScene = null;
+    syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
+      panelVisible: false, overlayVisible: true });
+    state.gameCursorTime = Math.max(0, Number(mediaTime) || 0);
+    state.consumedActionIds = new Set((state.analysis?.actions || [])
+      .filter(action => Number(action.endTime) <= mediaTime).map(action => action.actionId));
+    renderChoices();
+    return;
+  }
+  reconcileInteractionSource(mediaTime, { manual: true });
+}
+
+function settleInteractionClipBoundary(mediaTime) {
+  if (state.adultOutcomePhase !== 'idle') return false;
+  const prelude = state.adultScene?.foreplay?.find(item => item.id === state.activeAdultPreludeId);
+  const position = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
+  const movement = position?.movements?.find(item => item.id === state.activeMovementId);
+  const selected = prelude || movement;
+  const end = Number(selected?.loopEndTime ?? selected?.endTime);
+  if (!selected || selected.sourceVerified !== true || !Number.isFinite(end) || Number(mediaTime) < end - 0.04) return false;
+  // A delayed frame callback must settle the chosen clip before source phase
+  // discovery or scene exit can take ownership of the playhead.
+  els.video?.pause();
+  state.adultTimelineFloor = Math.max(Number(state.adultTimelineFloor) || 0, end);
+  if (prelude) state.activeAdultPreludeId = null;
+  else state.activeMovementId = null;
+  if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
+  renderAdultProgressiveUI(true);
+  logEngineEvent('INTERACTION_CLIP_ENDED_AWAITING_SELECTION', {
+    groupId: position?.id || null, occurrenceId: state.activeAdultOccurrenceId,
+    movementId: selected.id, sourceEnd: end, observedTime: Number(mediaTime)
+  });
+  return true;
+}
+
 function currentAdultFlow() {
   const raw = Math.min(ADULT_LUST_UNLOCK_THRESHOLD, Math.max(0, Number(state.femaleSceneProgress) || 0));
   return (raw / ADULT_LUST_UNLOCK_THRESHOLD) * 100;
@@ -4537,21 +4753,22 @@ function currentAdultFlow() {
 function currentWarmupLustScale(scene = state.adultScene) {
   if (!scene) return 1;
   const coreStarts = (scene.positions || [])
-    .filter(position => !isWarmupPosition(position))
+    .filter(position => position.sourceVerified === true && !isWarmupPosition(position))
     .map(position => Number(position.startTime))
     .filter(Number.isFinite);
   if (!coreStarts.length) return 1;
   const firstCoreStart = Math.min(...coreStarts);
   const warmupStarts = [
     Number(scene.startTime),
-    ...(scene.foreplay || []).map(item => Number(item.startTime)),
-    ...(scene.positions || []).filter(isWarmupPosition).map(item => Number(item.startTime))
+    ...(scene.foreplay || []).filter(item => item.sourceVerified === true).map(item => Number(item.startTime)),
+    ...(scene.positions || []).filter(position => position.sourceVerified === true && isWarmupPosition(position))
+      .map(item => Number(item.startTime))
   ].filter(Number.isFinite);
   const warmupStart = warmupStarts.length ? Math.min(...warmupStarts) : firstCoreStart;
   const warmupActionCount = (scene.foreplay || [])
-    .filter(item => Number(item.startTime) < firstCoreStart + 0.05).length;
+    .filter(item => item.sourceVerified === true && Number(item.startTime) < firstCoreStart + 0.05).length;
   const warmupPositionChoiceCount = (scene.positions || [])
-    .filter(isWarmupPosition)
+    .filter(position => position.sourceVerified === true && isWarmupPosition(position))
     .reduce((sum, position) => sum + Math.max(1,
       Number(position.movementChoices?.length) || Number(position.movements?.length) || 0), 0);
   return warmupLustScale({
@@ -4563,6 +4780,7 @@ function currentWarmupLustScale(scene = state.adultScene) {
 
 function orderedLockedAdultPositions(scene = state.adultScene) {
   return (scene?.positions || [])
+    .filter(position => position.sourceVerified === true)
     .filter(position => !isWarmupPosition(position))
     .filter(position => !state.adultUnlockedPositionIds.has(position.id))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
@@ -4578,10 +4796,17 @@ function unlockNextAdultPositionFromLust() {
   );
   // Lust is the unlock gate. Do not also require the previous card's final
   // variant or a nearby playhead; those constraints made 100/100 look stuck.
-  const next = locked.find(position =>
-    firstUnlock ? !isBonusPosition(position) : (!isBonusPosition(position) || coreVisited)
-  );
+  const eligible = locked.filter(position =>
+    firstUnlock ? !isBonusPosition(position) : (!isBonusPosition(position) || coreVisited));
+  const snapshot = genericInteractionSnapshot();
+  const unlocked = unlockNextCoreGroup({ ...snapshot,
+    scene: { ...snapshot.scene, groups: snapshot.scene.groups.filter(group =>
+      eligible.some(position => position.id === group.id) || group.id === snapshot.activeGroupId) }
+  });
+  const next = eligible.find(position => unlocked.unlockedGroupIds.includes(position.id));
   if (!next) return null;
+  state.interactionRuntime = { ...unlocked, scene: snapshot.scene };
+  state.interactionPhaseOverride = null;
   state.adultUnlockedPositionIds.add(next.id);
   state.adultRevealedPositionIds.add(next.id);
   state.adultSexUnlocked = true;
@@ -4728,7 +4953,7 @@ function adultWarmupStats(scene = state.adultScene) {
 }
 
 function unlockedAdultPositions(scene = state.adultScene) {
-  const positions = scene?.positions || [];
+  const positions = (scene?.positions || []).filter(position => position.sourceVerified === true);
   if (!state.adultSexUnlocked) return positions.filter(isWarmupPosition);
   const unlocked = positions
     .filter(position => !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id))
@@ -4848,6 +5073,8 @@ function refreshAdultCompactDock() {
 }
 
 function resetAdultSceneGameplay() {
+  clearInteractionSelection();
+  state.interactionPhaseOverride = null;
   state.adultPendingSelectionProgress = null;
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
@@ -4943,6 +5170,7 @@ function renderAdultApproachChoices(scene, later = false) {
       : initialWarmupBeforeFirstPosition(scene?.foreplay || [],
         (scene?.positions || []).filter(position => !isWarmupPosition(position)))).map(item => ({
       kind: 'foreplay', id: item.id, label: item.label,
+      sourceVerified: item.sourceVerified === true,
       startTime: item.startTime, endTime: item.endTime,
       playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
     })),
@@ -4953,6 +5181,7 @@ function renderAdultApproachChoices(scene, later = false) {
       const cards = buildVerifiedMovementChoices(movements, position.label, 5, position);
       return cards.map((card, index) => ({
         choiceId: card.id, variants: card.variants,
+        sourceVerified: position.sourceVerified === true && card.variants.every(item => item.sourceVerified === true),
         kind: 'position', id: position.id,
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
         label: card?.label || card?.variants?.[0]?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
@@ -4970,14 +5199,13 @@ function renderAdultApproachChoices(scene, later = false) {
   const activeWarmupMovement = activeWarmupPosition?.movements?.find(item => item.id === state.activeMovementId);
   const projectedFloor = Math.max(
     Number(state.adultTimelineFloor) || 0,
-    Number(els.video?.currentTime) || 0,
-    Number(activePrelude?.endTime) || 0,
-    Number(activeWarmupMovement?.loopEndTime) || 0
+    Number(els.video?.currentTime) || 0
   );
   const candidates = selectSequentialApproachChoices(approachPool, {
     timelineFloor: projectedFloor,
     limit: 5,
-    maxForwardSeconds: 90
+    maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 30,
+    activeEndTime: Number(activePrelude?.endTime) || Number(activeWarmupMovement?.loopEndTime) || 0
   });
 
   state.adultApproachChoices = candidates;
@@ -5097,7 +5325,8 @@ function renderAdultProgressiveUI(force = false) {
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const hasCoreUnlocked = availablePositions.some(position => !isBonusPosition(position));
   const hasBonusUnlocked = availablePositions.some(isBonusPosition);
-  const phase = setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
+  const phase = state.interactionPhaseOverride === 'APPROACH'
+    ? 'foreplay' : setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
   const videoTime = Number(els.video?.currentTime) || 0;
   const hasUnlockedFutureCore = availablePositions.some(position =>
     Number(position.startTime) > videoTime + 0.04);
@@ -5111,6 +5340,10 @@ function renderAdultProgressiveUI(force = false) {
     phase,
     availablePositions.map(item => item.id).join(','),
     state.activePositionId || '',
+    state.activeAdultOccurrenceId || '',
+    state.activeMovementId || '',
+    state.activeMovementChoiceId || '',
+    state.activeAdultPreludeId || '',
     state.activeAdultCategory || '',
     state.activeAdultPartnerTrackId || '',
     laterOverlay ? 'overlay' : '',
@@ -5126,6 +5359,11 @@ function renderAdultProgressiveUI(force = false) {
     : 'Bir pozisyon ve ardından gerçek video hareketini seç.';
   els.adultInteractionPanel.dataset.phase = phase;
   els.outcomeSection?.classList.add('hidden');
+
+  // Visibility is repaired even when the cached UI signature is unchanged.
+  syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
+    panelVisible: phase !== 'foreplay' && !laterOverlay,
+    overlayVisible: phase === 'foreplay' || laterOverlay });
 
   if (!force && signature === state.adultUiSignature) return;
   state.adultUiSignature = signature;
@@ -5286,8 +5524,7 @@ function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}
 }
 
 function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
-  if (!stage || !els.adultInteractionPanel) return;
-  if (els.adultInteractionPanel.parentElement !== stage) stage.appendChild(els.adultInteractionPanel);
+  mountInteractionPanel(stage, els.adultInteractionPanel);
 }
 
 function selectAdultCategory(categoryId, shouldSeek = true) {
@@ -5359,8 +5596,8 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
       .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
       .trim();
     button.dataset.positionId = position.id;
-    const hasVerifiedEntry = (position.movements || []).some(item =>
-      item?.sourceVerified === true && positionOccurrenceForMovement(position, item));
+  const hasVerifiedEntry = Boolean(interactionEntryClip(
+      genericInteractionSnapshot().scene.groups.find(group => group.id === position.id)));
     button.disabled = !hasVerifiedEntry;
     if (!state.adultRevealedPositionIds.has(position.id)) {
       state.adultRevealedPositionIds.add(position.id);
@@ -5504,6 +5741,7 @@ function updateVariantButton(_position) {
 }
 
 function resetAdultTapRhythm() {
+  state.interactionHoldControl?.reset?.();
   state.adultTapTimes = [];
   state.adultTapTempo = 'unclear';
   state.adultTapCandidateTempo = 'unclear';
@@ -5634,7 +5872,9 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const playableEntry = unlockedCore
     ? (entryMovement || verifiedPositionMovements[0] || null)
     : (forwardMovements.find(item => item.id === entryMovement?.id) || null);
-  if (shouldSeek && !playableEntry) {
+  const genericSelection = shouldSeek ? selectInteractionGroup(genericInteractionSnapshot(), position.id) : null;
+  if (shouldSeek && (!genericSelection.target || (!unlockedCore && !playableEntry))) {
+    if (genericSelection) state.interactionRuntime = genericSelection.state;
     logEngineEvent('POSITION_VERIFIED_ENTRY_MISSING', { positionId: position.id, cursor });
     return;
   }
@@ -5647,6 +5887,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   );
   if (!positionGuard.allowed) return;
   if (shouldSeek) logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
+  if (genericSelection) state.interactionRuntime = genericSelection.state;
 
   const selectionToken = shouldSeek
     ? beginAdultSelection()
@@ -5744,8 +5985,12 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     if (els.movementChoices) els.movementChoices.innerHTML = '';
     if (els.movementCount) els.movementCount.textContent = 'Bu bölümde doğrulanmış oynatılabilir kesit yok';
     els.video?.pause();
-    // No verified local clip means no playable choice; never seek an entire
-    // parent interval as an unverified fallback.
+    // The engine returns a seek-only verified range start when no entry clip
+    // exists. It never turns an entire parent envelope into a movement.
+    if (genericSelection?.target.entryOnly) {
+      state.activeAdultOccurrenceId = genericSelection.target.occurrenceId;
+      void seekAdultLoop(genericSelection.target.startTime, selectionToken, { resume: false });
+    }
   }
 }
 
@@ -5761,6 +6006,7 @@ function selectAdultMovement(
   if (!movement || movement.sourceVerified !== true || state.adultOutcomePhase !== 'idle') return;
   const movementOccurrence = positionOccurrenceForMovement(position, movement);
   if (!movementOccurrence) {
+    state.interactionBlockedSeekReason = 'CLIP_OUTSIDE_OCCURRENCE';
     logEngineEvent('MOVEMENT_OCCURRENCE_BLOCKED', {
       movementId: movement.id,
       positionId: position.id,
@@ -5775,7 +6021,10 @@ function selectAdultMovement(
   const alreadyPlayed = Number(state.adultMovementPlayCounts.get(movement.id) || 0) > 0;
   const sameOccurrenceReplay = alreadyPlayed &&
     (!state.activeAdultOccurrenceId || state.activeAdultOccurrenceId === movementOccurrence.id);
-  if (shouldSeek && !forwardPlayable && !sameOccurrenceReplay) {
+  const explicitUnlocked = !isWarmupPosition(position) &&
+    state.adultUnlockedPositionIds.has(position.id);
+  if (shouldSeek && !forwardPlayable && !sameOccurrenceReplay && !explicitUnlocked) {
+    state.interactionBlockedSeekReason = 'OUTSIDE_PASSIVE_LOOKAHEAD';
     logEngineEvent('MOVEMENT_FORWARD_RANGE_BLOCKED', { movementId: movement.id });
     return;
   }
@@ -5817,6 +6066,9 @@ function selectAdultMovement(
     const cursor = Number(els.video.currentTime) || 0;
     const target = cursor >= movement.loopStartTime && cursor < movement.loopEndTime
       ? cursor : movement.loopStartTime;
+    state.interactionBlockedSeekReason = null;
+    state.interactionRuntime = { ...genericInteractionSnapshot(), lastSeekTarget: target,
+      blockedSeekReason: null };
     void seekAdultLoop(target, effectiveToken);
   }
 }
@@ -5928,6 +6180,7 @@ function finishAdultScene(options = {}) {
   state.adultSelectionToken += 1;
   state.adultPendingSelectionProgress = null;
   cancelAdultSeek();
+  clearInteractionSelection();
   state.adultMode = false;
   state.adultScene = null;
   state.activePositionId = null;
@@ -6008,7 +6261,7 @@ async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
   }
 }
 
-async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken) {
+async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionToken, { resume = true } = {}) {
   if (!els.video || !state.adultMode || selectionToken !== state.adultSelectionToken) return false;
 
   cancelAdultSeek();
@@ -6040,6 +6293,12 @@ async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionTo
     state.adultLoopSeeking = false;
     state.lastAdultFrameNow = performance.now();
     resyncLanguageTracks();
+    if (!resume) {
+      els.video.pause();
+      setGameState('DECISION_PENDING');
+      renderAdultProgressiveUI(true);
+      return true;
+    }
     return await resumePanelPlayback(selectionToken);
   } catch (error) {
     if (!isCurrent()) return false;
@@ -6079,6 +6338,9 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
+  if (settleInteractionClipBoundary(mediaTime)) return;
+  reconcileInteractionSource(mediaTime);
+
   const sceneEnd = Number(state.adultScene?.endTime);
   const hasActiveClip = state.activeAdultPreludeId || state.activeMovementId ||
     state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision;
@@ -6111,7 +6373,7 @@ function updateAdultPlayback(now, mediaTime) {
         return;
       }
       const aftermath = state.adultScene?.aftermath;
-      if (aftermath) {
+      if (aftermath?.sourceVerified === true) {
         const token = beginAdultSelection();
         state.adultOutcomePhase = 'aftermath';
         setAdultMachinePhase('aftermath');
@@ -6282,7 +6544,7 @@ if (els.nextVariantBtn) {
   els.nextVariantBtn.addEventListener('click', playNextAdultVariant);
 }
 
-attachHoldReleaseControl({
+state.interactionHoldControl = attachHoldReleaseControl({
   button: els.rhythmTapBtn,
   engine: tactile,
   onActivate: ({ timestamp }) => handleAdultRhythmTap(timestamp)
@@ -6911,8 +7173,13 @@ els.adultTraceToggleBtn?.addEventListener('click', () => {
 els.adultTraceDownloadBtn?.addEventListener('click', downloadAdultAnalysisTrace);
 
 els.video.addEventListener('seeking', () => {
-  if (state.adultMode || state.adultLoopSeeking) {
+  if (state.adultLoopSeeking || state.navigationSeeking) {
     state.manualSeeking = false;
+    return;
+  }
+
+  if (state.adultMode) {
+    state.manualSeeking = true;
     return;
   }
 
@@ -6923,6 +7190,10 @@ els.video.addEventListener('seeking', () => {
 
 els.video.addEventListener('seeked', () => {
   if (state.adultMode) {
+    if (state.manualSeeking && !state.adultLoopSeeking) {
+      state.manualSeeking = false;
+      reconcileInteractionSeek(Number(els.video.currentTime) || 0);
+    }
     updateAdultPlayback(performance.now(), Number(els.video.currentTime) || 0);
     return;
   }
@@ -6978,6 +7249,7 @@ function clearPreviousGameResidue() {
   state.remoteFileDownload = null;
   cancelTimelineNavigation();
   cancelAdultSeek();
+  clearInteractionSelection();
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;

@@ -43,11 +43,12 @@ export function sourcePositionAtTime(positions, time) {
   const point = Number(time);
   if (!Number.isFinite(point)) return null;
   return positions.find(position => {
+    if (position.sourceVerified !== true) return false;
     const ranges = position.sourceRanges?.length ? position.sourceRanges :
       (position.movements || []).filter(item => item.sourceVerified === true).map(clipRange).filter(Boolean);
-    return ranges.some(range => Number.isFinite(Number(range.startTime)) &&
+    return ranges.some(range => range.sourceVerified !== false && Number.isFinite(Number(range.startTime)) &&
       Number(range.endTime) > Number(range.startTime) &&
-      point >= Number(range.startTime) - 0.04 && point < Number(range.endTime) - 0.04);
+      point >= Number(range.startTime) && point < Number(range.endTime));
   }) || null;
 }
 

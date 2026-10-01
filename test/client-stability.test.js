@@ -6,6 +6,7 @@ import { dubSpeakerKey } from '../public/dub-speakers.js';
 import { createVideoDownloader } from '../public/video-download.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from '../public/media-limits.js';
 import { createDubRequestQueue } from '../public/dubbing-queue.js';
+import { resetInteractionSelection } from '../public/interaction-panel.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 function section(start, end) {
@@ -436,7 +437,9 @@ test('changing source removes the previous time boundary listener and clears old
   const listener = () => staleCallbacks++;
   els.video.addEventListener('timeupdate', listener);
   const state = { stopListener: listener, analysis: { actions: [{}] }, dialogue: { segments: [{}] } };
-  const f = fixture(section('function clearPreviousGameResidue()', '\nclearPreviousGameResidue();'), {
+  const f = fixture(functions('clearInteractionSelection') + '\n' +
+    section('function clearPreviousGameResidue()', '\nclearPreviousGameResidue();'), {
+    resetInteractionSelection,
     state, els, cancelTimelineNavigation() {}, cancelAdultSeek() {}, removeStoredValue() {},
     RUNTIME_SAVE_KEY: 'runtime', releaseVideoObjectUrl() {}, resetDubState() {}, updateLanguageSyncControls() {}, setGameState(value) { state.gameState = value; }
   });

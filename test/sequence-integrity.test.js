@@ -6,6 +6,10 @@ import {
   movementsForPositionOccurrence, expandVerifiedMovementVariants, buildVerifiedMovementChoices
 } from '../public/adult-gameplay.js';
 import { canPlayAction } from '../public/engine-hardening.js';
+import {
+  verifiedOccurrenceRanges, consolidateInteractionOccurrences, interactionClipGuard,
+  interactionEntryClip, interactionMovementVariants
+} from '../public/interaction-timeline.js';
 
 const clip = (id, start, end, source = 'raw') => ({
   id, sourcePositionId: source, label: `Action ${id}`, sourceVerified: true,
@@ -181,4 +185,142 @@ test('1000 deterministic timelines preserve every valid clip and exact occurrenc
     assert.equal(result.entryMovementId, result.movements[0].id);
     assert.equal(sourceRangeForClip(result, clip('gap', inputs[0].endTime, inputs[1].startTime, inputs[0].id)), null);
   }
+});
+
+const genericGroup = (id, startTime, endTime, extra = {}) => ({
+  id, occurrenceId: `occ:${id}`, groupType: 'group-a',
+  subjectId: 'subject-a', partnerId: 'partner-a', phase: 'CORE', routeNamespace: 'route-a',
+  label: `Opaque ${id}`, sourceVerified: true, startTime, endTime,
+  sourceRanges: [{ id: `source:${id}`, occurrenceId: `occ:${id}`, startTime, endTime }],
+  movements: [{ ...clip(`clip:${id}`, startTime, endTime, `source:${id}`), sourceOccurrenceId: `occ:${id}` }],
+  ...extra
+});
+
+test('generic occurrence guard requires verified group, clip and non-rejected source evidence', () => {
+  const group = genericGroup('a', 0, 10);
+  const action = group.movements[0];
+  assert.equal(interactionClipGuard(group, action).allowed, true);
+  for (const sourceVerified of [false, undefined, 'true', 1]) {
+    assert.equal(interactionClipGuard({ ...group, sourceVerified }, action).allowed, false);
+    assert.equal(interactionClipGuard(group, { ...action, sourceVerified }).allowed, false);
+  }
+  const rejected = { ...group, sourceRanges: [{ ...group.sourceRanges[0], sourceVerified: false }] };
+  assert.deepEqual(verifiedOccurrenceRanges(rejected), []);
+  assert.equal(interactionClipGuard(rejected, action).allowed, false);
+  assert.equal(sourceRangeForClip({ sourceVerified: false, sourceRanges: group.sourceRanges }, action), null);
+  assert.equal(sourceRangeForClip(rejected, action), null);
+});
+
+test('generic movement needs exact source identity and cannot substitute another occurrence', () => {
+  const group = genericGroup('a', 0, 10);
+  const action = group.movements[0];
+  for (const patch of [
+    { sourcePositionId: '' }, { sourcePositionId: 'source:b' }, { sourceOccurrenceId: 'occ:b' },
+    { subjectId: 'subject-b' }, { partnerId: 'partner-b' }, { routeNamespace: 'route-b' }
+  ]) assert.equal(interactionClipGuard(group, { ...action, ...patch }).allowed, false);
+  assert.equal(interactionClipGuard(group, action, { occurrenceId: 'occ:b' }).reason, 'OCCURRENCE_MISMATCH');
+  assert.equal(interactionClipGuard(group, { ...action, startTime: null }).reason, 'INVALID_SOURCE_INTERVAL');
+  assert.equal(interactionClipGuard(group, { ...action, endTime: 5 }).reason, 'CLIP_OUTSIDE_SOURCE');
+});
+
+test('sequence range guard does not accept matching time from a different opaque subject or namespace', () => {
+  const group = { subjectTrackId: 'subject-a', partnerTrackId: 'partner-a', routeNamespace: 'route-a',
+    sourceRanges: [{ id: 'raw', occurrenceId: 'occ:a', startTime: 0, endTime: 10 }] };
+  assert.ok(sourceRangeForClip(group, clip('valid', 0, 10)));
+  for (const patch of [{ subjectTrackId: 'subject-b' }, { routeNamespace: 'route-b' },
+    { sourceOccurrenceId: 'occ:b' }, { endTime: 5 }, { startTime: null }]) {
+    assert.equal(sourceRangeForClip(group, { ...clip('invalid', 0, 10), ...patch }), null);
+  }
+});
+
+test('adjacent opaque occurrences consolidate their tab while preserving exact ranges and source aliases', () => {
+  const first = genericGroup('a', 713, 782.260);
+  const next = genericGroup('b', 782.263, 830);
+  const groups = consolidateInteractionOccurrences([next, first]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].label, first.label);
+  assert.deepEqual(groups[0].sourceGroupIds, ['a', 'b']);
+  assert.deepEqual(groups[0].sourceOccurrenceIds, ['occ:a', 'occ:b']);
+  assert.deepEqual(groups[0].sourceRanges.map(range => [range.startTime, range.endTime]), [[713, 782.260], [782.263, 830]]);
+  assert.equal(interactionClipGuard(groups[0], clip('bridge', 782, 783, 'source:a')).allowed, false);
+  assert.equal(interactionClipGuard(groups[0], next.movements[0]).allowed, true);
+  assert.deepEqual(consolidateInteractionOccurrences(groups), groups);
+  assert.equal(first.sourceRanges.length, 1);
+});
+
+test('consolidation compares every opaque identity field without reclassifying provider labels', () => {
+  const first = genericGroup('a', 0, 10);
+  for (const key of ['groupType', 'subjectId', 'partnerId', 'phase', 'routeNamespace']) {
+    const next = genericGroup('b', 10, 20, { [key]: `${key}-other`, label: 'Keep exactly this' });
+    const groups = consolidateInteractionOccurrences([first, next]);
+    assert.equal(groups.length, 2, key);
+    assert.equal(groups[1].label, next.label);
+    assert.equal(groups[1][key], next[key]);
+  }
+});
+
+test('verified groups missing type metadata remain addressable without inferring a shared type', () => {
+  const first = genericGroup('a', 0, 10, { groupType: undefined });
+  const next = genericGroup('b', 10, 20, { groupType: undefined });
+  const groups = consolidateInteractionOccurrences([first, next]);
+  assert.equal(groups.length, 2);
+  assert.equal(interactionClipGuard(groups[0], first.movements[0]).allowed, true);
+  assert.equal(interactionClipGuard(groups[1], next.movements[0]).allowed, true);
+});
+
+test('distant occurrence return remains separate and never provides a playable envelope', () => {
+  const groups = consolidateInteractionOccurrences([
+    genericGroup('a', 374, 391), genericGroup('b', 713, 830)
+  ]);
+  assert.equal(groups.length, 2);
+  assert.equal(interactionClipGuard(groups[0], clip('jump', 380, 720, 'source:a')).allowed, false);
+  assert.equal(interactionClipGuard(groups[0], groups[1].movements[0]).allowed, false);
+  assert.equal(interactionClipGuard(groups[1], groups[0].movements[0]).allowed, false);
+});
+
+test('preexisting disjoint ranges split before adjacent merge instead of using the parent envelope', () => {
+  const first = genericGroup('a', 0, 100, { sourceRanges: [
+    { id: 'source:a', startTime: 0, endTime: 10 }, { id: 'source:a', startTime: 90, endTime: 100 }
+  ], movements: [clip('first', 0, 10, 'source:a'), clip('return', 90, 100, 'source:a')] });
+  const groups = consolidateInteractionOccurrences([first, genericGroup('b', 40, 50)]);
+  assert.deepEqual(groups.map(group => [group.startTime, group.endTime]), [[0, 10], [40, 50], [90, 100]]);
+  assert.equal(new Set(groups.map(group => group.occurrenceId)).size, 3);
+  assert.equal(interactionClipGuard(groups[0], first.movements[1]).allowed, false);
+  assert.deepEqual(consolidateInteractionOccurrences(groups), groups);
+});
+
+test('a movement card keeps only its own verified variants in the same continuous occurrence', () => {
+  const first = genericGroup('a', 0, 10);
+  const distant = genericGroup('b', 90, 100);
+  const group = { ...first, endTime: 100, sourceRanges: [...first.sourceRanges, ...distant.sourceRanges] };
+  const card = { variants: [first.movements[0], distant.movements[0],
+    { ...first.movements[0], id: 'unverified', sourceVerified: false }] };
+  assert.deepEqual(interactionMovementVariants(group, card).map(action => action.id), ['clip:a']);
+  assert.deepEqual(interactionMovementVariants(first, { variants: [] }), []);
+  assert.deepEqual(interactionMovementVariants(first, { variants: [first.movements[0]] }).map(action => action.id), ['clip:a']);
+});
+
+test('tiny adjacent provider split allows both card variants but never allows a clip spanning the gap', () => {
+  const first = genericGroup('a', 713, 782.260);
+  const next = genericGroup('b', 782.263, 830);
+  const [group] = consolidateInteractionOccurrences([first, next]);
+  const bridge = clip('bridge', 782, 783, 'source:a');
+  const card = { variants: [first.movements[0], next.movements[0], bridge] };
+  assert.deepEqual(interactionMovementVariants(group, card).map(action => action.id), ['clip:a', 'clip:b']);
+  assert.equal(interactionClipGuard(group, bridge).allowed, false);
+  assert.equal(consolidateInteractionOccurrences([genericGroup('a', 0, 10), genericGroup('b', 11, 20)],
+    { adjacencyTolerance: 1000 }).length, 2);
+});
+
+test('group entry selects one verified entry or the earliest exact range without chaining internal cards', () => {
+  const group = genericGroup('a', 0, 20, { movements: [clip('late', 10, 15, 'source:a')] });
+  const entry = interactionEntryClip(group);
+  assert.equal(entry.startTime, 0);
+  assert.equal(entry.entryOnly, true);
+  assert.equal(entry.variants, undefined);
+  assert.equal(interactionClipGuard(group, entry).allowed, true);
+  const entryClip = { ...clip('entry', 1, 3, 'source:a'), sourceOccurrenceId: 'occ:a' };
+  assert.deepEqual(interactionEntryClip({ ...group, entryClip }), entryClip);
+  assert.equal(interactionEntryClip({ ...group, sourceVerified: false }), null);
+  assert.equal(interactionEntryClip({ ...group, sourceRanges: [] }), null);
 });

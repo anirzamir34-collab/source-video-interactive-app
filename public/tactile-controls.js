@@ -100,24 +100,44 @@ export function attachTactileSurface({
 }
 
 export function attachHoldReleaseControl({ button, engine, onActivate, holdMs = 460 } = {}) {
-  if (!button || !engine || typeof onActivate !== 'function') return () => {};
+  if (!button || !engine || typeof onActivate !== 'function') {
+    const detach = () => {};
+    detach.reset = () => {};
+    return detach;
+  }
   let pointerId = null;
   let holdTimer = null;
   let charged = false;
+  let resetVersion = 0;
   const clearTimer = () => {
     clearTimeout(holdTimer);
     holdTimer = null;
   };
   const reset = () => {
-    clearTimer();
-    button.classList.remove('is-pressed', 'is-charged');
+    const previousPointerId = pointerId;
+    // Invalidate first: releasing capture can synchronously dispatch a lost
+    // capture event, which must not reactivate or vibrate for an old scope.
     pointerId = null;
     charged = false;
+    resetVersion += 1;
+    clearTimer();
+    button.classList.remove('is-pressed', 'is-charged', 'tap-confirmed');
+    if (previousPointerId !== null) {
+      try {
+        if (!button.hasPointerCapture || button.hasPointerCapture(previousPointerId)) {
+          button.releasePointerCapture?.(previousPointerId);
+        }
+      } catch { /* capture may already have been released by the browser */ }
+    }
   };
   const activate = timestamp => {
     const wasCharged = charged;
     reset();
+    const activationVersion = resetVersion;
     const accepted = onActivate({ charged: wasCharged, timestamp }) !== false;
+    // A selection callback can switch scope and reset this controller. Its
+    // confirmation must not appear on the newly selected scope afterwards.
+    if (activationVersion !== resetVersion) return;
     engine.pulse(accepted ? (wasCharged ? 'charged' : 'confirm') : 'unavailable');
     button.classList.toggle('tap-confirmed', accepted);
   };
@@ -138,6 +158,7 @@ export function attachHoldReleaseControl({ button, engine, onActivate, holdMs = 
   const onPointerUp = event => {
     if (event.pointerId !== pointerId) return;
     event.preventDefault();
+    if (button.disabled) { reset(); return; }
     activate(event.timeStamp);
   };
   const onPointerCancel = event => {
@@ -156,7 +177,7 @@ export function attachHoldReleaseControl({ button, engine, onActivate, holdMs = 
   button.addEventListener('pointercancel', onPointerCancel);
   button.addEventListener('lostpointercapture', onPointerCancel);
   button.addEventListener('click', onClick);
-  return () => {
+  const detach = () => {
     reset();
     delete button.dataset.tactileManaged;
     button.removeEventListener('pointerdown', onPointerDown);
@@ -165,4 +186,6 @@ export function attachHoldReleaseControl({ button, engine, onActivate, holdMs = 
     button.removeEventListener('lostpointercapture', onPointerCancel);
     button.removeEventListener('click', onClick);
   };
+  detach.reset = reset;
+  return detach;
 }

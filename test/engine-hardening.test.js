@@ -254,7 +254,7 @@ test('state machine is monotonic and centralized permission guard blocks invalid
   assert.equal(advanceAdultPhase('positions', 'foreplay'), 'positions');
   assert.equal(advanceAdultPhase('positions', 'reward'), 'reward');
 
-  const action = { startTime: 20, endTime: 25, outcomeStartTime: 20, outcomeEndTime: 25 };
+  const action = { sourceVerified: true, startTime: 20, endTime: 25, outcomeStartTime: 20, outcomeEndTime: 25 };
   assert.equal(canPlayAction({ kind: 'outcome', action, phase: 'positions', outcomeReady: true, videoDuration: 60 }).allowed, false);
   assert.equal(canPlayAction({ kind: 'outcome', action, phase: 'final', outcomeReady: false, videoDuration: 60 }).allowed, false);
   assert.equal(canPlayAction({ kind: 'outcome', action, phase: 'final', outcomeReady: true, videoDuration: 60 }).allowed, true);

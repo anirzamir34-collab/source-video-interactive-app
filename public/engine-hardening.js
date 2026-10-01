@@ -607,6 +607,7 @@ export function canPlayAction({
   videoDuration = 0
 } = {}) {
   if (!action) return { allowed: false, reason: 'ACTION_MISSING' };
+  if (action.sourceVerified !== true) return { allowed: false, reason: 'SOURCE_NOT_VERIFIED' };
   const interval = validateActionInterval(action, videoDuration);
   if (!interval.valid) return { allowed: false, reason: interval.reasons[0] || 'INVALID_INTERVAL' };
   if (!unlocked) return { allowed: false, reason: 'LOCKED' };

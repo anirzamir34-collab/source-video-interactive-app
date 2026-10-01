@@ -7,6 +7,9 @@ import * as gameplay from '../public/adult-gameplay.js';
 import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
 import { forwardVerifiedClips } from '../public/panel-feedback.js';
 import { sourcePositionAtTime } from '../public/scene-entry.js';
+import * as interaction from '../public/interaction-engine.js';
+import * as timeline from '../public/interaction-timeline.js';
+import * as panel from '../public/interaction-panel.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -29,6 +32,7 @@ class Element extends EventTarget {
   dataset = {};
   classes = new Set();
   classList = {
+    contains: name => this.classes.has(name),
     add: (...names) => names.forEach(name => this.classes.add(name)),
     remove: (...names) => names.forEach(name => this.classes.delete(name)),
     toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name)
@@ -108,7 +112,9 @@ function fixture() {
     isWarmupPosition: () => false,
     selectAdultPosition: id => { state.selectedPositionId = id; },
     navigateTimelineTo: async target => { state.navigationTargets.push(target); },
-    currentAdultFlow: () => 0, renderAdultProgressiveUI() {}, findAdultSceneAt: () => null
+    currentAdultFlow: () => 0, renderAdultProgressiveUI() {}, findAdultSceneAt: () => null,
+    clearInteractionSelection() {}, reconcileInteractionSource() {},
+    settleInteractionClipBoundary: () => false
   });
   vm.runInContext(handlers, scope);
   video.addEventListener('play', () => { if (state.gameState !== 'SEGMENT_PLAYING') video.pause(); });
@@ -275,6 +281,9 @@ test('pending media seek does not accidentally trigger scene exit', () => {
 // Integration coverage: real panel handlers, guards, progress and DOM click
 // handlers together. Fixtures are neutral timed chapters; no external media.
 const runtimeNames = [
+  'genericInteractionScene', 'genericInteractionSnapshot', 'genericInteractionTrace',
+  'clearInteractionSelection', 'reconcileInteractionSource', 'reconcileInteractionSeek',
+  'settleInteractionClipBoundary',
   'guardPlayable', 'setAdultMachinePhase', 'isWarmupPosition', 'isBonusPosition',
   'adultTimeLabel', 'currentAdultFlow', 'currentWarmupLustScale', 'tempoLabel', 'orderedLockedAdultPositions',
   'unlockNextAdultPositionFromLust', 'addFemaleLust', 'unlockedAdultPositions',
@@ -298,7 +307,7 @@ const runtimeHandlers = runtimeNames.map(name => {
 
 function chapter(id, start, family = id, role = 'core') {
   return {
-    id, familyId: family, progressionRole: role, label: `Chapter ${id}`,
+    id, sourceVerified: true, familyId: family, progressionRole: role, label: `Chapter ${id}`,
     partnerTrackId: 'track-a', startTime: start, endTime: start + 30,
     sourceRanges: [{ id: `source-${id}`, startTime: start, endTime: start + 30 }],
     controlClipIds: [`${id}-1`, `${id}-2`],
@@ -312,7 +321,7 @@ function chapter(id, start, family = id, role = 'core') {
 
 function runtimeFixture() {
   const f = fixture();
-  Object.assign(f, gameplay, {
+  Object.assign(f, gameplay, interaction, timeline, panel, {
     canPlayAction, advanceAdultPhase, queueMicrotask, forwardVerifiedClips, sourcePositionAtTime,
     primeAdultPositionLanguage() {}, escapeHtml: String,
     normalizeAdultLabel: value => String(value || '').toLowerCase()
@@ -813,4 +822,190 @@ test('a verified explicit chapter selection retains the panel and never finishes
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
   assert.equal(f.state.completedAdultSceneIds.size, 0);
   assert.equal(f.state.adultMode, true);
+});
+
+test('explicit future chapter click plays its verified entry beyond passive lookahead', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  assert.equal(f.state.adultMovementPlayCounts.has('one-1'), false);
+  assert.equal(f.state.adultMovementPlayCounts.has('one-2'), false);
+  f.addFemaleLust(35);
+  f.renderAdultProgressiveUI(true);
+  const tab = f.els.positionTabs.querySelectorAll('.position-tab').find(button => button.dataset.positionId === 'two');
+  assert.equal(tab.disabled, false);
+  tab.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.els.video.currentTime, 60);
+  assert.equal(f.state.activeMovementId, 'two-0');
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-two');
+  assert.equal(f.state.adultMovementPlayCounts.has('two-1'), false);
+  f.els.video.time = 70;
+  f.updateAdultPlayback(1000, 70);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.state.completedAdultSceneIds.size, 0);
+});
+
+test('paused manual rewind reconciles source approach phase and clears stale selection without seeking', async () => {
+  const f = runtimeFixture();
+  f.renderAdultPanel(f.state.adultScene);
+  await startFirstChapter(f);
+  f.els.video.time = 25;
+  f.updateAdultPlayback(1000, 25);
+  f.state.activeMovementChoiceId = 'old-card';
+  const plays = f.els.video.playCalls;
+  f.els.video.time = 5;
+  f.els.video.paused = true;
+  f.reconcileInteractionSource(5, { manual: true });
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.state.activeMovementChoiceId, null);
+  assert.equal(f.state.activePositionId, null);
+  assert.equal(f.state.adultPendingSelectionProgress, null);
+  assert.equal(f.state.adultTimelineFloor, 5);
+  assert.equal(f.genericInteractionTrace().currentPhase, 'APPROACH');
+  assert.equal(f.genericInteractionTrace().overlayCount, 1);
+  assert.equal(f.els.choices.classes.has('hidden'), false);
+  assert.equal(f.els.video.currentTime, 5);
+  assert.equal(f.els.video.playCalls, plays);
+  f.renderAdultPanel(f.state.adultScene);
+  f.renderAdultPanel(f.state.adultScene);
+  assert.equal(f.stage.children.filter(node => node === f.els.adultInteractionPanel).length, 1);
+});
+
+test('paused source boundary reveals the actual verified chapter before playback resumes', () => {
+  const f = runtimeFixture();
+  f.els.video.time = 65;
+  f.els.video.paused = true;
+  f.updateAdultPlayback(1000, 65);
+  assert.equal(f.state.adultUnlockedPositionIds.has('two'), true);
+  assert.equal(f.state.activePositionId, 'two');
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-two');
+  assert.equal(f.genericInteractionTrace().currentPhase, 'CORE');
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.els.video.currentTime, 65);
+});
+
+test('unchanged UI signature repairs panel visibility after seek or pause', () => {
+  const f = runtimeFixture();
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.renderAdultProgressiveUI(true);
+  f.renderAdultProgressiveUI(false);
+  const signature = f.state.adultUiSignature;
+  f.els.adultInteractionPanel.classList.add('hidden');
+  f.els.choices.classList.remove('hidden');
+  f.renderAdultProgressiveUI(false);
+  assert.equal(f.state.adultUiSignature, signature);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.els.choices.classes.has('hidden'), true);
+});
+
+test('scene switch drops previous card, pending selection and held input state', () => {
+  const f = runtimeFixture();
+  let resets = 0;
+  f.state.interactionHoldControl = { reset() { resets += 1; } };
+  f.state.activePositionId = 'one';
+  f.state.activeAdultOccurrenceId = 'source-one';
+  f.state.activeMovementId = 'one-1';
+  f.state.activeMovementChoiceId = 'previous-card';
+  f.state.adultPendingSelectionProgress = { token: 12 };
+  f.state.adultTapTimes = [10, 20];
+  f.state.adultRhythmHeld = true;
+  f.renderAdultPanel({ id: 'new-set', startTime: 0, endTime: 30, positions: [chapter('new', 0)], foreplay: [] });
+  assert.equal(f.state.activePositionId, 'new');
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.state.activeMovementChoiceId, null);
+  assert.equal(f.state.adultPendingSelectionProgress, null);
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-new');
+  assert.deepEqual(Array.from(f.state.adultTapTimes), []);
+  assert.equal(f.state.adultRhythmHeld, false);
+  assert.ok(resets > 0);
+  assert.equal(f.els.video.playCalls, 0);
+});
+
+test('verified range fallback entry seeks one source start and does not autoplay internal movements', async () => {
+  const f = runtimeFixture();
+  const group = chapter('range-only', 60);
+  group.movements = [];
+  f.state.adultScene.positions = [group];
+  f.state.adultUnlockedPositionIds.add(group.id);
+  f.state.adultSexUnlocked = true;
+  f.renderAdultProgressiveUI(true);
+  const tab = f.els.positionTabs.querySelectorAll('.position-tab')[0];
+  assert.equal(tab.disabled, false);
+  tab.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.els.video.currentTime, 60);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+});
+
+test('active introduction prepares upcoming choices without dropping the current choice or exposing distant data', () => {
+  const f = runtimeFixture();
+  f.state.adultScene.foreplay = [
+    { id: 'opening-a', label: 'Step A', sourceVerified: true, startTime: 0, endTime: 40 },
+    { id: 'opening-b', label: 'Step B', sourceVerified: true, startTime: 40, endTime: 50 },
+    { id: 'distant', label: 'Distant', sourceVerified: true, startTime: 400, endTime: 410 },
+    { id: 'unverified', label: 'Unverified', sourceVerified: false, startTime: 15, endTime: 25 }
+  ];
+  f.state.adultScene.positions = [chapter('main', 500)];
+  f.state.activeAdultPreludeId = 'opening-a';
+  f.els.video.time = 10;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, choice => choice.id), ['opening-a', 'opening-b']);
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.els.video.playCalls, 0);
+});
+
+test('unverified groups and clips cannot be revealed or explicitly selected', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene.positions[1].sourceVerified = false;
+  f.state.adultUnlockedPositionIds.add('two');
+  f.state.adultSexUnlocked = true;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.els.positionTabs.querySelectorAll('.position-tab').some(button => button.dataset.positionId === 'two'), false);
+  f.selectAdultPosition('two', true);
+  await flush();
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.genericInteractionTrace().blockedSeekReason, 'unverified-group');
+});
+
+test('a delayed source tick settles the selected card before discovering a terminal phase', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  f.state.adultScene.outcomes = [{ id: 'next-ending', sourceVerified: true, startTime: 30, endTime: 40 }];
+  f.els.video.time = 30.8;
+  f.updateAdultPlayback(1000, 30.8);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.state.adultOutcomePhase, 'idle');
+  assert.equal(f.state.activeAdultOutcomeId, undefined);
+  assert.equal(f.state.completedAdultSceneIds.size, 0);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.state.adultMovementPlayCounts.has('one-1'), false);
+});
+
+test('a delayed final card tick pauses without completing the scene envelope', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene.positions = [chapter('last', 20)];
+  f.state.adultScene.endTime = 50;
+  f.state.adultScene.outcomes = [];
+  f.state.adultUnlockedPositionIds.add('last');
+  f.state.adultSexUnlocked = true;
+  f.state.activePositionId = 'last';
+  f.state.activeAdultOccurrenceId = 'source-last';
+  f.selectAdultMovement('last-2', true);
+  await flush();
+  f.els.video.time = 50.8;
+  f.updateAdultPlayback(1000, 50.8);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.adultMode, true);
+  assert.equal(f.state.completedAdultSceneIds.size, 0);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
 });

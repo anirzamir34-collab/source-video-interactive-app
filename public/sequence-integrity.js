@@ -24,7 +24,8 @@ export function normalizedSourceRanges(parent = {}) {
     const id = String(item?.id || '').trim();
     const range = timelineRange(item?.startTime, item?.endTime);
     if (!id || !range) return [];
-    const key = JSON.stringify([id, range.startTime, range.endTime]);
+    const key = JSON.stringify([id, range.startTime, range.endTime,
+      String(item.occurrenceId || item.sourceOccurrenceId || '').trim()]);
     if (seen.has(key)) return [];
     seen.add(key);
     return [{ ...item, id, ...range }];
@@ -33,13 +34,25 @@ export function normalizedSourceRanges(parent = {}) {
 
 export function sourceRangeForClip(parent = {}, clip = null, ranges = normalizedSourceRanges(parent)) {
   const range = clipRange(clip);
-  if (!range || clip.sourceVerified !== true) return null;
-  const parentTrack = String(parent.partnerTrackId || '').trim();
-  const clipTrack = String(clip.partnerTrackId || '').trim();
-  if (parentTrack && clipTrack && parentTrack !== clipTrack) return null;
+  if (!range || clip.sourceVerified !== true || parent.sourceVerified === false) return null;
+  // Identity is source data. A matching time alone must not move a clip to a
+  // different subject, partner or routing namespace.
+  for (const field of ['partnerTrackId', 'subjectTrackId', 'routeNamespace']) {
+    const parentValue = String(parent[field] || '').trim();
+    const clipValue = String(clip[field] || '').trim();
+    if (parentValue && clipValue && parentValue !== clipValue) return null;
+  }
   // Tolerate only floating-point rounding, not gaps or neighbouring footage.
   const epsilon = 1e-7;
-  return ranges.find(source => source.id === String(clip.sourcePositionId || '') &&
+  const observed = timelineRange(clip.startTime, clip.endTime);
+  if ((clip.startTime !== undefined || clip.endTime !== undefined) && !observed) return null;
+  if (observed && (range.startTime < observed.startTime - epsilon ||
+    range.endTime > observed.endTime + epsilon)) return null;
+  const occurrence = String(clip.sourceOccurrenceId || clip.positionOccurrenceId || '').trim();
+  return ranges.find(source => source.sourceVerified !== false &&
+    source.id === String(clip.sourcePositionId || '') &&
+    (!occurrence || !String(source.occurrenceId || source.sourceOccurrenceId || '').trim() ||
+      occurrence === String(source.occurrenceId || source.sourceOccurrenceId).trim()) &&
     range.startTime >= source.startTime - epsilon &&
     range.endTime <= source.endTime + epsilon) || null;
 }

@@ -65,6 +65,7 @@ test('short source-verified positions remain playable without accepting flashes'
 test('approach choices advance through verified source chronology instead of staying on the first cards', () => {
   const candidates = Array.from({ length: 8 }, (_, index) => ({
     kind: 'foreplay', id: `warmup-${index + 1}`, label: `Warmup ${index + 1}`,
+    sourceVerified: true,
     startTime: index * 10, endTime: index * 10 + 8, playCount: index === 2 ? 1 : 0
   }));
 
@@ -318,8 +319,8 @@ test('legs-up provider ids and Turkish labels resolve to one canonical family', 
 
 test('later partner transitions never appear in the initial Lust warm-up choices', () => {
   const result = initialWarmupBeforeFirstPosition([
-    { id: 'kiss', startTime: 260, endTime: 275 },
-    { id: 'switch', actionType: 'partner_transition', startTime: 471.134, endTime: 487.241 }
+    { id: 'kiss', sourceVerified: true, startTime: 260, endTime: 275 },
+    { id: 'switch', sourceVerified: true, actionType: 'partner_transition', startTime: 471.134, endTime: 487.241 }
   ], [
     { id: 'partner-b-first', startTime: 289.929, endTime: 471.134 },
     { id: 'partner-a-later', startTime: 547.643, endTime: 676.5 }
