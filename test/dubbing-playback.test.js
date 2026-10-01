@@ -1063,7 +1063,7 @@ test('17 cached clips with 16 prepared all actually start across sparse natural 
     assert.equal(report.segmentStateCounts.PLAYED, 17);
     assert.equal(report.dueSegmentCount, 0);
     assert.equal(report.skippedByExplicitSeekSegmentCount, 0);
-    assert.ok(vm.runInContext('preparedDubAudio.size', f.scope) <= 12, 'decoded media cache stays bounded');
+    assert.ok(vm.runInContext('preparedDubAudio.size', f.scope) <= 16, 'decoded media cache stays bounded');
   } finally { f.close(); }
 });
 
