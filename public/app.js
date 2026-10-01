@@ -10,6 +10,7 @@ import {
   canUnlockCorePositions,
   canUnlockOutcome,
   buildVerifiedMovementChoices,
+  splitSparseMovementChoiceCards,
   summarizeMovementChoiceCoverage,
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
@@ -4785,12 +4786,12 @@ function prepareAdultScenes() {
         ...position,
         ...linkedEntry,
         controlClipIds: [...controlClipIds],
-        movementChoices: buildVerifiedMovementChoices(
+        movementChoices: splitSparseMovementChoiceCards(buildVerifiedMovementChoices(
           position.movements.filter(item => !controlClipIds.has(item.id)),
           position.label,
           5,
           position
-        )
+        ), 5)
       };
     });
 
@@ -6405,7 +6406,9 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // movements from the same canonical position live under its subchoices.
   const verifiedMovements = localMovements;
   const movementPool = verifiedMovements.filter(item => !position.controlClipIds?.includes(item.id));
-  const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5, position);
+  const movementChoices = splitSparseMovementChoiceCards(
+    buildVerifiedMovementChoices(movementPool, position.label, 5, position), 5
+  );
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
