@@ -4323,9 +4323,11 @@ function prepareAdultScenes() {
     const actionType = String(action.actionType || '').toLowerCase();
     const dialogueBridge = actionType === 'other' && (state.dialogue?.segments || []).some(segment =>
       sourceSpeechOverlaps(action, segment));
+    const warmupFamily = String(playableAdultPanelFamily(action) || '').toLowerCase();
+    const warmupCandidate = ['oral', 'manual'].includes(warmupFamily);
     return (['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm'].includes(actionType) ||
-      dialogueBridge) &&
-      !traceByAction.get(action)?.sceneCandidate &&
+      dialogueBridge || warmupCandidate) &&
+      (!traceByAction.get(action)?.sceneCandidate || warmupCandidate) &&
       !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
         !isAdultSocialRelationshipRole(action.relationshipRoleLabel));
   };
