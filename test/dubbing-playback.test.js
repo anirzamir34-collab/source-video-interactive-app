@@ -6,6 +6,7 @@ import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from '../public
 import { dubSpeakerKey } from '../public/dub-speakers.js';
 import { normalizeDialogueTimeline } from '../public/dialogue-integrity.js';
 import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from '../public/dubbing-audio.js';
+import { createDubScheduler } from '../public/dubbing-scheduler.js';
 import { dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget,
   isDubStartTimely, mapVideoTimeToDubTime, dubSegmentKey, languageTimelineTime } from '../public/playback-logic.js';
 
@@ -161,7 +162,9 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
   const made = [];
   class Media extends EventTarget {
     paused = true; ended = false; seeking = false; volume = 1; muted = false;
-    currentTime = 0; duration = 1; playbackRate = 1; readyState = 4; src = '';
+    _currentTime = 0; duration = 1; playbackRate = 1; readyState = 4; src = '';
+    get currentTime() { return this._currentTime; }
+    set currentTime(value) { this._currentTime = value; if (value < this.duration) this.ended = false; }
     plays = 0; pauses = 0;
     classList = { toggle() {} };
     removeAttribute(name) { this[name] = ''; }
@@ -211,7 +214,7 @@ function fixture(segments, { durations = {}, ensure, playGate, browserEvents = f
   const scope = vm.createContext({
     state, els, Audio, console, AbortController, setTimeout, clearTimeout,
     setInterval: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearInterval: id => timers.delete(id),
-    createDubMixer: media => createDubMixer(media, frames), naturalDubRate, canFinishDubTail, correctDubClock,
+    createDubMixer: media => createDubMixer(media, frames), createDubScheduler, naturalDubRate, canFinishDubTail, correctDubClock,
     dialogueSegmentAt, nextDialogueSegments, dialogueSegmentsForTarget, isDubStartTimely, mapVideoTimeToDubTime,
     activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps, dubSpeakerKey,
     languageClockTime: time => languageTimelineTime(time ?? video.currentTime, state.languageSyncOffset),
@@ -466,7 +469,7 @@ test('next speaker waits for a short tail and starts from its first syllable', a
   } finally { f.close(); }
 });
 
-test('slow synthesis is not started after the source has left the sentence', async () => {
+test('a naturally due short line survives preparation completing beyond its caption end', async () => {
   const request = deferred();
   const f = fixture([line('a', 1, 2)], { ensure: () => request.promise });
   try {
@@ -474,8 +477,10 @@ test('slow synthesis is not started after the source has left the sentence', asy
     f.video.currentTime = 3;
     request.resolve('a');
     await pending;
-    assert.equal(f.state.activeDubSegmentId, null);
-    assert.equal(f.state.dubPlayedSegmentIds.size, 0);
+    assert.equal(f.state.activeDubSegmentId, 'a');
+    assert.equal(f.active().currentTime, 0);
+    assert.equal(f.state.dubPlayedSegmentIds.size, 1);
+    assert.equal(f.scope.dubbingDebugReport().timeline[0].playbackState, 'PLAYED');
   } finally { f.close(); }
 });
 
@@ -583,6 +588,7 @@ test('an old play promise cannot pause the same pooled audio reused after a seek
     assert.equal(f.state.activeDubSegmentId, 'a');
     assert.equal(f.active().paused, false);
     assert.equal(f.active().currentTime, 2);
+    assert.equal(f.scope.dubbingDebugReport().playbackEventCount, 1, 'the obsolete promise never records a second start');
   } finally { f.close(); }
 });
 
@@ -1007,5 +1013,161 @@ test('source audio returns to normal between dubbed lines even when original-beh
     assert.equal(f.channels().length, 0);
     assert.equal(f.video.muted, false);
     assert.equal(f.video.volume, 1);
+  } finally { f.close(); }
+});
+
+test('17 cached clips with 16 prepared all actually start across sparse natural ticks', async () => {
+  const last = deferred();
+  const segments = Array.from({ length: 17 }, (_, i) => line(`cached-${i}`, 1 + i * 2, 1.12 + i * 2));
+  const f = fixture(segments, {
+    durations: Object.fromEntries(segments.map(row => [row.segmentId, .1])),
+    ensure: row => row === segments.at(-1) ? last.promise : Promise.resolve(row.segmentId)
+  });
+  try {
+    f.state.dubCache = new Map(segments.map(row => [row.segmentId, row.segmentId]));
+    for (const segment of segments.slice(0, 16)) await f.scope.prepareDubAudio(segment);
+    const initial = f.scope.dubbingDebugReport();
+    assert.equal(initial.cachedSegmentCount, 17);
+    assert.equal(initial.decodedPreparedSegmentCount, 16);
+    assert.equal(initial.playedSegmentCount, 0);
+    assert.equal(initial.detectedDialogueCount, 17);
+    assert.equal(initial.generatedCount, 17);
+    assert.equal(initial.readyCount, 12);
+    assert.equal(initial.dueCount, 0);
+    assert.equal(initial.playedCount, 0, 'cached and prepared audio is not counted as actual playback');
+    assert.equal(initial.missedWithoutSeekCount, 0);
+    assert.ok(initial.timeline.every(row => row.generated && row.cached && !row.played && row.playAttemptCount === 0));
+    f.video.currentTime = 0;
+    await f.sync();
+    for (const segment of segments) {
+      // Every tick lands after the entire short source interval.
+      f.video.currentTime = segment.endTime + .4;
+      const pending = f.sync();
+      if (segment === segments.at(-1)) {
+        await tick();
+        f.video.currentTime += 1;
+        f.event('timeupdate');
+        last.resolve(segment.segmentId);
+      }
+      await pending;
+      assert.equal(f.state.activeDubSegmentId, segment.segmentId);
+      assert.equal(f.active().currentTime, 0, 'a natural late start retains its first syllable');
+      assert.equal(f.active().paused, false);
+      f.active().end();
+      await tick();
+    }
+    const report = f.scope.dubbingDebugReport();
+    assert.equal(report.playedSegmentCount, 17);
+    assert.equal(report.playbackEventCount, 17);
+    assert.equal(report.firstPlaybackEvents.length, 10);
+    assert.equal(report.segmentStateCounts.PLAYED, 17);
+    assert.equal(report.dueSegmentCount, 0);
+    assert.equal(report.skippedByExplicitSeekSegmentCount, 0);
+    assert.ok(vm.runInContext('preparedDubAudio.size', f.scope) <= 12, 'decoded media cache stays bounded');
+  } finally { f.close(); }
+});
+
+test('explicit seeks explain 17 cached, 16 prepared, 1 played and a rewind replays without erasing history', async () => {
+  const segments = Array.from({ length: 17 }, (_, i) => line(`seek-${i}`, 1 + i * 2, 2 + i * 2));
+  const f = fixture(segments);
+  try {
+    f.state.dubCache = new Map(segments.map(row => [row.segmentId, row.segmentId]));
+    for (const segment of segments.slice(0, 16)) await f.scope.prepareDubAudio(segment);
+    await f.sync();
+    f.active().end();
+    await tick();
+    f.video.currentTime = 80;
+    f.event('seeking');
+    f.event('seeked');
+    await tick();
+    const skipped = f.scope.dubbingDebugReport();
+    assert.equal(skipped.cachedSegmentCount, 17);
+    assert.equal(skipped.decodedPreparedSegmentCount, 16);
+    assert.equal(skipped.playedSegmentCount, 1);
+    assert.equal(skipped.skippedByExplicitSeekSegmentCount, 17);
+    assert.equal(skipped.segmentStateCounts.FAILED, 0);
+    assert.equal(skipped.playbackFailureReason, '');
+    assert.equal(skipped.generatedCount, 17);
+    assert.equal(skipped.playedCount, 1);
+    assert.equal(skipped.skippedBySeekCount, 17);
+    assert.equal(skipped.missedWithoutSeekCount, 0);
+    assert.equal(skipped.warning, '');
+    assert.ok(skipped.timeline.every(row => row.skipped && row.skipReason === 'EXPLICIT_SEEK_PAST_SEGMENT' &&
+      row.explicitSeekGeneration === f.state.dubSyncGeneration && !row.due && !row.playing));
+    assert.equal(skipped.timeline[0].playAttemptCount, 1);
+    assert.equal(skipped.timeline[0].lastPlayAttemptTime, 1);
+    assert.ok(skipped.timeline.slice(1).every(row => row.playAttemptCount === 0 && row.lastPlayAttemptTime === null));
+    f.video.currentTime = 1.4;
+    f.event('seeking');
+    f.event('seeked');
+    await tick();
+    assert.equal(f.state.activeDubSegmentId, 'seek-0');
+    assert.ok(Math.abs(f.active().currentTime - .4) < 1e-6);
+    const replayed = f.scope.dubbingDebugReport();
+    assert.equal(replayed.playedSegmentCount, 1, 'cumulative unique heard clips survive the seek');
+    assert.equal(replayed.playbackEventCount, 2, 'the visited line can actually start on the new visit');
+    assert.equal(replayed.timeline[0].playAttemptCount, 2);
+    assert.equal(replayed.timeline[0].lastPlayAttemptGeneration, f.state.dubSyncGeneration);
+  } finally { f.close(); }
+});
+
+test('overdue natural due diagnostics warn after grace and retain pending eligibility until seek', async () => {
+  const request = deferred();
+  const f = fixture([line('pending', 1, 2)], { ensure: () => request.promise });
+  try {
+    const work = f.sync();
+    await tick();
+    f.video.currentTime = 3;
+    f.event('timeupdate');
+    let report = f.scope.dubbingDebugReport();
+    assert.equal(report.dueCount, 1);
+    assert.equal(report.playedCount, 0);
+    assert.equal(report.missedWithoutSeekCount, 0, 'normal in-flight preparation is not a missed clip');
+    assert.equal(report.timeline[0].pendingStatus, 'PENDING');
+    f.video.currentTime = 15;
+    f.event('timeupdate');
+    report = f.scope.dubbingDebugReport();
+    assert.equal(report.missedWithoutSeekCount, 1);
+    assert.equal(report.dueCount, 1, 'a warning never discards the due utterance');
+    assert.equal(report.timeline[0].pendingStatus, 'DELAYED_PENDING');
+    assert.equal(report.timeline[0].playAttemptCount, 0);
+    assert.match(report.warning, /remain pending/);
+    assert.deepEqual([...report.warnings[0].segmentIds], ['pending']);
+    f.video.currentTime = 30;
+    f.event('seeking');
+    report = f.scope.dubbingDebugReport();
+    assert.equal(report.skippedBySeekCount, 1);
+    assert.equal(report.missedWithoutSeekCount, 0);
+    assert.equal(report.warning, '');
+    assert.equal(report.timeline[0].skipReason, 'EXPLICIT_SEEK_PAST_SEGMENT');
+    assert.equal(report.timeline[0].explicitSeekGeneration, f.state.dubSyncGeneration);
+    request.resolve('pending');
+    await work;
+    assert.equal(f.scope.dubbingDebugReport().playedCount, 0);
+  } finally { request.resolve('pending'); f.close(); }
+});
+
+test('pause and resume preserve sample offsets and invalidate an unresolved old play attempt', async () => {
+  const firstPlay = deferred();
+  let starts = 0;
+  const f = fixture([line('a', 1, 6)], { durations: { a: 5 }, playGate: () => ++starts === 1 ? firstPlay.promise : undefined });
+  try {
+    const old = f.sync();
+    await tick();
+    const audio = f.active();
+    audio.currentTime = .3;
+    f.video.currentTime = 1.3;
+    f.video.paused = true;
+    f.event('pause');
+    assert.equal(f.scope.dubbingDebugReport().playedSegmentCount, 0);
+    f.event('play');
+    await tick();
+    firstPlay.resolve();
+    await old;
+    await f.sync();
+    assert.equal(f.active(), audio);
+    assert.equal(audio.currentTime, .3);
+    assert.equal(audio.paused, false);
+    assert.equal(f.scope.dubbingDebugReport().playbackEventCount, 1);
   } finally { f.close(); }
 });

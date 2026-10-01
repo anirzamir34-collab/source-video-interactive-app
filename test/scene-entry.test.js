@@ -34,6 +34,28 @@ test('a continuous verified introduction crosses a provider scene ID change into
   assert.equal(matchSceneIntroductions(rows, [{ action: rows[3], sceneId: 'main' }], eligible).has(rows[0]), false);
 });
 
+test('the optional scene flag does not reject adjacent same-cast evidence across provider IDs', () => {
+  const intro = action(5, 9.8, { adultScene: false, adultSceneId: 'intro' });
+  const anchor = action(10, 20, { adultScene: true, adultSceneId: 'main', kind: 'chapter' });
+  const original = structuredClone([intro, anchor]);
+  const decisions = [];
+  const result = matchSceneIntroductions([intro, anchor], [{ action: anchor, sceneId: 'main' }], eligible, 45,
+    (item, reason) => decisions.push([item, reason]));
+  assert.equal(result.get(intro), 'main');
+  assert.deepEqual(decisions, [[intro, 'VERIFIED_SAME_CAST_INTRODUCTION']]);
+  assert.deepEqual([intro, anchor], original);
+  const distant = { ...intro, endTime: 9.7 };
+  assert.equal(matchSceneIntroductions([distant, anchor], [{ action: anchor, sceneId: 'main' }], eligible).size, 0);
+});
+
+test('same participant names cannot substitute swapped source roles or an invalid observed interval', () => {
+  const anchor = action(10, 20, { kind: 'chapter' });
+  for (const patch of [{ subjectTrackId: 'b', partnerTrackId: 'a' }, { startTime: null }, { startTime: -1 }]) {
+    const intro = action(5, 10, patch);
+    assert.equal(matchSceneIntroductions([intro, anchor], [{ action: anchor, sceneId: 'main' }], eligible).size, 0);
+  }
+});
+
 test('dialogue, cast changes, unverified data, scene conflicts and long gaps bound introductions', () => {
   for (const extra of [{ kind: 'dialogue' }, { partnerTrackId: 'c' }, { sourceVerified: false },
     { confidence: .2 }, { confidence: undefined }, { adultSceneId: 'other' }, { endTime: 4 }]) {

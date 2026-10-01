@@ -10,6 +10,7 @@ import { sourcePositionAtTime } from '../public/scene-entry.js';
 import * as interaction from '../public/interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
 import * as panel from '../public/interaction-panel.js';
+import * as compat from '../public/interaction-compat.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -114,7 +115,7 @@ function fixture() {
     navigateTimelineTo: async target => { state.navigationTargets.push(target); },
     currentAdultFlow: () => 0, renderAdultProgressiveUI() {}, findAdultSceneAt: () => null,
     clearInteractionSelection() {}, reconcileInteractionSource() {},
-    settleInteractionClipBoundary: () => false
+    settleInteractionClipBoundary: () => false, observeInteractionProgress() {}
   });
   vm.runInContext(handlers, scope);
   video.addEventListener('play', () => { if (state.gameState !== 'SEGMENT_PLAYING') video.pause(); });
@@ -284,11 +285,13 @@ const runtimeNames = [
   'genericInteractionScene', 'genericInteractionSnapshot', 'genericInteractionTrace',
   'clearInteractionSelection', 'reconcileInteractionSource', 'reconcileInteractionSeek',
   'settleInteractionClipBoundary',
+  'observeInteractionProgress',
   'guardPlayable', 'setAdultMachinePhase', 'isWarmupPosition', 'isBonusPosition',
   'adultTimeLabel', 'currentAdultFlow', 'currentWarmupLustScale', 'tempoLabel', 'orderedLockedAdultPositions',
   'unlockNextAdultPositionFromLust', 'addFemaleLust', 'unlockedAdultPositions',
   'unlockedAdultOutcomes', 'renderAdultFlowStatus', 'renderAdultProgress',
   'renderAdultApproachChoices', 'renderAdultProgressiveUI', 'selectAdultCategory',
+  'renderInteractionInterludeChoices',
   'selectAdultPosition', 'selectAdultMovement', 'refreshAdultCompactDock',
   'playAdultPrelude', 'applyAdultPreludeProgress', 'applyAdultSelectionProgress',
   'resetAdultTapRhythm', 'updateVariantButton', 'updateRhythmControl',
@@ -321,7 +324,7 @@ function chapter(id, start, family = id, role = 'core') {
 
 function runtimeFixture() {
   const f = fixture();
-  Object.assign(f, gameplay, interaction, timeline, panel, {
+  Object.assign(f, gameplay, interaction, timeline, panel, compat, {
     canPlayAction, advanceAdultPhase, queueMicrotask, forwardVerifiedClips, sourcePositionAtTime,
     primeAdultPositionLanguage() {}, escapeHtml: String,
     normalizeAdultLabel: value => String(value || '').toLowerCase()
@@ -616,7 +619,7 @@ test('one position tab exposes later verified returns and switches occurrence on
   f.selectAdultPosition('one', false);
   assert.deepEqual(
     new Set(first.activeMovementChoices.flatMap(item => item.variants).map(item => item.id)),
-    new Set(['return-0', 'return-1', 'return-2'])
+    new Set(['one-0', 'return-0', 'return-1', 'return-2'])
   );
   const tabPlayCalls = f.els.video.playCalls;
   f.selectAdultPosition('one', true);
@@ -689,7 +692,8 @@ test('invalid child clips are neither shown nor allowed to bridge disjoint sourc
     { id: 'source-one', startTime: 40, endTime: 50 }
   ];
   await startFirstChapter(f);
-  assert.deepEqual(first.activeMovementChoices.flatMap(c => c.variants).map(m => m.id), []);
+  assert.deepEqual(first.activeMovementChoices.flatMap(c => c.variants).map(m => m.id), ['one-0'],
+    'the valid entry remains replayable; the gap and exclusive controls remain absent');
   const currentOccurrence = f.state.activeAdultOccurrenceId;
   f.selectAdultMovement('one-1', true);
   await flush();
@@ -1080,4 +1084,118 @@ test('verified normal dialogue has its own choices and earns no progress before 
   assert.equal(f.state.femaleSceneProgress, 0);
   assert.equal(f.els.video.currentTime, 10);
   assert.equal(f.els.video.playCalls, 1);
+});
+
+test('unique opening clips fill the budget and open the core panel without repeat farming', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene.positions = [chapter('main', 60)];
+  f.state.adultScene.foreplay = Array.from({ length: 6 }, (_, index) => ({
+    id: `step-${index}`, label: `Source step ${index}`, startTime: index * 10,
+    endTime: (index + 1) * 10, sourceVerified: true, castIds: ['track-a', 'track-b']
+  }));
+  f.els.video.time = 0;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.adultApproachChoices.length, 5);
+  for (let index = 0; index < 6; index += 1) {
+    f.playAdultPrelude(`step-${index}`);
+    await flush();
+    f.els.video.time = (index + 1) * 10;
+    f.updateAdultPlayback((index + 1) * 1000, f.els.video.time);
+    if (index < 5) {
+      assert.ok(f.currentAdultFlow() < 100);
+      assert.ok(f.state.adultApproachChoices.some(choice => choice.id === `step-${index + 1}`));
+    }
+  }
+  assert.equal(f.currentAdultFlow(), 100);
+  assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+  assert.equal(f.els.choices.classList.contains('hidden'), true);
+  assert.equal(f.state.adultPreludePlayCounts.size, 6);
+  assert.ok([...f.state.adultPreludePlayCounts.values()].every(count => count === 1));
+  assert.equal(f.els.video.time, 60);
+});
+
+test('natural opening playback advances the budget without button clicks and never double-unlocks', () => {
+  const f = runtimeFixture();
+  f.els.video.time = 0;
+  f.els.video.paused = false;
+  f.renderAdultProgressiveUI(true);
+  f.updateAdultPlayback(0, 0);
+  f.els.video.time = 10;
+  f.updateAdultPlayback(10000, 10);
+  assert.ok(f.currentAdultFlow() > 0 && f.currentAdultFlow() < 100);
+  f.els.video.time = 20;
+  f.updateAdultPlayback(20000, 20);
+  assert.equal(f.currentAdultFlow(), 100);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
+  f.els.video.time = 21;
+  f.updateAdultPlayback(21000, 21);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
+  assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+});
+
+test('a separate verified entry plays only its transition and keeps every core movement card', async () => {
+  const f = runtimeFixture();
+  const group = f.state.adultScene.positions[0];
+  group.subjectTrackId = 'track-b';
+  group.controlClipIds = [];
+  group.movements = group.movements.slice(0, 2);
+  group.movements.forEach((movement, index) => { movement.sourceActionId = `observed-${index}`; });
+  group.entryRange = { id: 'source-entry', startTime: 18, endTime: 20, sourceVerified: true,
+    subjectTrackId: 'track-b', partnerTrackId: 'track-a', coreOccurrenceId: 'source-one', entryForGroupId: 'one' };
+  group.entryClip = { id: 'entry-clip', startTime: 18, endTime: 20, loopStartTime: 18, loopEndTime: 20,
+    sourceVerified: true, sourcePositionId: 'source-entry', sourceOccurrenceId: 'source-entry',
+    subjectTrackId: 'track-b', partnerTrackId: 'track-a' };
+  f.addFemaleLust(35);
+  f.renderAdultProgressiveUI(true);
+  f.selectAdultPosition('one', true);
+  await flush();
+  assert.equal(f.els.video.currentTime, 18);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.state.activeAdultEntryClip.id, 'entry-clip');
+  assert.deepEqual(group.activeMovementChoices.flatMap(card => card.variants).map(movement => movement.id), ['one-0', 'one-1']);
+  const playCalls = f.els.video.playCalls;
+  f.els.video.time = 20;
+  f.updateAdultPlayback(1000, 20);
+  assert.equal(f.state.activeAdultEntryClip, null);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.els.video.playCalls, playCalls);
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+  f.selectAdultMovement('one-0', true);
+  await flush();
+  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-one');
+});
+
+test('tab text retains the full verified provider display label', () => {
+  const f = runtimeFixture();
+  const position = f.state.adultScene.positions[0];
+  position.label = 'Source Chapter · Anal';
+  f.addFemaleLust(35);
+  f.renderAdultProgressiveUI(true);
+  const button = f.els.positionTabs.children.find(child => child.dataset.positionId === position.id);
+  assert.equal(button.textContent, position.label);
+});
+
+test('verified interlude choices remain selectable without resetting the core phase or mounting another overlay', async () => {
+  const f = runtimeFixture();
+  f.addFemaleLust(35);
+  f.state.adultScene.foreplay.push({ id: 'interlude', label: 'Existing source transition',
+    startTime: 50, endTime: 60, sourceVerified: true });
+  f.els.video.time = 50;
+  f.reconcileInteractionSource(50);
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+  assert.equal(f.els.choices.classList.contains('hidden'), true);
+  const button = f.els.foreplayChoices.children.find(child => child.dataset.clipId === 'interlude');
+  assert.ok(button);
+  button.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.state.activeAdultPreludeId, 'interlude');
+  assert.equal(f.els.video.currentTime, 50);
+  assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
 });

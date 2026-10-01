@@ -6,7 +6,8 @@ import * as gameplay from '../public/adult-gameplay.js';
 import { sourceRangeForClip } from '../public/sequence-integrity.js';
 import { matchSceneIntroductions } from '../public/scene-entry.js';
 import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
-import { sourceIdentityLabel } from '../public/choice-groups.js';
+import { sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
+import { interactionEntryGuard, interactionClipGuard } from '../public/interaction-timeline.js';
 
 test('verified action time repairs zeroed position and loop metadata', () => {
   const repaired = gameplay.normalizeSourceActionTimes({ startTime: 332.653, endTime: 345.5,
@@ -47,7 +48,8 @@ const action = (id, start, end, extra = {}) => ({
 function prepare(actions, overrides = {}) {
   const state = { analysis: { actions }, analysisFingerprint: 'test' };
   const scope = vm.createContext({
-    ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole, sourceIdentityLabel,
+    ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole,
+    sourceIdentityLabel, sourceDisplayLabel, interactionEntryGuard,
     bindActionCharacter: item => item,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
     playableAdultPanelFamily: item => item.sourceVerified && item.adultScene && item.positionId ? 'chapter' : '',
@@ -260,16 +262,20 @@ test('wide parent declarations preserve only the exact accepted source intervals
     action('first', 10, 30, { sourcePositionId: 'provider-parent' }), action('later', 90, 110),
     action('unverified', 35, 85, { sourceVerified: false })
   ]);
-  assert.equal(state.adultScenes.length, 1);
-  const positions = state.adultScenes[0].positions;
-  assert.equal(positions.length, 1);
-  const p = positions[0];
-  assert.deepEqual(Array.from(p.sourceRanges, r => [r.startTime, r.endTime]), [[10, 30], [90, 110]]);
-  assert.ok(p.movements.every(m => sourceRangeForClip(p, m)));
-  assert.equal(p.movements.some(m => m.positionOnlyFallback), false);
-  assert.equal(p.movementChoices.flatMap(c => c.variants).some(m => m.id === p.entryMovementId), false);
-  assert.equal(new Set([p.entryMovementId, ...p.movementChoices.flatMap(c => c.variants).map(m => m.id)]).size,
-    p.movements.length);
+  assert.equal(state.adultScenes.length, 2);
+  assert.deepEqual(Array.from(state.adultScenes, scene => [scene.startTime, scene.endTime]), [[10, 30], [90, 110]]);
+  const positions = state.adultScenes.flatMap(scene => scene.positions);
+  assert.equal(positions.length, 2);
+  assert.deepEqual(Array.from(positions.flatMap(position => position.sourceRanges),
+    range => [range.startTime, range.endTime]), [[10, 30], [90, 110]]);
+  for (const p of positions) {
+    assert.ok(p.movements.every(m => sourceRangeForClip(p, m)));
+    assert.equal(p.movements.some(m => m.positionOnlyFallback || m.sourceActionId === 'unverified'), false);
+    const cardMovements = p.movementChoices.flatMap(c => c.variants);
+    assert.equal(cardMovements.filter(m => m.id === p.entryMovementId).length, 1);
+    assert.deepEqual(cardMovements.map(m => m.id).sort(), p.movements.map(m => m.id).sort());
+    assert.equal(cardMovements.every(m => sourceRangeForClip(p, m) && p.movements.includes(m)), true);
+  }
 });
 
 test('separate scenes retain separate parent cards and source intervals', () => {
@@ -281,4 +287,131 @@ test('separate scenes retain separate parent cards and source intervals', () => 
   assert.equal(state.adultScenes.length, 2);
   assert.equal(state.adultScenes[0].positions[0].movements.every(m => m.loopEndTime <= 30), true);
   assert.equal(state.adultScenes[1].positions[0].movements.every(m => m.loopStartTime >= 310), true);
+});
+
+test('verified opaque position labels survive scene preparation with the original source intervals', () => {
+  const state = prepare([action('source-a', 10, 30, { positionLabel: 'Chapter A' })]);
+  const position = state.adultScenes[0].positions[0];
+  assert.equal(position.positionLabel, 'Chapter A');
+  assert.equal(position.label, 'Chapter A');
+  assert.deepEqual(Array.from(position.sourceRanges, range => [range.startTime, range.endTime]), [[10, 30]]);
+  const corrected = prepare([action('source-a', 10, 30, { positionLabel: 'Chapter A' })], {
+    canonicalAdultPosition: () => ({ id: 'chapter', label: 'Verified correction', correctedFromAction: true })
+  });
+  assert.equal(corrected.adultScenes[0].positions[0].label, 'Verified correction');
+  assert.equal(corrected.adultScenes[0].positions[0].positionLabel, '');
+});
+
+test('a verified adjacent transition opens a group without becoming core evidence or hiding the entry movement', () => {
+  const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
+  const transition = action('entry:a', 6, 9.9, { ...cast, adultScene: false, adultSceneId: 'intro:a',
+    actionType: 'body_transition', positionId: '', positionLabel: '' });
+  const core = action('core:a', 10, 20, { ...cast, adultSceneId: 'core:a', actionType: 'position',
+    positionLabel: 'Chapter A', positionStartTime: 10, positionEndTime: 20 });
+  const original = structuredClone([transition, core]);
+  const state = prepare([transition, core]);
+  const position = state.adultScenes[0].positions[0];
+  assert.equal(state.adultScenes[0].startTime, 6);
+  assert.deepEqual([position.entryRange.startTime, position.entryRange.endTime], [6, 9.9]);
+  assert.equal(position.entryRange.entryForGroupId, position.id);
+  const sourceRanges = gameplay.positionOccurrenceGroups(position).flatMap(occurrence =>
+    occurrence.sourceRanges.map(range => ({ ...range, occurrenceId: occurrence.id })));
+  const group = { ...position, sourceRanges };
+  assert.equal(interactionEntryGuard(group, position.entryClip).allowed, true);
+  assert.equal(interactionClipGuard(group, position.entryClip).allowed, false);
+  assert.deepEqual(Array.from(sourceRanges, range => [range.startTime, range.endTime]), [[10, 20]]);
+  assert.equal(position.movementChoices.flatMap(card => card.variants)
+    .filter(item => item.id === position.entryMovementId).length, 1);
+  assert.deepEqual([transition, core], original);
+  assert.equal(state.adultAnalysisTrace.actions[0].membershipReason, 'VERIFIED_SAME_CAST_INTRODUCTION');
+});
+
+test('a preceding transition cannot become an entry across another cast, a wide gap or rejected proof', () => {
+  const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
+  const core = action('core:a', 10, 20, { ...cast, actionType: 'position',
+    positionStartTime: 10, positionEndTime: 20 });
+  for (const patch of [{ partnerTrackId: 'partner:b' }, { endTime: 9.5, loopEndTime: 9.5 },
+    { sourceVerified: false }, { startTime: null }]) {
+    const transition = action('entry:a', 6, 9.9, { ...cast, actionType: 'body_transition',
+      positionId: '', positionLabel: '', ...patch });
+    const state = prepare([transition, core]);
+    const position = state.adultScenes[0].positions[0];
+    assert.equal(position.entryRange, undefined);
+    assert.deepEqual(Array.from(position.sourceRanges, range => [range.startTime, range.endTime]), [[10, 20]]);
+  }
+});
+
+test('a rejected verified introduction reports its source times and membership reason', () => {
+  const core = action('core:a', 100, 120, { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a',
+    positionStartTime: 100, positionEndTime: 120 });
+  const intro = action('intro:a', 10, 20, { adultScene: false, adultSceneId: '', actionType: 'touch',
+    positionId: '', positionLabel: '', subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' });
+  const state = prepare([intro, core]);
+  const warning = state.adultAnalysisTrace.warnings.find(item => item.code === 'VERIFIED_APPROACH_REJECTED');
+  assert.equal(warning.actionId, 'intro:a');
+  assert.equal(warning.membershipReason, 'SOURCE_GAP_TOO_LARGE');
+  assert.deepEqual([warning.sourceStartTime, warning.sourceEndTime], [10, 20]);
+});
+
+test('nearby scene fragments with a different opaque cast remain separate', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const scene = (id, startTime, subject, partner) => ({ id, startTime, endTime: startTime + 10,
+    postSceneTime: startTime + 10, positions: [{ subjectTrackId: subject, partnerTrackId: partner }],
+    foreplay: [], outcomes: [] });
+  assert.equal(mergeFragments([scene('a', 10, 'subject:a', 'partner:a'),
+    scene('b', 22, 'subject:a', 'partner:a')]).length, 1);
+  for (const [subject, partner] of [['subject:b', 'partner:a'], ['subject:a', 'partner:b'], ['partner:a', 'subject:a']]) {
+    assert.equal(mergeFragments([scene('a', 10, 'subject:a', 'partner:a'), scene('b', 22, subject, partner)]).length, 2);
+  }
+});
+
+test('a wide provider position envelope cannot merge distant exact source chapters', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
+  const actions = [
+    action('source:a', 10, 30, { ...cast, adultSceneId: 'scene:a', positionStartTime: 0, positionEndTime: 1000,
+      adultSceneStartTime: 0, adultSceneEndTime: 1000, positionLabel: 'Chapter A' }),
+    action('source:b', 400, 420, { ...cast, adultSceneId: 'scene:b', positionStartTime: 400, positionEndTime: 420,
+      adultSceneStartTime: 400, adultSceneEndTime: 420, positionLabel: 'Chapter B' })
+  ];
+  const original = structuredClone(actions);
+  const state = prepare(actions, { mergeAdultSceneFragments: mergeFragments });
+  assert.equal(state.adultScenes.length, 2);
+  assert.deepEqual(Array.from(state.adultScenes, scene => [scene.startTime, scene.endTime]), [[10, 30], [400, 420]]);
+  assert.deepEqual(Array.from(state.adultScenes, scene => Array.from(scene.positions[0].sourceRanges,
+    range => [range.startTime, range.endTime])), [[[10, 30]], [[400, 420]]]);
+  assert.ok(state.adultScenes.every(scene => scene.positions.every(position =>
+    position.movements.every(movement => sourceRangeForClip(position, movement)))));
+  assert.deepEqual(actions, original);
+});
+
+test('unverified scene-tagged provider rows cannot join a distant introduction to a core occurrence', () => {
+  const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
+  for (const sourceVerified of [false, undefined, 'true', 1]) {
+    const intro = action('intro:a', 10, 20, { ...cast, actionType: 'touch', positionId: '', positionLabel: '' });
+    const bridges = Array.from({ length: 9 }, (_, index) => {
+      const startTime = 40 + index * 40;
+      return action(`provider:${index}`, startTime, startTime + 40, { ...cast, sourceVerified,
+        actionType: 'touch', positionId: '', positionLabel: '' });
+    });
+    const core = action('core:a', 400, 420, { ...cast, positionStartTime: 400, positionEndTime: 420 });
+    const actions = [intro, ...bridges, core];
+    const original = structuredClone(actions);
+    const state = prepare(actions);
+    assert.equal(state.adultScenes.length, 1);
+    const [scene] = state.adultScenes;
+    assert.deepEqual([scene.startTime, scene.endTime], [400, 420]);
+    assert.equal(scene.foreplay.length, 0);
+    assert.deepEqual(Array.from(scene.positions[0].sourceRanges, range => [range.startTime, range.endTime]), [[400, 420]]);
+    assert.ok(scene.positions[0].movements.every(movement => sourceRangeForClip(scene.positions[0], movement)));
+    const warning = state.adultAnalysisTrace.warnings.find(item => item.code === 'VERIFIED_APPROACH_REJECTED' &&
+      item.actionId === 'intro:a');
+    assert.ok(warning);
+    assert.deepEqual([warning.sourceStartTime, warning.sourceEndTime], [10, 20]);
+    assert.deepEqual(actions, original);
+  }
 });

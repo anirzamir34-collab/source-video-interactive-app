@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSourceChoiceCards, sourceIdentityLabel } from '../public/choice-groups.js';
+import { groupSourceChoiceCards, sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
 import { buildVerifiedMovementChoices, exclusiveControlClipIds, findAdultSceneForTimeline,
   forwardLocalMovementClips } from '../public/adult-gameplay.js';
 
@@ -154,4 +154,60 @@ test('an already verified adult partner relationship remains the card identity i
   const spouse = clip(0, { label: 'Eşiyle ritmi sürdür', identityResolution: 'verified',
     primaryCharacterLabel: 'Meral', relationshipResolution: 'verified', relationshipRoleLabel: 'eşi' });
   assert.equal(buildVerifiedMovementChoices([spouse], 'Aynı Pozisyon', 5)[0].label, 'Eşiyle ritmi sürdür');
+});
+
+test('five declared source actions stay independently addressable even when the card preference is smaller', () => {
+  const actions = Array.from({ length: 5 }, (_, index) => clip(index, {
+    label: `Source action ${index + 1}`, sourceActionId: `observed:${index}`,
+    actionType: 'opaque-kind', sourceOccurrenceId: 'occurrence:a'
+  }));
+  const before = structuredClone(actions);
+  const cards = groupSourceChoiceCards(actions, {
+    preferredCount: 2, contextFor: () => 'occurrence:a', mergeWithinContext: true
+  });
+  assert.equal(cards.length, 5);
+  assert.deepEqual(cards.map(card => card.label), actions.map(action => action.label));
+  assert.deepEqual(cards.flatMap(card => card.variants), actions);
+  assert.deepEqual(actions, before);
+});
+
+test('opaque action types remain distinct inside one trusted display context', () => {
+  const actions = [clip(0, { actionType: 'type:A' }), clip(1, { actionType: 'type:A' }),
+    clip(2, { actionType: 'type:B' }), clip(3, { actionType: 'type:B' })];
+  const cards = groupSourceChoiceCards(actions, { contextFor: () => 'same', mergeWithinContext: true });
+  assert.deepEqual(cards.map(card => card.variants.map(action => action.actionType)),
+    [['type:A', 'type:A'], ['type:B', 'type:B']]);
+});
+
+test('five parts of the same observed action form coherent two or three part cards', () => {
+  const parts = Array.from({ length: 5 }, (_, index) => clip(index, {
+    derivedFromVerifiedSegment: 'observed:a', label: 'Chapter A'
+  }));
+  const cards = groupSourceChoiceCards(parts);
+  assert.deepEqual(cards.map(card => card.variants.length), [3, 2]);
+  assert.ok(cards.every(card => card.label === 'Chapter A'));
+  assert.deepEqual(cards.flatMap(card => card.variants), parts);
+  const [single] = groupSourceChoiceCards([parts[0]]);
+  assert.equal(single.label, 'Chapter A');
+  assert.deepEqual(single.variants, [parts[0]]);
+});
+
+test('reused source and action IDs cannot combine declared different occurrences', () => {
+  const actions = [clip(0, { sourceOccurrenceId: 'occurrence:a', derivedFromVerifiedSegment: 'observed:a' }),
+    clip(20, { sourceOccurrenceId: 'occurrence:b', derivedFromVerifiedSegment: 'observed:a' })];
+  const cards = groupSourceChoiceCards(actions);
+  assert.deepEqual(cards.map(card => card.variants.map(action => action.id)), [['clip-0'], ['clip-20']]);
+  assert.deepEqual(cards.flatMap(card => card.variants).map(action => [action.loopStartTime, action.loopEndTime]),
+    [[0, 5], [100, 105]]);
+});
+
+test('verified provider display labels remain opaque and partner distinction is explicit', () => {
+  const group = { sourceVerified: true, positionLabel: 'Chapter A', partnerLabel: 'Participant B' };
+  assert.equal(sourceDisplayLabel(group, 'Existing fallback'), 'Chapter A');
+  assert.equal(sourceDisplayLabel(group, 'Existing fallback', { distinguishPartner: true }),
+    'Chapter A · Participant B');
+  assert.equal(sourceDisplayLabel({ ...group, positionLabel: 'Chapter A · Participant B' }, '',
+    { distinguishPartner: true }), 'Chapter A · Participant B');
+  assert.equal(sourceDisplayLabel({ ...group, sourceVerified: false }, 'Existing fallback'), 'Existing fallback');
+  assert.equal(sourceDisplayLabel({ ...group, positionLabel: '' }, 'Existing fallback'), 'Existing fallback');
 });

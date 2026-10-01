@@ -100,6 +100,7 @@ import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery
 import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 
 import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from './dubbing-audio.js';
+import { createDubScheduler } from './dubbing-scheduler.js';
 import { createDubRequestQueue } from './dubbing-queue.js';
 import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
@@ -116,13 +117,15 @@ import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
 import { normalizeDialogueTimeline } from './dialogue-integrity.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
-import { sourceIdentityLabel } from './choice-groups.js';
+import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
 import { extractMp4Audio } from './mp4-audio.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
-  selectInteractionGroup, interactionTrace } from './interaction-engine.js';
-import { interactionEntryClip } from './interaction-timeline.js';
+  selectInteractionGroup, interactionTrace, transitionInteraction,
+  selectVerifiedChoiceQueue } from './interaction-engine.js';
+import { interactionEntryClip, interactionEntryGuard, interactionFamilyViews } from './interaction-timeline.js';
+import { bindInteractionRuntimeViews } from './interaction-compat.js';
 import { mountInteractionPanel, resetInteractionSelection,
   syncInteractionSurfaces } from './interaction-panel.js';
 
@@ -1399,7 +1402,23 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
   let processingTimer = null;
   let upload;
 
-  if (reusableAudio) {
+  if (session?.dialogueUploadId) {
+    els.analysisTitle.textContent = 'Yüklenmiş kaynak sesi kullanılıyor';
+    const form = new FormData();
+    form.append('uploadId', session.dialogueUploadId);
+    form.append('duration', String(duration));
+    form.append('protagonistProfile', protagonistProfile);
+    form.append('retainAudioForReuse', '1');
+    const response = await fetch('/api/gemini-dialogue-analyze', {
+      method: 'POST', headers: geminiRequestHeaders(), body: form
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 410 || body.reason === 'UPLOAD_SESSION_EXPIRED') {
+      session.dialogueUploadId = '';
+    } else upload = { ok: response.ok, status: response.status, body };
+  }
+
+  if (!upload && reusableAudio) {
     els.analysisTitle.textContent = '24 saatlik ses önbelleği kullanılıyor';
     els.analysisOutput.textContent = 'Ses tekrar yüklenmiyor; daha önce hazırlanan Gemini ses dosyası kullanılıyor.';
     const form = new FormData();
@@ -1606,6 +1625,20 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
 
   recordAiUsage(body?.aiUsage);
 
+  // An ASR retry reuses uploaded source audio, including partial window failure.
+  if (session && body?.uploadId) session.dialogueUploadId = String(body.uploadId);
+  if (session && body?.coverageAudit) session.dialogueCoverageAudit = body.coverageAudit;
+  if (body?.audioReuseToken) {
+    const token = String(body.audioReuseToken);
+    if (session) session.audioReuseToken = token;
+    if (state.urlCacheKey) {
+      state.audioReuseToken = token;
+      if (state.urlCacheSavePromise) await state.urlCacheSavePromise.catch(() => null);
+      void urlVideoCache.update(state.urlCacheKey, { audioReuseToken: token })
+        .catch(error => console.warn('Ses önbelleği bilgisi kaydedilemedi:', error));
+    }
+  }
+
   if (!upload.ok || !body.available) {
     if (body?.reason === 'DIALOGUE_TIMING_INVALID') {
       state.dubFailureReason = body.reason;
@@ -1615,18 +1648,6 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
       ? body.message : (body.error || body.message || `HTTP ${upload.status}`));
     error.code = body.reason || 'DIALOGUE_ANALYSIS_FAILED';
     throw error;
-  }
-
-  if (body.audioReuseToken) {
-    const token = String(body.audioReuseToken);
-    if (session) session.audioReuseToken = token;
-    if (state.urlCacheKey) {
-      state.audioReuseToken = token;
-      if (state.urlCacheSavePromise) await state.urlCacheSavePromise.catch(() => null);
-      void urlVideoCache.update(state.urlCacheKey, {
-        audioReuseToken: state.audioReuseToken
-      }).catch(error => console.warn('Ses önbelleği bilgisi kaydedilemedi:', error));
-    }
   }
 
   const durationSeconds = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
@@ -1693,8 +1714,65 @@ const dubChannels = new Map();
 const dubRecoveryOffsets = new Map();
 let dubBoundaryHold = null;
 const preparedDubAudio = new Map();
+const dubPreparationGroups = new Set();
+let dubScheduler = null;
+let dubSchedulerTimeline = null;
+let dubSchedulerGeneration = null;
+let dubSegmentIdTimeline = null;
+let dubSegmentIds = new WeakMap();
+let dubSpeechEnds = new WeakMap();
 const dubMixer = createDubMixer(els.video);
 let dubPlaybackTimer = null;
+
+function getDubPlaybackScheduler() {
+  const timeline = dubTimeline();
+  if (!dubScheduler || dubSchedulerTimeline !== timeline) {
+    dubSchedulerTimeline = timeline;
+    dubSchedulerGeneration = state.dubSyncGeneration;
+    dubScheduler = createDubScheduler(timeline, { getId: getDubSegmentId, generation: state.dubSyncGeneration });
+    dubSpeechEnds = new WeakMap();
+    const followingStarts = new Map();
+    for (const segment of [...timeline].sort((a, b) => Number(b.startTime) - Number(a.startTime))) {
+      const speaker = dubSpeakerKey(segment);
+      const start = Number(segment.startTime);
+      const next = followingStarts.get(speaker);
+      const end = next && next.start > start ? next.start : next?.following;
+      dubSpeechEnds.set(segment, Math.min(Number(segment.endTime), end ?? Infinity));
+      followingStarts.set(speaker, { start, following: end });
+    }
+    for (const segment of timeline) {
+      const id = getDubSegmentId(segment);
+      if (state.dubCache?.has(id)) dubScheduler.markCached(id);
+      if (preparedDubAudio.get(id)?.readyState >= 2) dubScheduler.markReady(id);
+    }
+    if (state.dubResumeTime !== null) dubScheduler.seek(languageClockTime(), state.dubSyncGeneration);
+  } else if (dubSchedulerGeneration !== state.dubSyncGeneration) {
+    dubSchedulerGeneration = state.dubSyncGeneration;
+    dubScheduler.seek(languageClockTime(), state.dubSyncGeneration);
+  }
+  return dubScheduler;
+}
+
+function getDubSpeechEnd(segment) {
+  return dubSpeechEnds.get(segment) ?? Number(segment.endTime);
+}
+
+function indexedActiveDubSegments(time) {
+  const voices = new Map();
+  for (const row of getDubPlaybackScheduler().active(time)) voices.set(dubSpeakerKey(row.segment), row.segment);
+  return [...voices.values()];
+}
+
+function dubPlaybackOwner() {
+  return { generation: state.dubSyncGeneration, controller: state.dubRequestController,
+    selectionToken: state.adultSelectionToken, playbackGeneration: state.playbackGeneration, gameState: state.gameState };
+}
+
+function isDubPlaybackOwnerCurrent(owner) {
+  return owner.generation === state.dubSyncGeneration && owner.controller === state.dubRequestController &&
+    owner.selectionToken === state.adultSelectionToken && owner.playbackGeneration === state.playbackGeneration &&
+    owner.gameState === state.gameState && state.dubbingEnabled && !els.video.seeking;
+}
 
 function getDubDiagnostics() {
   return state.dubDiagnostics ||= {
@@ -1706,6 +1784,48 @@ function getDubDiagnostics() {
 function dubbingDebugReport() {
   const diagnostics = getDubDiagnostics();
   const timeline = dubTimeline();
+  const scheduler = getDubPlaybackScheduler();
+  const scheduling = scheduler.counts();
+  const now = languageClockTime();
+  const activeIds = new Set(indexedActiveDubSegments(now).map(getDubSegmentId));
+  // Decode recovery has a ten-second timeout and speech tails have a 1.1s
+  // budget. Give newly latched sparse ticks the same grace before warning.
+  const pendingOverdueGraceSeconds = 12;
+  const readyCount = [...preparedDubAudio.values()].filter(audio => audio.readyState >= 2 && !audio.error).length;
+  const segmentReports = timeline.map(segment => {
+    const id = getDubSegmentId(segment);
+    const row = scheduler.get(id);
+    const cached = state.dubCache?.has(id) || false;
+    const pending = Boolean(row?.due);
+    const overdue = pending && row.due.origin === 'natural' &&
+      now - Math.max(Number(segment.endTime), row.due.time) > pendingOverdueGraceSeconds;
+    const skipped = row?.state === 'SKIPPED_BY_EXPLICIT_SEEK';
+    return {
+      segmentId: id, speakerId: dubSpeakerKey(segment),
+      startTime: segment.startTime, endTime: segment.endTime,
+      ...(state.dubSegmentMetadata?.get(id) || {}),
+      voiceId: state.dubSegmentMetadata?.get(id)?.voiceId || state.dubSpeakerVoices?.get(dubSpeakerKey(segment))?.voiceId || '',
+      generated: cached, cached,
+      prepared: diagnostics.preparedIds.has(id),
+      ready: Boolean(preparedDubAudio.get(id)?.readyState >= 2 && !preparedDubAudio.get(id)?.error),
+      due: pending, dueSelection: row?.due || null,
+      playing: Boolean(dubChannels.get(id) && !dubChannels.get(id).paused && !dubChannels.get(id).ended),
+      played: diagnostics.playedIds.has(id),
+      skipped, skipReason: skipped ? row?.skipReason || row?.reason || 'EXPLICIT_SEEK_PAST_SEGMENT' : '',
+      explicitSeekGeneration: row?.explicitSeekGeneration ?? null,
+      playAttemptCount: row?.playAttemptCount || 0,
+      lastPlayAttemptTime: row?.lastPlayAttemptTime ?? null,
+      lastPlayAttemptGeneration: row?.lastPlayAttemptGeneration ?? null,
+      playbackState: row?.state || 'GENERATED',
+      preparationState: row?.preparationState || 'GENERATED',
+      playedThisVisit: Boolean(row?.playedThisVisit),
+      pendingStatus: pending ? overdue ? 'DELAYED_PENDING' : 'PENDING' : null,
+      missedWithoutSeek: overdue,
+      active: activeIds.has(id)
+    };
+  });
+  const missed = segmentReports.filter(row => row.missedWithoutSeek);
+  const warning = missed.length ? `${missed.length} naturally due dubbing segment(s) remain pending beyond the ${pendingOverdueGraceSeconds}-second grace; playback or recovery is still pending.` : '';
   return {
     dubbingEnabled: state.dubbingEnabled,
     provider: state.dubProviderLock || 'unknown',
@@ -1718,12 +1838,27 @@ function dubbingDebugReport() {
     cachedSegmentCount: state.dubCache?.size || 0,
     decodedPreparedSegmentCount: diagnostics.preparedIds.size,
     preparedDecodedCount: diagnostics.preparedIds.size,
-    readySegmentCount: [...preparedDubAudio.values()].filter(audio => audio.readyState >= 2 && !audio.error).length,
+    readySegmentCount: readyCount,
     playedSegmentCount: diagnostics.playedIds.size,
     playbackEventCount: diagnostics.playbackEventCount,
     firstPlaybackEvents: diagnostics.firstPlaybackEvents,
+    segmentStateCounts: scheduling.states,
+    dueSegmentCount: scheduler.due().length,
+    skippedByExplicitSeekSegmentCount: scheduling.skippedByExplicitSeekCount,
+    detectedDialogueCount: state.dialogue?.segments?.length ?? timeline.length,
+    generatedCount: state.dubCache?.size || 0,
+    readyCount,
+    dueCount: scheduling.due,
+    playedCount: diagnostics.playedIds.size,
+    skippedBySeekCount: scheduling.skippedByExplicitSeekCount,
+    missedWithoutSeekCount: missed.length,
+    pendingOverdueGraceSeconds,
+    warning,
+    warnings: missed.length ? [{ code: 'DUB_DUE_OVERDUE_WITHOUT_SEEK', segmentIds: missed.map(row => row.segmentId), message: warning }] : [],
+    schedulerGeneration: state.dubSyncGeneration,
     repairedTimestamps: state.dialogue?.timestampRepair || null,
     timingIntegrity: state.dialogue?.timingIntegrity || null,
+    coverageAudit: state.dialogue?.coverageAudit || state.analysisSession?.dialogueCoverageAudit || null,
     transcriptionEngine: state.dialogue?.transcriptionEngine || '',
     translationEngine: state.dialogue?.translationEngine || '',
     sourceLanguage: state.dialogue?.sourceLanguage || '',
@@ -1731,18 +1866,7 @@ function dubbingDebugReport() {
     playbackFailureReason: diagnostics.playbackFailureReason,
     playbackBlocked: Boolean(state.dubPlaybackBlocked),
     videoTime: Number(els.video.currentTime) || 0,
-    timeline: timeline.map(segment => {
-      const id = getDubSegmentId(segment);
-      return {
-        segmentId: id, speakerId: dubSpeakerKey(segment),
-        startTime: segment.startTime, endTime: segment.endTime,
-        ...(state.dubSegmentMetadata?.get(id) || {}),
-        voiceId: state.dubSegmentMetadata?.get(id)?.voiceId || state.dubSpeakerVoices?.get(dubSpeakerKey(segment))?.voiceId || '',
-        cached: state.dubCache?.has(id) || false,
-        prepared: diagnostics.preparedIds.has(id), played: diagnostics.playedIds.has(id),
-        active: activeDubSegments(timeline, languageClockTime()).includes(segment)
-      };
-    })
+    timeline: segmentReports
   };
 }
 
@@ -1830,8 +1954,7 @@ function isDubBufferCurrent(buffer) {
     buffer.controller === state.dubRequestController &&
     buffer.selectionToken === state.adultSelectionToken &&
     buffer.playbackGeneration === state.playbackGeneration && buffer.gameState === state.gameState &&
-    !els.video.seeking && !els.video.ended &&
-    Math.abs(Number(els.video.currentTime) - buffer.videoTime) < 0.35;
+    !els.video.seeking && !els.video.ended;
 }
 
 function beginDubBuffer(segment, loading = true) {
@@ -1895,11 +2018,17 @@ async function retryDubBuffer(useOriginal = false) {
 
 async function prepareDubForPlayback(segment) {
   const group = await prepareDubGroupForPlayback([segment]);
-  return group?.get(getDubSegmentId(segment)) || null;
+  const audio = group?.get(getDubSegmentId(segment)) || null;
+  if (group?._vqPreparationGroup) dubPreparationGroups.delete(group._vqPreparationGroup);
+  return audio;
 }
 
-async function prepareDubGroupForPlayback(segments) {
+async function prepareDubGroupForPlayback(segments, owner = dubPlaybackOwner()) {
   const result = new Map();
+  const group = { ids: new Set(segments.map(getDubSegmentId)), owner };
+  dubPreparationGroups.add(group);
+  result._vqPreparationGroup = group;
+  const release = () => dubPreparationGroups.delete(group);
   const missing = [];
   for (const segment of segments) {
     const id = getDubSegmentId(segment);
@@ -1907,6 +2036,7 @@ async function prepareDubGroupForPlayback(segments) {
     if (audio?.readyState >= 2 && !audio.error) result.set(id, audio);
     else missing.push(segment);
   }
+  if (!isDubPlaybackOwnerCurrent(owner)) { release(); return null; }
   if (!missing.length) return result;
   // One preparation hold covers every simultaneous speaker. Independent holds
   // would cancel each other and resume with only the last prepared voice.
@@ -1919,22 +2049,26 @@ async function prepareDubGroupForPlayback(segments) {
   } catch (error) {
     logEngineEvent('DUB_PREPARATION_FAILED', { message: error?.message || String(error) });
   }
-  if (!isDubBufferCurrent(buffer) || !state.dubbingEnabled) {
+  if (!isDubBufferCurrent(buffer) || !isDubPlaybackOwnerCurrent(owner)) {
     if (state.dubBuffer === buffer) cancelDubBuffer();
+    release();
     return null;
   }
   buffer.loading = false;
   if (result.size !== segments.length) {
     renderDubBuffer('Bu bölümün Türkçe dublajı hazırlanamadı. Yeniden dene veya dublajı kapatarak devam et.');
+    release();
     return null;
   }
   try { await els.video.play(); }
   catch {
     if (isDubBufferCurrent(buffer)) renderDubBuffer('Ses hazır. Oynatmak için yeniden dokun.');
+    release();
     return null;
   }
-  if (!isDubBufferCurrent(buffer) || !state.dubbingEnabled) {
+  if (!isDubBufferCurrent(buffer) || !isDubPlaybackOwnerCurrent(owner)) {
     if (state.dubBuffer === buffer) cancelDubBuffer();
+    release();
     return null;
   }
   cancelDubBuffer();
@@ -1960,14 +2094,55 @@ function clearPreparedDubAudio() {
     audio.load();
   }
   preparedDubAudio.clear();
+  dubPreparationGroups.clear();
+}
+
+function trimPreparedDubAudio() {
+  const activeIds = new Set(dubChannels.keys());
+  for (const group of dubPreparationGroups) {
+    if (!isDubPlaybackOwnerCurrent(group.owner)) { dubPreparationGroups.delete(group); continue; }
+    for (const id of group.ids) activeIds.add(id);
+  }
+  const limit = Math.max(12, activeIds.size + 6);
+  for (const [id, audio] of preparedDubAudio) {
+    if (preparedDubAudio.size <= limit) break;
+    if (activeIds.has(id) || audio.readyState < 2) continue;
+    preparedDubAudio.delete(id);
+    dubScheduler?.markCached(id);
+    audio.pause();
+    audio._vqCancelReady?.();
+    audio.removeAttribute('src');
+    audio.load();
+  }
 }
 
 async function prepareDubAudio(segment, priority = 0) {
   const controller = state.dubRequestController;
-  const source = await ensureDubSegment(segment, priority);
-  if (!source || controller !== state.dubRequestController || !dubTimeline().includes(segment)) return null;
+  const scheduler = getDubPlaybackScheduler();
   const id = getDubSegmentId(segment);
-  if (preparedDubAudio.has(id)) return preparedDubAudio.get(id)._vqReady;
+  const existing = preparedDubAudio.get(id);
+  if (existing && !existing.error) {
+    if (existing.readyState >= 2) scheduler.markReady(id);
+    else scheduler.markPreparing(id);
+    return existing._vqReady;
+  }
+  scheduler.markPreparing(id);
+  let source;
+  try { source = await ensureDubSegment(segment, priority); }
+  catch (error) {
+    if (controller === state.dubRequestController) scheduler.markFailed(id, { reason: error?.message || 'DUB_PREPARATION_FAILED' });
+    throw error;
+  }
+  if (controller !== state.dubRequestController || !dubTimeline().includes(segment)) return null;
+  if (!source) { scheduler.markFailed(id, { reason: 'DUB_SOURCE_UNAVAILABLE' }); return null; }
+  scheduler.markCached(id);
+  if (preparedDubAudio.has(id)) {
+    const shared = preparedDubAudio.get(id);
+    if (shared.readyState >= 2 && !shared.error) scheduler.markReady(id);
+    else scheduler.markPreparing(id);
+    return shared._vqReady;
+  }
+  scheduler.markPreparing(id);
   const audio = new Audio();
   audio.preload = 'auto';
   audio.volume = dubMixer.voiceVolume();
@@ -1980,17 +2155,21 @@ async function prepareDubAudio(segment, priority = 0) {
     const done = () => {
       clearTimeout(timer);
       for (const event of ['canplay', 'error']) audio.removeEventListener(event, done);
-      const ready = !cancelled && audio.readyState >= 2 && !audio.error;
+      const sourceCurrent = controller === state.dubRequestController && dubTimeline().includes(segment);
+      const ready = !cancelled && sourceCurrent && audio.readyState >= 2 && !audio.error;
       if (!ready && preparedDubAudio.get(id) === audio) preparedDubAudio.delete(id);
       const diagnostics = getDubDiagnostics();
       if (ready) {
         diagnostics.preparedIds.add(id);
+        scheduler.markReady(id);
         logEngineEvent('DUB_AUDIO_PREPARED', { segmentId: id, duration: Number(audio.duration) || 0 });
-      } else if (!cancelled) {
+      } else if (!cancelled && sourceCurrent) {
         diagnostics.playbackFailureReason = audio.error ? `DUB_DECODE_ERROR:${audio.error.code}` : 'DUB_DECODE_TIMEOUT';
+        scheduler.markFailed(id, { reason: diagnostics.playbackFailureReason });
         logEngineEvent('DUB_DECODE_FAILED', { segmentId: id, reason: diagnostics.playbackFailureReason });
       }
       resolve(ready ? audio : null);
+      if (ready) trimPreparedDubAudio();
     };
     for (const event of ['canplay', 'error']) audio.addEventListener(event, done);
     audio._vqCancelReady = () => { cancelled = true; done(); };
@@ -1998,6 +2177,7 @@ async function prepareDubAudio(segment, priority = 0) {
   });
   audio.addEventListener('ended', () => {
     if (dubChannels.get(id) !== audio) return;
+    getDubPlaybackScheduler().markEnded(id, { generation: audio._vqPlayGeneration });
     dubChannels.delete(id);
     if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
     updateDubMix();
@@ -2010,6 +2190,7 @@ async function prepareDubAudio(segment, priority = 0) {
     dubChannels.delete(id);
     if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
     getDubDiagnostics().playbackFailureReason = `DUB_DECODE_ERROR:${audio.error?.code || 'unknown'}`;
+    getDubPlaybackScheduler().markFailed(id, { generation: audio._vqPlayGeneration, reason: getDubDiagnostics().playbackFailureReason });
     logEngineEvent('DUB_PLAYBACK_FAILED', { segmentId: id, reason: getDubDiagnostics().playbackFailureReason });
     state.dubPlayedSegmentIds.delete(id);
     dubRecoveryOffsets.set(id, { segment, offset: Math.max(0, Number(audio.currentTime) || 0) });
@@ -2018,16 +2199,7 @@ async function prepareDubAudio(segment, priority = 0) {
     updateDubMix();
   });
   preparedDubAudio.set(id, audio);
-  // Keep only a handful of decoded media elements, including the active line.
-  for (const [key, old] of preparedDubAudio) {
-    if (preparedDubAudio.size <= Math.max(12, activeDubSegments(dubTimeline(), languageClockTime()).length + 6)) break;
-    if (key === id || dubChannels.has(key) || activeDubSegments(dubTimeline(), languageClockTime()).some(row => getDubSegmentId(row) === key)) continue;
-    preparedDubAudio.delete(key);
-    old.pause();
-    old._vqCancelReady?.();
-    old.removeAttribute('src');
-    old.load();
-  }
+  trimPreparedDubAudio();
   audio.src = source;
   audio.load();
   return audio._vqReady;
@@ -2083,8 +2255,12 @@ function dubTimeline() {
 function getDubSegmentId(segment) {
   if (!segment) return '';
   const segments = dubTimeline();
-  const index = Math.max(0, segments.indexOf(segment));
-  return dubSegmentKey(segment, index);
+  if (dubSegmentIdTimeline !== segments) {
+    dubSegmentIdTimeline = segments;
+    dubSegmentIds = new WeakMap();
+    segments.forEach((row, index) => dubSegmentIds.set(row, dubSegmentKey(row, index)));
+  }
+  return dubSegmentIds.get(segment) || dubSegmentKey(segment);
 }
 
 function stableDubGender(segment) {
@@ -2274,7 +2450,8 @@ function stopDubPlayback() {
   cancelDubBuffer();
   state.dubStartingToken = null;
   dubRecoveryOffsets.clear();
-  dubChannels.forEach(audio => audio.pause());
+  dubPreparationGroups.clear();
+  dubChannels.forEach(audio => { audio._vqPlayAttempt = null; audio.pause(); });
   dubChannels.clear();
   state.activeDubSegmentId = null;
   updateDubMix();
@@ -2293,6 +2470,9 @@ function resetDubState() {
   state.dubCache.clear();
   state.dubRequests.clear();
   state.dubSyncGeneration += 1;
+  dubScheduler = null;
+  dubSchedulerTimeline = null;
+  dubSchedulerGeneration = null;
   state.activeDubSegmentId = null;
   state.dubFailureReason = '';
   state.dubProviderLock = '';
@@ -2319,8 +2499,8 @@ function resetDubState() {
 
 function prefetchDubSegmentsAround(videoTime) {
   if (!state.dubbingEnabled) return;
-  nextDialogueSegments(dubTimeline(), languageClockTime(videoTime), 6)
-    .forEach((segment, index) => void prepareDubAudio(segment, 30 - index));
+  getDubPlaybackScheduler().upcoming(languageClockTime(videoTime), 6)
+    .forEach((row, index) => void prepareDubAudio(row.segment, 30 - index));
 }
 
 async function prepareCompleteDubTimeline(segments = [], concurrency = 1, onProgress = null) {
@@ -2363,8 +2543,8 @@ async function prepareCompleteDubTimeline(segments = [], concurrency = 1, onProg
 
 function primeLanguageTracksAt(videoTime, count = 2) {
   if (!state.dubbingEnabled) return;
-  dialogueSegmentsForTarget(dubTimeline(), languageClockTime(videoTime), count)
-    .forEach((segment, index) => void prepareDubAudio(segment, 50 - index));
+  getDubPlaybackScheduler().upcoming(languageClockTime(videoTime), count)
+    .forEach((row, index) => void prepareDubAudio(row.segment, 50 - index));
 }
 
 function primeAdultPositionLanguage(position) {
@@ -2401,24 +2581,35 @@ function resyncLanguageTracks() {
 }
 
 async function playDubAudio(audio, segmentId, generation, sourcePlayback = null) {
+  const owner = dubPlaybackOwner();
+  const attempt = { generation, owner, pending: true };
   try {
     audio._vqPlayGeneration = generation;
+    audio._vqPlayAttempt = attempt;
+    if (generation !== owner.generation || !isDubPlaybackOwnerCurrent(owner)) return false;
+    const scheduler = getDubPlaybackScheduler();
+    if (audio.readyState >= 2 && !audio.error) scheduler.markReady(segmentId);
+    const selection = scheduler.get(segmentId)?.due;
+    if (!scheduler.markPlaying(segmentId, { generation, time: Number(els.video.currentTime) || 0 })) return false;
     if (audio.muted || audio.volume <= 0) throw Object.assign(new Error('Dublaj çıkışı sessiz; ses seviyesini açıp yeniden dene.'), { name: 'DUB_OUTPUT_MUTED' });
     await audio.play();
     if (sourcePlayback) await sourcePlayback;
-    if (generation !== state.dubSyncGeneration || dubChannels.get(segmentId) !== audio ||
+    if (audio._vqPlayAttempt !== attempt || !isDubPlaybackOwnerCurrent(owner) || dubChannels.get(segmentId) !== audio ||
         !state.dubbingEnabled || (els.video.paused && !state.decisionDubHold) ||
         state.dubVideoWaiting || els.video.seeking) {
-      if (audio._vqPlayGeneration === generation) audio.pause();
+      if (audio._vqPlayAttempt === attempt || (!audio._vqPlayAttempt && els.video.paused)) audio.pause();
       return false;
     }
     // A queued or blocked play() is not a heard sentence.
+    if (!scheduler.markPlayed(segmentId, { generation })) return false;
     state.dubPlayedSegmentIds.add(segmentId);
     const diagnostics = getDubDiagnostics();
     diagnostics.playedIds.add(segmentId);
     diagnostics.playbackEventCount += 1;
     diagnostics.playbackFailureReason = '';
-    const event = { segmentId, videoTime: Number(els.video.currentTime) || 0,
+    const event = { segmentId, generation, dueOrigin: selection?.origin || 'resume',
+      sourceStartTime: Number(audio._vqSegment?.startTime) || 0, sourceEndTime: Number(audio._vqSegment?.endTime) || 0,
+      videoTime: Number(els.video.currentTime) || 0,
       audioTime: Number(audio.currentTime) || 0, duration: Number(audio.duration) || 0,
       provider: state.dubSegmentMetadata?.get(segmentId)?.provider || state.dubProviderLock || 'unknown',
       model: state.dubSegmentMetadata?.get(segmentId)?.model || '',
@@ -2432,33 +2623,43 @@ async function playDubAudio(audio, segmentId, generation, sourcePlayback = null)
     updateDubMix();
     return true;
   } catch (error) {
-    if (generation !== state.dubSyncGeneration || dubChannels.get(segmentId) !== audio) return false;
+    if (audio._vqPlayAttempt !== attempt || !isDubPlaybackOwnerCurrent(owner) || dubChannels.get(segmentId) !== audio) return false;
     // pause()/seek() may legitimately interrupt a pending play promise.
     if (error?.name !== 'AbortError') {
       state.dubPlaybackBlocked = true;
       getDubDiagnostics().playbackFailureReason = `${error?.name || 'DUB_PLAY_ERROR'}:${error?.message || String(error)}`;
+      getDubPlaybackScheduler().markFailed(segmentId, { generation, reason: getDubDiagnostics().playbackFailureReason });
       logEngineEvent('DUB_PLAYBACK_BLOCKED', { message: error?.message || String(error) });
       beginDubBuffer(audio._vqSegment, false);
     }
     updateDubMix();
     return false;
+  } finally {
+    attempt.pending = false;
   }
 }
 
 async function syncDubPlayback() {
   if (!state.dubbingEnabled) return stopDubPlayback();
+  const scheduler = getDubPlaybackScheduler();
+  // Observe source progress before an existing async preparation returns.
+  // Every crossed boundary stays due until heard or explicitly sought away.
+  if (!els.video.seeking) scheduler.update(languageClockTime());
   if (els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked || state.dubStartingToken) return;
   const generation = state.dubSyncGeneration;
-  const token = { generation };
+  const token = dubPlaybackOwner();
   state.dubStartingToken = token;
-  const current = () => state.dubStartingToken === token && generation === state.dubSyncGeneration && state.dubbingEnabled;
+  const current = () => state.dubStartingToken === token && isDubPlaybackOwnerCurrent(token);
+  let prepared;
   try {
     const videoTime = languageClockTime();
-    const active = activeDubSegments(dubTimeline(), videoTime);
+    const active = indexedActiveDubSegments(videoTime);
     // A decoder retry resumes unheard samples even if its caption has ended.
     // Explicit seeks and source changes clear these recovery entries.
     for (const { segment } of dubRecoveryOffsets.values()) if (!active.includes(segment)) active.push(segment);
     const activeIds = new Set(active.map(getDubSegmentId));
+    const due = scheduler.due().map(row => row.segment);
+    const candidates = [...new Set([...due, ...active])];
     const waitingForTail = new Set();
     const overdue = new Set();
     let mustHold = false;
@@ -2471,7 +2672,8 @@ async function syncDubPlayback() {
         overdue.add(id);
         const remaining = (audio.duration - audio.currentTime) / Math.max(.25, audio._vqSpeechRate || 1);
         if (!canFinishDubTail(audio, active[0], videoTime)) mustHold = true;
-        for (const segment of active) {
+        for (const segment of candidates) {
+          if (getDubSegmentId(segment) === id || state.dubPlayedSegmentIds.has(getDubSegmentId(segment))) continue;
           // Only consecutive turns wait for a final syllable. Actual source
           // overlap starts immediately on each speaker's independent channel.
           if (dubSpeakerKey(audio._vqSegment) === dubSpeakerKey(segment) || !sourceSpeechOverlaps(audio._vqSegment, segment)) {
@@ -2492,34 +2694,44 @@ async function syncDubPlayback() {
       if (current() && !els.video.paused && !state.dubPlaybackBlocked) beginDubBoundaryHold(overdue);
       return;
     }
-    const pending = active.filter(segment => {
+    const eligible = candidates.filter(segment => {
       const id = getDubSegmentId(segment);
-      return !waitingForTail.has(id) && !dubChannels.has(id) && !state.dubPlayedSegmentIds.has(id) && !state.dubSkippedSegmentIds?.has(id);
+      return scheduler.get(id)?.due && !waitingForTail.has(id) && !dubChannels.has(id) && !state.dubPlayedSegmentIds.has(id) && !state.dubSkippedSegmentIds?.has(id);
     });
-    const prepared = await prepareDubGroupForPlayback(pending);
+    const pending = [];
+    for (const segment of eligible) {
+      // Delayed ticks may discover several consecutive turns at once. Their
+      // due entries persist while each voice finishes; source overlaps can
+      // still speak together on independent channels.
+      const concurrent = [...dubChannels.values()].filter(audio => !audio.ended).map(audio => audio._vqSegment).concat(pending);
+      if (concurrent.some(other => dubSpeakerKey(other) === dubSpeakerKey(segment) || !sourceSpeechOverlaps(other, segment))) continue;
+      pending.push(segment);
+    }
+    prepared = await prepareDubGroupForPlayback(pending, token);
     if (!prepared || !current() || els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked) return;
     const now = languageClockTime();
-    const stillActive = new Set(activeDubSegments(dubTimeline(), now).map(getDubSegmentId));
+    scheduler.update(now);
     for (const segment of pending) {
       const id = getDubSegmentId(segment);
       const audio = prepared.get(id);
-      if (!audio || (!stillActive.has(id) && !dubRecoveryOffsets.has(id)) || state.dubPlayedSegmentIds.has(id)) continue;
-      const elapsed = Math.max(0, now - Number(segment.startTime));
-      const sourceRate = naturalDubRate(audio.duration, dubSpeechEnd(segment, dubTimeline()) - Number(segment.startTime));
+      const dueEntry = scheduler.get(id)?.due;
+      if (!audio || !dueEntry || dueEntry.generation !== generation || state.dubPlayedSegmentIds.has(id)) continue;
+      const sourceRate = naturalDubRate(audio.duration, getDubSpeechEnd(segment) - Number(segment.startTime));
       // Only an explicit source seek skips heard material. A late callback,
       // initial preparation or preceding speaker must not cut the beginning.
       const offset = dubRecoveryOffsets.get(id)?.offset ??
-        (state.dubResumeTime !== null
-          ? Math.min(audio.duration, elapsed * sourceRate) : 0);
+        (dueEntry.origin === 'explicit-seek'
+          ? Math.min(audio.duration, dueEntry.offset * sourceRate) : 0);
       if (offset >= audio.duration - 0.02) {
         state.dubSkippedSegmentIds ||= new Set();
         state.dubSkippedSegmentIds.add(id);
+        scheduler.markSkipped(id, { generation, reason: 'DUB_SEEK_PAST_AUDIO' });
         logEngineEvent('DUB_SEEK_PAST_AUDIO', { segmentId: id, offset, duration: audio.duration });
         continue;
       }
       audio.currentTime = offset;
-      audio._vqSpeechEnd = dubSpeechEnd(segment, dubTimeline());
-      audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, dubSpeechEnd(segment, dubTimeline()) - now));
+      audio._vqSpeechEnd = getDubSpeechEnd(segment);
+      audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, getDubSpeechEnd(segment) - now));
       audio._vqAnchorVideoTime = now;
       audio._vqAnchorAudioTime = offset;
       audio._vqClockHold = false;
@@ -2533,6 +2745,8 @@ async function syncDubPlayback() {
     await Promise.all(starts.map(([id, audio]) => playDubAudio(audio, id, generation)));
     if (current()) prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
   } finally {
+    if (prepared?._vqPreparationGroup) dubPreparationGroups.delete(prepared._vqPreparationGroup);
+    trimPreparedDubAudio();
     if (state.dubStartingToken === token) state.dubStartingToken = null;
   }
 }
@@ -2543,13 +2757,27 @@ els.video.addEventListener('pause', () => {
   if (els.video.ended && state.dubbingEnabled) { finishDubPlaybackAtVideoEnd(); return; }
   stopDubClock();
   if (!state.decisionDubHold && !dubBoundaryHold) {
-    dubChannels.forEach(audio => audio.pause());
+    let cancelledStart = false;
+    for (const [id, audio] of dubChannels) {
+      cancelledStart ||= Boolean(audio._vqPlayAttempt?.pending);
+      audio._vqPlayAttempt = null;
+      audio.pause();
+      getDubPlaybackScheduler().markPaused(id, { generation: state.dubSyncGeneration });
+    }
+    if (cancelledStart) state.dubStartingToken = null;
     updateDubMix();
   }
 });
 els.video.addEventListener('waiting', () => {
   state.dubVideoWaiting = true;
-  if (!state.decisionDubHold && !dubBoundaryHold) dubChannels.forEach(audio => audio.pause());
+  let cancelledStart = false;
+  if (!state.decisionDubHold && !dubBoundaryHold) for (const [id, audio] of dubChannels) {
+    cancelledStart ||= Boolean(audio._vqPlayAttempt?.pending);
+    audio._vqPlayAttempt = null;
+    audio.pause();
+    getDubPlaybackScheduler().markPaused(id, { generation: state.dubSyncGeneration });
+  }
+  if (cancelledStart) state.dubStartingToken = null;
   updateDubMix();
 });
 els.video.addEventListener('seeking', () => {
@@ -2557,10 +2785,11 @@ els.video.addEventListener('seeking', () => {
   state.dubSyncGeneration += 1;
   // Previously selected timestamps are now speculative, not urgent.
   state.dubQueue?.deprioritize();
-  state.dubResumeTime = Math.max(0, Number(els.video.currentTime) || 0);
+  state.dubResumeTime = languageClockTime();
   stopDubPlayback();
   state.dubPlayedSegmentIds.clear();
   state.dubSkippedSegmentIds?.clear();
+  getDubPlaybackScheduler();
 });
 els.video.addEventListener('seeked', () => {
   renderSubtitle();
@@ -2629,6 +2858,7 @@ function adjustLanguageSync(delta) {
   state.dubPlayedSegmentIds.clear();
   state.dubSkippedSegmentIds?.clear();
   state.dubResumeTime = languageClockTime();
+  getDubPlaybackScheduler();
   resyncLanguageTracks();
   if (!els.video.paused) startDubClock();
   const id = state.activeSavedGameId;
@@ -2655,7 +2885,8 @@ els.dubToggleBtn?.addEventListener('click', () => {
   state.dubPlaybackBlocked = false;
   state.dubPlayedSegmentIds.clear();
   state.dubSkippedSegmentIds?.clear();
-  state.dubResumeTime = Math.max(0, Number(els.video.currentTime) || 0);
+  state.dubResumeTime = languageClockTime();
+  getDubPlaybackScheduler().seek(languageClockTime(), state.dubSyncGeneration);
   updateDubMix();
   if (!els.video.paused) startDubClock();
   resyncLanguageTracks();
@@ -3866,6 +4097,15 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const merged = [];
+  const castFor = scene => [...new Set([
+    ...(scene.positions || []), ...(scene.foreplay || []), ...(scene.partnerTransitions || [])
+  ].flatMap(item => {
+    const subject = String(item.subjectTrackId || '').trim();
+    const partner = String(item.partnerTrackId || '').trim();
+    const participants = [...(item.participantTrackIds || [])]
+      .map(value => String(value || '').trim()).filter(Boolean).sort();
+    return subject || partner || participants.length ? [JSON.stringify([subject, partner, participants])] : [];
+  }))].sort().join('|');
 
   for (const scene of sorted) {
     const previous = merged[merged.length - 1];
@@ -3887,7 +4127,10 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
         Number.isFinite(start) && Number.isFinite(end) &&
         Math.min(end, Number(scene.startTime)) - Math.max(start, Number(previous.endTime)) >= 0.5;
     });
-    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier || unownedBarrier) {
+    const previousCast = castFor(previous);
+    const sceneCast = castFor(scene);
+    const castBarrier = Boolean(previousCast && sceneCast && previousCast !== sceneCast);
+    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier || unownedBarrier || castBarrier) {
       merged.push({ ...scene });
       continue;
     }
@@ -3919,6 +4162,13 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
 }
 
 function prepareAdultScenes() {
+  const sourceInterval = (startValue, endValue) => {
+    const numeric = value => typeof value === 'number' || (typeof value === 'string' && value.trim())
+      ? Number(value) : NaN;
+    const startTime = numeric(startValue), endTime = numeric(endValue);
+    return Number.isFinite(startTime) && Number.isFinite(endTime) && startTime >= 0 && endTime > startTime
+      ? { startTime, endTime } : null;
+  };
   const actions = (state.analysis?.actions || []).map(action => bindActionCharacter(
     normalizeSourceActionTimes(action), state.analysis?.storyContext || {}));
   const traceRows = actions.map((action, index) => ({
@@ -3927,6 +4177,8 @@ function prepareAdultScenes() {
     label: String(action?.label || ''),
     startTime: Number(action?.startTime),
     endTime: Number(action?.endTime),
+    sourceStartTime: action?.startTime,
+    sourceEndTime: action?.endTime,
     sourceVerified: action?.sourceVerified === true,
     confidence: Number(action?.confidence || 0),
     input: {
@@ -3966,6 +4218,7 @@ function prepareAdultScenes() {
     detectedFamily: verifiedAdultPositionFamily(action) || '',
     sceneCandidate: false,
     sceneCandidateReason: 'NOT_EVALUATED',
+    membershipReason: 'NOT_ASSIGNED',
     route: 'NOT_ROUTED',
     routeReason: 'NOT_EVALUATED',
     finalSceneId: '',
@@ -3990,9 +4243,10 @@ function prepareAdultScenes() {
     warnings: [...(state.analysis?.warnings || [])]
   };
   const sceneMap = new Map();
-  const sceneOccurrenceIds = assignAdultSceneOccurrenceIds(actions);
+  const verifiedSceneActions = actions.filter(action => action?.sourceVerified === true);
+  const sceneOccurrenceIds = assignAdultSceneOccurrenceIds(verifiedSceneActions);
   const sceneOccurrenceByAction = new Map(
-    actions.map((action, index) => [action, sceneOccurrenceIds[index]])
+    verifiedSceneActions.map((action, index) => [action, sceneOccurrenceIds[index]])
   );
   const sceneIdFor = action => sceneOccurrenceByAction.get(action) || action.adultSceneId ||
     `adult-${Math.round(action.adultSceneStartTime || action.startTime)}`;
@@ -4014,7 +4268,8 @@ function prepareAdultScenes() {
       }
       const start = Number(action.positionStartTime ?? action.startTime);
       const end = Number(action.positionEndTime ?? action.endTime);
-      const validTime = isPlayableVerifiedPositionDuration(start, end);
+      const validTime = Boolean(sourceInterval(action.startTime, action.endTime)) &&
+        isPlayableVerifiedPositionDuration(start, end);
       const validConfidence = Number(action.confidence || 0) >= 0.6;
       row.sceneCandidate = validTime && validConfidence;
       row.sceneCandidateReason = !validTime
@@ -4024,14 +4279,18 @@ function prepareAdultScenes() {
     }).map(sceneIdFor)
   );
 
-  const introductions = matchSceneIntroductions(actions,
-    actions.filter(action => traceByAction.get(action).sceneCandidate)
-      .map(action => ({ action, sceneId: sceneIdFor(action) })),
-    action => ['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm']
+  const isIntroduction = action => ['kiss', 'touch', 'clothing', 'body_transition', 'tempo_change', 'movement', 'rhythm']
       .includes(String(action.actionType || '').toLowerCase()) &&
       !traceByAction.get(action)?.sceneCandidate &&
       !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
-        !isAdultSocialRelationshipRole(action.relationshipRoleLabel)));
+        !isAdultSocialRelationshipRole(action.relationshipRoleLabel));
+  const introductions = matchSceneIntroductions(actions,
+    actions.filter(action => traceByAction.get(action).sceneCandidate)
+      .map(action => ({ action, sceneId: sceneIdFor(action) })), isIntroduction, 45,
+    (action, reason) => {
+      const row = traceByAction.get(action);
+      if (row && row.membershipReason !== 'VERIFIED_SAME_CAST_INTRODUCTION') row.membershipReason = reason;
+    });
   introductions.forEach((sceneId, action) => sceneOccurrenceByAction.set(action, sceneId));
 
   actions.filter(action =>
@@ -4040,6 +4299,14 @@ function prepareAdultScenes() {
     const sceneId = sceneIdFor(action);
     const traceRow = traceByAction.get(action);
     traceRow.finalSceneId = sceneId;
+    if (traceRow.membershipReason === 'NOT_ASSIGNED') traceRow.membershipReason = traceRow.sceneCandidate
+      ? 'VERIFIED_POSITION_ANCHOR' : 'EXISTING_SCENE_OCCURRENCE';
+    const observedSource = sourceInterval(action.startTime, action.endTime);
+    if (!observedSource || action.sourceVerified !== true) {
+      traceRow.route = 'REJECTED';
+      traceRow.routeReason = !observedSource ? 'INVALID_SOURCE_INTERVAL' : 'SOURCE_NOT_VERIFIED';
+      return;
+    }
 
     if (!sceneMap.has(sceneId)) {
       sceneMap.set(sceneId, {
@@ -4075,16 +4342,11 @@ function prepareAdultScenes() {
     if (isOutcome || isAftermath) {
       traceRow.route = isAftermath ? 'AFTERMATH' : 'OUTCOME';
       traceRow.routeReason = 'ACTION_OUTCOME_TYPE';
-      const startTime = Math.max(
-        scene.startTime,
-        Number(action.outcomeStartTime ?? action.startTime)
-      );
-      const endTime = Math.min(
-        scene.endTime,
-        Number(action.outcomeEndTime ?? action.endTime)
-      );
+      const startTime = Number(action.outcomeStartTime ?? action.startTime);
+      const endTime = Number(action.outcomeEndTime ?? action.endTime);
 
-      if (action.sourceVerified === true && Number.isFinite(startTime) && Number.isFinite(endTime) && endTime - startTime >= 2) {
+      if (sourceInterval(startTime, endTime) && startTime >= observedSource.startTime &&
+          endTime <= observedSource.endTime && endTime - startTime >= 2) {
         if (isAftermath) {
           if (!scene.aftermath || startTime < scene.aftermath.startTime) {
             scene.aftermath = {
@@ -4158,6 +4420,9 @@ function prepareAdultScenes() {
           label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           sourceVerified: true,
+          sourceActionId: String(action.sourceActionId || action.actionId || '').trim(),
+          actionType: String(action.actionType || '').trim(),
+          routeNamespace: activityOccurrenceNamespace(action),
           nonIntimate: sourceDialogue,
           subjectTrackId: String(action.subjectTrackId || '').trim(),
           partnerTrackId: String(action.partnerTrackId || '').trim(),
@@ -4187,8 +4452,8 @@ function prepareAdultScenes() {
     if (['oral', 'manual'].includes(String(canonical.id || '').toLowerCase())) {
       const startTime = Number(action.loopStartTime ?? action.startTime);
       const endTime = Number(action.loopEndTime ?? action.endTime);
-      if (action.sourceVerified === true && action.label &&
-          Number.isFinite(startTime) && Number.isFinite(endTime) &&
+      if (action.sourceVerified === true && action.label && sourceInterval(startTime, endTime) &&
+          startTime >= observedSource.startTime && endTime <= observedSource.endTime &&
           endTime - startTime >= 2) {
         traceRow.route = 'FOREPLAY';
         traceRow.routeReason = 'ORAL_MANUAL_WARMUP';
@@ -4199,6 +4464,9 @@ function prepareAdultScenes() {
           label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           sourceVerified: true,
+          sourceActionId: String(action.sourceActionId || action.actionId || '').trim(),
+          actionType: String(action.actionType || '').trim(),
+          routeNamespace: activityOccurrenceNamespace(action),
           nonIntimate: false,
           subjectTrackId: String(action.subjectTrackId || '').trim(),
           partnerTrackId: String(action.partnerTrackId || '').trim(),
@@ -4258,8 +4526,10 @@ function prepareAdultScenes() {
         activityType: routeNamespace,
         routeNamespace,
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
-        label: sourceIdentityLabel(activityDisplayLabel(canonical.label, action),
-          { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
+        positionLabel: canonical.correctedFromAction ? '' : String(action.positionLabel || '').trim(),
+        label: sourceDisplayLabel(canonical.correctedFromAction ? { ...action, positionLabel: '' } : action,
+          sourceIdentityLabel(activityDisplayLabel(canonical.label, action),
+            { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel })),
         categoryId: category.id,
         categoryLabel: category.label,
         startTime: correctedStart,
@@ -4281,17 +4551,12 @@ function prepareAdultScenes() {
     );
 
     if (action.label || action.movementType) {
-      const movementStart = Math.max(
-        position.startTime,
-        Number(action.startTime),
-        Number(action.loopStartTime ?? action.startTime)
-      );
-      const movementEnd = Math.min(
-        position.endTime,
-        Number(action.endTime),
-        Number(action.loopEndTime ?? action.endTime)
-      );
-      if (action.sourceVerified === true && movementBelongsToVerifiedPosition(action, canonical.id)) {
+      const movementStart = Number(action.loopStartTime ?? action.startTime);
+      const movementEnd = Number(action.loopEndTime ?? action.endTime);
+      const validMovementRange = sourceInterval(movementStart, movementEnd) &&
+        movementStart >= observedSource.startTime && movementEnd <= observedSource.endTime &&
+        movementStart >= position.startTime && movementEnd <= position.endTime;
+      if (action.sourceVerified === true && validMovementRange && movementBelongsToVerifiedPosition(action, canonical.id)) {
         position.sourceVerified = true;
         traceRow.movementAccepted = true;
         traceRow.movementReason = 'MOVEMENT_MATCHES_CANONICAL_POSITION';
@@ -4304,6 +4569,7 @@ function prepareAdultScenes() {
         position.movements.push({
           ...action,
           id: action.actionId || `movement-${index}`,
+          sourceActionId: String(action.sourceActionId || action.actionId || '').trim(),
           sourcePositionId: position.id,
           label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
@@ -4311,7 +4577,7 @@ function prepareAdultScenes() {
           loopEndTime: movementEnd
         });
       } else {
-        traceRow.movementReason = 'REJECTED_MOVEMENT_POSITION_CONFLICT';
+        traceRow.movementReason = !validMovementRange ? 'REJECTED_INVALID_SOURCE_INTERVAL' : 'REJECTED_MOVEMENT_POSITION_CONFLICT';
       }
     } else {
       traceRow.movementReason = 'NO_MOVEMENT_LABEL_OR_TYPE';
@@ -4320,23 +4586,7 @@ function prepareAdultScenes() {
 
   state.adultScenes = [...sceneMap.values()]
     .map(scene => {
-      const foreplay = [...scene.foreplay]
-        .sort((a, b) => a.startTime - b.startTime)
-        .reduce((items, item) => {
-          const previous = items[items.length - 1];
-          const sameLabel = previous &&
-            normalizeAdultLabel(previous.label) === normalizeAdultLabel(item.label);
-          if (previous && sameLabel && Boolean(item.nonIntimate) === Boolean(previous.nonIntimate) &&
-              item.sourceVerified === true && previous.sourceVerified === true &&
-              item.startTime <= previous.endTime + 1e-7 &&
-              String(item.subjectTrackId || '') === String(previous.subjectTrackId || '') &&
-              String(item.partnerTrackId || '') === String(previous.partnerTrackId || '')) {
-            previous.endTime = Math.max(previous.endTime, item.endTime);
-            return items;
-          }
-          items.push({ ...item });
-          return items;
-        }, []);
+      const foreplay = [...scene.foreplay].sort((a, b) => a.startTime - b.startTime);
 
       const outcomes = [...scene.outcomes]
         .filter(item => item.endTime - item.startTime >= 2)
@@ -4371,7 +4621,11 @@ function prepareAdultScenes() {
             );
             // An empty or conflicting analysis is not evidence for the whole
             // parent interval. Keep it unavailable instead of fabricating a clip.
-            return { ...position, movements };
+            const observedRanges = position.sourceRanges.filter(range => range.sourceVerified === true &&
+              sourceInterval(range.startTime, range.endTime));
+            return { ...position, movements,
+              startTime: observedRanges.length ? Math.min(...observedRanges.map(range => range.startTime)) : NaN,
+              endTime: observedRanges.length ? Math.max(...observedRanges.map(range => range.endTime)) : NaN };
           })
           .filter(position => position.movements.length &&
             isPlayableVerifiedPositionDuration(position.startTime, position.endTime))
@@ -4384,7 +4638,8 @@ function prepareAdultScenes() {
       // offered as the first choice and seek the player hundreds of seconds
       // forward in the source timeline.
       const playableForeplay = foreplay.filter(item =>
-        item.sourceVerified === true && Number(item.endTime) > Number(item.startTime));
+        item.sourceVerified === true && sourceInterval(item.startTime, item.endTime) &&
+        (item.endTime <= positionStart + 0.05 || item.startTime >= positionStart - 0.05));
       const openingForeplay = initialWarmupBeforeFirstPosition(playableForeplay, positions);
       const interactionStart = openingForeplay.length
         ? Math.min(positionStart, ...openingForeplay.map(item => Number(item.startTime)))
@@ -4395,6 +4650,7 @@ function prepareAdultScenes() {
         // their exact source times must not be clamped to the first position.
         startTime: interactionStart,
         endTime: Math.max(interactionEnd,
+          ...playableForeplay.map(item => Number(item.endTime)),
           ...outcomes.map(item => Number(item.endTime)),
           Number(scene.aftermath?.endTime) || 0),
         postSceneTime: Math.max(Number(scene.postSceneTime) || 0, interactionEnd),
@@ -4415,7 +4671,7 @@ function prepareAdultScenes() {
   // incorrectly reveals every later position.
   state.adultScenes = mergeAdultSceneFragments(
     state.adultScenes,
-    actions.filter(action => !action?.adultScene && !String(action?.adultSceneId || '').trim()),
+    actions.filter(action => !['FOREPLAY', 'POSITION', 'OUTCOME', 'AFTERMATH'].includes(traceByAction.get(action)?.route)),
     state.analysis?.unownedSourceIntervals || []
   );
 
@@ -4446,11 +4702,39 @@ function prepareAdultScenes() {
       mergeDistantReturns: false
     }).map(position => {
       const controlClipIds = isWarmupPosition(position) ? new Set() : exclusiveControlClipIds(position);
+      const occurrences = positionOccurrenceGroups(position);
+      const firstOccurrence = occurrences[0];
+      const firstRange = firstOccurrence?.sourceRanges[0];
+      const transition = firstRange && scene.foreplay.filter(item =>
+        item.sourceVerified === true && item.nonIntimate !== true && item.sourceActionId &&
+        ['body_transition', 'position_transition', 'transition'].includes(String(item.actionType || '').toLowerCase()) &&
+        sourceInterval(item.startTime, item.endTime) &&
+        item.endTime <= firstRange.startTime && firstRange.startTime - item.endTime <= 0.25 &&
+        String(item.subjectTrackId || '') === String(position.subjectTrackId || '') &&
+        String(item.partnerTrackId || '') === String(position.partnerTrackId || '') &&
+        position.subjectTrackId && position.partnerTrackId)
+        .sort((a, b) => b.endTime - a.endTime)[0];
+      let linkedEntry = {};
+      if (transition) {
+        const entryRange = { id: transition.id, startTime: transition.startTime, endTime: transition.endTime,
+          sourceVerified: true, sourceActionId: transition.sourceActionId,
+          subjectTrackId: transition.subjectTrackId, partnerTrackId: transition.partnerTrackId,
+          routeNamespace: position.routeNamespace,
+          coreOccurrenceId: firstOccurrence.id, entryForGroupId: position.id };
+        const entryClip = { ...transition, sourcePositionId: entryRange.id, sourceOccurrenceId: entryRange.id,
+          routeNamespace: position.routeNamespace,
+          loopStartTime: entryRange.startTime, loopEndTime: entryRange.endTime, entryOnly: true };
+        const sourceRanges = occurrences.flatMap(occurrence => occurrence.sourceRanges.map(range =>
+          ({ ...range, occurrenceId: occurrence.id })));
+        if (interactionEntryGuard({ ...position, sourceRanges, entryRange }, entryClip).allowed)
+          linkedEntry = { entryRange, entryClip };
+      }
       return {
         ...position,
+        ...linkedEntry,
         controlClipIds: [...controlClipIds],
         movementChoices: buildVerifiedMovementChoices(
-          position.movements.filter(item => item.id !== position.entryMovementId && !controlClipIds.has(item.id)),
+          position.movements.filter(item => !controlClipIds.has(item.id)),
           position.label,
           5,
           position
@@ -4477,8 +4761,19 @@ function prepareAdultScenes() {
 
   const graph = summarizeAdultSceneGraph(state.adultScenes);
   state.adultAnalysisTrace.graph = graph;
+  const acceptedApproachIds = new Set(state.adultScenes.flatMap(scene => scene.foreplay)
+    .map(item => item.sourceActionId || item.id));
+  const rejectedApproaches = actions.filter(action => action.sourceVerified === true && isIntroduction(action) &&
+    !acceptedApproachIds.has(String(action.sourceActionId || action.actionId || ''))).map(action => {
+    const row = traceByAction.get(action);
+    if (row.membershipReason === 'NOT_ASSIGNED') row.membershipReason = 'NO_VERIFIED_SCENE_MEMBERSHIP';
+    return { code: 'VERIFIED_APPROACH_REJECTED', actionId: row.actionId,
+      membershipReason: row.membershipReason, routeReason: row.routeReason,
+      sourceStartTime: row.sourceStartTime, sourceEndTime: row.sourceEndTime };
+  });
   state.adultAnalysisTrace.warnings = [
     ...state.adultAnalysisTrace.warnings,
+    ...rejectedApproaches,
     ...(!state.analysis?.storyContext?.characters?.length
       ? [{ code: 'CHARACTER_CONTEXT_MISSING', message: 'Analiz karakter haritası üretmedi; ilişkiler doğrulanamıyor.' }] : []),
     ...(state.adultAnalysisTrace.audioContext.status === 'unavailable'
@@ -4576,7 +4871,7 @@ function genericInteractionScene(scene = state.adultScene) {
     });
     return { ...position, phase, routeNamespace: position.routeNamespace ?? position.activityType,
       sourceRanges, movements, sourceOccurrenceIds: occurrences.map(item => item.id),
-      entryClip: movements.find(item => item.id === position.entryMovementId) || movements[0] };
+      entryClip: position.entryClip || movements.find(item => item.id === position.entryMovementId) || movements[0] };
   });
   const standalone = (items, phase) => (items || []).map(item => ({
     ...item, phase, occurrenceId: item.id, progressionEnabled: item.nonIntimate !== true,
@@ -4594,26 +4889,47 @@ function genericInteractionSnapshot() {
   if (!state.interactionRuntime || state.interactionSceneSource !== scene ||
       state.interactionPositionSource !== scene?.positions || state.interactionApproachSource !== scene?.foreplay ||
       state.interactionOutcomeSource !== scene?.outcomes || state.interactionAftermathSource !== scene?.aftermath) {
-    state.interactionRuntime = createInteractionState(genericInteractionScene(scene), {
+    const progress = currentAdultFlow();
+    const unlocked = [...(state.adultUnlockedPositionIds || [])];
+    const revealed = [...(state.adultRevealedPositionIds || [])];
+    const active = { activeGroupId: state.activePositionId || null,
+      activeOccurrenceId: state.activeAdultOccurrenceId || null, activeMovementId: state.activeMovementId || null };
+    const previous = state.interactionRuntime;
+    const created = createInteractionState(genericInteractionScene(scene), {
       currentTime: Number(scene?.startTime) || 0,
+      progressBudget: true,
       playbackPointsPerSecond: 0.24 * 100 / ADULT_LUST_UNLOCK_THRESHOLD,
       selectionPoints: 3 * 100 / ADULT_LUST_UNLOCK_THRESHOLD
     });
+    const sameSource = previous?.scene.id === scene?.id &&
+      state.interactionAnalysisFingerprint === state.analysisFingerprint;
+    const restored = state.restoredInteractionProgress;
+    const matchingRestore = restored?.version === 1 && restored.fingerprint === state.analysisFingerprint &&
+      restored.sceneId === scene?.id;
+    state.interactionRuntime = scene ? { ...created,
+      progressionValue: progress, unlockedGroupIds: [...new Set([...created.unlockedGroupIds, ...unlocked])],
+      revealedGroupIds: [...new Set([...created.revealedGroupIds, ...revealed])], ...active,
+      currentPhase: state.interactionPhaseOverride !== 'APPROACH' && created.scene.groups.some(group =>
+        group.phase === 'CORE' && unlocked.includes(group.id)) ? 'CORE' : created.currentPhase,
+      ...(sameSource ? { progressObservations: previous.progressObservations,
+        progressBudgetConsumed: previous.progressBudgetConsumed, choicePlayCounts: previous.choicePlayCounts } : {}),
+      ...(matchingRestore ? { progressObservations: restored.progressObservations,
+        progressBudgetConsumed: restored.progressBudgetConsumed, currentPhase: restored.currentPhase,
+        unlockReason: restored.unlockReason } : {})
+    } : created;
+    state.restoredInteractionProgress = null;
+    bindInteractionRuntimeViews(state, { progressKey: 'femaleSceneProgress', progressTarget: ADULT_LUST_UNLOCK_THRESHOLD,
+      unlockedKey: 'adultUnlockedPositionIds', revealedKey: 'adultRevealedPositionIds',
+      unlockedFlagKey: 'adultSexUnlocked', activeKeys: { activePositionId: 'activeGroupId',
+        activeAdultOccurrenceId: 'activeOccurrenceId', activeMovementId: 'activeMovementId' } });
+    state.interactionAnalysisFingerprint = state.analysisFingerprint;
     state.interactionSceneSource = scene;
     state.interactionPositionSource = scene?.positions;
     state.interactionApproachSource = scene?.foreplay;
     state.interactionOutcomeSource = scene?.outcomes;
     state.interactionAftermathSource = scene?.aftermath;
   }
-  const runtime = state.interactionRuntime;
-  if (!scene) return runtime;
-  return { ...runtime, progressionValue: currentAdultFlow(),
-    unlockedGroupIds: [...(state.adultUnlockedPositionIds || [])],
-    revealedGroupIds: [...(state.adultRevealedPositionIds || [])],
-    activeGroupId: state.activePositionId || null,
-    activeOccurrenceId: state.activeAdultOccurrenceId || null,
-    activeMovementId: state.activeMovementId || null,
-    panelVisible: Boolean(state.adultMode) };
+  return state.interactionRuntime;
 }
 
 function genericInteractionTrace() {
@@ -4625,7 +4941,11 @@ function genericInteractionTrace() {
     blockedSeekReason: state.interactionBlockedSeekReason || runtime.blockedSeekReason }, {
     overlayCount: Number(panelVisible) + Number(overlayVisible)
   });
-  return { ...report, sceneId: state.adultScene?.id || null,
+  return { ...report, phaseOverride: state.interactionPhaseOverride || null, overlayVisible,
+    phaseInvariantValid: !(runtime.progressionValue >= 100 && state.adultOutcomePhase === 'idle' &&
+      !['OUTCOME', 'AFTERMATH'].includes(runtime.sourcePhase) &&
+      runtime.scene.groups.some(group => group.phase === 'CORE' && runtime.unlockedGroupIds.includes(group.id)) &&
+      (runtime.currentPhase !== 'CORE' || !panelVisible)), sceneId: state.adultScene?.id || null,
     sceneActive: Boolean(state.adultScene),
     currentPhase: state.adultScene ? report.currentPhase : null };
 }
@@ -4635,11 +4955,13 @@ function clearInteractionSelection() {
     selectionKeys: ['activePositionId', 'activeAdultOccurrenceId', 'activeMovementId',
       'activeMovementChoiceId', 'activeAdultPreludeId', 'activeAdultOutcomeId',
       'adultPendingSelectionProgress', 'activeAdultCategory', 'activeAdultPartnerTrackId',
-      'lastAdultMediaTime'],
+      'lastAdultMediaTime', 'activeAdultEntryClip'],
     rhythmDefaults: { adultTapTimes: [], adultTapTempo: 'unclear', adultTapCandidateTempo: 'unclear',
       adultTapCandidateCount: 0, adultLastTempoSwitchAt: 0, adultRhythmHeld: false, adultRhythmArmed: false }
   });
-  state.interactionRuntime = null;
+  if (state.interactionRuntime) state.interactionRuntime = { ...state.interactionRuntime,
+    activeGroupId: null, activeOccurrenceId: null, activeMovementId: null, pendingSelection: null,
+    rhythm: { held: false, taps: 0 } };
   state.interactionBlockedSeekReason = null;
   state.interactionHoldControl?.reset?.();
 }
@@ -4648,7 +4970,8 @@ function reconcileInteractionSource(mediaTime, { manual = false } = {}) {
   if (!state.adultScene || state.adultLoopSeeking || els.video?.seeking) return;
   const snapshot = genericInteractionSnapshot();
   const rewind = Number(mediaTime) < snapshot.currentTime - 0.05;
-  const next = advanceInteraction(snapshot, mediaTime);
+  const next = transitionInteraction(snapshot, { type: 'source-time', currentTime: mediaTime,
+    rewind: manual && rewind });
   const matching = [...next.scene.groups, ...next.scene.choices].find(record =>
     (record.sourceRanges || []).some(range => Number(mediaTime) >= range.startTime &&
       Number(mediaTime) < range.endTime));
@@ -4669,7 +4992,7 @@ function reconcileInteractionSource(mediaTime, { manual = false } = {}) {
     state.adultOutcomePhase = 'idle';
     state.adultOrgasmDecision = null;
     els.orgasmDecision?.classList.add('hidden');
-    state.interactionPhaseOverride = matching?.phase === 'APPROACH' ? 'APPROACH' : null;
+    state.interactionPhaseOverride = next.currentPhase === 'APPROACH' ? 'APPROACH' : null;
     state.adultPhaseMachine = matching?.phase === 'APPROACH' ? 'foreplay' : 'positions';
     state.adultLastUiPhase = state.adultPhaseMachine;
     state.activePositionId = next.activeGroupId;
@@ -4702,9 +5025,10 @@ function reconcileInteractionSource(mediaTime, { manual = false } = {}) {
     state.adultPhaseMachine = matching.phase.toLowerCase();
     state.adultUiSignature = '';
   }
-  state.interactionRuntime = { ...next,
-    unlockedGroupIds: [...state.adultUnlockedPositionIds],
-    revealedGroupIds: [...state.adultRevealedPositionIds] };
+  state.interactionRuntime = next;
+  if (!snapshot.progressBudgetConsumed && next.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
+  if (manual && rewind) state.interactionMeterNeedsReset = false;
+  if (next.currentPhase === 'CORE') state.interactionPhaseOverride = null;
   if (manual || rewind || staleSelection || !state.adultUiSignature) renderAdultProgressiveUI(true);
 }
 
@@ -4741,15 +5065,28 @@ function settleInteractionClipBoundary(mediaTime) {
   const prelude = state.adultScene?.foreplay?.find(item => item.id === state.activeAdultPreludeId);
   const position = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
   const movement = position?.movements?.find(item => item.id === state.activeMovementId);
-  const selected = prelude || movement;
+  const selected = state.activeAdultEntryClip || prelude || movement;
   const end = Number(selected?.loopEndTime ?? selected?.endTime);
   if (!selected || selected.sourceVerified !== true || !Number.isFinite(end) || Number(mediaTime) < end - 0.04) return false;
   // A delayed frame callback must settle the chosen clip before source phase
   // discovery or scene exit can take ownership of the playhead.
   els.video?.pause();
+  state.interactionRuntime = transitionInteraction(genericInteractionSnapshot(), {
+    type: 'selection-complete', choiceId: selected.id,
+    startTime: Number(selected.loopStartTime ?? selected.startTime), endTime: end
+  });
   state.adultTimelineFloor = Math.max(Number(state.adultTimelineFloor) || 0, end);
-  if (prelude) state.activeAdultPreludeId = null;
+  if (state.activeAdultEntryClip) state.activeAdultEntryClip = null;
+  else if (prelude) state.activeAdultPreludeId = null;
   else state.activeMovementId = null;
+  if (prelude && state.interactionRuntime.scene.groups.some(group => group.phase === 'CORE' &&
+      group.sourceRanges.some(range => end >= range.startTime && end < range.endTime))) {
+    const beforeBoundary = state.interactionRuntime;
+    state.interactionRuntime = transitionInteraction(beforeBoundary, { type: 'source-time', currentTime: end });
+    if (!beforeBoundary.progressBudgetConsumed && state.interactionRuntime.progressBudgetConsumed)
+      state.interactionMeterNeedsReset = true;
+    state.interactionPhaseOverride = null;
+  }
   if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
   renderAdultProgressiveUI(true);
   logEngineEvent('INTERACTION_CLIP_ENDED_AWAITING_SELECTION', {
@@ -4801,6 +5138,7 @@ function orderedLockedAdultPositions(scene = state.adultScene) {
 }
 
 function unlockNextAdultPositionFromLust() {
+  if (state.interactionMeterNeedsReset) return null;
   if (currentAdultFlow() < 99.9 || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision) return null;
   const firstUnlock = !state.adultSexUnlocked;
   const locked = orderedLockedAdultPositions();
@@ -4836,6 +5174,10 @@ function unlockNextAdultPositionFromLust() {
 
 function addFemaleLust(amount) {
   if (state.adultOrgasmDecision) return null;
+  if (state.interactionMeterNeedsReset) {
+    state.interactionMeterNeedsReset = false;
+    state.femaleSceneProgress = 0;
+  }
   state.femaleSceneProgress = Math.min(
     ADULT_LUST_UNLOCK_THRESHOLD,
     Math.max(0, Number(state.femaleSceneProgress) || 0) + Math.max(0, Number(amount) || 0)
@@ -5088,6 +5430,9 @@ function refreshAdultCompactDock() {
 
 function resetAdultSceneGameplay() {
   clearInteractionSelection();
+  state.interactionRuntime = null;
+  state.interactionSceneSource = null;
+  state.interactionMeterNeedsReset = false;
   state.interactionPhaseOverride = null;
   state.adultPendingSelectionProgress = null;
   state.maleSceneProgress = 0;
@@ -5183,7 +5528,7 @@ function renderAdultApproachChoices(scene, later = false) {
       Math.min(...(scene?.positions || []).map(position => Number(position.startTime))))
       : initialWarmupBeforeFirstPosition(scene?.foreplay || [],
         (scene?.positions || []).filter(position => !isWarmupPosition(position)))).map(item => ({
-      kind: 'foreplay', id: item.id, label: item.label,
+      ...item, kind: 'foreplay', id: item.id, label: item.label,
       sourceVerified: item.sourceVerified === true,
       nonIntimate: item.nonIntimate === true,
       startTime: item.startTime, endTime: item.endTime,
@@ -5198,6 +5543,7 @@ function renderAdultApproachChoices(scene, later = false) {
         choiceId: card.id, variants: card.variants,
         sourceVerified: position.sourceVerified === true && card.variants.every(item => item.sourceVerified === true),
         kind: 'position', id: position.id,
+        castIds: [position.subjectTrackId, position.partnerTrackId].filter(Boolean),
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
         label: card?.label || card?.variants?.[0]?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
         startTime: Math.min(...card.variants.map(item => Number(item.loopStartTime))),
@@ -5222,11 +5568,14 @@ function renderAdultApproachChoices(scene, later = false) {
     Number(item.endTime) > projectedFloor + 0.05)
     .sort((left, right) => Number(left.startTime) - Number(right.startTime))[0];
   const dialogueOnly = foreground?.nonIntimate === true;
-  const candidates = selectSequentialApproachChoices(approachPool.filter(item =>
+  const candidates = selectVerifiedChoiceQueue(approachPool.filter(item =>
     Boolean(item.nonIntimate) === dialogueOnly), {
     timelineFloor: projectedFloor,
     limit: 5,
-    maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 30,
+    maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60,
+    firstCoreTime: later ? null : Math.min(...(scene.positions || [])
+      .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime))),
+    activeChoiceId: state.activeAdultPreludeId || activeWarmupPosition?.id || null,
     activeEndTime: Number(activePrelude?.endTime) || Number(activeWarmupMovement?.loopEndTime) || 0
   });
 
@@ -5285,6 +5634,32 @@ function renderAdultApproachChoices(scene, later = false) {
   }
 }
 
+function renderInteractionInterludeChoices(scene) {
+  if (!els.foreplayChoices || !els.foreplaySection) return;
+  const time = Number(els.video?.currentTime) || 0;
+  const firstCore = Math.min(...(scene.positions || []).filter(position => !isWarmupPosition(position))
+    .map(position => Number(position.startTime)));
+  const rows = (scene.foreplay || []).filter(item => Number(item.startTime) >= firstCore &&
+    Number(item.endTime) > time).map(item => ({ ...item,
+      playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0) }));
+  const active = rows.find(item => item.id === state.activeAdultPreludeId);
+  const candidates = selectVerifiedChoiceQueue(rows, { timelineFloor: time, activeChoiceId: active?.id,
+    activeEndTime: active?.endTime, limit: 5,
+    maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60 });
+  els.foreplayChoices.innerHTML = '';
+  els.foreplaySection.classList.toggle('hidden', candidates.length === 0);
+  if (els.foreplayCount) els.foreplayCount.textContent = `${candidates.length} seçenek`;
+  for (const choice of candidates) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'discovery-choice-card';
+    button.dataset.clipId = choice.id;
+    button.textContent = choice.label;
+    button.addEventListener('click', () => playAdultPrelude(choice.id));
+    els.foreplayChoices.appendChild(button);
+  }
+}
+
 function renderAdultOutcomes(scene) {
   if (!els.outcomeSection || !els.outcomeChoices) return;
   const outcomes = unlockedAdultOutcomes(scene);
@@ -5317,6 +5692,8 @@ function renderAdultOutcomes(scene) {
 function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel || state.adultOutcomePhase !== 'idle') return;
+  state.interactionRuntime = transitionInteraction(genericInteractionSnapshot(), { type: 'normalize' });
+  if (state.interactionRuntime.currentPhase === 'CORE') state.interactionPhaseOverride = null;
 
   if (!state.activeAdultPreludeId && !state.activeMovementId) {
     const current = sourcePositionAtTime((scene.positions || []).filter(position =>
@@ -5331,6 +5708,8 @@ function renderAdultProgressiveUI(force = false) {
       state.adultSexUnlocked = true;
       state.activePositionId = current.id;
       state.activeAdultOccurrenceId = currentOccurrence;
+      state.interactionRuntime = { ...state.interactionRuntime, currentPhase: 'CORE', panelVisible: true };
+      state.interactionPhaseOverride = null;
       resetAdultTapRhythm();
       state.adultUiSignature = '';
       logEngineEvent('SOURCE_BOUNDARY_PANEL_OPENED', { sceneId: scene.id, positionId: current.id });
@@ -5352,12 +5731,12 @@ function renderAdultProgressiveUI(force = false) {
   // A full meter must reveal their panel even when there is no new group left
   // for unlockNextAdultPositionFromLust() to unlock and clear that override.
   if (currentAdultFlow() >= 99.9 && hasCoreUnlocked) state.interactionPhaseOverride = null;
-  const phase = state.interactionPhaseOverride === 'APPROACH'
+  const phase = state.interactionRuntime.currentPhase === 'APPROACH'
     ? 'foreplay' : setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
   const videoTime = Number(els.video?.currentTime) || 0;
   const hasUnlockedFutureCore = availablePositions.some(position =>
     Number(position.startTime) > videoTime + 0.04);
-  const laterOverlay = state.adultSexUnlocked && !hasUnlockedFutureCore &&
+  const laterOverlay = state.interactionRuntime.currentPhase === 'APPROACH' && state.adultSexUnlocked && !hasUnlockedFutureCore &&
     !state.activeMovementId &&
     !sourcePositionAtTime(scene.positions || [], videoTime) &&
     (scene.positions || []).some(position => Number(position.startTime) < videoTime) &&
@@ -5393,6 +5772,7 @@ function renderAdultProgressiveUI(force = false) {
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
     panelVisible: phase !== 'foreplay' && !laterOverlay,
     overlayVisible: phase === 'foreplay' || laterOverlay });
+  state.interactionRuntime = { ...state.interactionRuntime, panelVisible: phase !== 'foreplay' && !laterOverlay };
 
   if (!force && signature === state.adultUiSignature) return;
   state.adultUiSignature = signature;
@@ -5465,6 +5845,7 @@ function renderAdultProgressiveUI(force = false) {
   if (selectedCategory) {
     selectAdultCategory(selectedCategory.id, false);
   }
+  renderInteractionInterludeChoices(scene);
 }
 
 function renderAdultPanel(scene) {
@@ -5621,9 +6002,7 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'position-tab';
-    button.textContent = String(position.label || '')
-      .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
-      .trim();
+    button.textContent = String(position.label || '').trim();
     button.dataset.positionId = position.id;
   const hasVerifiedEntry = Boolean(interactionEntryClip(
       genericInteractionSnapshot().scene.groups.find(group => group.id === position.id)));
@@ -5700,7 +6079,11 @@ function applyAdultPreludeProgress(item) {
   });
 
   state.adultPreludePlayCounts.set(item.id, repeatCount + 1);
-  addFemaleLust(delta.female * currentWarmupLustScale());
+  const runtime = genericInteractionSnapshot();
+  if (runtime.progressBudget && !runtime.progressBudgetConsumed) {
+    state.interactionRuntime = transitionInteraction(runtime, { type: 'playback',
+      startTime: Number(item.startTime), endTime: Math.min(Number(item.endTime), Number(item.startTime) + 0.05), playing: true });
+  } else addFemaleLust(delta.female * currentWarmupLustScale());
   renderAdultProgress();
 }
 
@@ -5714,6 +6097,7 @@ function playAdultPrelude(preludeId) {
 
   const token = beginAdultSelection();
   state.activeAdultPreludeId = item.id;
+  state.activeAdultEntryClip = null;
   state.activePositionId = null;
   state.activeAdultOccurrenceId = null;
   state.activeMovementId = null;
@@ -5751,7 +6135,12 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   if (movement) {
     state.adultMovementPlayCounts.set(movement.id, repeatCount + 1);
   }
-  addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
+  const runtime = genericInteractionSnapshot();
+  if (isWarmupPosition(position) && runtime.progressBudget && !runtime.progressBudgetConsumed && movement) {
+    state.interactionRuntime = transitionInteraction(runtime, { type: 'playback',
+      startTime: Number(movement.loopStartTime),
+      endTime: Math.min(Number(movement.loopEndTime), Number(movement.loopStartTime) + 0.05), playing: true });
+  } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
   if (!isWarmupPosition(position)) {
     // Tapping a card never advances orgasm. Only verified core playback does.
     const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
@@ -5887,6 +6276,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
+  const previousPositionId = state.activePositionId;
   const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
   const forwardMovements = forwardLocalMovementClips(position, cursor);
   const unlockedCore = !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id);
@@ -5922,7 +6312,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     ? beginAdultSelection()
     : state.adultSelectionToken;
   if (shouldSeek) state.activeAdultPreludeId = null;
-  const changedPosition = state.activePositionId !== position.id;
+  const changedPosition = previousPositionId !== position.id;
   state.activePositionId = position.id;
   if (changedPosition) {
     state.activeMovementId = null;
@@ -5937,8 +6327,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // The main tab owns only the verified position entry. All later returns and
   // movements from the same canonical position live under its subchoices.
   const verifiedMovements = localMovements;
-  const movementPool = verifiedMovements.filter(item => item.id !== entryMovementId &&
-    !position.controlClipIds?.includes(item.id));
+  const movementPool = verifiedMovements.filter(item => !position.controlClipIds?.includes(item.id));
   const movementChoices = buildVerifiedMovementChoices(movementPool, position.label, 5, position);
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
@@ -6000,6 +6389,19 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // Rendering must not arm a clip or cancel a pending selection. Only an
   // explicit play request (including the first unlock) may change playback.
   if (!shouldSeek) return;
+  state.activeAdultEntryClip = null;
+  const separateEntry = position.entryClip;
+  const entryGuard = separateEntry && interactionEntryGuard(
+    genericInteractionSnapshot().scene.groups.find(group => group.id === position.id), separateEntry);
+  if (entryGuard?.allowed && entryGuard.coreOccurrenceId) {
+    state.activeAdultEntryClip = separateEntry;
+    state.activeAdultOccurrenceId = entryGuard.coreOccurrenceId;
+    state.activeMovementId = null;
+    state.lastAdultMediaTime = null;
+    els.video?.pause();
+    void seekAdultLoop(Number(separateEntry.loopStartTime ?? separateEntry.startTime), selectionToken);
+    return;
+  }
   const movement = playableEntry;
 
   if (movement) {
@@ -6070,6 +6472,7 @@ function selectAdultMovement(
   const effectiveToken = selectionToken ?? beginAdultSelection();
   state.activeAdultOccurrenceId = movementOccurrence.id;
   state.activeAdultPreludeId = null;
+  state.activeAdultEntryClip = null;
   state.activeMovementId = movement.id;
   const matchingChoice = (position.activeMovementChoices || []).find(
     choice => choice.variants?.some(item => item.id === movement.id)
@@ -6308,6 +6711,7 @@ async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionTo
     logEngineEvent('ADULT_SEEK_CLAMPED', { requestedTarget, target, sceneId: state.adultScene?.id || null });
   }
   state.adultLoopSeeking = true;
+  state.lastAdultMediaTime = null;
   els.video.pause();
   setGameState('SEGMENT_SEEKING');
   const isCurrent = () => !controller.signal.aborted && state.adultMode &&
@@ -6320,6 +6724,7 @@ async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionTo
     }
     if (!isCurrent()) return false;
     state.adultLoopSeeking = false;
+    state.lastAdultMediaTime = target;
     state.lastAdultFrameNow = performance.now();
     resyncLanguageTracks();
     if (!resume) {
@@ -6346,6 +6751,19 @@ async function seekAdultLoop(targetTime, selectionToken = state.adultSelectionTo
   }
 }
 
+function observeInteractionProgress(mediaTime) {
+  const previous = state.lastAdultMediaTime;
+  state.lastAdultMediaTime = Number(mediaTime);
+  if (previous === null || previous === undefined || !Number.isFinite(Number(previous)) ||
+      els.video?.paused || els.video?.seeking || state.adultLoopSeeking || mediaTime <= Number(previous)) return;
+  const selected = state.activeAdultEntryClip || state.adultScene?.foreplay?.find(item => item.id === state.activeAdultPreludeId) ||
+    state.adultScene?.positions?.find(item => item.id === state.activePositionId)?.movements?.find(item => item.id === state.activeMovementId);
+  const endTime = selected ? Math.min(Number(mediaTime), Number(selected.loopEndTime ?? selected.endTime)) : Number(mediaTime);
+  const runtime = genericInteractionSnapshot();
+  state.interactionRuntime = transitionInteraction(runtime, { type: 'playback', startTime: Number(previous), endTime,
+    playing: true, seek: false });
+}
+
 function updateAdultPlayback(now, mediaTime) {
   if (state.navigationSeeking) return;
   if (!state.adultMode) {
@@ -6367,6 +6785,7 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
+  observeInteractionProgress(mediaTime);
   if (settleInteractionClipBoundary(mediaTime)) return;
   reconcileInteractionSource(mediaTime);
 
@@ -6441,7 +6860,7 @@ function updateAdultPlayback(now, mediaTime) {
     state.adultTimelineFloor = Math.max(previousFloor, Number(mediaTime) || 0);
   }
   const floorAdvanced = state.adultTimelineFloor > previousFloor + 0.01;
-  if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
+  if (currentAdultFlow() >= 99.9 && !state.interactionMeterNeedsReset) unlockNextAdultPositionFromLust();
   if (floorAdvanced && now - Number(state.adultLastApproachRefreshAt || 0) >= 750) {
     state.adultLastApproachRefreshAt = now;
     state.adultUiSignature = '';
@@ -6471,7 +6890,7 @@ function updateAdultPlayback(now, mediaTime) {
       femaleRate: item.femaleProgressRate || 1,
       warmup: true
     });
-    if (!item.nonIntimate) addFemaleLust(progress.lust * currentWarmupLustScale());
+    if (!item.nonIntimate && !genericInteractionSnapshot().progressBudget) addFemaleLust(progress.lust * currentWarmupLustScale());
     renderAdultProgress();
     return;
   }
@@ -6517,7 +6936,8 @@ function updateAdultPlayback(now, mediaTime) {
     femaleRate: movement.femaleProgressRate || 1,
     warmup: warmupMovement
   });
-  addFemaleLust(progress.lust * (warmupMovement ? currentWarmupLustScale() : 1));
+  if (!warmupMovement || !genericInteractionSnapshot().progressBudget)
+    addFemaleLust(progress.lust * (warmupMovement ? currentWarmupLustScale() : 1));
   if (!warmupMovement) {
     const movementRate = averageAdultProgress(
       Number(movement.maleProgressRate || 1),

@@ -16,7 +16,8 @@ import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStorybo
 import { MAX_VIDEO_BYTES, dialogueUploadLimit } from './public/media-limits.js';
 import { allocateSpeakerVoices } from './lib/voice-allocation.js';
 import { uniqueTimedSpeech, normalizeDialogueSegments, repairDialogueTimestamps, requireDialogueTiming } from './public/dialogue-integrity.js';
-import { prepareLocalDialogueAudio } from './lib/dialogue-media.js';
+import { prepareLocalDialogueAudio, probeLocalAudioDuration, prepareDialogueAudioWindow } from './lib/dialogue-media.js';
+import { transcribeSourceWindows, auditSourceTranscript } from './lib/source-transcription-windows.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1735,6 +1736,13 @@ setInterval(() => {
       if (keyEntry?.uploadId === uploadId) dialogueUploadKeys.delete(session.clientUploadKey);
     }
     fs.promises.unlink(session.filePath).catch(() => {});
+    if (session.preparedAudioFile?.path && session.preparedAudioFile.path !== session.filePath) {
+      fs.promises.unlink(session.preparedAudioFile.path).catch(() => {});
+    }
+    for (const window of session.transcriptionState?.windows || []) {
+      if (window.asset?.inlineAudioPath) fs.promises.unlink(window.asset.inlineAudioPath).catch(() => {});
+    }
+    session.cleanupAudioAssets?.().catch(() => {});
   }
 
   for (const [key, entry] of dialogueUploadKeys) {
@@ -1927,264 +1935,8 @@ async function prepareRemoteDialogueAudio(remoteToken, duration = 0) {
   }
 }
 
-app.post(
-  '/api/gemini-dialogue-analyze',
-  dialogueUpload.single('video'),
-  async (req, res) => {
-    const dialogueStartedAt = Date.now();
-    const dialogueStage = stage => console.info('[dialogue-stage]', JSON.stringify({
-      stage, elapsedMs: Date.now() - dialogueStartedAt
-    }));
-    const dialogueUsage = emptyGeminiUsage();
-    const uploadId = String(req.body?.uploadId || '');
-    const uploadSession = dialogueUploadSessions.get(uploadId);
 
-    if (!req.file && uploadSession) {
-      if (uploadSession.writing || Number(uploadSession.activeWrites) > 0 ||
-          uploadSession.receivedSize !== uploadSession.totalSize) {
-        return res.status(409).json({
-          available: false,
-          reason: 'UPLOAD_INCOMPLETE',
-          message: 'Ses yüklemesi henüz tamamlanmadı.'
-        });
-      }
-
-      req.file = {
-        path: uploadSession.filePath,
-        originalname: uploadSession.fileName,
-        mimetype: uploadSession.mimeType,
-        size: uploadSession.totalSize
-      };
-
-    }
-
-    // Completed source bytes survive provider failures. Identical analysis calls
-    // share one result; changing analysis context may reuse bytes, never results.
-    const analysisKey = JSON.stringify([req.body?.duration || '', req.body?.protagonistProfile || '']);
-    if (uploadSession?.analysisPromise) {
-      const previous = await uploadSession.analysisPromise;
-      if (previous.key === analysisKey) return res.status(previous.status).json(previous.body);
-    }
-    if (uploadSession?.analysisResult?.key === analysisKey) {
-      return res.json(uploadSession.analysisResult.body);
-    }
-    let resolveAnalysis;
-    let analysisResponse;
-    const originalJson = res.json.bind(res);
-    if (uploadSession) {
-      uploadSession.updatedAt = Date.now();
-      uploadSession.analysisPromise = new Promise(resolve => { resolveAnalysis = resolve; });
-      res.json = body => {
-        analysisResponse = { key: analysisKey, status: res.statusCode, body };
-        if (body?.available === true) uploadSession.analysisResult = { key: analysisKey, body };
-        return originalJson(body);
-      };
-    }
-
-    const apiKey = resolveGeminiApiKey(req);
-    let tempPath = req.file?.path;
-    let originalVideoPath;
-    let uploadedFile = null;
-    let remoteFile = uploadSession?.remoteFile || null;
-    let inlineAudioPart = null;
-    let retainUploadedFile = false;
-    let dialogueSucceeded = false;
-    const preparationController = new AbortController();
-    const stopPreparation = () => { if (!res.writableEnded) preparationController.abort(); };
-    res.once('close', stopPreparation);
-
-    try {
-      if (!apiKey) {
-        return res.status(503).json({
-          available: false,
-          reason: 'GEMINI_NOT_CONFIGURED',
-          message: 'Gemini API anahtarı yapılandırılmamış.'
-        });
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
-      retainUploadedFile = String(req.body?.retainAudioForReuse || '') === '1';
-      const audioReuseToken = String(req.body?.audioReuseToken || '').trim();
-
-      if (audioReuseToken && !req.file) {
-        try {
-          remoteFile = await ai.files.get({ name: audioReuseToken });
-        } catch {
-          return res.status(410).json({
-            available: false,
-            reason: 'AUDIO_REUSE_EXPIRED',
-            message: '24 saatlik ses önbelleği artık kullanılamıyor; ses yeniden hazırlanacak.'
-          });
-        }
-        if (!remoteFile || remoteFile.state === 'FAILED') {
-          return res.status(410).json({
-            available: false,
-            reason: 'AUDIO_REUSE_EXPIRED',
-            message: '24 saatlik ses önbelleği artık kullanılamıyor; ses yeniden hazırlanacak.'
-          });
-        }
-      }
-
-      if (!remoteFile) {
-        const remoteToken = String(req.body?.remoteToken || '').trim();
-        if (!req.file && remoteToken) {
-          dialogueStage('remote-audio-start');
-          req.file = await prepareRemoteDialogueAudio(remoteToken, req.body?.duration);
-          dialogueStage('remote-audio-ready');
-          tempPath = req.file.path;
-        }
-        if (!req.file || !tempPath) {
-          return res.status(400).json({
-            available: false,
-            reason: 'VIDEO_REQUIRED',
-            message: 'Diyalog analizi için video gerekli.'
-          });
-        }
-        if (req.file.mimetype.startsWith('video/')) {
-          originalVideoPath = tempPath;
-          req.file = await prepareLocalDialogueAudio(req.file, {
-            ffmpegPath, signal: preparationController.signal
-          });
-          tempPath = req.file.path;
-          if (originalVideoPath !== uploadSession?.filePath) await fs.promises.unlink(originalVideoPath).catch(() => {});
-        }
-        dialogueStage('gemini-upload-start');
-        try {
-          uploadedFile = await ai.files.upload({
-            file: tempPath,
-            config: {
-              mimeType: req.file.mimetype,
-              displayName: req.file.originalname || 'videoquest-dialogue-video',
-              httpOptions: { timeout: 120000 }
-            }
-          });
-          dialogueStage('gemini-upload-ready');
-          remoteFile = uploadedFile;
-        } catch (error) {
-          let audioSize = (await fs.promises.stat(tempPath)).size;
-          // The Files API can fail at upload initialization even though model
-          // requests remain available. Inline audio stays below the 20 MB
-          // request ceiling, including base64 expansion and the prompt.
-          if (Number(error?.status) !== 404 || !req.file.mimetype.startsWith('audio/')) throw error;
-          if (audioSize > 14 * 1024 * 1024) {
-            const previousPath = tempPath;
-            req.file = await prepareLocalDialogueAudio(req.file, {
-              ffmpegPath, signal: preparationController.signal,
-              audioInput: true, bitrate: '32k'
-            });
-            tempPath = req.file.path;
-            if (previousPath !== uploadSession?.filePath) await fs.promises.unlink(previousPath).catch(() => {});
-            audioSize = req.file.size;
-          }
-          if (audioSize > 14 * 1024 * 1024) {
-            throw new Error('Ses doğrudan analiz için çok uzun; kısa bölümlere ayırıp yeniden dene.');
-          }
-          inlineAudioPart = { inlineData: {
-            mimeType: req.file.mimetype,
-            data: (await fs.promises.readFile(tempPath)).toString('base64')
-          } };
-          dialogueStage('gemini-inline-audio-ready');
-          console.warn('[gemini-dialogue-fallback] file upload returned 404; using bounded inline audio');
-        }
-      }
-
-      const processingDeadline = Date.now() + 20 * 60 * 1000;
-      while (remoteFile?.state === 'PROCESSING' && Date.now() < processingDeadline) {
-        await wait(4000);
-        remoteFile = await ai.files.get({ name: remoteFile.name });
-      }
-      if ((!remoteFile && !inlineAudioPart) || remoteFile?.state === 'FAILED') throw new Error('GEMINI_VIDEO_PROCESSING_FAILED');
-      if (remoteFile?.state === 'PROCESSING') throw new Error('GEMINI_VIDEO_PROCESSING_TIMEOUT');
-
-      const prompt = `
-Analyze audible dialogue and separately observe non-speech human vocal reactions in this video.
-
-VOICE IDENTITY CONTEXT:
-- Use voice continuity and diarization to keep every audible speaker distinct.
-- This is an audio-first subtitle pass. Do not guess family relationships or character identities.
-
-LANGUAGE DETECTION AND TURKISH TRANSLATION:
-- Automatically identify the actual spoken source language from the audio; never assume it is English.
-- Support every detectable language and dialect, including multilingual conversations and speakers switching languages inside the same video.
-- Treat clear non-English speech as valid dialogue, never as silence or unintelligible audio merely because of its language.
-- Transcribe each clearly audible line faithfully in its original language into originalText.
-- Perform a second careful listening pass for low-volume speech: whispers, murmured words, breathy speech, short replies, overlapping dialogue and off-screen speakers. If words are intelligible, include them even when much quieter than music or other vocal sounds.
-- Translate every detected non-Turkish line into natural, complete Turkish in turkishText.
-- If a line is already Turkish, preserve its meaning faithfully in turkishText without translating it into another language.
-- Set sourceLanguage to the detected language name; use "multilingual" when multiple source languages are present.
-- Preserve names, profanity, slang, sexual or adult vocabulary, commands, reactions, tone and intensity without censorship or omission in every supported language.
-- Never skip a speaker or segment because the source language changes or is not English.
-
-Return valid JSON only, with this exact structure:
-{
-  "available": true,
-  "hasDialogue": true,
-  "sourceLanguage": "string",
-  "summaryTr": "short Turkish summary",
-  "speakers": [
-    {
-      "speakerId": "speaker-01",
-      "speakerName": "Kadın sesi A|Kadın sesi B|Erkek sesi A|Erkek sesi B|Ses A",
-      "relationshipRole": "unknown",
-      "roleConfidence": 0.0,
-      "roleEvidence": "brief visible or spoken evidence",
-      "gender": "female|male|uncertain",
-      "description": "short stable Turkish description"
-    }
-  ],
-  "segments": [
-    {
-      "segmentId": "dlg-001",
-      "startTime": 0.0,
-      "endTime": 2.5,
-      "speakerId": "speaker-01",
-      "speakerName": "same stable name used for this speaker",
-      "gender": "female|male|uncertain",
-      "originalText": "exact spoken dialogue",
-      "turkishText": "natural Turkish translation",
-      "emotion": "neutral|happy|sad|angry|afraid|excited|whispering|uncertain",
-      "confidence": 0.0
-    }
-  ],
-  "nonSpeechEvents": [
-    {
-      "eventId": "snd-001",
-      "startTime": 0.0,
-      "endTime": 2.5,
-      "speakerId": "speaker-01|unknown",
-      "soundType": "breathing|moan|laughter|crying|vocal_reaction|mixed|unclear",
-      "intensity": "low|moderate|high|unclear",
-      "confidence": 0.0,
-      "evidence": "short audible observation without interpreting an internal state"
-    }
-  ],
-  "warnings": []
-}
-
-Rules:
-- Use seconds as numbers for startTime and endTime.
-- Preserve chronological order.
-- Identify and consistently separate different speakers.
-- Give every distinct speaker one stable Turkish speakerName and reuse it in every segment.
-- Keep people distinct with stable voice labels such as "Kadın sesi A", "Kadın sesi B", "Erkek sesi A" and "Erkek sesi B".
-- Never guess personal names or family roles from voice alone.
-- Preserve clearly spoken proper names and explicit relationship statements in originalText; do not replace them with generic speaker labels. Stable speakerName labels identify voices, not the people mentioned by those voices. Keep an addressed name separate from the identity of the speaker.
-- Do not reuse one speakerName for two different voices and do not change a person's name between segments.
-- Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
-- Transcribe speech faithfully without inventing words.
-- Transcribe and translate every intelligible spoken word without censorship, sanitization, euphemism, summarization, or omission, including quiet, whispered, breathy, overlapping and sexually explicit speech.
-- Preserve profanity, slang, sexual or adult vocabulary, commands, reactions, and intensity exactly in natural Turkish.
-- Never replace words with asterisks, softened expressions, generic summaries, or skipped segments.
-- Treat every speaker equally and include every intelligible spoken line regardless of its subject.
-- Preserve the meaning, tone and emotion of the original dialogue.
-- Split long speech into readable subtitle segments, normally 1 to 7 seconds.
-- Do not include music, breathing, moans, sound effects or silence as dialogue. Put only clearly audible human breathing, moans, laughter, crying or vocal reactions in nonSpeechEvents without transcribing them as words.
-- Measure non-speech intensity from relative loudness, repetition and audible change over time. Never infer pain, pleasure, consent or identity from a sound alone.
-- If there is no intelligible speech, return hasDialogue false and an empty segments array.
-- Never add dialogue that is not audible in the source video.
-`;
-
-      const duration = Math.max(0, Number(req.body?.duration || 0));
+async function analyzeDialogueSourceAsset({ ai, remoteFile, inlineAudioPart, req, prompt, duration, dialogueStage, dialogueUsage }) {
       const audioMime = String(remoteFile?.mimeType || req.file?.mimetype || '').toLowerCase();
       let asr = null;
       if (audioMime.startsWith('audio/') && remoteFile?.uri) {
@@ -2403,6 +2155,415 @@ Rules:
         parsed.transcriptionEngine = process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe';
       }
 
+      requireDialogueTiming(parsed.segments || [], duration);
+      return { parsed, dialogueTimeRepair };
+
+}
+
+app.post(
+  '/api/gemini-dialogue-analyze',
+  dialogueUpload.single('video'),
+  async (req, res) => {
+    const dialogueStartedAt = Date.now();
+    const dialogueStage = stage => console.info('[dialogue-stage]', JSON.stringify({
+      stage, elapsedMs: Date.now() - dialogueStartedAt
+    }));
+    const dialogueUsage = emptyGeminiUsage();
+    let uploadId = String(req.body?.uploadId || '');
+    let uploadSession = dialogueUploadSessions.get(uploadId);
+
+    if (uploadId && !uploadSession && !req.file) return res.status(410).json({
+      available: false, reason: 'UPLOAD_SESSION_EXPIRED',
+      message: 'Yüklenmiş kaynak ses oturumu sona erdi.'
+    });
+
+    if (!req.file && uploadSession) {
+      if (uploadSession.writing || Number(uploadSession.activeWrites) > 0 ||
+          uploadSession.receivedSize !== uploadSession.totalSize) {
+        return res.status(409).json({
+          available: false,
+          reason: 'UPLOAD_INCOMPLETE',
+          message: 'Ses yüklemesi henüz tamamlanmadı.'
+        });
+      }
+
+      req.file = {
+        path: uploadSession.filePath,
+        originalname: uploadSession.fileName,
+        mimetype: uploadSession.mimeType,
+        size: uploadSession.totalSize
+      };
+
+    }
+
+    // Multipart callers receive the same retained-source lifecycle as phone
+    // chunk uploads. A failed window can be retried with this uploadId alone.
+    if (req.file && !uploadSession) {
+      uploadId = crypto.randomUUID();
+      uploadSession = { filePath: req.file.path, fileName: req.file.originalname,
+        mimeType: req.file.mimetype, totalSize: req.file.size, receivedSize: req.file.size,
+        activeWrites: 0, updatedAt: Date.now() };
+      dialogueUploadSessions.set(uploadId, uploadSession);
+    }
+
+    // Completed source bytes survive provider failures. Identical analysis calls
+    // share one result; changing analysis context may reuse bytes, never results.
+    const analysisKey = JSON.stringify([req.body?.duration || '', req.body?.protagonistProfile || '']);
+    if (uploadSession?.analysisPromise) {
+      const previous = await uploadSession.analysisPromise;
+      if (previous.key === analysisKey) return res.status(previous.status).json(previous.body);
+    }
+    if (uploadSession?.analysisResult?.key === analysisKey) {
+      return res.json(uploadSession.analysisResult.body);
+    }
+    let resolveAnalysis;
+    let analysisResponse;
+    const originalJson = res.json.bind(res);
+    const attachRetainedAnalysis = () => {
+      if (!uploadSession) return;
+      uploadSession.updatedAt = Date.now();
+      uploadSession.analysisPromise = new Promise(resolve => { resolveAnalysis = resolve; });
+      res.json = body => {
+        analysisResponse = { key: analysisKey, status: res.statusCode, body };
+        if (body?.available === true) uploadSession.analysisResult = { key: analysisKey, body };
+        return originalJson(body);
+      };
+    };
+    attachRetainedAnalysis();
+
+    const apiKey = resolveGeminiApiKey(req);
+    let tempPath = req.file?.path;
+    let originalVideoPath;
+    let uploadedFile = null;
+    let remoteFile = uploadSession?.remoteFile || null;
+    let inlineAudioPart = null;
+    let retainUploadedFile = false;
+    let dialogueSucceeded = false;
+    let sourceDuration = Number(uploadSession?.sourceDuration) || 0;
+    let windowedSource = sourceDuration > 120;
+    const preparationController = new AbortController();
+    const stopPreparation = () => { if (!res.writableEnded) preparationController.abort(); };
+    res.once('close', stopPreparation);
+
+    try {
+      if (!apiKey) {
+        return res.status(503).json({
+          available: false,
+          reason: 'GEMINI_NOT_CONFIGURED',
+          message: 'Gemini API anahtarı yapılandırılmamış.'
+        });
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      const attachAssetCleanup = () => {
+        if (!uploadSession) return;
+        const retainedSession = uploadSession;
+        retainedSession.cleanupAudioAssets = async () => {
+          if (process.env.KEEP_GEMINI_FILES === 'true') return;
+          const names = new Set([retainedSession.remoteFile?.name,
+            ...(retainedSession.deferredProviderDeletes || []),
+            ...(retainedSession.transcriptionState?.windows || []).map(window => window.asset?.remoteFile?.name)]);
+          await mapWithConcurrency([...names].filter(Boolean), 2,
+            name => ai.files.delete({ name }).catch(() => {}));
+        };
+      };
+      attachAssetCleanup();
+      retainUploadedFile = String(req.body?.retainAudioForReuse || '') === '1';
+      const audioReuseToken = String(req.body?.audioReuseToken || '').trim();
+
+      if (audioReuseToken && !req.file) {
+        try {
+          remoteFile = await ai.files.get({ name: audioReuseToken });
+        } catch {
+          return res.status(410).json({
+            available: false,
+            reason: 'AUDIO_REUSE_EXPIRED',
+            message: '24 saatlik ses önbelleği artık kullanılamıyor; ses yeniden hazırlanacak.'
+          });
+        }
+        if (!remoteFile || remoteFile.state === 'FAILED') {
+          return res.status(410).json({
+            available: false,
+            reason: 'AUDIO_REUSE_EXPIRED',
+            message: '24 saatlik ses önbelleği artık kullanılamıyor; ses yeniden hazırlanacak.'
+          });
+        }
+      }
+
+      if (!remoteFile) {
+        const remoteToken = String(req.body?.remoteToken || '').trim();
+        if (!req.file && remoteToken) {
+          dialogueStage('remote-audio-start');
+          req.file = await prepareRemoteDialogueAudio(remoteToken, req.body?.duration);
+          dialogueStage('remote-audio-ready');
+          tempPath = req.file.path;
+          uploadId = crypto.randomUUID();
+          uploadSession = { filePath: req.file.path, fileName: req.file.originalname,
+            mimeType: req.file.mimetype, totalSize: req.file.size, receivedSize: req.file.size,
+            activeWrites: 0, updatedAt: Date.now() };
+          dialogueUploadSessions.set(uploadId, uploadSession);
+          attachRetainedAnalysis();
+          attachAssetCleanup();
+        }
+        if (!req.file || !tempPath) {
+          return res.status(400).json({
+            available: false,
+            reason: 'VIDEO_REQUIRED',
+            message: 'Diyalog analizi için video gerekli.'
+          });
+        }
+        if (uploadSession?.preparedAudioFile) {
+          req.file = uploadSession.preparedAudioFile;
+          tempPath = req.file.path;
+        }
+        if (req.file.mimetype.startsWith('video/')) {
+          originalVideoPath = tempPath;
+          req.file = await prepareLocalDialogueAudio(req.file, {
+            ffmpegPath, signal: preparationController.signal
+          });
+          tempPath = req.file.path;
+          if (originalVideoPath !== uploadSession?.filePath) await fs.promises.unlink(originalVideoPath).catch(() => {});
+        }
+        if (uploadSession) uploadSession.preparedAudioFile = req.file;
+        sourceDuration = uploadSession?.sourceDuration || await probeLocalAudioDuration(req.file, {
+          ffmpegPath, signal: preparationController.signal
+        });
+        if (uploadSession) uploadSession.sourceDuration = sourceDuration;
+        windowedSource = sourceDuration > 120;
+      }
+      if (!remoteFile && !windowedSource) {
+        dialogueStage('gemini-upload-start');
+        try {
+          uploadedFile = await ai.files.upload({
+            file: tempPath,
+            config: {
+              mimeType: req.file.mimetype,
+              displayName: req.file.originalname || 'videoquest-dialogue-video',
+              httpOptions: { timeout: 120000 }
+            }
+          });
+          dialogueStage('gemini-upload-ready');
+          remoteFile = uploadedFile;
+        } catch (error) {
+          let audioSize = (await fs.promises.stat(tempPath)).size;
+          // The Files API can fail at upload initialization even though model
+          // requests remain available. Inline audio stays below the 20 MB
+          // request ceiling, including base64 expansion and the prompt.
+          if (Number(error?.status) !== 404 || !req.file.mimetype.startsWith('audio/')) throw error;
+          if (audioSize > 14 * 1024 * 1024) {
+            const previousPath = tempPath;
+            req.file = await prepareLocalDialogueAudio(req.file, {
+              ffmpegPath, signal: preparationController.signal,
+              audioInput: true, bitrate: '32k'
+            });
+            tempPath = req.file.path;
+            if (previousPath !== uploadSession?.filePath) await fs.promises.unlink(previousPath).catch(() => {});
+            audioSize = req.file.size;
+          }
+          if (audioSize > 14 * 1024 * 1024) {
+            throw new Error('Ses doğrudan analiz için çok uzun; kısa bölümlere ayırıp yeniden dene.');
+          }
+          inlineAudioPart = { inlineData: {
+            mimeType: req.file.mimetype,
+            data: (await fs.promises.readFile(tempPath)).toString('base64')
+          } };
+          dialogueStage('gemini-inline-audio-ready');
+          console.warn('[gemini-dialogue-fallback] file upload returned 404; using bounded inline audio');
+        }
+      }
+
+      const processingDeadline = Date.now() + 20 * 60 * 1000;
+      while (remoteFile?.state === 'PROCESSING' && Date.now() < processingDeadline) {
+        await wait(4000);
+        remoteFile = await ai.files.get({ name: remoteFile.name });
+      }
+      if ((!remoteFile && !inlineAudioPart && !windowedSource) || remoteFile?.state === 'FAILED') throw new Error('GEMINI_VIDEO_PROCESSING_FAILED');
+      if (remoteFile?.state === 'PROCESSING') throw new Error('GEMINI_VIDEO_PROCESSING_TIMEOUT');
+
+      const prompt = `
+Analyze audible dialogue and separately observe non-speech human vocal reactions in this video.
+
+VOICE IDENTITY CONTEXT:
+- Use voice continuity and diarization to keep every audible speaker distinct.
+- This is an audio-first subtitle pass. Do not guess family relationships or character identities.
+
+LANGUAGE DETECTION AND TURKISH TRANSLATION:
+- Automatically identify the actual spoken source language from the audio; never assume it is English.
+- Support every detectable language and dialect, including multilingual conversations and speakers switching languages inside the same video.
+- Treat clear non-English speech as valid dialogue, never as silence or unintelligible audio merely because of its language.
+- Transcribe each clearly audible line faithfully in its original language into originalText.
+- Perform a second careful listening pass for low-volume speech: whispers, murmured words, breathy speech, short replies, overlapping dialogue and off-screen speakers. If words are intelligible, include them even when much quieter than music or other vocal sounds.
+- Translate every detected non-Turkish line into natural, complete Turkish in turkishText.
+- If a line is already Turkish, preserve its meaning faithfully in turkishText without translating it into another language.
+- Set sourceLanguage to the detected language name; use "multilingual" when multiple source languages are present.
+- Preserve names, profanity, slang, sexual or adult vocabulary, commands, reactions, tone and intensity without censorship or omission in every supported language.
+- Never skip a speaker or segment because the source language changes or is not English.
+
+Return valid JSON only, with this exact structure:
+{
+  "available": true,
+  "hasDialogue": true,
+  "sourceLanguage": "string",
+  "summaryTr": "short Turkish summary",
+  "speakers": [
+    {
+      "speakerId": "speaker-01",
+      "speakerName": "Kadın sesi A|Kadın sesi B|Erkek sesi A|Erkek sesi B|Ses A",
+      "relationshipRole": "unknown",
+      "roleConfidence": 0.0,
+      "roleEvidence": "brief visible or spoken evidence",
+      "gender": "female|male|uncertain",
+      "description": "short stable Turkish description"
+    }
+  ],
+  "segments": [
+    {
+      "segmentId": "dlg-001",
+      "startTime": 0.0,
+      "endTime": 2.5,
+      "speakerId": "speaker-01",
+      "speakerName": "same stable name used for this speaker",
+      "gender": "female|male|uncertain",
+      "originalText": "exact spoken dialogue",
+      "turkishText": "natural Turkish translation",
+      "emotion": "neutral|happy|sad|angry|afraid|excited|whispering|uncertain",
+      "confidence": 0.0
+    }
+  ],
+  "nonSpeechEvents": [
+    {
+      "eventId": "snd-001",
+      "startTime": 0.0,
+      "endTime": 2.5,
+      "speakerId": "speaker-01|unknown",
+      "soundType": "breathing|moan|laughter|crying|vocal_reaction|mixed|unclear",
+      "intensity": "low|moderate|high|unclear",
+      "confidence": 0.0,
+      "evidence": "short audible observation without interpreting an internal state"
+    }
+  ],
+  "warnings": []
+}
+
+Rules:
+- Use seconds as numbers for startTime and endTime.
+- Preserve chronological order.
+- Identify and consistently separate different speakers.
+- Give every distinct speaker one stable Turkish speakerName and reuse it in every segment.
+- Keep people distinct with stable voice labels such as "Kadın sesi A", "Kadın sesi B", "Erkek sesi A" and "Erkek sesi B".
+- Never guess personal names or family roles from voice alone.
+- Preserve clearly spoken proper names and explicit relationship statements in originalText; do not replace them with generic speaker labels. Stable speakerName labels identify voices, not the people mentioned by those voices. Keep an addressed name separate from the identity of the speaker.
+- Do not reuse one speakerName for two different voices and do not change a person's name between segments.
+- Detect speaker gender only from audible and visible evidence; otherwise use uncertain.
+- Transcribe speech faithfully without inventing words.
+- Transcribe and translate every intelligible spoken word without censorship, sanitization, euphemism, summarization, or omission, including quiet, whispered, breathy, overlapping and sexually explicit speech.
+- Preserve profanity, slang, sexual or adult vocabulary, commands, reactions, and intensity exactly in natural Turkish.
+- Never replace words with asterisks, softened expressions, generic summaries, or skipped segments.
+- Treat every speaker equally and include every intelligible spoken line regardless of its subject.
+- Preserve the meaning, tone and emotion of the original dialogue.
+- Split long speech into readable subtitle segments, normally 1 to 7 seconds.
+- Do not include music, breathing, moans, sound effects or silence as dialogue. Put only clearly audible human breathing, moans, laughter, crying or vocal reactions in nonSpeechEvents without transcribing them as words.
+- Measure non-speech intensity from relative loudness, repetition and audible change over time. Never infer pain, pleasure, consent or identity from a sound alone.
+- If there is no intelligible speech, return hasDialogue false and an empty segments array.
+- Never add dialogue that is not audible in the source video.
+`;
+
+      const duration = sourceDuration || Math.max(0, Number(req.body?.duration || 0));
+      let parsed, dialogueTimeRepair, coverageAudit;
+      if (windowedSource) {
+        let transcriptionState = uploadSession?.transcriptionState || {};
+        if (transcriptionState.analysisKey && transcriptionState.analysisKey !== analysisKey) {
+          // Different analysis context may reuse an uploaded audio asset, but
+          // its translated/annotated result must be recomputed for that context.
+          transcriptionState = { windows: transcriptionState.windows?.map(window => ({
+            id: window.id, index: window.index, startTime: window.startTime, endTime: window.endTime,
+            status: 'pending', attempts: 0, asset: window.asset
+          })) };
+        }
+        transcriptionState.analysisKey = analysisKey;
+        if (uploadSession) uploadSession.transcriptionState = transcriptionState;
+        const windowed = await transcribeSourceWindows({
+          duration, videoDuration: Number(req.body?.duration) || duration, state: transcriptionState,
+          signal: preparationController.signal,
+          onProgress: progress => dialogueStage(`source-${progress.windowId}-${progress.stage}`),
+          prepareAsset: async window => {
+            const local = await prepareDialogueAudioWindow(req.file, {
+              ffmpegPath, signal: preparationController.signal,
+              startTime: window.startTime, endTime: window.endTime
+            });
+            let file = null, inlineAudioPath = '';
+            try {
+              try {
+                file = await ai.files.upload({ file: local.path, config: {
+                  mimeType: local.mimetype, displayName: `source-${window.id}.mp3`,
+                  httpOptions: { timeout: 120000 }
+                } });
+                if (!file?.name) throw new Error('SOURCE_WINDOW_UPLOAD_EMPTY');
+              } catch (error) {
+                if (Number(error?.status) !== 404) throw error;
+                if (local.size > 14 * 1024 * 1024) throw new Error('SOURCE_WINDOW_INLINE_LIMIT');
+                inlineAudioPath = local.path;
+              }
+              return { remoteFile: file, inlineAudioPath, mimeType: local.mimetype };
+            } finally {
+              if (!inlineAudioPath) await fs.promises.unlink(local.path).catch(() => {});
+            }
+          },
+          releaseAsset: async asset => {
+            if (asset?.inlineAudioPath) await fs.promises.unlink(asset.inlineAudioPath).catch(() => {});
+            if (asset?.remoteFile?.name && process.env.KEEP_GEMINI_FILES !== 'true') {
+              await ai.files.delete({ name: asset.remoteFile.name }).catch(() => {
+                if (uploadSession) (uploadSession.deferredProviderDeletes ||= []).push(asset.remoteFile.name);
+              });
+            }
+          },
+          transcribeWindow: async (asset, window) => {
+            // Store the uploaded asset before waiting for provider processing.
+            // A transient polling failure resumes this file on the next retry.
+            const deadline = Date.now() + 120000;
+            try {
+              while (asset.remoteFile?.state === 'PROCESSING' && Date.now() < deadline) {
+                await wait(2000);
+                preparationController.signal.throwIfAborted();
+                asset.remoteFile = await ai.files.get({ name: asset.remoteFile.name });
+              }
+              if (asset.remoteFile?.state === 'FAILED') {
+                await ai.files.delete({ name: asset.remoteFile.name }).catch(() => {});
+                throw Object.assign(new Error('SOURCE_WINDOW_ASSET_EXPIRED'), { code: 'SOURCE_WINDOW_ASSET_EXPIRED' });
+              }
+              if (asset.remoteFile?.state === 'PROCESSING') throw new Error('SOURCE_WINDOW_PROCESSING_TIMEOUT');
+              if (!asset.remoteFile?.uri && !asset.inlineAudioPath) throw new Error('SOURCE_WINDOW_AUDIO_REQUIRED');
+            } catch (error) {
+              if (Number(error?.status) === 404) {
+                throw Object.assign(new Error('SOURCE_WINDOW_ASSET_EXPIRED'), { code: 'SOURCE_WINDOW_ASSET_EXPIRED' });
+              }
+              throw error;
+            }
+            const span = window.endTime - window.startTime;
+            // Materialize at most one bounded window of inline audio. Failed
+            // windows retain disk paths rather than accumulating base64 in RAM.
+            const inlineAudioPart = asset.inlineAudioPath ? { inlineData: {
+              mimeType: asset.mimeType,
+              data: (await fs.promises.readFile(asset.inlineAudioPath)).toString('base64')
+            } } : null;
+            const result = await analyzeDialogueSourceAsset({ ai, remoteFile: asset.remoteFile, inlineAudioPart, req,
+              duration: span, dialogueStage, dialogueUsage,
+              prompt: prompt + `\nSOURCE WINDOW: This actual audio asset is ${span} seconds long. Listen to its entire duration. Use seconds RELATIVE to this asset, starting at 0; do not add the source offset ${window.startTime}. Do not infer speech from gaps. Keep diarization labels local to this audio asset.\n`
+            });
+            return result.parsed;
+          }
+        });
+        parsed = windowed.parsed;
+        coverageAudit = windowed.coverageAudit;
+        dialogueTimeRepair = { report: { repaired: false, reason: 'grounded-source-windows' } };
+      } else {
+        ({ parsed, dialogueTimeRepair } = await analyzeDialogueSourceAsset({
+          ai, remoteFile, inlineAudioPart, req, prompt, duration, dialogueStage, dialogueUsage
+        }));
+        if (duration > 0) coverageAudit = auditSourceTranscript({ duration, videoDuration: duration, windows: [{
+          id: 'window-001', startTime: 0, endTime: duration, status: 'complete', attempts: 1, result: parsed
+        }] }, parsed.segments);
+      }
       const timingIntegrity = requireDialogueTiming(parsed.segments || [], duration);
       const parsedSpeakers = Array.isArray(parsed.speakers) ? parsed.speakers : [];
       const speakerProfiles = new Map();
@@ -2441,7 +2602,8 @@ Rules:
             speakerProfiles.set(speakerId, profile);
           }
           return ({
-          segmentId: `dlg-${String(index + 1).padStart(3, '0')}`,
+          segmentId: String(segment.segmentId || `dlg-${String(index + 1).padStart(3, '0')}`),
+          ...(segment.sourceWindowId ? { sourceWindowId: segment.sourceWindowId } : {}),
           startTime: Math.max(0, Number(segment.startTime || 0)),
           endTime: Math.max(0, Number(segment.endTime || 0)),
           speakerId,
@@ -2491,6 +2653,8 @@ Rules:
         audioReuseToken: remoteFile?.name || '',
         audioReuseMimeType: remoteFile?.mimeType || req.file?.mimetype || '',
         sourceLanguage: String(parsed.sourceLanguage || 'unknown'),
+        coverageAudit: coverageAudit || null,
+        uploadId: uploadSession ? uploadId : '',
         summaryTr: String(parsed.summaryTr || ''),
         speakers: [...speakerProfiles.values()],
         segments,
@@ -2520,7 +2684,12 @@ Rules:
       }
       return res.status(502).json({
         available: false,
-        reason: error?.code === 'DIALOGUE_TIMING_INVALID' ? error.code : 'GEMINI_DIALOGUE_ERROR',
+        reason: ['DIALOGUE_TIMING_INVALID', 'SOURCE_TRANSCRIPTION_INCOMPLETE'].includes(error?.code) ? error.code : 'GEMINI_DIALOGUE_ERROR',
+        coverageAudit: error?.coverageAudit || null,
+        partialSegments: error?.partialResult?.segments || [],
+        uploadId: uploadSession ? uploadId : '',
+        audioReuseToken: remoteFile?.name || '',
+        audioReuseMimeType: remoteFile?.mimeType || req.file?.mimetype || '',
         timingIntegrity: error?.timingIntegrity || null,
         message: error?.code === 'DIALOGUE_TIMING_INVALID'
           ? 'Konuşma zamanları kaynaktan doğrulanamadı. Aynı yüklenmiş sesle analizi yeniden dene.'
@@ -2538,7 +2707,7 @@ Rules:
       }
       res.removeListener('close', stopPreparation);
       if (originalVideoPath && originalVideoPath !== uploadSession?.filePath) await fs.promises.unlink(originalVideoPath).catch(() => {});
-      if (tempPath && tempPath !== uploadSession?.filePath) {
+      if (tempPath && tempPath !== uploadSession?.filePath && tempPath !== uploadSession?.preparedAudioFile?.path) {
         try {
           if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
         } catch (cleanupError) {

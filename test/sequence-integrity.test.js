@@ -8,7 +8,7 @@ import {
 import { canPlayAction } from '../public/engine-hardening.js';
 import {
   verifiedOccurrenceRanges, consolidateInteractionOccurrences, interactionClipGuard,
-  interactionEntryClip, interactionMovementVariants
+  interactionEntryClip, interactionEntryGuard, interactionMovementVariants, interactionFamilyViews
 } from '../public/interaction-timeline.js';
 
 const clip = (id, start, end, source = 'raw') => ({
@@ -331,4 +331,72 @@ test('group entry selects one verified entry or the earliest exact range without
   assert.deepEqual(interactionEntryClip({ ...group, entryClip }), entryClip);
   assert.equal(interactionEntryClip({ ...group, sourceVerified: false }), null);
   assert.equal(interactionEntryClip({ ...group, sourceRanges: [] }), null);
+});
+
+const linkedEntryGroup = () => {
+  const group = genericGroup('core', 10, 20);
+  const entryRange = {
+    id: 'source:entry', startTime: 6, endTime: 9.9, sourceVerified: true,
+    subjectTrackId: group.subjectId, partnerTrackId: group.partnerId, routeNamespace: group.routeNamespace,
+    entryForGroupId: group.id, coreOccurrenceId: group.occurrenceId
+  };
+  const entryClip = { ...clip('entry', 6, 9.9, entryRange.id),
+    sourceOccurrenceId: entryRange.id, subjectTrackId: group.subjectId,
+    partnerTrackId: group.partnerId, routeNamespace: group.routeNamespace };
+  return { ...group, entryRange, entryClip };
+};
+
+test('an adjacent entry has its own exact proof and does not enlarge the core occurrence', () => {
+  const group = linkedEntryGroup();
+  const before = structuredClone(group);
+  const guard = interactionEntryGuard(group, group.entryClip);
+  assert.equal(guard.allowed, true);
+  assert.equal(guard.coreOccurrenceId, group.occurrenceId);
+  assert.equal(guard.sourceRange.occurrenceId, group.entryRange.id);
+  assert.deepEqual(interactionEntryClip(group), group.entryClip);
+  assert.equal(interactionClipGuard(group, group.entryClip).allowed, false);
+  assert.deepEqual(interactionMovementVariants(group, { variants: [group.entryClip, ...group.movements] }), group.movements);
+  assert.deepEqual(verifiedOccurrenceRanges(group).map(range => [range.startTime, range.endTime]), [[10, 20]]);
+  assert.deepEqual(group, before);
+  const { entryClip, ...rangeOnly } = group;
+  const generatedEntry = interactionEntryClip(rangeOnly);
+  assert.equal(interactionEntryGuard(rangeOnly, generatedEntry).allowed, true);
+  assert.deepEqual([generatedEntry.startTime, generatedEntry.endTime], [6, 9.9]);
+});
+
+test('preceding entry requires exact cast, a narrow adjacent gap and non-rejected source proof', () => {
+  const group = linkedEntryGroup();
+  for (const patch of [
+    { subjectTrackId: 'subject:b' }, { partnerTrackId: 'partner:b' },
+    { subjectTrackId: '' }, { routeNamespace: 'route:b' }, { sourceVerified: false },
+    { sourcePositionId: 'source:other' }, { sourceOccurrenceId: 'occurrence:other' },
+    { startTime: null }, { loopStartTime: 5 }, { endTime: 10.5, loopEndTime: 10.5 }
+  ]) assert.equal(interactionEntryGuard(group, { ...group.entryClip, ...patch }).allowed, false);
+  for (const patch of [
+    { endTime: 9.7 }, { endTime: 10.1 }, { sourceVerified: false },
+    { subjectTrackId: 'subject:b' }, { partnerTrackId: '' },
+    { coreOccurrenceId: 'occurrence:distant' }, { entryForGroupId: 'group:other' }
+  ]) assert.equal(interactionEntryGuard({ ...group, entryRange: { ...group.entryRange, ...patch } }, group.entryClip).allowed, false);
+  assert.equal(interactionEntryGuard({ ...group, sourceVerified: false }, group.entryClip).allowed, false);
+  assert.equal(interactionEntryGuard({ ...group, sourceRanges: [] }, group.entryClip).allowed, false);
+  assert.equal(interactionEntryGuard(group, group.entryClip, { occurrenceId: 'occurrence:distant' }).allowed, false);
+  const noRoutes = { ...group, routeNamespace: undefined,
+    entryRange: { ...group.entryRange, routeNamespace: undefined },
+    entryClip: { ...group.entryClip, routeNamespace: undefined } };
+  assert.equal(interactionEntryGuard(noRoutes, noRoutes.entryClip).allowed, true);
+});
+
+test('family display references retain distant occurrences without introducing a playable gap', () => {
+  const first = genericGroup('a', 0, 10, { label: 'Chapter A' });
+  const distant = genericGroup('b', 90, 100, { label: 'Chapter A' });
+  const before = structuredClone([first, distant]);
+  const [family] = interactionFamilyViews([distant, first]);
+  assert.equal(family.label, 'Chapter A');
+  assert.deepEqual(family.occurrences, [first, distant]);
+  assert.equal(family.sourceRanges, undefined);
+  assert.equal(family.startTime, undefined);
+  assert.equal(interactionClipGuard(family, clip('gap', 5, 95, 'source:a')).allowed, false);
+  assert.equal(interactionClipGuard(first, distant.movements[0]).allowed, false);
+  assert.equal(interactionClipGuard(distant, first.movements[0]).allowed, false);
+  assert.deepEqual([first, distant], before);
 });

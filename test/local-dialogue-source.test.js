@@ -169,3 +169,31 @@ test('legacy collapsed timing is rejected before dublaj preparation while local 
   assert.equal(f.requests.length, 1);
   assert.ok(f.session.dialogueUploadKey);
 });
+
+test('partial transcription retry reuses uploadId before any source extraction or phone upload', async () => {
+  const f = fixture();
+  let uploads = 0, retries = 0;
+  f.scope.geminiRequestHeaders = () => ({});
+  f.scope.uploadDialogueWithProgress = async () => {
+    uploads++;
+    return { ok: false, status: 502, body: { available: false, uploadId: 'retained-source',
+      reason: 'SOURCE_TRANSCRIPTION_INCOMPLETE', coverageAudit: { failedWindows: ['pending-window'] } } };
+  };
+  await assert.rejects(f.scope.analyzeSelectedDialogue(f.original), error => error.code === 'SOURCE_TRANSCRIPTION_INCOMPLETE');
+  assert.equal(f.session.dialogueUploadId, 'retained-source');
+  assert.deepEqual(f.session.dialogueCoverageAudit.failedWindows, ['pending-window']);
+  f.scope.fetch = async (url, options) => {
+    retries++;
+    assert.equal(url, '/api/gemini-dialogue-analyze');
+    assert.equal(options.body.get('uploadId'), 'retained-source');
+    assert.equal(options.body.has('video'), false);
+    assert.equal(options.body.has('remoteToken'), false);
+    return { ok: true, status: 200, json: async () => ({ available: true, uploadId: 'retained-source', segments: [],
+      coverageAudit: { failedWindows: [], complete: true } }) };
+  };
+  await f.scope.analyzeSelectedDialogue(f.original);
+  assert.equal(uploads, 1);
+  assert.equal(retries, 1);
+  assert.equal(f.extractions(), 1);
+  assert.equal(f.session.dialogueCoverageAudit.complete, true);
+});

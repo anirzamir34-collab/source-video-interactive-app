@@ -4,6 +4,20 @@ const text = value => String(value || '').trim();
 export const sourceActionLabel = value => text(value)
   .replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/iu, '').trim();
 
+// Display text is provider data. Keep it opaque and use the caller's existing
+// fallback when no verified display label was supplied.
+export function sourceDisplayLabel(group = {}, fallback = '', {
+  partnerLabel = group.partnerLabel,
+  distinguishPartner = false
+} = {}) {
+  const label = group.sourceVerified === true && text(group.positionLabel)
+    ? text(group.positionLabel) : text(fallback);
+  const partner = text(partnerLabel);
+  return label && distinguishPartner === true && partner &&
+    label !== partner && !label.endsWith(` · ${partner}`)
+    ? `${label} · ${partner}` : label;
+}
+
 function stableParticipantLabelForTrack(value, trackId) {
   const label = text(value);
   const track = text(trackId);
@@ -42,8 +56,9 @@ export function groupSourceChoiceCards(clips, {
     .filter(clip => clip?.sourceVerified === true && clip.id && clipRange(clip))
     .sort((a, b) => clipRange(a).startTime - clipRange(b).startTime || String(a.id).localeCompare(String(b.id)));
   const requestedTarget = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
-  // A card is a coherent source packet, not a separate button for each clip.
-  const target = Math.min(requestedTarget, Math.max(1, Math.ceil(source.length / 4)));
+  // This is a density preference, never a hard cap that combines unrelated
+  // source actions. Small rich inputs should still expose several choices.
+  const target = Math.min(requestedTarget, Math.max(1, Math.ceil(source.length / 3)));
   const groups = new Map();
   for (const clip of source) {
     const label = sourceActionLabel(labelFor?.(clip) || clip.label);
@@ -53,12 +68,13 @@ export function groupSourceChoiceCards(clips, {
       : { key: text(rawProfile) || 'unclear', intensityBand: text(rawProfile) || 'unclear' };
     const band = text(profile.key) || 'unclear';
     const occurrence = text(contextFor?.(clip));
-    const declaredScope = [text(clip.adultSceneId), text(clip.sourcePositionId), text(clip.positionOccurrenceId)];
+    const declaredScope = [text(clip.adultSceneId), text(clip.sourcePositionId || clip.sourceGroupId),
+      text(clip.sourceOccurrenceId || clip.positionOccurrenceId || clip.occurrenceId)];
     const hasScope = Boolean(occurrence || declaredScope.some(Boolean));
-    const rawType = text(clip.actionType || clip.movementType).toLocaleLowerCase('tr-TR');
-    const kind = !rawType ? ''
-      : /(?:position|tempo|movement|rhythm|thrust|ritim|hareket)/u.test(rawType) ? 'movement'
-        : 'contact';
+    const actionType = [text(clip.actionType), text(clip.movementType)];
+    const hasType = actionType.some(Boolean);
+    const declaredOrigin = text(clip.sourceActionId || clip.observedActionId ||
+      clip.actionOriginId || clip.derivedFromVerifiedSegment);
     const stableContext = mergeWithinContext && occurrence;
     const key = JSON.stringify([
       occurrence || declaredScope,
@@ -68,13 +84,15 @@ export function groupSourceChoiceCards(clips, {
       stableContext ? [] : [...(clip.participantTrackIds || [])].map(text).sort(),
       stableContext ? '' : text(clip.receiverBodyOrientation),
       stableContext ? '' : text(clip.receiverSupport), band,
-      stableContext ? ''
-        : hasScope && kind && kind !== 'other' ? kind : label.toLocaleLowerCase('tr-TR'),
+      // Even a trusted display context cannot erase the provider's declared
+      // action kind or the origin of parts split from one observed action.
+      hasScope && hasType ? actionType : label,
+      declaredOrigin,
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);
     if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence, packets: new Map() });
     const group = groups.get(key);
-    const origin = text(clip.derivedFromVerifiedSegment || clip.id);
+    const origin = declaredOrigin || text(clip.id);
     if (!group.packets.has(origin)) group.packets.set(origin, []);
     group.packets.get(origin).push(clip);
   }
@@ -82,7 +100,7 @@ export function groupSourceChoiceCards(clips, {
   for (const group of groups.values()) {
     const groupSize = [...group.packets.values()].reduce((sum, packet) => sum + packet.length, 0);
     const proportionalCards = Math.max(1, Math.round(target * groupSize / Math.max(1, source.length)));
-    const capacity = groupSize <= 2 ? groupSize : Math.max(3, Math.min(5, Math.ceil(groupSize / proportionalCards)));
+    const capacity = groupSize <= 2 ? groupSize : Math.max(2, Math.min(5, Math.ceil(groupSize / proportionalCards)));
     let pending = [];
     const flush = () => {
       if (!pending.length) return;

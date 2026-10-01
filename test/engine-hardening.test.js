@@ -290,6 +290,82 @@ test('runtime save only restores into the exact analysis/engine version', () => 
   assert.equal(target.restoredAdultSceneId, 'scene-active');
 });
 
+test('runtime recovery preserves the generic progress ledger without restoring scene or media objects', () => {
+  const observation = { startTime: 10, endTime: 20, sourcePositionId: 'observed-action',
+    sourceOccurrenceId: 'observed-occurrence', sourceKey: '["observed-action","observed-occurrence"]' };
+  const progressObservations = { playedRanges: [observation], selectedRanges: [{ ...observation }],
+    coreBoundaryObserved: true };
+  const staleScene = { id: 'scene-active', groups: [{ id: 'old-group' }] };
+  const sourceState = {
+    analysisFingerprint: 'fingerprint', interactionAnalysisFingerprint: 'fingerprint',
+    adultScene: staleScene,
+    interactionRuntime: { scene: staleScene, progressObservations,
+      progressBudgetConsumed: true, currentPhase: 'CORE', unlockReason: 'source-boundary',
+      activeAudio: { url: 'blob:old-audio' }, pendingSelection: { choiceId: 'old-choice' },
+      preparing: true, generation: 12 }
+  };
+  const snapshot = JSON.parse(JSON.stringify(createRuntimeSnapshot(sourceState, 'fingerprint')));
+  assert.equal(isCompatibleRuntimeSnapshot(snapshot, 'fingerprint'), true);
+  const currentScene = { id: 'scene-active', groups: [{ id: 'validated-group' }] };
+  const target = { analysisFingerprint: 'fingerprint', adultScene: currentScene };
+  applyRuntimeSnapshot(target, snapshot);
+
+  assert.deepEqual(target.restoredInteractionProgress, {
+    version: 1, fingerprint: 'fingerprint', sceneId: 'scene-active', progressObservations,
+    progressBudgetConsumed: true, currentPhase: 'CORE', unlockReason: 'source-boundary'
+  });
+  assert.equal(target.adultScene, currentScene);
+  assert.equal(target.interactionRuntime, undefined);
+  for (const key of ['scene', 'activeAudio', 'pendingSelection', 'preparing', 'generation']) {
+    assert.equal(Object.hasOwn(snapshot.genericInteraction, key), false);
+    assert.equal(Object.hasOwn(target.restoredInteractionProgress, key), false);
+  }
+  snapshot.genericInteraction.progressObservations.playedRanges[0].endTime = 999;
+  assert.equal(target.restoredInteractionProgress.progressObservations.playedRanges[0].endTime, 20);
+});
+
+test('generic progress recovery rejects another fingerprint or payload version without contaminating current state', () => {
+  const sourceState = { adultScene: { id: 'scene-active' }, interactionAnalysisFingerprint: 'source-a',
+    interactionRuntime: { scene: { id: 'scene-active' }, currentPhase: 'CORE',
+      progressBudgetConsumed: true, progressObservations: { playedRanges: [], selectedRanges: [],
+        coreBoundaryObserved: true }, unlockReason: 'source-boundary' } };
+  const snapshot = createRuntimeSnapshot(sourceState, 'source-a');
+  const seed = { fingerprint: 'source-b', sceneId: 'current-scene' };
+  const target = { analysisFingerprint: 'source-b', gameCursorTime: 7, restoredInteractionProgress: seed };
+  applyRuntimeSnapshot(target, snapshot);
+  assert.deepEqual(target, { analysisFingerprint: 'source-b', gameCursorTime: 7, restoredInteractionProgress: seed });
+  for (const genericInteraction of [
+    { ...snapshot.genericInteraction, fingerprint: 'source-b' },
+    { ...snapshot.genericInteraction, version: 2 },
+    { ...snapshot.genericInteraction, sceneId: 'another-scene' }
+  ]) {
+    const invalid = { ...snapshot, genericInteraction };
+    assert.equal(isCompatibleRuntimeSnapshot(invalid, 'source-a'), false);
+    const untouched = { analysisFingerprint: 'source-a', gameCursorTime: 7 };
+    applyRuntimeSnapshot(untouched, invalid);
+    assert.deepEqual(untouched, { analysisFingerprint: 'source-a', gameCursorTime: 7 });
+  }
+  assert.equal(createRuntimeSnapshot({ ...sourceState, interactionAnalysisFingerprint: 'source-b' },
+    'source-a').genericInteraction, undefined);
+});
+
+test('legacy runtime recovery clears old generic seeds and invalid ledger ranges provide no restored credit', () => {
+  const legacy = createRuntimeSnapshot({}, 'fingerprint');
+  const target = { analysisFingerprint: 'fingerprint', restoredInteractionProgress: { fingerprint: 'old' } };
+  applyRuntimeSnapshot(target, legacy);
+  assert.equal(target.restoredInteractionProgress, undefined);
+  const genericInteraction = { version: 1, fingerprint: 'fingerprint', sceneId: 'scene-active',
+    currentPhase: 'invalid-phase', progressBudgetConsumed: false, progressObservations: {
+      playedRanges: [{ startTime: -1, endTime: 10, sourcePositionId: 'action',
+        sourceOccurrenceId: 'occurrence', sourceKey: 'source' }],
+      selectedRanges: [{ startTime: 1, endTime: 10 }], coreBoundaryObserved: false
+    } };
+  applyRuntimeSnapshot(target, { ...legacy, adultSceneId: 'scene-active', genericInteraction });
+  assert.deepEqual(target.restoredInteractionProgress.progressObservations,
+    { playedRanges: [], selectedRanges: [], coreBoundaryObserved: false });
+  assert.equal(target.restoredInteractionProgress.currentPhase, 'APPROACH');
+});
+
 test('event log is bounded and fingerprint is stable', () => {
   const log = [];
   for (let index = 0; index < 10; index += 1) appendEngineEvent(log, 'TEST', { index }, 4);

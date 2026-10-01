@@ -1,4 +1,4 @@
-import { clipRange } from './sequence-integrity.js';
+import { clipRange, timelineRange } from './sequence-integrity.js';
 
 const participants = action => [...new Set([
   action.subjectTrackId, action.partnerTrackId, action.primaryCharacterId,
@@ -8,7 +8,7 @@ const participants = action => [...new Set([
 // Link only existing, verified adjacent introductions for the same exact pair
 // or group. A dialogue, another cast, or a long gap is a boundary, not evidence
 // for widening a scene. Input records and their source times stay unchanged.
-export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45) {
+export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45, onDecision = () => {}) {
   const ordered = [...actions].sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const result = new Map();
   for (const { action: anchor, sceneId } of anchors) {
@@ -17,19 +17,28 @@ export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45)
     let nextStart = Number(anchor.startTime);
     for (let i = ordered.indexOf(anchor) - 1; i >= 0; i--) {
       const action = ordered[i];
-      const start = Number(action.startTime), end = Number(action.endTime);
-      if (!eligible(action) || action.sourceVerified !== true || !(Number(action.confidence) >= 0.6) ||
-          !Number.isFinite(start) || !Number.isFinite(end) || end <= start ||
-          end > nextStart + 0.15 || nextStart - end > maxGap ||
-          participants(action).join('|') !== cast.join('|') ||
-          // A provider may change the scene ID exactly between an uninterrupted
-          // introduction and its first position. The verified cast and adjacent
-          // source intervals, rather than the provider's label, establish the
-          // connection. Do not bridge gaps or ordinary dialogue this way.
-          (action.adultSceneId && action.adultSceneId !== sceneId &&
-            !(action.adultScene === true && nextStart - end <= 0.15)) ||
-          (result.has(action) && result.get(action) !== sceneId)) break;
+      const range = timelineRange(action.startTime, action.endTime);
+      const start = range?.startTime, end = range?.endTime;
+      const sameRoles = ['subjectTrackId', 'partnerTrackId'].every(field =>
+        !String(anchor[field] || '').trim() || String(action[field] || '').trim() === String(anchor[field]).trim());
+      const reason = !eligible(action) ? 'INELIGIBLE_ACTION'
+        : action.sourceVerified !== true ? 'SOURCE_NOT_VERIFIED'
+          : !(Number(action.confidence) >= 0.6) ? 'CONFIDENCE_BELOW_0_60'
+            : !range ? 'INVALID_SOURCE_INTERVAL'
+              : end > nextStart + 0.15 ? 'SOURCE_OVERLAP'
+                : nextStart - end > maxGap ? 'SOURCE_GAP_TOO_LARGE'
+                  : !sameRoles || participants(action).join('|') !== cast.join('|') ? 'SOURCE_CAST_MISMATCH'
+                    // The optional scene flag cannot reject otherwise verified,
+                    // adjacent source evidence when provider IDs change.
+                    : action.adultSceneId && action.adultSceneId !== sceneId && nextStart - end > 0.25
+                      ? 'SCENE_ID_GAP'
+                      : result.has(action) && result.get(action) !== sceneId ? 'SCENE_MEMBERSHIP_CONFLICT' : '';
+      if (reason) {
+        onDecision(action, reason, sceneId);
+        break;
+      }
       result.set(action, sceneId);
+      onDecision(action, 'VERIFIED_SAME_CAST_INTRODUCTION', sceneId);
       nextStart = start;
     }
   }

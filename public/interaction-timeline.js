@@ -100,6 +100,24 @@ export function consolidateInteractionOccurrences(groups = [], { adjacencyTolera
   return results;
 }
 
+// A display family contains occurrence references only. It has no playable
+// envelope, so returning to the same family cannot authorize the intervening gap.
+export function interactionFamilyViews(groups = [], { identityFor = interactionGroupIdentity, labelFor } = {}) {
+  const families = new Map();
+  const occurrences = list(groups).filter(group => verifiedOccurrenceRanges(group).length)
+    .sort((a, b) => verifiedOccurrenceRanges(a)[0].startTime - verifiedOccurrenceRanges(b)[0].startTime);
+  for (const group of occurrences) {
+    const identity = text(identityFor(group));
+    if (!identity) continue;
+    if (!families.has(identity)) families.set(identity, {
+      id: `interaction-family:${encodeURIComponent(identity)}`,
+      identity, label: labelFor?.(group) ?? group.label, occurrences: []
+    });
+    families.get(identity).occurrences.push(group);
+  }
+  return [...families.values()];
+}
+
 export function interactionClipGuard(group = {}, clip = null, { occurrenceId = '' } = {}) {
   if (!clip || clip.sourceVerified !== true || group.sourceVerified !== true) {
     return { allowed: false, reason: 'SOURCE_NOT_VERIFIED' };
@@ -140,8 +158,69 @@ export function interactionClipGuard(group = {}, clip = null, { occurrenceId = '
     { allowed: false, reason: 'CLIP_OUTSIDE_OCCURRENCE' };
 }
 
+// A preceding entry has separate proof and remains outside the core ranges.
+// Call this guard only when selecting a group tab; movement selection uses the
+// core-only interactionClipGuard above.
+export function interactionEntryGuard(group = {}, clip = null, { occurrenceId = '' } = {}) {
+  const coreGuard = interactionClipGuard(group, clip, { occurrenceId });
+  if (coreGuard.allowed) return coreGuard;
+  if (group.sourceVerified !== true || clip?.sourceVerified !== true) {
+    return { allowed: false, reason: 'SOURCE_NOT_VERIFIED' };
+  }
+  const proof = group.entryRange;
+  if (!proof || proof.sourceVerified !== true) return coreGuard;
+  const observed = timelineRange(proof.startTime, proof.endTime);
+  const target = clipRange(clip);
+  const clipObserved = timelineRange(clip.startTime, clip.endTime);
+  if (!observed || !target || !clipObserved) {
+    return { allowed: false, reason: 'INVALID_SOURCE_INTERVAL' };
+  }
+  if (target.startTime < clipObserved.startTime - epsilon || target.endTime > clipObserved.endTime + epsilon ||
+      clipObserved.startTime < observed.startTime - epsilon || clipObserved.endTime > observed.endTime + epsilon) {
+    return { allowed: false, reason: 'CLIP_OUTSIDE_SOURCE' };
+  }
+  const first = verifiedOccurrenceRanges(group)[0];
+  const groupOccurrence = text(group.occurrenceId || group.id);
+  const coreOccurrenceId = text(proof.coreOccurrenceId);
+  if (!first || !text(group.id) || text(proof.entryForGroupId) !== text(group.id) ||
+      !coreOccurrenceId || ![groupOccurrence, first.occurrenceId].includes(coreOccurrenceId) ||
+      (text(occurrenceId) && ![groupOccurrence, first.occurrenceId].includes(text(occurrenceId)))) {
+    return { allowed: false, reason: 'OCCURRENCE_MISMATCH' };
+  }
+  if (observed.endTime > first.startTime + epsilon || first.startTime - observed.endTime > 0.25 + epsilon) {
+    return { allowed: false, reason: 'ENTRY_NOT_ADJACENT' };
+  }
+  for (const fields of [['subjectId', 'subjectTrackId'], ['partnerId', 'partnerTrackId']]) {
+    const value = object => text(fields.map(field => object[field]).find(item => item !== undefined));
+    const values = [group, proof, clip].map(value);
+    if (values.some(item => !item) || new Set(values).size !== 1) {
+      return { allowed: false, reason: 'SOURCE_IDENTITY_MISMATCH' };
+    }
+  }
+  const routes = [group, proof, clip].map(item => text(item.routeNamespace)).filter(Boolean);
+  if (new Set(routes).size > 1) return { allowed: false, reason: 'SOURCE_IDENTITY_MISMATCH' };
+  const sourceId = text(proof.id);
+  const entryOccurrenceId = text(proof.occurrenceId || proof.sourceOccurrenceId || sourceId);
+  if (!sourceId || text(clip.sourcePositionId || clip.sourceGroupId) !== sourceId ||
+      text(clip.sourceOccurrenceId || clip.positionOccurrenceId) !== entryOccurrenceId ||
+      (text(clip.entryForGroupId) && text(clip.entryForGroupId) !== text(group.id)) ||
+      (text(clip.coreOccurrenceId) && text(clip.coreOccurrenceId) !== coreOccurrenceId)) {
+    return { allowed: false, reason: 'OCCURRENCE_MISMATCH' };
+  }
+  return { allowed: true, reason: '', coreOccurrenceId,
+    sourceRange: { ...proof, id: sourceId, ...observed, occurrenceId: entryOccurrenceId } };
+}
+
 export function interactionEntryClip(group = {}) {
-  if (interactionClipGuard(group, group.entryClip).allowed) return { ...group.entryClip };
+  if (interactionEntryGuard(group, group.entryClip).allowed) return { ...group.entryClip };
+  if (group.entryRange) {
+    const range = group.entryRange;
+    const linkedEntry = { ...range, id: text(range.id),
+      sourcePositionId: text(range.id),
+      sourceOccurrenceId: text(range.occurrenceId || range.sourceOccurrenceId || range.id),
+      loopStartTime: range.startTime, loopEndTime: range.endTime, entryOnly: true };
+    if (interactionEntryGuard(group, linkedEntry).allowed) return linkedEntry;
+  }
   // A tab selects one observed entry only. It never chains internal cards.
   const first = verifiedOccurrenceRanges(group)[0];
   if (!first) return null;

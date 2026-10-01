@@ -666,9 +666,43 @@ export function appendEngineEvent(log, type, data = {}, maxEntries = 240) {
   return target;
 }
 
+const GENERIC_INTERACTION_SAVE_VERSION = 1;
+const GENERIC_INTERACTION_PHASES = ['APPROACH', 'CORE', 'OUTCOME', 'AFTERMATH'];
+
+function savedInteractionProgress(runtime, fingerprint, sceneId) {
+  if (!runtime || !fingerprint || !sceneId) return null;
+  const ranges = value => (Array.isArray(value) ? value : []).flatMap(range => {
+    if (!range || typeof range.startTime !== 'number' || typeof range.endTime !== 'number' ||
+        !Number.isFinite(range.startTime) || !Number.isFinite(range.endTime) ||
+        range.startTime < 0 || range.endTime <= range.startTime ||
+        typeof range.sourcePositionId !== 'string' || !range.sourcePositionId ||
+        typeof range.sourceOccurrenceId !== 'string' || !range.sourceOccurrenceId ||
+        typeof range.sourceKey !== 'string' || !range.sourceKey) return [];
+    return [{ startTime: range.startTime, endTime: range.endTime,
+      sourcePositionId: range.sourcePositionId, sourceOccurrenceId: range.sourceOccurrenceId,
+      sourceKey: range.sourceKey }];
+  });
+  return {
+    version: GENERIC_INTERACTION_SAVE_VERSION,
+    fingerprint: String(fingerprint), sceneId: String(sceneId),
+    progressObservations: {
+      playedRanges: ranges(runtime.progressObservations?.playedRanges),
+      selectedRanges: ranges(runtime.progressObservations?.selectedRanges),
+      coreBoundaryObserved: runtime.progressObservations?.coreBoundaryObserved === true
+    },
+    progressBudgetConsumed: runtime.progressBudgetConsumed === true,
+    currentPhase: GENERIC_INTERACTION_PHASES.includes(runtime.currentPhase) ? runtime.currentPhase : 'APPROACH',
+    unlockReason: typeof runtime.unlockReason === 'string' ? runtime.unlockReason : null
+  };
+}
+
 export function createRuntimeSnapshot(state = {}, fingerprint = '') {
   const mapEntries = value => value instanceof Map ? [...value.entries()] : [];
   const setValues = value => value instanceof Set ? [...value] : [];
+  const runtime = state.interactionRuntime;
+  const genericInteraction = state.interactionAnalysisFingerprint === fingerprint &&
+    runtime?.scene?.id === state.adultScene?.id
+    ? savedInteractionProgress(runtime, fingerprint, runtime?.scene?.id) : null;
   return {
     saveVersion: SAVE_VERSION,
     engineVersion: ENGINE_VERSION,
@@ -698,7 +732,8 @@ export function createRuntimeSnapshot(state = {}, fingerprint = '') {
     activePositionId: state.activePositionId || null,
     activeAdultCategory: state.activeAdultCategory || null,
     activeMovementId: state.activeMovementId || null,
-    adultSceneId: state.adultScene?.id || null
+    adultSceneId: state.adultScene?.id || null,
+    ...(genericInteraction ? { genericInteraction } : {})
   };
 }
 
@@ -707,12 +742,18 @@ export function isCompatibleRuntimeSnapshot(snapshot, fingerprint) {
     snapshot &&
     Number(snapshot.saveVersion) === SAVE_VERSION &&
     String(snapshot.engineVersion || '') === ENGINE_VERSION &&
-    String(snapshot.fingerprint || '') === String(fingerprint || '')
+    String(snapshot.fingerprint || '') === String(fingerprint || '') &&
+    (!snapshot.genericInteraction || (
+      Number(snapshot.genericInteraction.version) === GENERIC_INTERACTION_SAVE_VERSION &&
+      String(snapshot.genericInteraction.fingerprint || '') === String(fingerprint || '') &&
+      Boolean(snapshot.genericInteraction.sceneId) &&
+      String(snapshot.genericInteraction.sceneId) === String(snapshot.adultSceneId || '')
+    ))
   );
 }
 
 export function applyRuntimeSnapshot(state, snapshot) {
-  if (!state || !snapshot) return state;
+  if (!state || !isCompatibleRuntimeSnapshot(snapshot, state.analysisFingerprint ?? snapshot?.fingerprint)) return state;
   state.gameCursorTime = Math.max(0, numberOr(snapshot.gameCursorTime));
   state.currentActionIndex = Math.floor(numberOr(snapshot.currentActionIndex, -1));
   state.consumedActionIds = new Set(snapshot.consumedActionIds || []);
@@ -737,5 +778,12 @@ export function applyRuntimeSnapshot(state, snapshot) {
   state.activeAdultCategory = snapshot.activeAdultCategory || null;
   state.activeMovementId = snapshot.activeMovementId || null;
   state.restoredAdultSceneId = snapshot.adultSceneId || null;
+  // The adapter applies this seed only after rebuilding and validating the
+  // matching source scene. Never persist or restore scene objects or media.
+  delete state.restoredInteractionProgress;
+  if (snapshot.genericInteraction) {
+    state.restoredInteractionProgress = savedInteractionProgress(snapshot.genericInteraction,
+      snapshot.fingerprint, snapshot.genericInteraction.sceneId);
+  }
   return state;
 }
