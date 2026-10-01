@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { parseModelJson } from '../public/model-json.js';
-import { repairDialogueTimestamps, requireDialogueTiming } from '../public/dialogue-integrity.js';
+import { repairDialogueTimestamps, requireDialogueTiming, filterValidDialogueRanges } from '../public/dialogue-integrity.js';
 
 // Run the existing provider loop against simulated HTTP failures, retaining
 // the already uploaded media URI. No external API requests are made.
@@ -17,7 +17,9 @@ async function run(errors = [], responses = []) {
   const requests = [];
   const delays = [];
   const scope = vm.createContext({
-    parseModelJson, repairDialogueTimestamps, requireDialogueTiming, duration: 900, process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
+    parseModelJson, repairDialogueTimestamps, requireDialogueTiming, filterValidDialogueRanges,
+    timingScope: 'source', allowPartialInvalidRanges: false,
+    duration: 900, process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
     req: { file: { mimetype: 'audio/wav' } }, prompt: 'Analyze speech', transcriptGrounding: '',
     dialogueUsage: {}, addGeminiUsage() {}, console: { warn() {} },
     dialogueStage() {}, inlineAudioPart: null,
