@@ -48,6 +48,25 @@ test('the optional scene flag does not reject adjacent same-cast evidence across
   assert.equal(matchSceneIntroductions([distant, anchor], [{ action: anchor, sceneId: 'main' }], eligible).size, 0);
 });
 
+test('stable subject and partner tracks ignore provider-local character aliases across chunks', () => {
+  const intro = action(0, 10, {
+    primaryCharacterId: 'char-002',
+    involvedCharacterIds: ['char-001', 'char-002']
+  });
+  const anchorRow = action(10, 20, {
+    kind: 'chapter',
+    primaryCharacterId: 'PARTNER_A',
+    involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A']
+  });
+  intro.subjectTrackId = 'MAIN_MALE';
+  intro.partnerTrackId = 'PARTNER_A';
+  anchorRow.subjectTrackId = 'MAIN_MALE';
+  anchorRow.partnerTrackId = 'PARTNER_A';
+  const result = matchSceneIntroductions([intro, anchorRow],
+    [{ action: anchorRow, sceneId: 'main' }], eligible);
+  assert.equal(result.get(intro), 'main');
+});
+
 test('same participant names cannot substitute swapped source roles or an invalid observed interval', () => {
   const anchor = action(10, 20, { kind: 'chapter' });
   for (const patch of [{ subjectTrackId: 'b', partnerTrackId: 'a' }, { startTime: null }, { startTime: -1 }]) {
