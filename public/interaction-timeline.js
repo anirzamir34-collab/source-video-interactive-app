@@ -32,11 +32,9 @@ export function interactionGroupIdentity(group = {}) {
 export function verifiedOccurrenceRanges(group = {}) {
   if (group.sourceVerified !== true) return [];
   const parentRange = timelineRange(group.startTime, group.endTime);
-  const declared = Object.prototype.hasOwnProperty.call(group, 'sourceRanges');
-  const source = declared ? list(group.sourceRanges) : parentRange ? [{
-    id: text(group.sourceGroupId || group.sourcePositionId || group.id),
-    ...parentRange
-  }] : [];
+  // A verified parent flag does not prove a continuous envelope. Require the
+  // actual declared source intervals before a target can become playable.
+  const source = list(group.sourceRanges);
   const ranges = normalizedSourceRanges({ sourceRanges: source })
     .filter(range => range.sourceVerified !== false && (!parentRange ||
       (range.startTime >= parentRange.startTime - epsilon && range.endTime <= parentRange.endTime + epsilon)));

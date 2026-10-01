@@ -196,6 +196,14 @@ const genericGroup = (id, startTime, endTime, extra = {}) => ({
   ...extra
 });
 
+test('generic source guard never substitutes a verified parent envelope for missing source ranges', () => {
+  const group = genericGroup('missing-ranges', 0, 100);
+  delete group.sourceRanges;
+  assert.deepEqual(verifiedOccurrenceRanges(group), []);
+  assert.equal(interactionEntryClip(group), null);
+  assert.equal(interactionClipGuard(group, group.movements[0]).allowed, false);
+});
+
 test('generic occurrence guard requires verified group, clip and non-rejected source evidence', () => {
   const group = genericGroup('a', 0, 10);
   const action = group.movements[0];
