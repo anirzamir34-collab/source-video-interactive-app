@@ -4571,8 +4571,13 @@ function prepareAdultScenes() {
         activityType: routeNamespace,
         routeNamespace,
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
-        positionLabel: canonical.correctedFromAction ? '' : String(action.positionLabel || '').trim(),
-        label: sourceDisplayLabel(canonical.correctedFromAction ? { ...action, positionLabel: '' } : action,
+        positionLabel: action.classificationReview === 'verified' && String(action.positionLabel || '').trim()
+          ? String(action.positionLabel).trim()
+          : (canonical.correctedFromAction ? '' : String(action.positionLabel || '').trim()),
+        label: sourceDisplayLabel(
+          action.classificationReview === 'verified' && String(action.positionLabel || '').trim()
+            ? action
+            : (canonical.correctedFromAction ? { ...action, positionLabel: '' } : action),
           sourceIdentityLabel(activityDisplayLabel(canonical.label, action),
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel })),
         categoryId: category.id,
