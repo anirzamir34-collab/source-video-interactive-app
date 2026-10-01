@@ -6340,7 +6340,9 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   const retainedOccurrence = previousPositionId === position.id
     ? occurrences.find(group => group.id === state.activeAdultOccurrenceId)
     : null;
-  const targetOccurrence = containingOccurrence || retainedOccurrence ||
+  const nextForwardOccurrence = occurrences.find(group => Number(group.startTime) >= cursor - 0.25 &&
+    Number(group.endTime) > cursor + 0.05);
+  const targetOccurrence = containingOccurrence || nextForwardOccurrence || retainedOccurrence ||
     occurrences.find(group => Number(group.endTime) > cursor + 0.05) || occurrences[0] || null;
   // A canonical tab may summarize several distant returns, but a movement
   // selection must stay inside one continuous occurrence. This prevents the
