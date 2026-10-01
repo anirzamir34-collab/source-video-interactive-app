@@ -40,7 +40,7 @@ export function interactionProgressPacing(scene, {
 } = {}) {
   const source = normalizeInteractionScene(scene);
   const firstCoreTime = Math.min(...source.groups.filter(group => group.phase === 'CORE').map(startOf));
-  const opening = source.choices.filter(choice => choice.phase === 'APPROACH' &&
+  const opening = source.choices.filter(choice => choice.phase === 'APPROACH' && choice.progressionEnabled !== false &&
     (!Number.isFinite(firstCoreTime) || startOf(choice) < firstCoreTime));
   const openingStart = Math.min(...opening.map(startOf));
   const openingEnd = Math.max(...opening.flatMap(rangesOf).map(range => range.endTime));
@@ -99,6 +99,7 @@ export function progressForSelection(state, choiceId, baseIncrement = 25) {
   const choice = state.scene.choices.find(row => row.id === choiceId) ||
     state.scene.groups.flatMap(group => group.movements || []).find(row => row.id === choiceId);
   if (!choice || choice.sourceVerified !== true || !rangesOf(choice).length) return state;
+  if (choice.progressionEnabled === false) return state;
   const owner = choice.groupId ? state.scene.groups.find(group => group.id === choice.groupId)
     : state.scene.groups.find(group => (group.movements || []).includes(choice));
   if (choice.groupId && !owner) return state;

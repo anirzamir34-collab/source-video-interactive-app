@@ -1009,3 +1009,75 @@ test('a delayed final card tick pauses without completing the scene envelope', a
   assert.equal(f.state.activeMovementId, null);
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
 });
+
+test('a full meter clears the opening override when every verified group is already unlocked without seeking', () => {
+  const f = runtimeFixture();
+  f.els.video.time = 5;
+  f.state.adultSexUnlocked = true;
+  f.state.interactionPhaseOverride = 'APPROACH';
+  f.state.femaleSceneProgress = 35;
+  f.state.adultScene.positions.forEach(group => f.state.adultUnlockedPositionIds.add(group.id));
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.interactionPhaseOverride, null);
+  assert.equal(f.els.adultInteractionPanel.dataset.phase, 'positions');
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.els.choices.classes.has('hidden'), true);
+  assert.equal(f.els.video.currentTime, 5);
+  assert.equal(f.els.video.playCalls, 0);
+  assert.equal(f.state.adultSeekRequestId, 0);
+  assert.equal(f.state.adultUnlockedPositionIds.size, 3);
+  f.renderAdultProgressiveUI(false);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.els.video.currentTime, 5);
+});
+
+test('an inactive scene trace excludes retained group unlocks and source ranges', () => {
+  const f = runtimeFixture();
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultRevealedPositionIds.add('one');
+  f.state.activePositionId = 'one';
+  f.state.activeAdultOccurrenceId = 'source-one';
+  f.genericInteractionSnapshot();
+  f.state.adultMode = false;
+  f.state.adultScene = null;
+  const trace = f.genericInteractionTrace();
+  assert.equal(trace.sceneId, null);
+  assert.equal(trace.sceneActive, false);
+  assert.equal(trace.currentPhase, null);
+  assert.deepEqual(Array.from(trace.unlockedGroupIds), []);
+  assert.deepEqual(Array.from(trace.revealedGroupIds), []);
+  assert.deepEqual(Array.from(trace.sourceRanges), []);
+  assert.equal(trace.activeGroupId, null);
+  assert.equal(trace.activeOccurrenceId, null);
+});
+
+test('verified normal dialogue has its own choices and earns no progress before the opening choices appear', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene.foreplay = [
+    { id: 'source-dialogue', label: 'Existing line', sourceVerified: true, nonIntimate: true, startTime: 0, endTime: 10 },
+    { id: 'source-opening', label: 'Existing opening', sourceVerified: true, startTime: 10, endTime: 20 }
+  ];
+  f.els.video.time = 0;
+  f.renderAdultPanel(f.state.adultScene);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-dialogue']);
+  assert.equal(f.els.choices.children[0].html, '<strong>DİYALOG</strong>');
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
+  f.playAdultPrelude('source-dialogue');
+  await flush();
+  assert.equal(f.state.activeAdultPreludeId, 'source-dialogue');
+  assert.equal(f.state.femaleSceneProgress, 0);
+  f.state.lastAdultFrameNow = 1000;
+  f.els.video.time = 5;
+  f.updateAdultPlayback(1250, 5);
+  assert.equal(f.state.femaleSceneProgress, 0);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
+  f.els.video.time = 10;
+  f.updateAdultPlayback(1500, 10);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-opening']);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
+  assert.equal(f.state.femaleSceneProgress, 0);
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.els.video.playCalls, 1);
+});

@@ -2835,6 +2835,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.dubbingEnabled = true;
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
+        if (els.dubToggleBtn) els.dubToggleBtn.textContent = 'TR DUBLAJ: AÇIK';
         updateDubMix();
         const dubSegments = dialogue.dubSegments || dialogue.segments;
         els.analysisState.textContent = 'PREPARING_DUB';
@@ -3931,6 +3932,8 @@ function prepareAdultScenes() {
     input: {
       adultScene: Boolean(action?.adultScene),
       adultSceneId: String(action?.adultSceneId || ''),
+      adultSceneStartTime: action?.adultSceneStartTime ?? null,
+      adultSceneEndTime: action?.adultSceneEndTime ?? null,
       positionId: String(action?.positionId || ''),
       positionLabel: String(action?.positionLabel || ''),
       positionOccurrenceId: String(action?.positionOccurrenceId || ''),
@@ -4135,8 +4138,10 @@ function prepareAdultScenes() {
       const sourceDialogue = actionType === 'other' &&
         !/\b(?:pozisyon|seks|oral)\b/iu.test(action.label || '');
       const labelWarmup = /\b(op|opus|dokun|oksa|soyun|cikar|saril|elle|elini|tenine)\b/.test(labelKey);
-      const startTime = Math.max(scene.startTime, Number(action.startTime));
-      const endTime = Math.min(scene.endTime, Number(action.endTime));
+      // A provider's scene envelope is container metadata, not evidence that
+      // can erase an observed action already assigned by the routing guards.
+      const startTime = Number(action.startTime);
+      const endTime = Number(action.endTime);
 
       if (
         action.sourceVerified === true &&
@@ -4154,6 +4159,8 @@ function prepareAdultScenes() {
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           sourceVerified: true,
           nonIntimate: sourceDialogue,
+          subjectTrackId: String(action.subjectTrackId || '').trim(),
+          partnerTrackId: String(action.partnerTrackId || '').trim(),
           startTime,
           endTime,
           maleProgressRate: Number(action.maleProgressRate || 1),
@@ -4193,6 +4200,8 @@ function prepareAdultScenes() {
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           sourceVerified: true,
           nonIntimate: false,
+          subjectTrackId: String(action.subjectTrackId || '').trim(),
+          partnerTrackId: String(action.partnerTrackId || '').trim(),
           startTime,
           endTime,
           maleProgressRate: Number(action.maleProgressRate || 1),
@@ -4317,7 +4326,8 @@ function prepareAdultScenes() {
           const previous = items[items.length - 1];
           const sameLabel = previous &&
             normalizeAdultLabel(previous.label) === normalizeAdultLabel(item.label);
-          if (previous && sameLabel && item.sourceVerified === true && previous.sourceVerified === true &&
+          if (previous && sameLabel && Boolean(item.nonIntimate) === Boolean(previous.nonIntimate) &&
+              item.sourceVerified === true && previous.sourceVerified === true &&
               item.startTime <= previous.endTime + 1e-7 &&
               String(item.subjectTrackId || '') === String(previous.subjectTrackId || '') &&
               String(item.partnerTrackId || '') === String(previous.partnerTrackId || '')) {
@@ -4569,7 +4579,7 @@ function genericInteractionScene(scene = state.adultScene) {
       entryClip: movements.find(item => item.id === position.entryMovementId) || movements[0] };
   });
   const standalone = (items, phase) => (items || []).map(item => ({
-    ...item, phase, occurrenceId: item.id,
+    ...item, phase, occurrenceId: item.id, progressionEnabled: item.nonIntimate !== true,
     sourceRanges: [{ id: item.id, startTime: item.startTime, endTime: item.endTime }]
   }));
   return { id: scene?.id || null, groups,
@@ -4596,6 +4606,7 @@ function genericInteractionSnapshot() {
     state.interactionAftermathSource = scene?.aftermath;
   }
   const runtime = state.interactionRuntime;
+  if (!scene) return runtime;
   return { ...runtime, progressionValue: currentAdultFlow(),
     unlockedGroupIds: [...(state.adultUnlockedPositionIds || [])],
     revealedGroupIds: [...(state.adultRevealedPositionIds || [])],
@@ -4610,10 +4621,13 @@ function genericInteractionTrace() {
   const panelVisible = Boolean(els.adultInteractionPanel &&
     !els.adultInteractionPanel.classList.contains('hidden'));
   const overlayVisible = Boolean(els.choices && !els.choices.classList.contains('hidden'));
-  return interactionTrace({ ...runtime, panelVisible,
+  const report = interactionTrace({ ...runtime, panelVisible,
     blockedSeekReason: state.interactionBlockedSeekReason || runtime.blockedSeekReason }, {
     overlayCount: Number(panelVisible) + Number(overlayVisible)
   });
+  return { ...report, sceneId: state.adultScene?.id || null,
+    sceneActive: Boolean(state.adultScene),
+    currentPhase: state.adultScene ? report.currentPhase : null };
 }
 
 function clearInteractionSelection() {
@@ -4759,14 +4773,14 @@ function currentWarmupLustScale(scene = state.adultScene) {
   if (!coreStarts.length) return 1;
   const firstCoreStart = Math.min(...coreStarts);
   const warmupStarts = [
-    Number(scene.startTime),
-    ...(scene.foreplay || []).filter(item => item.sourceVerified === true).map(item => Number(item.startTime)),
+    ...(scene.foreplay || []).filter(item => item.sourceVerified === true && !item.nonIntimate)
+      .map(item => Number(item.startTime)),
     ...(scene.positions || []).filter(position => position.sourceVerified === true && isWarmupPosition(position))
       .map(item => Number(item.startTime))
   ].filter(Number.isFinite);
   const warmupStart = warmupStarts.length ? Math.min(...warmupStarts) : firstCoreStart;
   const warmupActionCount = (scene.foreplay || [])
-    .filter(item => item.sourceVerified === true && Number(item.startTime) < firstCoreStart + 0.05).length;
+    .filter(item => item.sourceVerified === true && !item.nonIntimate && Number(item.startTime) < firstCoreStart + 0.05).length;
   const warmupPositionChoiceCount = (scene.positions || [])
     .filter(position => position.sourceVerified === true && isWarmupPosition(position))
     .reduce((sum, position) => sum + Math.max(1,
@@ -5171,6 +5185,7 @@ function renderAdultApproachChoices(scene, later = false) {
         (scene?.positions || []).filter(position => !isWarmupPosition(position)))).map(item => ({
       kind: 'foreplay', id: item.id, label: item.label,
       sourceVerified: item.sourceVerified === true,
+      nonIntimate: item.nonIntimate === true,
       startTime: item.startTime, endTime: item.endTime,
       playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
     })),
@@ -5201,7 +5216,14 @@ function renderAdultApproachChoices(scene, later = false) {
     Number(state.adultTimelineFloor) || 0,
     Number(els.video?.currentTime) || 0
   );
-  const candidates = selectSequentialApproachChoices(approachPool, {
+  // Existing source-role metadata chooses the surface. Dialogue choices stay
+  // separate from progress-bearing opening choices, without changing labels.
+  const foreground = approachPool.filter(item => item.sourceVerified === true &&
+    Number(item.endTime) > projectedFloor + 0.05)
+    .sort((left, right) => Number(left.startTime) - Number(right.startTime))[0];
+  const dialogueOnly = foreground?.nonIntimate === true;
+  const candidates = selectSequentialApproachChoices(approachPool.filter(item =>
+    Boolean(item.nonIntimate) === dialogueOnly), {
     timelineFloor: projectedFloor,
     limit: 5,
     maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 30,
@@ -5209,11 +5231,12 @@ function renderAdultApproachChoices(scene, later = false) {
   });
 
   state.adultApproachChoices = candidates;
+  els.choices.dataset.interactionPhase = dialogueOnly ? 'DIALOGUE' : 'APPROACH';
   els.choices.innerHTML = '';
   els.choices.classList.remove('hidden');
   const heading = document.createElement('div');
   heading.className = 'approach-status';
-  heading.innerHTML = later ? '<strong>SAHNE SEÇENEKLERİ</strong>' :
+  heading.innerHTML = dialogueOnly ? '<strong>DİYALOG</strong>' : later ? '<strong>SAHNE SEÇENEKLERİ</strong>' :
     `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>Lust 100 olduğunda sıradaki doğrulanmış pozisyon hemen açılır.</small>`;
   els.choices.appendChild(heading);
   const compactChoiceLabel = value => String(value || '')
@@ -5325,6 +5348,10 @@ function renderAdultProgressiveUI(force = false) {
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const hasCoreUnlocked = availablePositions.some(position => !isBonusPosition(position));
   const hasBonusUnlocked = availablePositions.some(isBonusPosition);
+  // Rewinding may restore the opening surface without revoking earned groups.
+  // A full meter must reveal their panel even when there is no new group left
+  // for unlockNextAdultPositionFromLust() to unlock and clear that override.
+  if (currentAdultFlow() >= 99.9 && hasCoreUnlocked) state.interactionPhaseOverride = null;
   const phase = state.interactionPhaseOverride === 'APPROACH'
     ? 'foreplay' : setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
   const videoTime = Number(els.video?.currentTime) || 0;
@@ -5347,6 +5374,8 @@ function renderAdultProgressiveUI(force = false) {
     state.activeAdultCategory || '',
     state.activeAdultPartnerTrackId || '',
     laterOverlay ? 'overlay' : '',
+    (scene.foreplay || []).find(item => item.sourceVerified === true && videoTime >= Number(item.startTime) &&
+      videoTime < Number(item.endTime))?.nonIntimate ? 'dialogue' : 'approach',
     phase === 'foreplay' ? Math.floor(Math.max(Number(els.video?.currentTime) || 0,
       Number(state.adultTimelineFloor) || 0) / 3) : '',
     Math.round(currentAdultFlow())
@@ -6442,7 +6471,7 @@ function updateAdultPlayback(now, mediaTime) {
       femaleRate: item.femaleProgressRate || 1,
       warmup: true
     });
-    addFemaleLust(progress.lust * currentWarmupLustScale());
+    if (!item.nonIntimate) addFemaleLust(progress.lust * currentWarmupLustScale());
     renderAdultProgress();
     return;
   }

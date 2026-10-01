@@ -46,6 +46,28 @@ test('short opening keeps normal pacing and verified choice count ignores invali
   assert.equal(progressForSelection(createInteractionState(data), 'a').progressionValue, 25);
 });
 
+test('verified choices with progression disabled remain selectable without contributing to pacing or progress', () => {
+  const data = scene({ choices: [choice('dialogue', 0, 250, { progressionEnabled: false }),
+    choice('opening', 250, 270)], groups: [group('chapter', 280, 310)] });
+  const state = createInteractionState(data);
+  assert.equal(state.openingDuration, 30);
+  assert.equal(state.verifiedChoiceCount, 1);
+  assert.equal(state.progressionScale, 1);
+  assert.equal(selectInteractionChoice(state, 'dialogue').target.startTime, 0);
+  assert.equal(progressForSelection(state, 'dialogue', 1000), state);
+  assert.deepEqual(state.unlockedGroupIds, []);
+  assert.equal(progressForSelection(advanceInteraction(state, 250), 'opening').progressionValue, 25);
+});
+
+test('an entirely progress-disabled opening does not acquire a synthetic progression budget', () => {
+  const state = createInteractionState(scene({ choices: [choice('dialogue', 0, 300,
+    { progressionEnabled: false })], groups: [group('chapter', 300, 330)] }));
+  assert.equal(state.openingDuration, 0);
+  assert.equal(state.verifiedChoiceCount, 0);
+  assert.equal(state.progressionValue, 0);
+  assert.deepEqual(advanceInteraction(state, 300).unlockedGroupIds, ['chapter']);
+});
+
 test('later approach records cannot slow the first opening progress budget', () => {
   const data = scene({ choices: [choice('first', 0, 10),
     ...Array.from({ length: 20 }, (_, index) => choice(`later-${index}`, 100 + index * 2, 101 + index * 2))] });

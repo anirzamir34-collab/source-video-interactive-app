@@ -135,6 +135,121 @@ test('preparation routes a verified same-cast introduction into its adjacent sce
   assert.equal(ordinaryFamily.adultScenes[0].foreplay.length, 0);
 });
 
+for (const example of [
+  { name: 'starts after the first action', sceneStart: 90, sceneEnd: 100,
+    intervals: [[80, 90], [90, 100]] },
+  { name: 'ends before the action', sceneStart: 0, sceneEnd: 80,
+    intervals: [[90, 100]] }
+]) {
+  test(`verified introduction intervals survive provider scene metadata that ${example.name}`, () => {
+    const cast = { subjectTrackId: 'actor-a', partnerTrackId: 'actor-b' };
+    const metadata = { ...cast, adultSceneStartTime: example.sceneStart,
+      adultSceneEndTime: example.sceneEnd };
+    const introductions = example.intervals.map(([start, end], index) =>
+      action(`approach-${index}`, start, end, { ...metadata,
+        actionType: 'touch', positionId: '', positionLabel: '' }));
+    const rejected = action('unverified-approach', 70, 80, { ...metadata,
+      sourceVerified: false, actionType: 'touch', positionId: '', positionLabel: '' });
+    const core = action('chapter', 100, 120, { ...metadata, actionType: 'position',
+      positionStartTime: 100, positionEndTime: 120 });
+    const actions = [rejected, ...introductions, core];
+    const original = structuredClone(actions);
+    const state = prepare(actions, {
+      verifiedAdultPositionFamily: item => item.sourceVerified && item.positionId ? 'chapter' : ''
+    });
+
+    assert.equal(state.adultScenes.length, 1);
+    const scene = state.adultScenes[0];
+    assert.deepEqual(Array.from(scene.foreplay, item =>
+      [item.id, item.startTime, item.endTime, item.sourceVerified]),
+    example.intervals.map(([start, end], index) => [`approach-${index}`, start, end, true]));
+    assert.equal(scene.startTime, example.intervals[0][0]);
+    assert.equal(scene.endTime, 120);
+    assert.deepEqual(Array.from(scene.positions[0].sourceRanges,
+      item => [item.startTime, item.endTime]), [[100, 120]]);
+    assert.ok(scene.positions[0].movements.every(item => sourceRangeForClip(scene.positions[0], item)));
+    assert.equal(scene.positions[0].movements.some(item => item.positionOnlyFallback), false);
+    assert.equal(state.adultAnalysisTrace.actions.find(item =>
+      item.actionId === 'unverified-approach').route, 'REJECTED');
+    assert.deepEqual(actions, original);
+  });
+}
+
+test('introduction routing still rejects unverified actions, a different cast, and a large source gap', () => {
+  const cast = { subjectTrackId: 'actor-a', partnerTrackId: 'actor-b' };
+  const core = action('chapter', 100, 120, { ...cast, actionType: 'position',
+    adultSceneStartTime: 90, adultSceneEndTime: 100,
+    positionStartTime: 100, positionEndTime: 120 });
+  const examples = [
+    action('unverified', 90, 100, { ...cast, sourceVerified: false }),
+    action('different-cast', 90, 100, { ...cast, partnerTrackId: 'actor-c' }),
+    action('large-gap', 10, 20, cast)
+  ];
+  for (const example of examples) {
+    const introduction = { ...example, actionType: 'touch', positionId: '', positionLabel: '',
+      adultScene: false, adultSceneId: '', adultSceneStartTime: undefined,
+      adultSceneEndTime: undefined };
+    const actions = [introduction, core];
+    const original = structuredClone(actions);
+    const state = prepare(actions, {
+      verifiedAdultPositionFamily: item => item.sourceVerified && item.positionId ? 'chapter' : ''
+    });
+    assert.equal(state.adultScenes.length, 1, example.actionId);
+    assert.equal(state.adultScenes[0].foreplay.length, 0, example.actionId);
+    assert.equal(state.adultScenes[0].startTime, 100, example.actionId);
+    assert.deepEqual(Array.from(state.adultScenes[0].positions[0].sourceRanges,
+      item => [item.startTime, item.endTime]), [[100, 120]], example.actionId);
+    assert.equal(state.adultAnalysisTrace.actions[0].route, 'NOT_ROUTED', example.actionId);
+    assert.deepEqual(actions, original, example.actionId);
+  }
+});
+
+test('adjacent same-label introductions retain separate source intervals for different casts', () => {
+  const metadata = { adultSceneStartTime: 90, adultSceneEndTime: 100,
+    subjectTrackId: 'actor-a' };
+  const actions = [
+    action('first-approach', 80, 90, { ...metadata, partnerTrackId: 'actor-b',
+      label: 'Observed action', actionType: 'touch', positionId: '', positionLabel: '' }),
+    action('second-approach', 90, 100, { ...metadata, partnerTrackId: 'actor-c',
+      label: 'Observed action', actionType: 'touch', positionId: '', positionLabel: '' }),
+    action('chapter', 100, 120, { ...metadata, partnerTrackId: 'actor-c',
+      actionType: 'position', positionStartTime: 100, positionEndTime: 120 })
+  ];
+  const original = structuredClone(actions);
+  const state = prepare(actions);
+
+  assert.equal(state.adultScenes.length, 1);
+  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item =>
+    [item.id, item.startTime, item.endTime, item.subjectTrackId, item.partnerTrackId]), [
+    ['first-approach', 80, 90, 'actor-a', 'actor-b'],
+    ['second-approach', 90, 100, 'actor-a', 'actor-c']
+  ]);
+  assert.deepEqual(actions, original);
+});
+
+test('adjacent same-label dialogue and introduction retain their separate progress roles', () => {
+  const metadata = { adultSceneStartTime: 90, adultSceneEndTime: 100,
+    subjectTrackId: 'actor-a', partnerTrackId: 'actor-b' };
+  const actions = [
+    action('dialogue', 80, 90, { ...metadata, label: 'Observed action',
+      actionType: 'other', positionId: '', positionLabel: '' }),
+    action('approach', 90, 100, { ...metadata, label: 'Observed action',
+      actionType: 'touch', positionId: '', positionLabel: '' }),
+    action('chapter', 100, 120, { ...metadata, actionType: 'position',
+      positionStartTime: 100, positionEndTime: 120 })
+  ];
+  const original = structuredClone(actions);
+  const state = prepare(actions);
+
+  assert.equal(state.adultScenes.length, 1);
+  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item =>
+    [item.id, item.startTime, item.endTime, item.nonIntimate]), [
+    ['dialogue', 80, 90, true],
+    ['approach', 90, 100, false]
+  ]);
+  assert.deepEqual(actions, original);
+});
+
 test('short source evidence does not authorize a longer parent fallback', () => {
   const state = prepare([action('short', 10, 11)]);
   assert.equal(state.adultScenes.length, 0);
