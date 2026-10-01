@@ -2273,7 +2273,17 @@ app.post(
     };
     attachRetainedAnalysis();
 
+    const customGeminiApiKey = clientGeminiApiKey(req);
     const apiKey = resolveGeminiApiKey(req);
+    if (!customGeminiApiKey && dialogueQuotaBlockedUntil > Date.now()) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((dialogueQuotaBlockedUntil - Date.now()) / 1000));
+      return res.status(429).json({
+        available: false,
+        reason: 'GEMINI_DIALOGUE_QUOTA_BLOCKED',
+        retryAfterSeconds,
+        message: `Gemini konuşma analizi kotası şu anda dolu. Yaklaşık ${Math.ceil(retryAfterSeconds / 60)} dk sonra yeniden dene veya tarayıcı oturumuna kotası olan başka bir Gemini API anahtarı ekle.`
+      });
+    }
     let tempPath = req.file?.path;
     let originalVideoPath;
     let uploadedFile = null;
@@ -2723,8 +2733,19 @@ Rules:
           message: 'Video bağlantısının süresi doldu. Bağlantıyı yeniden aç.'
         });
       }
-      if (details.includes('RESOURCE_EXHAUSTED') || details.includes('429') || details.includes('quota')) {
-        dialogueQuotaBlockedUntil = Date.now() + (ttsQuotaRetrySeconds(details) || 3600) * 1000;
+      const quotaBlocked = details.includes('RESOURCE_EXHAUSTED') || details.includes('429') ||
+        details.toLowerCase().includes('quota') || details.toLowerCase().includes('rate limit');
+      if (quotaBlocked) {
+        const retryAfterSeconds = ttsQuotaRetrySeconds(details) || 3600;
+        dialogueQuotaBlockedUntil = Date.now() + retryAfterSeconds * 1000;
+        return res.status(429).json({
+          available: false,
+          reason: 'GEMINI_DIALOGUE_QUOTA_BLOCKED',
+          retryAfterSeconds,
+          uploadId: uploadSession ? uploadId : '',
+          message: `Gemini konuşma analizi kotası dolu. Yaklaşık ${Math.ceil(retryAfterSeconds / 60)} dk sonra yeniden dene veya kotası olan başka bir Gemini API anahtarı kullan.`,
+          error: error?.message || String(error)
+        });
       }
       return res.status(502).json({
         available: false,
