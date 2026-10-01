@@ -4143,7 +4143,22 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
     }
 
     const gap = Number(scene.startTime) - Number(previous.endTime);
-    const unownedBarrier = unownedIntervals.some(interval =>
+    const previousCast = castFor(previous);
+    const sceneCast = castFor(scene);
+    const castBarrier = Boolean(previousCast && sceneCast && previousCast !== sceneCast);
+    const scenePair = source => {
+      const rows = [...(source.positions || []), ...(source.foreplay || []), ...(source.partnerTransitions || [])];
+      const row = rows.find(item => String(item.subjectTrackId || '').trim() && String(item.partnerTrackId || '').trim());
+      return row ? [String(row.subjectTrackId).trim(), String(row.partnerTrackId).trim()] : [];
+    };
+    const [subjectTrackId, partnerTrackId] = scenePair(previous);
+    const verifiedBridge = !castBarrier && Boolean(subjectTrackId && partnerTrackId) &&
+      nonAdultActions.some(action => action?.sourceVerified === true &&
+        String(action.subjectTrackId || '').trim() === subjectTrackId &&
+        String(action.partnerTrackId || '').trim() === partnerTrackId &&
+        Number(action.endTime) >= Number(previous.endTime) - 0.1 &&
+        Number(action.startTime) <= Number(scene.startTime) + 2);
+    const unownedBarrier = !verifiedBridge && unownedIntervals.some(interval =>
       Number(interval.endTime) > Number(previous.endTime) + 0.05 &&
       Number(interval.startTime) < Number(scene.startTime) - 0.05);
     const narrativeBarrier = gap > 0.25 && nonAdultActions.some(action => {
@@ -4155,9 +4170,6 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
         Number.isFinite(start) && Number.isFinite(end) &&
         Math.min(end, Number(scene.startTime)) - Math.max(start, Number(previous.endTime)) >= 0.5;
     });
-    const previousCast = castFor(previous);
-    const sceneCast = castFor(scene);
-    const castBarrier = Boolean(previousCast && sceneCast && previousCast !== sceneCast);
     if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier || unownedBarrier || castBarrier) {
       merged.push({ ...scene });
       continue;
