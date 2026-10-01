@@ -180,6 +180,22 @@ test('audit separates transcription gaps from windows never successfully process
   assert.equal(audit.complete, false);
 });
 
+test('systemic provider quota failure aborts after the first window instead of becoming incomplete coverage', async () => {
+  const calls = [];
+  await assert.rejects(transcribeSourceWindows({
+    duration: 928.94,
+    state: {},
+    prepareAsset: async window => ({ uri: window.id }),
+    transcribeWindow: async (_asset, window) => {
+      calls.push(window.id);
+      throw Object.assign(new Error('429 RESOURCE_EXHAUSTED quota exceeded; Please retry in 49m'), {
+        status: 429
+      });
+    }
+  }), error => Number(error.status) === 429 && /RESOURCE_EXHAUSTED/.test(error.message));
+  assert.deepEqual(calls, ['window-001']);
+});
+
 test('majority failed source windows remain fatal while minority failure is usable', async () => {
   await assert.rejects(transcribeSourceWindows({
     duration: 180, state: {},
