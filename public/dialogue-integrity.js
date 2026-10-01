@@ -176,6 +176,31 @@ export function inspectDialogueTiming(rows = [], duration = 0) {
     requiresSourceRetiming: Boolean(reason) };
 }
 
+export function filterValidDialogueRanges(rows = [], duration = 0) {
+  const list = Array.isArray(rows) ? rows : [];
+  const limit = Number(duration) > 0 ? Number(duration) : Infinity;
+  const segments = [];
+  const rejectedSegments = [];
+  for (const row of list) {
+    const startTime = Number(row?.startTime);
+    const endTime = Number(row?.endTime);
+    const valid = row?.startTime != null && row?.endTime != null &&
+      Number.isFinite(startTime) && Number.isFinite(endTime) &&
+      startTime >= 0 && endTime > startTime && endTime <= limit + 0.05;
+    if (valid) {
+      segments.push({ ...row, startTime, endTime });
+      continue;
+    }
+    rejectedSegments.push({
+      segmentId: String(row?.segmentId || ''),
+      startTime: Number.isFinite(startTime) ? startTime : null,
+      endTime: Number.isFinite(endTime) ? endTime : null,
+      reason: 'INVALID_SOURCE_INTERVAL'
+    });
+  }
+  return { segments, rejectedSegments, rejectedCount: rejectedSegments.length };
+}
+
 export function requireDialogueTiming(rows, duration) {
   const report = inspectDialogueTiming(rows, duration);
   if (!report.valid) throw Object.assign(new Error(`DIALOGUE_TIMING_INVALID:${report.reason}`), {
