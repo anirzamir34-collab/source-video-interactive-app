@@ -775,7 +775,7 @@ async function checkAiUsageStatus() {
     });
     const body = await response.json();
     renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
-    const dialogueBlocked = !activeGeminiApiKey() && body.subtitles?.available === false &&
+    const dialogueBlocked = body.keySource !== 'browser_session' && body.subtitles?.available === false &&
       Number(body.subtitles?.retryAfterSeconds) > 0;
     renderQuotaBadge(els.dubQuotaStatus, activeElevenLabsApiKey()
       ? (dialogueBlocked
