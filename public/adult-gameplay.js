@@ -988,6 +988,20 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   });
 }
 
+export function splitSparseMovementChoiceCards(choices = [], maxChoices = 5) {
+  const cards = Array.isArray(choices) ? choices : [];
+  if (cards.length !== 1 || !Array.isArray(cards[0]?.variants) || cards[0].variants.length <= 1) return cards;
+  const base = cards[0];
+  const variants = base.variants.slice(0, Math.max(1, Math.min(5, Number(maxChoices) || 5)));
+  return variants.map((variant, index) => ({
+    ...base,
+    id: `${base.id}:source-part-${index + 1}`,
+    label: `${sourceActionLabel(variant?.label || base.label)} · Bölüm ${index + 1}`,
+    variants: [variant],
+    displayIndex: index + 1
+  }));
+}
+
 export function summarizeMovementChoiceCoverage(choices = []) {
   const cards = Array.isArray(choices) ? choices : [];
   const variantIds = cards.flatMap(card =>
