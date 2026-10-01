@@ -35,7 +35,8 @@ class Element extends EventTarget {
   };
   style = {};
   set innerHTML(value) { this.html = value; this.children = []; }
-  append(...children) { children.forEach(child => { child.parent = this; this.children.push(child); }); }
+  get parentElement() { return this.parent || null; }
+  append(...children) { children.forEach(child => { child.remove(); child.parent = this; this.children.push(child); }); }
   appendChild(child) { this.append(child); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
   setAttribute() {}
@@ -779,4 +780,37 @@ test('leaving the scene cancels a queued automatic first entry', async () => {
   await flush();
   assert.equal(f.state.adultMode, false);
   assert.equal(f.els.video.playCalls, 0);
+});
+
+test('repeated panel rendering after rewind mounts one panel and replaces introductory choices', () => {
+  const f = runtimeFixture();
+  const scene = f.state.adultScene;
+  f.els.video.time = 0;
+  f.renderAdultPanel(scene);
+  const initialChoices = f.els.choices.children.length;
+  assert.ok(initialChoices > 0);
+  f.els.video.time = 12;
+  f.renderAdultPanel(scene);
+  f.els.video.time = 0;
+  f.renderAdultPanel(scene);
+  assert.equal(f.stage.children.filter(node => node === f.els.adultInteractionPanel).length, 1);
+  assert.equal(f.els.choices.children.length, initialChoices);
+  assert.equal(f.state.completedAdultSceneIds.size, 0);
+});
+
+test('a verified explicit chapter selection retains the panel and never finishes the encounter', async () => {
+  const f = runtimeFixture();
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.renderAdultPanel(f.state.adultScene);
+  f.selectAdultPosition('one', true);
+  await flush();
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.state.completedAdultSceneIds.size, 0);
+  assert.equal(f.state.adultMode, true);
+  f.els.video.time = 30;
+  f.updateAdultPlayback(1000, 30);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.state.completedAdultSceneIds.size, 0);
+  assert.equal(f.state.adultMode, true);
 });
