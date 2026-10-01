@@ -1,9 +1,17 @@
 import { clipRange, timelineRange } from './sequence-integrity.js';
 
-const participants = action => [...new Set([
-  action.subjectTrackId, action.partnerTrackId, action.primaryCharacterId,
-  ...(action.involvedCharacterIds || []), ...(action.participantTrackIds || [])
-].map(value => String(value || '').trim()).filter(Boolean))].sort();
+const participants = action => {
+  const subject = String(action?.subjectTrackId || '').trim();
+  const partner = String(action?.partnerTrackId || '').trim();
+  // Stable gameplay track IDs are authoritative when both sides are present.
+  // Provider-local character aliases (char-001, char-002, etc.) may change
+  // between chunks and must not break an otherwise continuous source scene.
+  if (subject && partner) return [...new Set([subject, partner])].sort();
+  return [...new Set([
+    subject, partner, action?.primaryCharacterId,
+    ...(action?.involvedCharacterIds || []), ...(action?.participantTrackIds || [])
+  ].map(value => String(value || '').trim()).filter(Boolean))].sort();
+};
 
 // Link only existing, verified adjacent introductions for the same exact pair
 // or group. A dialogue, another cast, or a long gap is a boundary, not evidence
