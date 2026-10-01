@@ -603,3 +603,23 @@ test('reusing completed source bytes with changed analysis context never returns
   assert.equal(calls, 2); assert.equal(changed.jsonBody.context, 'second');
   assert.equal(f.sessions.size, 1);
 });
+
+test('parallel final chunk response is sent only after close and release of its write lock', async () => {
+  let releaseClose;
+  const closing = new Promise(resolve => { releaseClose = resolve; });
+  const session = { filePath: '/tmp/mock.part', totalSize: 6, receivedSize: 0,
+    nextChunk: 0, receivedChunks: new Map(), inflightRanges: new Map(), activeWrites: 0 };
+  const f = fixture(chunkCode, { dialogueUploadSessions: new Map([['upload', session]]),
+    fs: { promises: { open: async () => ({ write: async () => ({ bytesWritten: 6 }), close: () => closing }) } } });
+  const response = new ResponseStream();
+  const pending = f.routes.get('/api/dialogue-upload/:uploadId/chunk')({ params: { uploadId: 'upload' },
+    headers: { 'x-chunk-index': '0', 'x-chunk-offset': '0' }, body: Buffer.from('abcdef') }, response);
+  await tick();
+  assert.equal(response.jsonBody, undefined, 'a pending close must not advertise completion');
+  assert.equal(session.activeWrites, 1);
+  releaseClose(); await pending;
+  assert.equal(response.jsonBody.complete, true);
+  assert.equal(session.activeWrites, 0);
+  assert.equal(session.inflightRanges.size, 0);
+  assert.equal(session.receivedSize, 6);
+});

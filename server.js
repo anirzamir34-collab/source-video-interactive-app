@@ -1636,17 +1636,23 @@ app.post(
       session.activeWrites = Math.max(0, Number(session.activeWrites) || 0) + 1;
       session.updatedAt = Date.now();
       let handle;
+      let writeReleased = false;
       try {
         handle = await fs.promises.open(session.filePath, 'r+');
         const { bytesWritten } = await handle.write(body, 0, body.length, offset);
         if (bytesWritten !== body.length) throw new Error('CHUNK_SHORT_WRITE');
+        await handle.close();
+        handle = null;
         session.receivedChunks.set(chunkIndex, { offset, length: body.length });
         session.receivedSize += body.length;
+        session.inflightRanges.delete(chunkIndex);
+        session.activeWrites = Math.max(0, Number(session.activeWrites) - 1);
+        writeReleased = true;
         session.updatedAt = Date.now();
         return res.json({
           available: true,
           receivedSize: session.receivedSize,
-          complete: session.receivedSize === session.totalSize
+          complete: session.receivedSize === session.totalSize && Number(session.activeWrites) === 0
         });
       } catch (error) {
         return res.status(500).json({
@@ -1656,8 +1662,10 @@ app.post(
         });
       } finally {
         try { await handle?.close(); } catch {}
-        session.inflightRanges.delete(chunkIndex);
-        session.activeWrites = Math.max(0, Number(session.activeWrites) - 1);
+        if (!writeReleased) {
+          session.inflightRanges.delete(chunkIndex);
+          session.activeWrites = Math.max(0, Number(session.activeWrites) - 1);
+        }
         session.updatedAt = Date.now();
       }
     }
