@@ -2496,7 +2496,7 @@ Rules:
         segments,
         nonSpeechEvents,
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
-        transcriptionEngine: String(parsed.transcriptionEngine || 'gemini-3.8-flash-fallback'),
+        transcriptionEngine: String(parsed.transcriptionEngine || process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite'),
         translationEngine: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
         timestampUnit: 'seconds',
         timestampRepair: dialogueTimeRepair.report,
