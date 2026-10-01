@@ -603,7 +603,7 @@ test('obsolete introduction selections cannot earn progress after a newer select
   assert.equal(f.state.adultPreludePlayCounts.size, 0);
 });
 
-test('one position tab exposes later verified returns and switches occurrence only when selected', async () => {
+test('one canonical position tab keeps each distant return occurrence local and never jumps backward', async () => {
   const f = runtimeFixture();
   const first = f.state.adultScene.positions[0];
   const later = chapter('return', 120, 'one');
@@ -611,25 +611,29 @@ test('one position tab exposes later verified returns and switches occurrence on
   first.movements.push(...later.movements);
   first.endTime = 150;
   await startFirstChapter(f);
-  assert.equal(first.activeMovementChoices.some(choice => choice.variants.some(item => item.id === 'return-0')), true);
-  assert.ok(first.activeMovementChoices.every(choice => new Set(choice.variants.map(item => item.sourcePositionId)).size === 1));
+
+  assert.equal(first.activeMovementChoices.some(choice =>
+    choice.variants.some(item => item.id === 'return-0')), false,
+  'the first occurrence does not expose movement cards from a distant return');
+  assert.ok(first.activeMovementChoices.every(choice =>
+    choice.variants.every(item => item.sourcePositionId === 'source-one')));
+
   f.state.activeMovementId = null;
   f.state.adultTimelineFloor = 119.8;
   f.els.video.time = 119.8;
   f.selectAdultPosition('one', false);
   assert.deepEqual(
     new Set(first.activeMovementChoices.flatMap(item => item.variants).map(item => item.id)),
-    new Set(['one-0', 'return-0', 'return-1', 'return-2'])
+    new Set(['return-0', 'return-1', 'return-2'])
   );
+
   const tabPlayCalls = f.els.video.playCalls;
   f.selectAdultPosition('one', true);
   await flush();
   assert.equal(f.els.video.playCalls, tabPlayCalls + 1);
-  assert.equal(f.els.video.currentTime, 20, 'the explicit tab replays only its verified entry');
-  f.selectAdultMovement('return-0', true);
-  await flush();
+  assert.equal(f.els.video.currentTime, 120,
+    'an explicit tab near a later return enters that forward verified occurrence instead of rewinding');
   assert.equal(f.state.activeAdultOccurrenceId, 'source-return');
-  assert.equal(f.els.video.currentTime, 120);
   assert.equal(f.state.activePositionId, 'one');
 });
 
