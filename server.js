@@ -2254,7 +2254,13 @@ app.post(
       uploadSession.analysisPromise = new Promise(resolve => { resolveAnalysis = resolve; });
       res.json = body => {
         analysisResponse = { key: analysisKey, status: res.statusCode, body };
-        if (body?.available === true) uploadSession.analysisResult = { key: analysisKey, body };
+        // A usable partial transcript may let the current run continue, but it
+        // must not become the permanent cached answer. A later explicit retry
+        // should revisit only the retained failed windows without re-uploading
+        // successful source bytes.
+        if (body?.available === true && body?.coverageAudit?.complete !== false) {
+          uploadSession.analysisResult = { key: analysisKey, body };
+        }
         return originalJson(body);
       };
     };
