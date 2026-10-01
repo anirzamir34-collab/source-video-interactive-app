@@ -1601,7 +1601,14 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
   recordAiUsage(body?.aiUsage);
 
   if (!upload.ok || !body.available) {
-    throw new Error(body.error || body.message || `HTTP ${upload.status}`);
+    if (body?.reason === 'DIALOGUE_TIMING_INVALID') {
+      state.dubFailureReason = body.reason;
+      logEngineEvent(body.reason, body.timingIntegrity || {});
+    }
+    const error = new Error(body.reason === 'DIALOGUE_TIMING_INVALID'
+      ? body.message : (body.error || body.message || `HTTP ${upload.status}`));
+    error.code = body.reason || 'DIALOGUE_ANALYSIS_FAILED';
+    throw error;
   }
 
   if (body.audioReuseToken) {
@@ -1618,6 +1625,10 @@ async function analyzeSelectedDialogueOnce(file, session = state.analysisSession
 
   const durationSeconds = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
   const normalizedDialogue = normalizeDialogueTimeline(body, durationSeconds);
+  if (normalizedDialogue.timingIntegrity?.valid === false) {
+    logEngineEvent('DIALOGUE_TIMING_INVALID', normalizedDialogue.timingIntegrity);
+    throw new Error('Konuşma zamanları kaynaktan doğrulanamadı. Yüklenmiş sesle analizi yeniden dene.');
+  }
   if (normalizedDialogue.timestampRepair?.repaired) {
     logEngineEvent('DIALOGUE_TIMELINE_REPAIRED', normalizedDialogue.timestampRepair);
   }
@@ -1692,6 +1703,7 @@ function dubbingDebugReport() {
   return {
     dubbingEnabled: state.dubbingEnabled,
     provider: state.dubProviderLock || 'unknown',
+    voiceAssignments: [...(state.dubSpeakerVoices?.values() || [])],
     selectedModel: [...(state.dubSegmentMetadata?.values() || [])].find(row => row.model)?.model || '',
     modelId: [...(state.dubSegmentMetadata?.values() || [])].find(row => row.model)?.model || '',
     activeSegmentId: state.activeDubSegmentId,
@@ -1705,6 +1717,7 @@ function dubbingDebugReport() {
     playbackEventCount: diagnostics.playbackEventCount,
     firstPlaybackEvents: diagnostics.firstPlaybackEvents,
     repairedTimestamps: state.dialogue?.timestampRepair || null,
+    timingIntegrity: state.dialogue?.timingIntegrity || null,
     failureReason: state.dubFailureReason || '',
     playbackFailureReason: diagnostics.playbackFailureReason,
     playbackBlocked: Boolean(state.dubPlaybackBlocked),
@@ -7388,10 +7401,13 @@ async function openSavedGame(game) {
   } else state.analysis = savedAnalysis;
   state.dialogue = normalizeDialogueTimeline(game.payload.dialogue, game.duration);
   state.languageSyncOffset = Number(game.payload.languageSyncOffset) || 0;
-  state.dubCache = new Map(compatibleSavedDubCache(game.payload));
+  state.dubCache = new Map(state.dialogue?.timingIntegrity?.valid === false
+    ? [] : compatibleSavedDubCache(game.payload));
   state.dubSegmentMetadata = new Map(game.payload.dubSegmentMetadata || []);
   state.dubProviderLock = game.payload.dubProviderLock || '';
-  state.dubDiagnostics = null;
+  state.dubDiagnostics = state.dialogue?.timingIntegrity?.valid === false
+    ? { preparedIds: new Set(), playedIds: new Set(), firstPlaybackEvents: [], playbackEventCount: 0,
+      playbackFailureReason: 'DIALOGUE_TIMING_INVALID' } : null;
   state.dubSpeakerVoices = new Map((game.payload.dubSpeakerVoices || []).map(row => [row.speakerId, row]));
   state.dubVoicePlanRequest = null;
   state.dubStableSpeakerGenders = new Map(game.payload.dubStableSpeakerGenders || []);

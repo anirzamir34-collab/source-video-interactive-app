@@ -12,7 +12,7 @@ const keyStart = source.indexOf('function dialogueUploadClientKey(');
 const keyEnd = source.indexOf('async function uploadDialogueWithProgress(', keyStart);
 const code = source.slice(keyStart, keyEnd) + source.slice(start, end);
 
-function fixture({ decodeFails = false, uploadFails = false, compact = false, remux } = {}) {
+function fixture({ decodeFails = false, uploadFails = false, compact = false, remux, segments = [] } = {}) {
   const original = new File(['original-video-bytes'], 'source.mp4', { type: 'video/mp4' });
   const audio = new File(['prepared-speech'], 'speech.wav', { type: 'audio/wav' });
   const compactAudio = new File(['compressed-speech'], 'dialogue.m4a', { type: 'audio/mp4' });
@@ -28,7 +28,7 @@ function fixture({ decodeFails = false, uploadFails = false, compact = false, re
     analysisState: element(), video: { duration: NaN }, protagonistInput: { value: '' } };
   const scope = vm.createContext({ canDecodeDialogueLocally, normalizeDialogueSegments, normalizeDialogueTimeline, File, Blob, FormData, performance, els, AbortController,
     state: { analysisSession: session, selectedRemoteVideo: { proxyUrl: '/proxy?token=old-token' } },
-    console: { warn() {} }, localStorage: { removeItem() {} }, recordAiUsage() {},
+    console: { warn() {} }, logEngineEvent() {}, localStorage: { removeItem() {} }, recordAiUsage() {},
     buildDubBlocks: segments => segments, updateLanguageSyncControls() {},
     setInterval: callback => { timers.set(++timerId, callback); return timerId; },
     clearInterval: id => { cleared.push(id); timers.delete(id); },
@@ -44,7 +44,7 @@ function fixture({ decodeFails = false, uploadFails = false, compact = false, re
       complete();
       assert.equal(els.analysisState.textContent, 'DIALOGUE_PROCESSING');
       if (uploadFails) throw Error('Provider unavailable');
-      return { ok: true, body: { available: true, segments: [] } };
+      return { ok: true, body: { available: true, segments } };
     },
     fetch: () => assert.fail('speech analysis must upload local bytes, never request a remote token')
   });
@@ -157,4 +157,15 @@ test('provider retries retain the same logical upload identity and already prepa
   assert.equal(f.session.dialogueUploadKey, key);
   assert.equal(f.requests[0].get('clientUploadKey'), f.requests[1].get('clientUploadKey'));
   assert.equal(f.extractions(), 1);
+});
+
+test('legacy collapsed timing is rejected before dublaj preparation while local audio remains reusable', async () => {
+  const segments = Array.from({ length: 21 }, (_, i) => ({ segmentId: `line-${i}`, speakerId: 'voice-a',
+    startTime: 3.04, endTime: 3.44, originalText: `Reply ${i}`, turkishText: `Yanıt ${i}` }));
+  const f = fixture({ segments });
+  await assert.rejects(f.scope.analyzeSelectedDialogue(f.original), /Konuşma zamanları kaynaktan doğrulanamadı/);
+  assert.equal(f.scope.state.dialogue, undefined);
+  assert.equal(f.session.audioFile, f.audio);
+  assert.equal(f.requests.length, 1);
+  assert.ok(f.session.dialogueUploadKey);
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { parseModelJson } from '../public/model-json.js';
+import { repairDialogueTimestamps, requireDialogueTiming } from '../public/dialogue-integrity.js';
 
 // Run the existing provider loop against simulated HTTP failures, retaining
 // the already uploaded media URI. No external API requests are made.
@@ -12,11 +13,11 @@ const end = source.indexOf('      // If multimodal enrichment', start);
 assert.ok(start >= 0 && end > start);
 const loop = source.slice(start, end);
 
-async function run(errors) {
+async function run(errors = [], responses = []) {
   const requests = [];
   const delays = [];
   const scope = vm.createContext({
-    parseModelJson, process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
+    parseModelJson, repairDialogueTimestamps, requireDialogueTiming, duration: 900, process: { env: {} }, remoteFile: { uri: 'already-uploaded-audio', mimeType: 'audio/wav' },
     req: { file: { mimetype: 'audio/wav' } }, prompt: 'Analyze speech', transcriptGrounding: '',
     dialogueUsage: {}, addGeminiUsage() {}, console: { warn() {} },
     dialogueStage() {}, inlineAudioPart: null,
@@ -25,7 +26,8 @@ async function run(errors) {
       requests.push(request);
       const error = errors[requests.length - 1];
       if (error) throw error;
-      return { text: JSON.stringify({ segments: [{ originalText: 'Hello' }] }) };
+      if (responses[requests.length - 1] != null) return { text: responses[requests.length - 1] };
+      return { text: JSON.stringify({ segments: [{ originalText: 'Hello', startTime: 1, endTime: 2, speakerId: 'a' }] }) };
     } } }
   });
   const result = await vm.runInContext(`(async () => { ${loop}; return { parsed, lastDialogueError }; })()`, scope);
@@ -107,4 +109,27 @@ test('malformed provider JSON retries three times using the already uploaded sou
   assert.equal(exhausted.requests.length, 3);
   assert.equal(exhausted.parsed, null);
   assert.equal(exhausted.lastDialogueError.message, broken.message);
+});
+
+test('collapsed speech intervals are remeasured on the same uploaded audio before acceptance', async () => {
+  const rows = Array.from({ length: 21 }, (_, i) => ({ segmentId: `line-${i}`, speakerId: 'a',
+    startTime: 3.04, endTime: 3.44, originalText: `Reply ${i}`, turkishText: `Yanıt ${i}` }));
+  const broken = JSON.stringify({ segments: rows });
+  const grounded = JSON.stringify({ timestampUnit: 'seconds', segments: rows.map((row, i) => ({ ...row,
+    startTime: 184 + i * 4, endTime: 186 + i * 4 })) });
+  const result = await run([], [broken, broken, grounded]);
+  assert.equal(result.requests.length, 3);
+  assert.equal(result.parsed.segments[0].startTime, 184);
+  assert.equal(result.parsed.segments.at(-1).startTime, 264);
+  assert.ok(result.requests.every(request => request.contents[0].parts[0].fileData.fileUri === 'already-uploaded-audio'));
+  assert.match(result.requests[1].contents[0].parts[1].text, /measure each turn separately/);
+});
+test('three collapsed responses fail explicitly instead of caching a falsely successful transcript', async () => {
+  const broken = JSON.stringify({ segments: Array.from({ length: 21 }, (_, i) => ({
+    segmentId: `line-${i}`, speakerId: 'a', startTime: 3.04, endTime: 3.44, originalText: `Reply ${i}` })) });
+  const result = await run([], [broken, broken, broken]);
+  assert.equal(result.requests.length, 3);
+  assert.equal(result.parsed, null);
+  assert.equal(result.lastDialogueError.code, 'DIALOGUE_TIMING_INVALID');
+  assert.equal(result.lastDialogueError.timingIntegrity.segmentCount, 21);
 });

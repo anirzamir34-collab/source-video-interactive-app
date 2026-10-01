@@ -54,3 +54,18 @@ test('Turkish catalog metadata cannot make a narrator outrank a conversational v
   assert.equal(scope.isElevenDialogueVoice({ labels: { use_case: 'news' } }), false);
   assert.equal(scope.isElevenDialogueVoice({ description: 'robotic voice' }), false);
 });
+
+test('Turkish language codes and conversational catalog labels outrank English default voices', () => {
+  const start = source.indexOf('function elevenVoiceGender(');
+  const end = source.indexOf('\nasync function elevenLabsVoices(', start);
+  const scope = vm.createContext({}); vm.runInContext(source.slice(start, end), scope);
+  const english = { name: 'English default', description: 'Natural casual voice',
+    labels: { gender: 'female', language: 'english', accent: 'american' }, category: 'premade' };
+  const turkish = { name: 'Turkish dialogue', labels: { gender: 'female', language: 'tr', use_case: 'conversational' } };
+  assert.ok(scope.scoreElevenVoice(turkish, 'female') > scope.scoreElevenVoice(english, 'female'));
+  const fineTuned = { name: 'Speaker', labels: { gender: 'female' }, fine_tuning: { language: 'tr' } };
+  assert.ok(scope.scoreElevenVoice(fineTuned, 'female') > scope.scoreElevenVoice(english, 'female'));
+  const labelledConversation = { name: 'Speaker', labels: { gender: 'male', use_case: 'conversational' } };
+  const neutral = { name: 'Speaker', labels: { gender: 'male' } };
+  assert.ok(scope.scoreElevenVoice(labelledConversation, 'male') > scope.scoreElevenVoice(neutral, 'male'));
+});

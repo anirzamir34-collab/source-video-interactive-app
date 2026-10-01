@@ -15,7 +15,7 @@ import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 import { MAX_VIDEO_BYTES, dialogueUploadLimit } from './public/media-limits.js';
 import { allocateSpeakerVoices } from './lib/voice-allocation.js';
-import { uniqueTimedSpeech, normalizeDialogueSegments, repairDialogueTimestamps } from './public/dialogue-integrity.js';
+import { uniqueTimedSpeech, normalizeDialogueSegments, repairDialogueTimestamps, requireDialogueTiming } from './public/dialogue-integrity.js';
 import { prepareLocalDialogueAudio } from './lib/dialogue-media.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 
@@ -2184,14 +2184,17 @@ Rules:
 - Never add dialogue that is not audible in the source video.
 `;
 
+      const duration = Math.max(0, Number(req.body?.duration || 0));
       const audioMime = String(remoteFile?.mimeType || req.file?.mimetype || '').toLowerCase();
       let asr = null;
       if (audioMime.startsWith('audio/') && remoteFile?.uri) {
         try {
           dialogueStage('transcribe-start');
           asr = await transcribeDialogueGemini35(ai, remoteFile);
+          requireDialogueTiming(asr?.segments || [], duration);
           dialogueStage('transcribe-ready');
         } catch (error) {
+          asr = null;
           // Interactions/transcribe may be unavailable for an account, region or
           // model rollout. It is an enhancement, not a hard dependency: the
           // multimodal dialogue request below can still produce timed Turkish
@@ -2223,7 +2226,9 @@ Rules:
                     mimeType: remoteFile.mimeType || req.file.mimetype
                   } })
                 },
-                { text: prompt + transcriptGrounding }
+                { text: prompt + transcriptGrounding +
+                  (lastDialogueError?.code === 'DIALOGUE_TIMING_INVALID'
+                    ? '\nThe previous response reused invalid speech intervals. Listen to the SAME source audio again and measure each turn separately in absolute seconds. Do not copy the first timestamp or invent replacement times from line order.' : '') }
               ]
             }],
             config: {
@@ -2237,7 +2242,11 @@ Rules:
           addGeminiUsage(dialogueUsage, response?.usageMetadata);
           const raw = String(response.text || '').trim();
           if (!raw) throw new Error('GEMINI_EMPTY_JSON_RESPONSE');
-          parsed = parseModelJson(raw);
+          const candidate = parseModelJson(raw);
+          if (!Array.isArray(candidate?.segments)) throw new SyntaxError('GEMINI_DIALOGUE_SEGMENTS_REQUIRED');
+          const candidateTimes = repairDialogueTimestamps(candidate.segments, duration, candidate);
+          requireDialogueTiming(candidateTimes.segments, duration);
+          parsed = candidate;
           break;
         } catch (error) {
           lastDialogueError = error;
@@ -2248,6 +2257,7 @@ Rules:
             details.includes('Unexpected token') ||
             details.includes('Expected property name') ||
             details.includes('GEMINI_EMPTY_JSON_RESPONSE') ||
+            error?.code === 'DIALOGUE_TIMING_INVALID' ||
             details.includes('503') || details.includes('UNAVAILABLE') || details.includes('high demand') ||
             [500, 502, 503, 504].includes(Number(error?.status || error?.code)) ||
             /"code"\s*:\s*(?:500|502|503|504)\b/.test(details);
@@ -2301,7 +2311,6 @@ Rules:
 
       // Repair multimodal timestamps before combining them with ASR seconds.
       // A mixed timeline would hide collapsed supplemental speech from detection.
-      const duration = Math.max(0, Number(req.body?.duration || 0));
       const dialogueTimeRepair = repairDialogueTimestamps(parsed.segments, duration, {
         timestampUnit: parsed.timestampUnit
       });
@@ -2394,6 +2403,7 @@ Rules:
         parsed.transcriptionEngine = process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe';
       }
 
+      const timingIntegrity = requireDialogueTiming(parsed.segments || [], duration);
       const parsedSpeakers = Array.isArray(parsed.speakers) ? parsed.speakers : [];
       const speakerProfiles = new Map();
       let neutralFemaleCount = 0;
@@ -2490,6 +2500,7 @@ Rules:
         translationEngine: process.env.GEMINI_DIALOGUE_MODEL || 'gemini-3.1-flash-lite',
         timestampUnit: 'seconds',
         timestampRepair: dialogueTimeRepair.report,
+        timingIntegrity,
         dubbingEngine: 'eleven_v3',
         aiUsage: dialogueUsage,
         performance: { processingMs }
@@ -2509,8 +2520,11 @@ Rules:
       }
       return res.status(502).json({
         available: false,
-        reason: 'GEMINI_DIALOGUE_ERROR',
-        message: 'Video diyaloğu analiz edilirken hata oluştu.',
+        reason: error?.code === 'DIALOGUE_TIMING_INVALID' ? error.code : 'GEMINI_DIALOGUE_ERROR',
+        timingIntegrity: error?.timingIntegrity || null,
+        message: error?.code === 'DIALOGUE_TIMING_INVALID'
+          ? 'Konuşma zamanları kaynaktan doğrulanamadı. Aynı yüklenmiş sesle analizi yeniden dene.'
+          : 'Video diyaloğu analiz edilirken hata oluştu.',
         error: error?.message || String(error)
       });
     } finally {
@@ -2779,21 +2793,25 @@ function scoreElevenVoice(voice, gender) {
       item?.accent
     ])
   ].filter(Boolean).join(' ').toLowerCase();
+  const verifiedTurkish = verifiedLanguages.some(item => /^(?:tr|tr-tr)$/i.test(String(item?.language || item?.locale || '')));
+  const turkish = verifiedTurkish || /\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence) ||
+    /(?:^|\s)tr(?:$|\s)/.test(languageEvidence);
+  const deliveryEvidence = [name, description, ...Object.values(labels)].filter(Boolean).join(' ').toLowerCase();
   const detected = elevenVoiceGender(voice);
   let score = detected === gender ? 100 : detected === 'uncertain' ? 10 : -100;
   // Prefer a voice explicitly verified for Turkish. The old selector ignored
   // verified_languages/fine_tuning metadata and fell back to Bella/George.
-  if (/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score += 1200;
-  if (verifiedLanguages.some(item => /^(?:tr|tr-tr)$/i.test(String(item?.language || item?.locale || '')))) score += 500;
+  if (turkish) score += 1200;
+  if (verifiedTurkish) score += 500;
   // Accent and language metadata from the voice catalog is more useful than
   // a generic 'natural' marketing description for Turkish dialogue.
   if (/\b(?:english|american|british|australian|german|french|spanish)\b/.test(languageEvidence) &&
-      !/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score -= 350;
+      !turkish) score -= 350;
   if (voice?.category === 'premade' &&
-      !/\b(?:tr-tr|turkish|türkçe|türk)\b/.test(languageEvidence)) score -= 80;
-  if (/conversational|conversation|natural|casual|dialogue|dialog/.test(description)) score += 80;
-  if (/warm|soft|calm|professional/.test(description)) score += 30;
-  if (/narration|narrator|news|storyteller|audiobook|announcer/.test(description)) score -= 3000;
+      !turkish) score -= 80;
+  if (/conversational|conversation|natural|casual|dialogue|dialog/.test(deliveryEvidence)) score += 120;
+  if (/warm|soft|calm/.test(deliveryEvidence)) score += 30;
+  if (/narration|narrator|news|storyteller|audiobook|announcer/.test(deliveryEvidence)) score -= 3000;
   if (/^(?:bella|george)$/.test(name)) score -= 250;
   if (voice?.is_owner === true) score += 20;
   return score;

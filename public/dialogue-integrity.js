@@ -69,9 +69,18 @@ export function normalizeDialogueTimeline(dialogue, duration) {
     ? repairDialogueTimestamps(pinIds(dialogue.dubSegments), duration, {
       timestampUnit: result.report.repaired ? 'minute.second' : dialogue.timestampUnit
     }) : null;
+  const captions = normalizeDialogueSegments(result.segments, duration);
+  const blocks = blockResult ? normalizeDialogueSegments(blockResult.segments, duration) : null;
+  const captionTiming = inspectDialogueTiming(captions, duration);
+  const blockTiming = blocks ? inspectDialogueTiming(blocks, duration) : captionTiming;
+  const timingIntegrity = !captionTiming.valid ? captionTiming : blockTiming;
   return { ...dialogue,
-    segments: normalizeDialogueSegments(result.segments, duration),
-    ...(blockResult ? { dubSegments: normalizeDialogueSegments(blockResult.segments, duration) } : {}),
+    segments: timingIntegrity.valid ? captions : [],
+    ...(blocks ? { dubSegments: timingIntegrity.valid ? blocks : [] } : {}),
+    ...(!timingIntegrity.valid ? { unresolvedSegments: captions,
+      unresolvedDubSegments: blocks || [], timingIntegrity } :
+      { timingIntegrity: dialogue.timingIntegrity?.valid === false && !captions.length
+        ? dialogue.timingIntegrity : timingIntegrity }),
     timestampUnit: 'seconds',
     timestampRepair: result.report.repaired ? result.report :
       (blockResult?.report.repaired ? blockResult.report : (dialogue.timestampRepair || result.report))
@@ -128,4 +137,49 @@ export function normalizeDialogueSegments(rows = [], duration = Infinity) {
       endTime: Math.min(limit, row.endTime)
     };
   });
+}
+
+// A source interval cannot contain several different turns by the same voice
+// at precisely the same bounds. Do not guess replacement times from row order.
+export function inspectDialogueTiming(rows = [], duration = 0) {
+  const list = Array.isArray(rows) ? rows : [];
+  const limit = Number(duration) > 0 ? Number(duration) : Infinity;
+  const intervals = new Set();
+  const bySpeakerInterval = new Map();
+  let invalidRangeCount = 0;
+  let maxSameSpeakerIntervalCount = 0;
+  let originalMin = Infinity;
+  let originalMax = 0;
+  for (const row of list) {
+    const start = Number(row?.startTime), end = Number(row?.endTime);
+    if (row?.startTime == null || row?.endTime == null || !Number.isFinite(start) ||
+        !Number.isFinite(end) || start < 0 || end <= start || end > limit + 0.05) {
+      invalidRangeCount++;
+      continue;
+    }
+    originalMin = Math.min(originalMin, start);
+    originalMax = Math.max(originalMax, end);
+    const interval = `${start.toFixed(3)}:${end.toFixed(3)}`;
+    intervals.add(interval);
+    const key = `${clean(row.speakerId) || 'speaker-unknown'}:${interval}`;
+    // Identical observations are deduplicated elsewhere; count distinct speech.
+    const turns = bySpeakerInterval.get(key) || new Set();
+    turns.add(textKey(row.originalText || row.turkishText) || clean(row.segmentId));
+    bySpeakerInterval.set(key, turns);
+    maxSameSpeakerIntervalCount = Math.max(maxSameSpeakerIntervalCount, turns.size);
+  }
+  const reason = invalidRangeCount ? 'INVALID_SOURCE_INTERVAL' :
+    maxSameSpeakerIntervalCount >= 3 ? 'SAME_SPEAKER_COLLAPSED_INTERVALS' : '';
+  return { valid: !reason, reason, segmentCount: list.length, invalidRangeCount,
+    distinctIntervalCount: intervals.size, maxSameSpeakerIntervalCount,
+    originalMin: Number.isFinite(originalMin) ? originalMin : 0, originalMax,
+    requiresSourceRetiming: Boolean(reason) };
+}
+
+export function requireDialogueTiming(rows, duration) {
+  const report = inspectDialogueTiming(rows, duration);
+  if (!report.valid) throw Object.assign(new Error(`DIALOGUE_TIMING_INVALID:${report.reason}`), {
+    code: 'DIALOGUE_TIMING_INVALID', timingIntegrity: report
+  });
+  return report;
 }
