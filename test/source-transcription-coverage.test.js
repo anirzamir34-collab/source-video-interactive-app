@@ -227,7 +227,8 @@ test('window dialogue keeps valid rows after bounded retries when only some time
   assert.equal(requests.length, 3, 'invalid timing receives bounded model retries before safe row filtering');
   assert.equal(result.parsed.segments.length, 11);
   assert.equal(result.parsed.rejectedInvalidSegmentCount, 3);
-  assert.deepEqual(result.parsed.segments.map(row => row.segmentId), validRows.map(row => row.segmentId));
+  assert.equal(JSON.stringify(result.parsed.segments.map(row => row.segmentId)),
+    JSON.stringify(validRows.map(row => row.segmentId)));
   const retryPrompt = requests.at(-1).contents[0].parts.at(-1).text;
   assert.match(retryPrompt, /RELATIVE to this audio asset/);
   assert.match(retryPrompt, /0 <= startTime < endTime <= 90\.000/);
