@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { planSourceTranscriptionWindows, transcribeSourceWindows, groundWindowResult,
   mergeGroundedSourceWindows, auditSourceTranscript } from '../lib/source-transcription-windows.js';
 import { parseModelJson } from '../public/model-json.js';
-import { requireDialogueTiming, repairDialogueTimestamps } from '../public/dialogue-integrity.js';
+import { requireDialogueTiming, repairDialogueTimestamps, filterValidDialogueRanges } from '../public/dialogue-integrity.js';
 
 const line = (startTime = 1, endTime = 2, originalText = 'A brief reply.', speakerId = 'voice-a') => ({
   segmentId: 'line-1', startTime, endTime, originalText, turkishText: 'Kısa bir yanıt.', speakerId
@@ -43,7 +43,7 @@ test('late source dialogue is grounded by its actual chunk offset, preserving st
   assert.equal(result.coverageAudit.complete, true);
 });
 
-test('successful chunks and prepared failed-chunk assets survive failures and retry only the failed window', async () => {
+test('minority failed windows return usable partial coverage and later retry only the retained failure', async () => {
   const state = {}, prepared = [], requests = [];
   let fail = true, active = 0, peak = 0;
   const args = { duration: 250, state,
@@ -56,13 +56,12 @@ test('successful chunks and prepared failed-chunk assets survive failures and re
       } finally { active--; }
     }
   };
-  await assert.rejects(transcribeSourceWindows(args), error => {
-    assert.equal(error.code, 'SOURCE_TRANSCRIPTION_INCOMPLETE');
-    assert.equal(error.coverageAudit.processedWindowCount, 2);
-    assert.equal(error.coverageAudit.failedWindows[0].id, 'window-002');
-    assert.equal(error.partialResult.segments.length, 2);
-    return true;
-  });
+  const partial = await transcribeSourceWindows(args);
+  assert.equal(partial.coverageAudit.complete, false);
+  assert.equal(partial.coverageAudit.fatalCoverage, false);
+  assert.equal(partial.coverageAudit.processedWindowCount, 2);
+  assert.equal(partial.coverageAudit.failedWindows[0].id, 'window-002');
+  assert.equal(partial.parsed.segments.length, 2);
   const earlier = state.windows[0].result;
   fail = false;
   const result = await transcribeSourceWindows(args);
@@ -72,6 +71,7 @@ test('successful chunks and prepared failed-chunk assets survive failures and re
   assert.equal(state.windows[0].result, earlier);
   assert.equal(result.coverageAudit.processedWindowCount, 3);
   assert.equal(result.coverageAudit.failedWindows.length, 0);
+  assert.equal(result.coverageAudit.retainedSuccessfulWindows, 2);
   assert.equal(result.parsed.segments.length, 3);
   await transcribeSourceWindows(args);
   assert.equal(requests.length, 4, 'an already complete retained source has no provider work');
@@ -93,14 +93,17 @@ test('overlap observations unify a voice only with unique timed evidence and pre
   assert.equal(ambiguous.segments.length, 4, 'simultaneous voices are not merged from text alone');
 });
 
-test('out-of-window timestamps fail before any offset can manufacture a plausible source interval', async () => {
+test('one invalid source window is isolated without manufacturing a plausible source interval', async () => {
   const state = {};
-  await assert.rejects(transcribeSourceWindows({ duration: 180, state,
+  const result = await transcribeSourceWindows({ duration: 180, state,
     prepareAsset: async window => ({ uri: window.id }),
     transcribeWindow: async (_asset, window) => ({ segments: [window.index === 1 ? line(100, 102) : line()] })
-  }), error => error.code === 'SOURCE_TRANSCRIPTION_INCOMPLETE' &&
-    error.coverageAudit.failedWindows[0].reason === 'DIALOGUE_TIMING_INVALID');
+  });
+  assert.equal(result.coverageAudit.complete, false);
+  assert.equal(result.coverageAudit.fatalCoverage, false);
+  assert.equal(result.coverageAudit.failedWindows[0].reason, 'DIALOGUE_TIMING_INVALID');
   assert.equal(state.windows[1].result, undefined);
+  assert.equal(result.parsed.segments.length, 2);
   assert.throws(() => groundWindowResult({ segments: [line(-1, 1)] }, { id: 'window-x', startTime: 100, endTime: 190 }), /TIMING_INVALID/);
 });
 
@@ -138,13 +141,39 @@ test('audit separates transcription gaps from windows never successfully process
   assert.equal(audit.complete, false);
 });
 
+test('majority failed source windows remain fatal while minority failure is usable', async () => {
+  await assert.rejects(transcribeSourceWindows({
+    duration: 180, state: {},
+    prepareAsset: async window => ({ uri: window.id }),
+    transcribeWindow: async (_asset, window) => {
+      if (window.index > 0) throw Object.assign(new Error('provider unavailable'), { code: 'PROVIDER_UNAVAILABLE' });
+      return { segments: [line()] };
+    }
+  }), error => error.code === 'SOURCE_TRANSCRIPTION_INCOMPLETE' &&
+    error.coverageAudit.fatalCoverage === true &&
+    error.coverageAudit.completeWindows === 1 &&
+    error.coverageAudit.failedWindowCount === 2);
+});
+
+test('invalid provider rows can be rejected without changing valid source timestamps', () => {
+  const filtered = filterValidDialogueRanges([
+    line(1, 2, 'valid one'),
+    { ...line(3, 4, 'valid two'), segmentId: 'line-2' },
+    { ...line(7, 6, 'bad reversed'), segmentId: 'bad-1' },
+    { ...line(89, 95, 'bad overflow'), segmentId: 'bad-2' }
+  ], 90);
+  assert.equal(filtered.segments.length, 2);
+  assert.equal(filtered.rejectedCount, 2);
+  assert.deepEqual(filtered.segments.map(row => [row.startTime, row.endTime]), [[1, 2], [3, 4]]);
+});
+
 test('window provider JSON recovery retries on the same retained asset and shared parser', async () => {
   const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const start = source.indexOf('async function analyzeDialogueSourceAsset(');
   const end = source.indexOf("\napp.post(\n  '/api/gemini-dialogue-analyze'", start);
   assert.ok(start >= 0 && end > start);
   const requests = [];
-  const scope = vm.createContext({ parseModelJson, requireDialogueTiming, repairDialogueTimestamps,
+  const scope = vm.createContext({ parseModelJson, requireDialogueTiming, repairDialogueTimestamps, filterValidDialogueRanges,
     process: { env: {} }, console: { warn() {}, info() {} }, wait: async () => {},
     addGeminiUsage() {}, mapWithConcurrency: async (items, _n, worker) => Promise.all(items.map(worker)),
     transcribeDialogueGemini35: async () => { throw new Error('Unavailable in mock account'); },
@@ -186,7 +215,7 @@ test('server retained phone audio recovers a failed window without another devic
     return { text: failing && uri.includes('window-002') ? '{"segments":[' :
       JSON.stringify({ segments: [line(1, 2, `Reply from ${uri}`)] }) };
   } } };
-  const scope = vm.createContext({ parseModelJson, requireDialogueTiming, repairDialogueTimestamps,
+  const scope = vm.createContext({ parseModelJson, requireDialogueTiming, repairDialogueTimestamps, filterValidDialogueRanges,
     normalizeDialogueSegments: rows => rows, transcribeSourceWindows, auditSourceTranscript,
     process: { env: {} }, console: { warn() {}, info() {}, error() {} }, wait: async () => {},
     fs: { existsSync: () => false, promises: { unlink: async () => {},
