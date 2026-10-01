@@ -24,6 +24,45 @@ test('source windows cover the complete known duration with bounded spans and sh
   assert.throws(() => planSourceTranscriptionWindows(300, { windowSeconds: 300 }), /INVALID/);
 });
 
+test('invalid supplemental non-speech timing never discards valid dialogue from the same window', () => {
+  const window = { id: 'window-001', index: 0, startTime: 0, endTime: 90 };
+  const result = groundWindowResult({
+    segments: [line(10, 12, 'Verified speech')],
+    nonSpeechEvents: [
+      { eventId: 'event-good', startTime: 20, endTime: 21, soundType: 'laugh' },
+      { eventId: 'event-bad', startTime: 88, endTime: 94, soundType: 'breath' }
+    ]
+  }, window);
+  assert.equal(result.segments.length, 1);
+  assert.equal(result.segments[0].originalText, 'Verified speech');
+  assert.equal(result.nonSpeechEvents.length, 1);
+  assert.equal(result.nonSpeechEvents[0].eventId, 'window-001:event-good');
+  assert.equal(result.rejectedInvalidEventCount, 1);
+  assert.match(result.warnings.at(-1), /non-speech event/);
+});
+
+test('zero-speech partial coverage retries only failed retained windows once before declaring no dialogue', async () => {
+  const calls = [];
+  let failedOnce = false;
+  const result = await transcribeSourceWindows({
+    duration: 180,
+    state: {},
+    prepareAsset: async window => ({ uri: window.id }),
+    transcribeWindow: async (_asset, window) => {
+      calls.push(window.id);
+      if (window.index === 1 && !failedOnce) {
+        failedOnce = true;
+        throw Object.assign(new Error('temporary timing failure'), { code: 'DIALOGUE_TIMING_INVALID' });
+      }
+      return { segments: window.index === 1 ? [line(2, 3, 'Recovered speech')] : [] };
+    }
+  });
+  assert.equal(result.coverageAudit.complete, true);
+  assert.equal(result.parsed.segments.length, 1);
+  assert.equal(result.parsed.segments[0].originalText, 'Recovered speech');
+  assert.deepEqual(calls, ['window-001', 'window-002', 'window-003', 'window-002']);
+});
+
 test('late source dialogue is grounded by its actual chunk offset, preserving stable chunk identifiers', async () => {
   const prepared = [];
   const state = {};
