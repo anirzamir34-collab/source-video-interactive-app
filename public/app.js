@@ -3023,6 +3023,16 @@ els.analyzeBtn.addEventListener('click', async () => {
   state.dubbingEnabled = false;
   updateDubMix();
   state.subtitlesEnabled = false;
+  if (els.dubToggleBtn) {
+    if (modes.dubbing) {
+      els.dubToggleBtn.classList.remove('hidden');
+      els.dubToggleBtn.textContent = 'TR DUBLAJ: HAZIRLANIYOR';
+      els.dubToggleBtn.title = 'Konuşmalar analiz ediliyor ve Türkçe dublaj hazırlanıyor.';
+      delete els.dubToggleBtn.dataset.unavailable;
+    } else {
+      els.dubToggleBtn.classList.add('hidden');
+    }
+  }
   if (modes.dubbing || !reusableSession) resetDubState();
   els.video.muted = false;
   els.subtitleOverlay?.classList.add('hidden');
@@ -3066,7 +3076,11 @@ els.analyzeBtn.addEventListener('click', async () => {
         state.dubbingEnabled = true;
         state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
         els.dubToggleBtn?.classList.remove('hidden');
-        if (els.dubToggleBtn) els.dubToggleBtn.textContent = 'TR DUBLAJ: AÇIK';
+        if (els.dubToggleBtn) {
+          delete els.dubToggleBtn.dataset.unavailable;
+          els.dubToggleBtn.title = '';
+          els.dubToggleBtn.textContent = 'TR DUBLAJ: AÇIK';
+        }
         updateDubMix();
         const dubSegments = dialogue.dubSegments || dialogue.segments;
         els.analysisState.textContent = 'PREPARING_DUB';
@@ -3087,6 +3101,20 @@ els.analyzeBtn.addEventListener('click', async () => {
         } else {
           logEngineEvent('DUB_PREPARATION_OVERLAPPED', { total: dubSegments.length, completed: completedDubBlocks });
         }
+      }
+
+      if (modes.dubbing && !dialogue.segments.length && els.dubToggleBtn) {
+        state.dubbingEnabled = false;
+        els.dubToggleBtn.classList.remove('hidden');
+        els.dubToggleBtn.dataset.unavailable = 'true';
+        const incomplete = dialogue.coverageAudit?.complete === false;
+        els.dubToggleBtn.textContent = incomplete
+          ? 'TR DUBLAJ: KONUŞMA ANALİZİ EKSİK'
+          : 'TR DUBLAJ: KONUŞMA BULUNAMADI';
+        els.dubToggleBtn.title = incomplete
+          ? 'Bazı ses pencereleri doğrulanamadığı için dublaj hazırlanamadı.'
+          : 'Doğrulanmış konuşma segmenti bulunmadığı için dublaj hazırlanamadı.';
+        updateDubMix();
       }
 
       if (!modes.motion) {
