@@ -191,6 +191,49 @@ test('window provider JSON recovery retries on the same retained asset and share
   assert.equal(result.parsed.segments[0].originalText, 'A brief reply.');
 });
 
+test('window dialogue keeps valid rows after bounded retries when only some timestamps remain invalid', async () => {
+  const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function analyzeDialogueSourceAsset(');
+  const end = source.indexOf("\napp.post(\n  '/api/gemini-dialogue-analyze'", start);
+  assert.ok(start >= 0 && end > start);
+  const requests = [];
+  const validRows = Array.from({ length: 11 }, (_, index) => ({
+    ...line(index + 1, index + 1.5, `valid-${index + 1}`),
+    segmentId: `valid-${index + 1}`
+  }));
+  const invalidRows = [
+    { ...line(92, 94, 'overflow-1'), segmentId: 'bad-1' },
+    { ...line(10, 9, 'reversed'), segmentId: 'bad-2' },
+    { ...line(-1, 1, 'negative'), segmentId: 'bad-3' }
+  ];
+  const scope = vm.createContext({ parseModelJson, requireDialogueTiming, repairDialogueTimestamps,
+    filterValidDialogueRanges,
+    process: { env: {} }, console: { warn() {}, info() {} }, wait: async () => {},
+    addGeminiUsage() {}, mapWithConcurrency: async (items, _n, worker) => Promise.all(items.map(worker)),
+    transcribeDialogueGemini35: async () => { throw new Error('Unavailable in mock account'); },
+    ai: { models: { generateContent: async request => {
+      requests.push(request);
+      return { text: JSON.stringify({ segments: [...validRows, ...invalidRows] }) };
+    } } },
+    remoteFile: { uri: 'retained-window-asset', mimeType: 'audio/mpeg' }
+  });
+  vm.runInContext(source.slice(start, end), scope);
+  const result = await vm.runInContext(`analyzeDialogueSourceAsset({
+    ai, remoteFile, req: { file: { mimetype: 'audio/mpeg' } },
+    prompt: 'Listen to this complete audio window.', duration: 90,
+    timingScope: 'window', allowPartialInvalidRanges: true,
+    dialogueStage() {}, dialogueUsage: {}
+  })`, scope);
+  assert.equal(requests.length, 3, 'invalid timing receives bounded model retries before safe row filtering');
+  assert.equal(result.parsed.segments.length, 11);
+  assert.equal(result.parsed.rejectedInvalidSegmentCount, 3);
+  assert.deepEqual(result.parsed.segments.map(row => row.segmentId), validRows.map(row => row.segmentId));
+  const retryPrompt = requests.at(-1).contents[0].parts.at(-1).text;
+  assert.match(retryPrompt, /RELATIVE to this audio asset/);
+  assert.match(retryPrompt, /0 <= startTime < endTime <= 90\.000/);
+  assert.doesNotMatch(retryPrompt, /absolute seconds/);
+});
+
 test('server retained phone audio recovers a failed window without another device upload, extraction, or successful-window request', async () => {
   const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const helperStart = source.indexOf('async function analyzeDialogueSourceAsset(');
