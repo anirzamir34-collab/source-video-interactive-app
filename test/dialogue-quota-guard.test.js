@@ -12,7 +12,7 @@ test('dubbing preflight explains that ElevenLabs still depends on dialogue trans
 });
 
 test('dubbing quota badge reflects a blocked dialogue dependency', () => {
-  assert.match(appSource, /const dialogueBlocked = !activeGeminiApiKey\(\)[\s\S]*?body\.subtitles\?\.available === false/);
+  assert.match(appSource, /const dialogueBlocked = body\.keySource !== 'browser_session'[\s\S]*?body\.subtitles\?\.available === false/);
   assert.match(appSource, /ElevenLabs hazır; ancak Türkçe dublaj metni için gereken Gemini konuşma analizi kotası/);
 });
 
