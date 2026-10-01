@@ -1,3 +1,4 @@
+import { DUB_CACHE_ENGINE_VERSION, compatibleSavedDubCache } from './dub-cache.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import {
   adultPositionFamily,
@@ -1134,20 +1135,18 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
   const effectiveType = String(connection?.effectiveType || '').toLowerCase();
   const constrained = connection?.saveData === true || ['slow-2g', '2g'].includes(effectiveType);
   const compactSingleRequest = file.size <= 9 * 1024 * 1024;
-  const chunkSize = compactSingleRequest
+  let chunkSize = compactSingleRequest
     ? file.size
     : constrained ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
-  const chunkCount = Math.ceil(file.size / chunkSize);
-  const maxConnections = compactSingleRequest || constrained ? 1 : effectiveType === '3g' ? 1 : 2;
-  const connections = Math.max(1, Math.min(maxConnections, chunkCount));
-
   const startResponse = await fetch('/api/dialogue-upload/start', {
     method: 'POST',
+    signal: AbortSignal.timeout(45000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       totalSize: file.size,
       fileName: file.name || 'dialogue.wav',
       mimeType: dialogueUploadMimeType(file),
+      chunkSize,
       clientUploadKey
     })
   });
@@ -1158,6 +1157,15 @@ async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
     error.retryable = false;
     throw error;
   }
+
+  // Keep the original layout if connectivity changes during a retry.
+  const retainedChunkSize = Number(startBody.chunkSize);
+  if (Number.isSafeInteger(retainedChunkSize) && retainedChunkSize > 0 && retainedChunkSize <= 10 * 1024 * 1024) {
+    chunkSize = retainedChunkSize;
+  }
+  const chunkCount = Math.ceil(file.size / chunkSize);
+  const maxConnections = compactSingleRequest || constrained ? 1 : effectiveType === '3g' ? 1 : 2;
+  const connections = Math.max(1, Math.min(maxConnections, chunkCount));
 
   const uploadId = startBody.uploadId;
   const startedAt = performance.now();
@@ -1360,7 +1368,7 @@ async function analyzeSelectedDialogue(file, session = state.analysisSession) {
   try {
     return await task;
   } catch (error) {
-    if (session) session.dialogueUploadKey = '';
+    // Preserve the logical upload identity: provider retries reuse received bytes.
     throw error;
   } finally {
     if (session?.dialogueAnalysisPromise === task) session.dialogueAnalysisPromise = null;
@@ -1685,9 +1693,13 @@ function dubbingDebugReport() {
     dubbingEnabled: state.dubbingEnabled,
     provider: state.dubProviderLock || 'unknown',
     selectedModel: [...(state.dubSegmentMetadata?.values() || [])].find(row => row.model)?.model || '',
+    modelId: [...(state.dubSegmentMetadata?.values() || [])].find(row => row.model)?.model || '',
+    activeSegmentId: state.activeDubSegmentId,
+    lastPlaybackEvents: (state.engineEvents || []).filter(event => /^DUB_PLAYBACK_|^DUB_SOURCE_/.test(event.type)).slice(-10),
     generatedSegmentCount: state.dubCache?.size || 0,
     cachedSegmentCount: state.dubCache?.size || 0,
     decodedPreparedSegmentCount: diagnostics.preparedIds.size,
+    preparedDecodedCount: diagnostics.preparedIds.size,
     readySegmentCount: [...preparedDubAudio.values()].filter(audio => audio.readyState >= 2 && !audio.error).length,
     playedSegmentCount: diagnostics.playedIds.size,
     playbackEventCount: diagnostics.playbackEventCount,
@@ -2235,6 +2247,7 @@ async function ensureDubSegment(segment, priority = 0) {
 }
 
 function stopDubPlayback() {
+  if (dubChannels.size) logEngineEvent('DUB_PLAYBACK_STOPPED', { segmentIds: [...dubChannels.keys()], videoTime: Number(els.video.currentTime) || 0 });
   cancelDubBoundaryHold();
   cancelDubBuffer();
   state.dubStartingToken = null;
@@ -2504,6 +2517,7 @@ async function syncDubPlayback() {
 
 els.video.addEventListener('timeupdate', () => { renderSubtitle(); void syncDubPlayback(); });
 els.video.addEventListener('pause', () => {
+  if (state.dubbingEnabled) logEngineEvent('DUB_SOURCE_PAUSE', { videoTime: Number(els.video.currentTime) || 0 });
   if (els.video.ended && state.dubbingEnabled) { finishDubPlaybackAtVideoEnd(); return; }
   stopDubClock();
   if (!state.decisionDubHold && !dubBoundaryHold) {
@@ -2517,6 +2531,7 @@ els.video.addEventListener('waiting', () => {
   updateDubMix();
 });
 els.video.addEventListener('seeking', () => {
+  if (state.dubbingEnabled) logEngineEvent('DUB_SOURCE_SEEK', { videoTime: Number(els.video.currentTime) || 0 });
   state.dubSyncGeneration += 1;
   // Previously selected timestamps are now speculative, not urgent.
   state.dubQueue?.deprioritize();
@@ -7310,6 +7325,7 @@ function captureSavedGame() {
       analysis: state.analysis,
       dialogue: state.dialogue,
       dubCache: [...state.dubCache],
+      dubCacheEngineVersion: DUB_CACHE_ENGINE_VERSION,
       dubSegmentMetadata: [...state.dubSegmentMetadata],
       dubProviderLock: state.dubProviderLock,
       dubSpeakerVoices: [...state.dubSpeakerVoices.values()],
@@ -7372,7 +7388,7 @@ async function openSavedGame(game) {
   } else state.analysis = savedAnalysis;
   state.dialogue = normalizeDialogueTimeline(game.payload.dialogue, game.duration);
   state.languageSyncOffset = Number(game.payload.languageSyncOffset) || 0;
-  state.dubCache = new Map(game.payload.dubCache || []);
+  state.dubCache = new Map(compatibleSavedDubCache(game.payload));
   state.dubSegmentMetadata = new Map(game.payload.dubSegmentMetadata || []);
   state.dubProviderLock = game.payload.dubProviderLock || '';
   state.dubDiagnostics = null;

@@ -147,3 +147,14 @@ test('cancelling a local preparation never uploads the abandoned file or caches 
   assert.equal(f.session.audioPreparationController, undefined);
   assert.equal(f.timers.size, 0);
 });
+
+test('provider retries retain the same logical upload identity and already prepared audio', async () => {
+  const f = fixture({ uploadFails: true });
+  await assert.rejects(f.scope.analyzeSelectedDialogue(f.original), /Provider unavailable/);
+  const key = f.session.dialogueUploadKey;
+  assert.ok(key);
+  await assert.rejects(f.scope.analyzeSelectedDialogue(f.original), /Provider unavailable/);
+  assert.equal(f.session.dialogueUploadKey, key);
+  assert.equal(f.requests[0].get('clientUploadKey'), f.requests[1].get('clientUploadKey'));
+  assert.equal(f.extractions(), 1);
+});

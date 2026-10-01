@@ -275,7 +275,7 @@ test('pending media seek does not accidentally trigger scene exit', () => {
 // handlers together. Fixtures are neutral timed chapters; no external media.
 const runtimeNames = [
   'guardPlayable', 'setAdultMachinePhase', 'isWarmupPosition', 'isBonusPosition',
-  'adultTimeLabel', 'currentAdultFlow', 'orderedLockedAdultPositions',
+  'adultTimeLabel', 'currentAdultFlow', 'currentWarmupLustScale', 'tempoLabel', 'orderedLockedAdultPositions',
   'unlockNextAdultPositionFromLust', 'addFemaleLust', 'unlockedAdultPositions',
   'unlockedAdultOutcomes', 'renderAdultFlowStatus', 'renderAdultProgress',
   'renderAdultApproachChoices', 'renderAdultProgressiveUI', 'selectAdultCategory',
@@ -429,12 +429,15 @@ test('the scene control occupies space only while an existing clip is available'
 async function startFirstChapter(f) {
   f.els.video.time = 20;
   f.addFemaleLust(35);
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.els.video.playCalls, 0, 'unlocking never starts playback');
+  f.selectAdultPosition('one', true);
   await flush();
   assert.equal(f.state.activePositionId, 'one');
   assert.equal(f.els.video.paused, false);
 }
 
-test('first full threshold opens the panel and plays the first local clip automatically', async () => {
+test('first unlock reveals a clickable chapter; only explicit selection plays its verified entry', async () => {
   const f = runtimeFixture();
   f.renderAdultProgressiveUI(true);
   assert.equal(f.els.video.playCalls, 0);
@@ -444,9 +447,15 @@ test('first full threshold opens the panel and plays the first local clip automa
   assert.equal(f.state.adultSexUnlocked, false);
   f.addFemaleLust(1);
   await flush();
-  // The first verified clip is ten seconds ahead. Full progress opens it now,
-  // even though the introduction ended before the position's source boundary.
   assert.equal(f.state.adultSexUnlocked, true);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.playCalls, 0);
+  f.renderAdultProgressiveUI(true);
+  const tab = f.els.positionTabs.querySelectorAll('.position-tab').find(button => button.dataset.positionId === 'one');
+  assert.ok(tab);
+  assert.equal(tab.disabled, false);
+  tab.dispatchEvent(new Event('click'));
+  await flush();
   assert.equal(f.state.activeMovementId, 'one-0');
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.paused, false);
@@ -499,35 +508,27 @@ test('entry during a disjoint return binds that occurrence and a parent gap neve
   }
 });
 
-test('later thresholds unlock exactly one next chapter without switching playback', async () => {
+test('each completed gate reveals exactly one next verified chapter without moving the source clock', async () => {
   const f = runtimeFixture();
   await startFirstChapter(f);
   f.state.femaleSceneProgress = 0;
   assert.equal(f.unlockNextAdultPositionFromLust(), null);
+  const plays = f.els.video.playCalls;
   f.addFemaleLust(35);
-  await flush();
-  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
-  f.state.activeMovementId = null;
-  f.state.adultTimelineFloor = 59.8;
-  f.els.video.time = 59.8;
-  f.addFemaleLust(0);
+  f.renderAdultProgressiveUI(true);
   assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one', 'two']);
   assert.equal(f.state.activePositionId, 'one');
-  assert.equal(f.els.video.currentTime, 59.8);
+  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.els.video.playCalls, plays);
   assert.equal(f.state.femaleSceneProgress, 0);
+  const tab = f.els.positionTabs.querySelectorAll('.position-tab').find(button => button.dataset.positionId === 'two');
+  assert.ok(tab);
+  assert.equal(tab.disabled, false, 'an unlocked destination is clickable outside passive lookahead');
   f.addFemaleLust(35);
-  assert.equal(f.state.adultUnlockedPositionIds.has('three'), false);
-  assert.equal(f.state.femaleSceneProgress, 35);
-  f.state.femaleSceneProgress = 0;
-  f.selectAdultPosition('two', true);
-  await flush();
-  f.addFemaleLust(35);
-  assert.equal(f.state.adultUnlockedPositionIds.has('three'), false);
-  f.state.activeMovementId = null;
-  f.state.adultTimelineFloor = 119.8;
-  f.els.video.time = 119.8;
-  f.addFemaleLust(0);
-  assert.equal(f.state.adultUnlockedPositionIds.has('three'), true);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one', 'two', 'three']);
+  assert.equal(f.state.activePositionId, 'one');
+  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.els.video.playCalls, plays);
 });
 
 test('direct calls cannot play a locked chapter or movement', async () => {
@@ -562,16 +563,19 @@ for (const mode of ['error', 'blocked']) {
   });
 }
 
-test('failed chapter playback cannot count as a visit or open the following chapter', async () => {
+test('failed chapter playback earns no visit or progress; revealing destinations never starts media', async () => {
   const f = runtimeFixture();
   f.els.video.mode = 'error';
   f.els.video.time = 19.8;
   f.addFemaleLust(35);
+  f.selectAdultPosition('one', true);
   await flush();
   assert.equal(f.state.adultVisitedPositionIds.size, 0);
   assert.equal(f.state.femaleSceneProgress, 0);
   f.addFemaleLust(35);
-  assert.equal(f.state.adultUnlockedPositionIds.has('two'), false);
+  assert.equal(f.state.adultUnlockedPositionIds.has('two'), true);
+  assert.equal(f.state.adultVisitedPositionIds.size, 0);
+  assert.equal(f.els.video.paused, true);
 });
 
 test('obsolete introduction selections cannot earn progress after a newer selection', async () => {
@@ -594,20 +598,21 @@ test('one position tab exposes later verified returns and switches occurrence on
   first.movements.push(...later.movements);
   first.endTime = 150;
   await startFirstChapter(f);
-  assert.equal(first.activeMovementChoices.some(choice => choice.variants.some(item => item.id === 'return-0')), false);
+  assert.equal(first.activeMovementChoices.some(choice => choice.variants.some(item => item.id === 'return-0')), true);
+  assert.ok(first.activeMovementChoices.every(choice => new Set(choice.variants.map(item => item.sourcePositionId)).size === 1));
   f.state.activeMovementId = null;
   f.state.adultTimelineFloor = 119.8;
   f.els.video.time = 119.8;
   f.selectAdultPosition('one', false);
   assert.deepEqual(
     new Set(first.activeMovementChoices.flatMap(item => item.variants).map(item => item.id)),
-    new Set(['return-0', 'return-1'])
+    new Set(['return-0', 'return-1', 'return-2'])
   );
   const tabPlayCalls = f.els.video.playCalls;
   f.selectAdultPosition('one', true);
   await flush();
-  assert.equal(f.els.video.playCalls, tabPlayCalls);
-  assert.equal(f.els.video.currentTime, 119.8);
+  assert.equal(f.els.video.playCalls, tabPlayCalls + 1);
+  assert.equal(f.els.video.currentTime, 20, 'the explicit tab replays only its verified entry');
   f.selectAdultMovement('return-0', true);
   await flush();
   assert.equal(f.state.activeAdultOccurrenceId, 'source-return');
@@ -615,7 +620,7 @@ test('one position tab exposes later verified returns and switches occurrence on
   assert.equal(f.state.activePositionId, 'one');
 });
 
-test('choosing an old consolidated position never rewinds from a later scene', async () => {
+test('explicitly replaying a chapter seeks only to its verified entry', async () => {
   const f = runtimeFixture();
   await startFirstChapter(f);
   f.state.activeMovementId = null;
@@ -625,8 +630,9 @@ test('choosing an old consolidated position never rewinds from a later scene', a
   f.selectAdultPosition('one', true);
   f.selectAdultMovement('one-0', true);
   await flush();
-  assert.equal(f.els.video.currentTime, 120);
-  assert.equal(f.els.video.playCalls, plays);
+  assert.equal(f.els.video.currentTime, 20);
+  assert.equal(f.els.video.playCalls, plays + 1);
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-one');
 });
 
 test('a rejected later selection does not mutate the current occurrence or playback token', async () => {

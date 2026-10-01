@@ -1437,6 +1437,10 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
     const mimeType = String(req.body?.mimeType || 'audio/wav');
     const clientUploadKey = String(req.body?.clientUploadKey || '').trim().slice(0, 512);
     const maxSize = dialogueUploadLimit(mimeType);
+    const chunkSize = Number(req.body?.chunkSize || 0);
+    if (!Number.isSafeInteger(chunkSize) || chunkSize < 0 || chunkSize > 10 * 1024 * 1024) {
+      return res.status(400).json({ available: false, reason: 'INVALID_CHUNK_SIZE' });
+    }
 
     if (
       !Number.isSafeInteger(totalSize) ||
@@ -1453,7 +1457,7 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
     if (clientUploadKey) {
       const existingKey = dialogueUploadKeys.get(clientUploadKey);
       if (existingKey && existingKey.expiresAt > Date.now()) {
-        if (existingKey.status === 'consumed') {
+        if (existingKey.status === 'consumed' && !dialogueUploadSessions.has(existingKey.uploadId)) {
           return res.status(409).json({
             available: false,
             reason: 'UPLOAD_ALREADY_CONSUMED',
@@ -1462,6 +1466,7 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
         }
         const existing = dialogueUploadSessions.get(existingKey.uploadId);
         if (existing) {
+          await existing.initialization;
           if (existing.totalSize !== totalSize || existing.mimeType !== mimeType) {
             return res.status(409).json({
               available: false,
@@ -1475,6 +1480,7 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
             available: true,
             reused: true,
             uploadId: existingKey.uploadId,
+            chunkSize: existing.chunkSize || 0,
             receivedSize: existing.receivedSize,
             totalSize: existing.totalSize,
             activeWrites: Number(existing.activeWrites) || 0,
@@ -1491,16 +1497,12 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
     const uploadId = crypto.randomUUID();
     const filePath = `/tmp/videoquest-dialogue/${uploadId}.part`;
 
-    await fs.promises.mkdir('/tmp/videoquest-dialogue', {
-      recursive: true
-    });
-    await fs.promises.writeFile(filePath, Buffer.alloc(0));
-
-    dialogueUploadSessions.set(uploadId, {
+    const session = {
       filePath,
       fileName,
       mimeType,
       totalSize,
+      chunkSize,
       receivedSize: 0,
       nextChunk: 0,
       receivedChunks: new Map(),
@@ -1508,7 +1510,9 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
       activeWrites: 0,
       clientUploadKey,
       updatedAt: Date.now()
-    });
+    };
+    // Publish the logical session before asynchronous disk creation.
+    dialogueUploadSessions.set(uploadId, session);
     if (clientUploadKey) {
       dialogueUploadKeys.set(clientUploadKey, {
         uploadId,
@@ -1517,10 +1521,23 @@ app.post('/api/dialogue-upload/start', async (req, res) => {
       });
     }
 
+    session.initialization = (async () => {
+      await fs.promises.mkdir('/tmp/videoquest-dialogue', { recursive: true });
+      await fs.promises.writeFile(filePath, Buffer.alloc(0));
+    })();
+    try { await session.initialization; }
+    catch (error) {
+      dialogueUploadSessions.delete(uploadId);
+      if (dialogueUploadKeys.get(clientUploadKey)?.uploadId === uploadId) dialogueUploadKeys.delete(clientUploadKey);
+      await fs.promises.unlink(filePath).catch(() => {});
+      throw error;
+    }
+
     return res.json({
       available: true,
       reused: false,
       uploadId,
+      chunkSize,
       receivedSize: 0,
       nextChunk: 0,
       receivedChunks: []
@@ -1702,7 +1719,7 @@ setInterval(() => {
   const expiry = Date.now() - 60 * 60 * 1000;
 
   for (const [uploadId, session] of dialogueUploadSessions) {
-    if (session.writing || Number(session.activeWrites) > 0 || session.updatedAt >= expiry) continue;
+    if (session.analysisPromise || session.writing || Number(session.activeWrites) > 0 || session.updatedAt >= expiry) continue;
 
     dialogueUploadSessions.delete(uploadId);
     if (session.clientUploadKey) {
@@ -1931,21 +1948,36 @@ app.post(
         size: uploadSession.totalSize
       };
 
-      if (uploadSession.clientUploadKey) {
-        dialogueUploadKeys.set(uploadSession.clientUploadKey, {
-          uploadId,
-          status: 'consumed',
-          expiresAt: Date.now() + DIALOGUE_UPLOAD_KEY_TTL_MS
-        });
-      }
-      dialogueUploadSessions.delete(uploadId);
+    }
+
+    // Completed source bytes survive provider failures. Identical analysis calls
+    // share one result; changing analysis context may reuse bytes, never results.
+    const analysisKey = JSON.stringify([req.body?.duration || '', req.body?.protagonistProfile || '']);
+    if (uploadSession?.analysisPromise) {
+      const previous = await uploadSession.analysisPromise;
+      if (previous.key === analysisKey) return res.status(previous.status).json(previous.body);
+    }
+    if (uploadSession?.analysisResult?.key === analysisKey) {
+      return res.json(uploadSession.analysisResult.body);
+    }
+    let resolveAnalysis;
+    let analysisResponse;
+    const originalJson = res.json.bind(res);
+    if (uploadSession) {
+      uploadSession.updatedAt = Date.now();
+      uploadSession.analysisPromise = new Promise(resolve => { resolveAnalysis = resolve; });
+      res.json = body => {
+        analysisResponse = { key: analysisKey, status: res.statusCode, body };
+        if (body?.available === true) uploadSession.analysisResult = { key: analysisKey, body };
+        return originalJson(body);
+      };
     }
 
     const apiKey = resolveGeminiApiKey(req);
     let tempPath = req.file?.path;
     let originalVideoPath;
     let uploadedFile = null;
-    let remoteFile = null;
+    let remoteFile = uploadSession?.remoteFile || null;
     let inlineAudioPart = null;
     let retainUploadedFile = false;
     let dialogueSucceeded = false;
@@ -2006,7 +2038,7 @@ app.post(
             ffmpegPath, signal: preparationController.signal
           });
           tempPath = req.file.path;
-          await fs.promises.unlink(originalVideoPath).catch(() => {});
+          if (originalVideoPath !== uploadSession?.filePath) await fs.promises.unlink(originalVideoPath).catch(() => {});
         }
         dialogueStage('gemini-upload-start');
         try {
@@ -2033,7 +2065,7 @@ app.post(
               audioInput: true, bitrate: '32k'
             });
             tempPath = req.file.path;
-            await fs.promises.unlink(previousPath).catch(() => {});
+            if (previousPath !== uploadSession?.filePath) await fs.promises.unlink(previousPath).catch(() => {});
             audioSize = req.file.size;
           }
           if (audioSize > 14 * 1024 * 1024) {
@@ -2474,9 +2506,17 @@ Rules:
         error: error?.message || String(error)
       });
     } finally {
+      if (uploadSession) {
+        if (remoteFile?.name && remoteFile.state !== 'FAILED') uploadSession.remoteFile = remoteFile;
+        uploadSession.updatedAt = Date.now();
+        uploadSession.analysisPromise = null;
+        res.json = originalJson;
+        resolveAnalysis(analysisResponse || { key: analysisKey, status: 503,
+          body: { available: false, reason: 'ANALYSIS_INTERRUPTED' } });
+      }
       res.removeListener('close', stopPreparation);
-      if (originalVideoPath) await fs.promises.unlink(originalVideoPath).catch(() => {});
-      if (tempPath) {
+      if (originalVideoPath && originalVideoPath !== uploadSession?.filePath) await fs.promises.unlink(originalVideoPath).catch(() => {});
+      if (tempPath && tempPath !== uploadSession?.filePath) {
         try {
           if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
         } catch (cleanupError) {
@@ -2484,7 +2524,7 @@ Rules:
         }
       }
 
-      if (uploadedFile?.name && !(retainUploadedFile && dialogueSucceeded) &&
+      if (uploadedFile?.name && !uploadSession && !(retainUploadedFile && dialogueSucceeded) &&
           process.env.KEEP_GEMINI_FILES !== 'true') {
         try {
           const cleanupAi = new GoogleGenAI({ apiKey });

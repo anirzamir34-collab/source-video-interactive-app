@@ -511,3 +511,95 @@ test('short completed ASR replies retain their pauses before caption and TTS gro
   assert.equal(groups.length, 5);
   assert.ok(groups.every((row, i) => row.originalText === 'Yes.' && row.startTime === words[i].startTime));
 });
+
+test('concurrent logical upload starts reserve one session before disk initialization', async () => {
+  const sessions = new Map();
+  const keys = new Map();
+  let release;
+  let writes = 0;
+  let ids = 0;
+  const pending = new Promise(resolve => { release = resolve; });
+  const f = fixture(section("app.post('/api/dialogue-upload/start'", "app.post(\n  '/api/dialogue-upload/:uploadId/chunk'"), {
+    dialogueUploadLimit, dialogueUploadSessions: sessions, dialogueUploadKeys: keys,
+    DIALOGUE_UPLOAD_KEY_TTL_MS: 1800000, crypto: { randomUUID: () => `logical-${++ids}` },
+    fs: { promises: { mkdir: () => pending, writeFile: async () => { writes++; }, unlink: async () => {} } }
+  });
+  const req = { body: { totalSize: 6, mimeType: 'audio/wav', clientUploadKey: 'same-file' } };
+  const first = new ResponseStream(), second = new ResponseStream();
+  const handler = f.routes.get('/api/dialogue-upload/start');
+  const a = handler(req, first), b = handler(req, second);
+  assert.equal(sessions.size, 1);
+  release();
+  await Promise.all([a, b]);
+  assert.equal(ids, 1);
+  assert.equal(writes, 1);
+  assert.equal(first.jsonBody.uploadId, second.jsonBody.uploadId);
+  assert.equal(second.jsonBody.reused, true);
+});
+
+test('failed upload initialization releases its reservation so retry cannot reuse a broken file', async () => {
+  const sessions = new Map(), keys = new Map();
+  let attempts = 0;
+  const f = fixture(section("app.post('/api/dialogue-upload/start'", "app.post(\n  '/api/dialogue-upload/:uploadId/chunk'"), {
+    dialogueUploadLimit, dialogueUploadSessions: sessions, dialogueUploadKeys: keys,
+    DIALOGUE_UPLOAD_KEY_TTL_MS: 1800000, crypto: { randomUUID: () => `try-${attempts}` },
+    fs: { promises: { mkdir: async () => {}, writeFile: async () => { if (++attempts === 1) throw Error('disk failure'); }, unlink: async () => {} } }
+  });
+  const req = { body: { totalSize: 6, mimeType: 'audio/wav', clientUploadKey: 'retry-file' } };
+  const handler = f.routes.get('/api/dialogue-upload/start');
+  const failed = new ResponseStream(); await handler(req, failed);
+  assert.equal(failed.statusCode, 500);
+  assert.equal(sessions.size, 0); assert.equal(keys.size, 0);
+  const retry = new ResponseStream(); await handler(req, retry);
+  assert.equal(retry.statusCode, 200); assert.equal(sessions.size, 1);
+});
+
+function uploadAnalysisLifecycle(work) {
+  const route = source.indexOf("  '/api/gemini-dialogue-analyze'");
+  const start = source.indexOf('    const dialogueStartedAt', route);
+  const end = source.indexOf('    const apiKey', start);
+  const finishStart = source.indexOf('      if (uploadSession) {\n        if (remoteFile?.name', end);
+  const finishEnd = source.indexOf("      res.removeListener('close'", finishStart);
+  assert.ok(start > route && end > start && finishStart > end && finishEnd > finishStart);
+  const sessions = new Map([['done', { filePath: '/tmp/retained.part', fileName: 'speech.wav',
+    mimeType: 'audio/wav', totalSize: 6, receivedSize: 6, activeWrites: 0, updatedAt: Date.now() }]]);
+  const scope = vm.createContext({ dialogueUploadSessions: sessions, emptyGeminiUsage: () => ({}),
+    console: { info() {} }, work, Date });
+  vm.runInContext(`async function analyze(req, res) { ${source.slice(start, end)}
+    const remoteFile = { name: 'already-uploaded-provider-source', state: 'ACTIVE' };
+    try { const output = await work(req); return res.status(output.status).json(output.body); }
+    finally { ${source.slice(finishStart, finishEnd)} }
+  }`, scope);
+  return { scope, sessions, request: context => ({ body: { uploadId: 'done', duration: '900', protagonistProfile: context || '' } }) };
+}
+
+test('completed device audio survives provider failure and concurrent analysis shares a result', async () => {
+  let calls = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const f = uploadAnalysisLifecycle(async () => {
+    calls++;
+    if (calls === 1) { await gate; return { status: 502, body: { available: false, reason: 'PROVIDER_TEMPORARY' } }; }
+    return { status: 200, body: { available: true, segments: [{ originalText: 'Hello' }] } };
+  });
+  const a = new ResponseStream(), b = new ResponseStream();
+  const first = f.scope.analyze(f.request(), a), same = f.scope.analyze(f.request(), b);
+  assert.equal(calls, 1); release(); await Promise.all([first, same]);
+  assert.equal(a.statusCode, 502); assert.equal(b.statusCode, 502);
+  assert.deepEqual(a.jsonBody, b.jsonBody);
+  assert.equal(f.sessions.size, 1, 'failed provider analysis retains the completed device upload');
+  const retry = new ResponseStream(); await f.scope.analyze(f.request(), retry);
+  assert.equal(calls, 2); assert.equal(retry.jsonBody.available, true);
+  assert.equal(f.sessions.get('done').remoteFile.name, 'already-uploaded-provider-source');
+  const cached = new ResponseStream(); await f.scope.analyze(f.request(), cached);
+  assert.equal(calls, 2); assert.deepEqual(cached.jsonBody, retry.jsonBody);
+});
+
+test('reusing completed source bytes with changed analysis context never returns a stale result', async () => {
+  let calls = 0;
+  const f = uploadAnalysisLifecycle(async req => ({ status: 200,
+    body: { available: true, context: req.body.protagonistProfile, generation: ++calls } }));
+  const first = new ResponseStream(); await f.scope.analyze(f.request('first'), first);
+  const changed = new ResponseStream(); await f.scope.analyze(f.request('second'), changed);
+  assert.equal(calls, 2); assert.equal(changed.jsonBody.context, 'second');
+  assert.equal(f.sessions.size, 1);
+});

@@ -51,7 +51,7 @@ test('a Files API 404 uses bounded inline audio without uploading again', async 
   const audio = Buffer.from('small encoded speech');
   const stages = [];
   const scope = vm.createContext({
-    req: { file: { mimetype: 'audio/mpeg', originalname: 'speech.mp3' } }, tempPath: '/tmp/speech.mp3',
+    uploadSession: null, req: { file: { mimetype: 'audio/mpeg', originalname: 'speech.mp3' } }, tempPath: '/tmp/speech.mp3',
     uploadedFile: null, remoteFile: null, inlineAudioPart: null,
     fs: { promises: { stat: async () => ({ size: audio.length }), readFile: async () => audio } },
     dialogueStage: stage => stages.push(stage), console: { warn() {} },
@@ -64,7 +64,7 @@ test('a Files API 404 uses bounded inline audio without uploading again', async 
   assert.ok(stages.includes('gemini-inline-audio-ready'));
 
   const oversized = vm.createContext({
-    req: { file: { mimetype: 'audio/mpeg', originalname: 'large.mp3' } },
+    uploadSession: null, req: { file: { mimetype: 'audio/mpeg', originalname: 'large.mp3' } },
     tempPath: '/tmp/large.mp3', uploadedFile: null, remoteFile: null, inlineAudioPart: null,
     fs: { promises: { stat: async () => ({ size: 15 * 1024 * 1024 }),
       readFile: async path => {
@@ -95,4 +95,16 @@ test('repeated transient failure is bounded; quota and invalid-input errors are 
     assert.equal(result.requests.length, 1);
     assert.deepEqual(result.delays, []);
   }
+});
+
+test('malformed provider JSON retries three times using the already uploaded source', async () => {
+  const broken = new SyntaxError('Expected double-quoted property name in JSON');
+  const recovered = await run([broken, broken]);
+  assert.equal(recovered.requests.length, 3);
+  assert.equal(recovered.parsed.segments[0].originalText, 'Hello');
+  assert.ok(recovered.requests.every(request => request.contents[0].parts[0].fileData.fileUri === 'already-uploaded-audio'));
+  const exhausted = await run([broken, broken, broken]);
+  assert.equal(exhausted.requests.length, 3);
+  assert.equal(exhausted.parsed, null);
+  assert.equal(exhausted.lastDialogueError.message, broken.message);
 });

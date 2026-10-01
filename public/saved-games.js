@@ -61,6 +61,7 @@ export function prepareGame(input, previous = null) {
       analysis: input.payload?.analysis || null,
       dialogue: input.payload?.dialogue || null,
       dubCache: input.payload?.dubCache || [],
+      dubCacheEngineVersion: Number(input.payload?.dubCacheEngineVersion) || 0,
       dubSegmentMetadata: input.payload?.dubSegmentMetadata || [],
       dubProviderLock: input.payload?.dubProviderLock === 'elevenlabs' ? 'elevenlabs' : '',
       dubVoiceIds: input.payload?.dubVoiceIds || {},

@@ -241,16 +241,16 @@ test('source stays below the voice; levels ramp smoothly and restore the user vo
   const frames = clock();
   const mix = createDubMixer(video, frames);
   mix.update({ enabled: true });
-  assert.ok(Math.abs(video.volume - 0.176) < 1e-8);
+  assert.equal(video.volume, 0.8, 'source audio remains normal between dubbed lines');
   assert.ok(Math.abs(mix.voiceVolume() - 0.416) < 1e-8);
   mix.update({ enabled: true, speaking: true });
   frames.advance(40);
-  assert.ok(video.volume > 0.08 && video.volume < 0.176);
+  assert.ok(video.volume > 0.08 && video.volume < 0.8);
   frames.advance(40);
   assert.ok(Math.abs(video.volume - 0.08) < 1e-8);
   mix.update({ enabled: true, speaking: false });
   frames.advance(100);
-  assert.ok(video.volume < 0.176);
+  assert.ok(video.volume > 0.08 && video.volume < 0.8);
   mix.update({ enabled: false });
   frames.advance(500);
   assert.equal(video.volume, 0.8);
@@ -990,5 +990,22 @@ test('natural video end lets a short final syllable finish through pause and end
     assert.equal(f.timers.size, 0);
     audio.end();
     assert.equal(f.channels().length, 0);
+  } finally { f.close(); }
+});
+
+test('source audio returns to normal between dubbed lines even when original-behind-dub is disabled', async () => {
+  const f = fixture([line('a', 1, 2)]);
+  try {
+    f.state.keepOriginalAudioEnabled = false;
+    await f.sync();
+    assert.equal(f.video.muted, true);
+    assert.equal(f.active().paused, false);
+    f.active().end();
+    f.video.currentTime = 10;
+    await f.sync();
+    f.frames.advance(1000);
+    assert.equal(f.channels().length, 0);
+    assert.equal(f.video.muted, false);
+    assert.equal(f.video.volume, 1);
   } finally { f.close(); }
 });

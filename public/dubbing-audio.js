@@ -1,5 +1,5 @@
 // Conservative levels leave headroom when the two tracks are summed.
-export const DUB_MIX = Object.freeze({ voice: 0.52, sourceSpeaking: 0.10, sourceIdle: 0.22 });
+export const DUB_MIX = Object.freeze({ voice: 0.52, sourceSpeaking: 0.10, sourceIdle: 1 });
 
 export function createDubMixer(video, {
   now = () => performance.now(),
@@ -44,7 +44,7 @@ export function createDubMixer(video, {
       }
       const entering = !original;
       original ||= { volume: video.volume, muted: video.muted };
-      video.muted = original.muted || !keepOriginal;
+      video.muted = original.muted || (!keepOriginal && speaking);
       ramp(original.volume * (speaking ? DUB_MIX.sourceSpeaking : DUB_MIX.sourceIdle), entering);
     },
     voiceVolume(count = 1) {

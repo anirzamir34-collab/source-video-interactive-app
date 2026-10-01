@@ -113,6 +113,34 @@ test('HTTP integration: authentication, JSON errors and resumable upload', { tim
     t.after(() => fs.unlink(filePath).catch(() => {}));
   });
 
+  await t.test('provider failure retains completed upload bytes for analysis retry', async () => {
+    const body = JSON.stringify({ totalSize: 6, mimeType: 'audio/wav', fileName: 'retry.wav', clientUploadKey: 'provider-retry', chunkSize: 6 });
+    const starts = await Promise.all([0, 1].map(() => request('/api/dialogue-upload/start', {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body
+    }).then(response => response.json())));
+    assert.equal(starts[0].uploadId, starts[1].uploadId);
+    const uploadId = starts[0].uploadId;
+    const filePath = `/tmp/videoquest-dialogue/${uploadId}.part`;
+    t.after(() => fs.unlink(filePath).catch(() => {}));
+    const chunk = await request(`/api/dialogue-upload/${uploadId}/chunk`, {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/octet-stream', 'x-chunk-index': '0', 'x-chunk-offset': '0' }, body: 'abcdef'
+    });
+    assert.equal(chunk.status, 200); await chunk.json();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const form = new FormData(); form.set('uploadId', uploadId); form.set('duration', '900');
+      const failed = await request('/api/gemini-dialogue-analyze', { method: 'POST', headers: { Cookie: cookie }, body: form });
+      assert.equal(failed.status, 503);
+      assert.equal((await failed.json()).reason, 'GEMINI_NOT_CONFIGURED');
+      assert.equal(await fs.readFile(filePath, 'utf8'), 'abcdef');
+    }
+    const resumed = await request('/api/dialogue-upload/start', {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body
+    });
+    const retained = await resumed.json();
+    assert.equal(retained.uploadId, uploadId); assert.equal(retained.complete, true);
+    assert.equal(retained.chunkSize, 6); assert.deepEqual(retained.receivedChunks, [0]);
+  });
+
   await t.test('parallel audio chunks may arrive out of order and are written at exact offsets', async () => {
     const start = await request('/api/dialogue-upload/start', {
       method: 'POST',
