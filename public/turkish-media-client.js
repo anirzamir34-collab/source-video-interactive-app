@@ -44,12 +44,15 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   urlImpl = globalThis.URL, baseUrl = globalThis.location?.href || 'http://localhost/'
 } = {}) {
   if (!video || typeof fetchImpl !== 'function') throw new Error('Video oynatıcısı hazır değil.');
+  // Native Window methods reject the timers object as their receiver on some
+  // mobile browsers. Injected clocks and custom transports keep their contract.
+  const requestFetch = fetchImpl === globalThis.fetch ? fetchImpl.bind(globalThis) : fetchImpl;
   const timers = {
-    set: clock.setTimeout?.bind(clock) || globalThis.setTimeout,
-    clear: clock.clearTimeout?.bind(clock) || globalThis.clearTimeout,
+    set: clock.setTimeout?.bind(clock) || globalThis.setTimeout.bind(globalThis),
+    clear: clock.clearTimeout?.bind(clock) || globalThis.clearTimeout.bind(globalThis),
     now: clock.now?.bind(clock) || Date.now,
-    frame: clock.requestAnimationFrame?.bind(clock) || globalThis.requestAnimationFrame,
-    cancelFrame: clock.cancelAnimationFrame?.bind(clock) || globalThis.cancelAnimationFrame
+    frame: clock.requestAnimationFrame?.bind(clock) || globalThis.requestAnimationFrame?.bind(globalThis),
+    cancelFrame: clock.cancelAnimationFrame?.bind(clock) || globalThis.cancelAnimationFrame?.bind(globalThis)
   };
   let generation = 0, controller = new AbortController(), destroyed = false;
   let jobId = null, jobState = null, lastStart = null;
@@ -95,7 +98,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     }, asBlob ? assetTimeoutMs : requestTimeoutMs);
     try {
       const operation = (async () => {
-        const response = await fetchImpl(internalUrl(path, baseUrl), { ...options,
+        const response = await requestFetch(internalUrl(path, baseUrl), { ...options,
           headers: requestHeaders(path, options), credentials: 'same-origin', signal: requestController.signal });
         const body = asBlob && response.ok ? await response.blob() : await response.json().catch(() => ({}));
         if (!response.ok) throw Object.assign(new Error(errorMessage(body?.error || body?.message,
@@ -238,7 +241,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const expired = new Promise(resolve => { deadline = timers.set(() => {
       cancellation.abort(); resolve();
     }, requestTimeoutMs); });
-    const sent = Promise.resolve().then(() => fetchImpl(`${API}/jobs/${encodeURIComponent(id)}/cancel`, {
+    const sent = Promise.resolve().then(() => requestFetch(`${API}/jobs/${encodeURIComponent(id)}/cancel`, {
       method: 'POST', credentials: 'same-origin', signal: cancellation.signal
     })).catch(() => {});
     return Promise.race([sent, expired]).finally(() => timers.clear(deadline));
