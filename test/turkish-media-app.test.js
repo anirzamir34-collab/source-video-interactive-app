@@ -15,6 +15,7 @@ function section(start, end) {
 
 const branch = section('// The URL cache supplies one complete local source', '  const remoteStoryboardSource');
 const visualRequest = section('  const remoteStoryboardSource', '\n            body = await response.json();');
+const handlerFailure = section("  } catch (error) {\n    console.error('Analysis failed:'", '\n});\n\nfunction assignPositionOccurrenceIds(');
 const updateTranscript = section('function updateSourceTranscript(', '\nfunction onTurkishMediaStatus(');
 const selectedModes = section('function selectedAnalysisModes(', '\nfunction updateAnalysisModesUI(');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -70,6 +71,8 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
   const calls = { prepare: [], extract: [], start: [], load: [], save: [], events: [], visual: [], renders: 0 };
   const scope = vm.createContext({
     state, els, sourceContextAdapter, Blob, FormData, AbortSignal,
+    console: { error() {} }, videoUrlInput: new Element(), resolveUrlBtn: new Element(),
+    renderDebug() {}, updateAnalyzeAvailability() {},
     adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
     normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}),
     geminiRequestHeaders: () => ({}),
@@ -106,8 +109,10 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
   // then returns at the first fetch before unrelated response handling starts.
   const continuation = visual ? `${visualRequest}\nreturn { file, fastStoryboardPreparation, response };\n}\n} finally {}\n}\n}` : '';
   vm.runInContext(`${updateTranscript}\n${selectedModes}\nasync function runBranch(file, session, modes) {\nconst requestedProtagonist = '';\nlet analysisModeKey = '';\n${branch}\n${continuation}\nreturn { file, fastStoryboardPreparation };\n}`, scope);
+  vm.runInContext(`async function runHandler(file, session, modes) {\ntry {\nawait runBranch(file, session, modes);\n${handlerFailure}\n}`, scope);
   return { scope, state, els, session, calls, completeFile,
-    run: file => scope.runBranch(file ?? null, session, scope.selectedAnalysisModes()) };
+    run: file => scope.runBranch(file ?? null, session, scope.selectedAnalysisModes()),
+    runHandler: file => scope.runHandler(file ?? null, session, scope.selectedAnalysisModes()) };
 }
 
 test('the complete cached source is prepared before frame extraction and upload, while frame work overlaps the pending media job', async () => {
@@ -262,6 +267,24 @@ test('requested dubbing remains strict and prevents visual provider work after a
   assert.equal(f.session.storyboard, storyboard);
   assert.equal(f.session.audioContextStatus, 'unavailable');
   assert.equal(f.state.sourceContext, null);
+  assert.equal(f.state.savedGameReady, false);
+  assert.equal(f.calls.save.length, 0);
+});
+
+test('motion-only cancellation rejects instead of continuing visually and the analysis handler returns CANCELLED and IDLE', async () => {
+  const cancelled = new DOMException('Media job cancelled by the user', 'AbortError');
+  const storyboard = { sheets: [new Blob(['source frames'])], timestamps: [0], duration: 30, totalBytes: 13 };
+  const f = fixture({ visual: true, start: async () => { throw cancelled; }, extract: () => Promise.resolve(storyboard) });
+  await assert.rejects(f.run(), error => error === cancelled);
+  assert.equal(f.calls.visual.length, 0, 'cancelling source transcription must not start a storyboard POST');
+  f.state.analysisInProgress = true;
+  f.els.videoInput.disabled = true;
+  await f.runHandler();
+  assert.equal(f.calls.visual.length, 0);
+  assert.equal(f.els.analysisState.textContent, 'CANCELLED');
+  assert.equal(f.state.gameState, 'IDLE');
+  assert.equal(f.state.analysisInProgress, false);
+  assert.equal(f.els.videoInput.disabled, false);
   assert.equal(f.state.savedGameReady, false);
   assert.equal(f.calls.save.length, 0);
 });

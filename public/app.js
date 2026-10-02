@@ -1203,7 +1203,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     if (fastStoryboardPreparation) {
       session.storyboard = await fastStoryboardPreparation.catch(() => null);
     }
-    if (!modes.motion || modes.dubbing || modes.subtitles) throw error;
+    if (error?.name === 'AbortError' || !modes.motion || modes.dubbing || modes.subtitles) throw error;
     // Visual-only analysis may continue without speech evidence, including a
     // genuinely silent source or an unavailable ASR service. Requested Turkish
     // media still fails explicitly above; no alternate speech model is used.
