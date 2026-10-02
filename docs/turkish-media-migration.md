@@ -209,4 +209,4 @@ Son QA'da gerçek kaynağın hash'i, source/translations/dubs tam ID/speaker/say
 
 ## Nihai CI doğrulaması
 
-Kod commit'i `b3dce68` için [GitHub Actions run 36950798205](https://github.com/anirzamir34-collab/source-video-interactive-app/actions/runs/36950798205) temiz `npm ci` ve tam `npm test` geçti: **741 test, 741 pass, 0 fail, 0 skip**. Production JavaScript syntax: **52 dosya**. Önceki yerel bağımlılık skip'leri bu nihai tam sonucun yerine kullanılmaz. Ayrıntılı dosya/build/env/remaining/deploy raporu: [Implementation report](turkish-media-implementation-report.md).
+Son kod commit'i `a3e2e95` için [GitHub Actions run 36952599947](https://github.com/anirzamir34-collab/source-video-interactive-app/actions/runs/36952599947) temiz `npm ci` ve tam `npm test` geçti: **744 test, 744 pass, 0 fail, 0 skip**. Production JavaScript syntax: **52 dosya**. Önceki yerel bağımlılık skip'leri bu nihai tam sonucun yerine kullanılmaz. Ayrıntılı dosya/build/env/remaining/deploy raporu: [Implementation report](turkish-media-implementation-report.md).

@@ -14,7 +14,7 @@ npm start
 
 Başlatmadan önce `APP_PASSWORD` tanımlanmalıdır. Tanımlı değilse uygulama erişime açılmaz. `PORT` varsayılanı 10000'dir. Canlı ortamda HTTPS kullanılmalıdır; oturum çerezi `Secure` ve `HttpOnly` olarak oluşturulur.
 
-`npm test`, sözdizimi denetimlerini, mevcut oynatıcı/analiz regresyonlarını, hata senaryolarını ve gerçek Express HTTP entegrasyonunu çalıştırır. HTTP testleri geçici bir yerel sunucu ve test parolası kullanır; ücretli model veya ses servislerine çağrı yapmaz. Migration kodunun tam CI doğrulaması: **741 test geçti, 0 fail, 0 skip**. Dosya/test/build/deploy raporu: [Implementation report](docs/turkish-media-implementation-report.md).
+`npm test`, sözdizimi denetimlerini, mevcut oynatıcı/analiz regresyonlarını, hata senaryolarını ve gerçek Express HTTP entegrasyonunu çalıştırır. HTTP testleri geçici bir yerel sunucu ve test parolası kullanır; ücretli model veya ses servislerine çağrı yapmaz. Migration kodunun tam CI doğrulaması: **744 test geçti, 0 fail, 0 skip**. Dosya/test/build/deploy raporu: [Implementation report](docs/turkish-media-implementation-report.md).
 
 ## Bileşenler
 
@@ -26,7 +26,7 @@ Başlatmadan önce `APP_PASSWORD` tanımlanmalıdır. Tanımlı değilse uygulam
 | `public/analysis-recovery.js` | Analiz hatalarının sınıflandırılması ve yeniden deneme kuralları |
 | `public/playback-logic.js`, `public/engine-hardening.js`, `public/story-engine.js` | Zaman çizelgesi, analiz doğrulama ve oynatma yardımcıları |
 
-Hareket analizi Gemini storyboard uçlarını kullanır. `/api/external-analyze` ayrıca yapılandırılmış harici servise dosya iletir. Kaynak konuşma bilgisi görsel analize yalnızca özgün metin ve kaynak zamanlarıyla aktarılır; Türkçe ses veya hizalama zamanları etkileşimli seçimlerin kanıtı değildir. Seçim oynatımı kendi doğrulanmış kaynak aralığında biter.
+Hareket analizi Gemini storyboard uçlarını kullanır. `/api/external-analyze` ayrıca yapılandırılmış harici servise dosya iletir. Kaynak konuşma bilgisi görsel analize yalnızca özgün metin ve kaynak zamanlarıyla aktarılır; Türkçe ses veya hizalama zamanları etkileşimli seçimlerin kanıtı değildir. Seçim oynatımı kendi doğrulanmış kaynak aralığında biter. Yalnız görsel analiz istendiğinde kaynak konuşma servisi kullanılamazsa kare analizi boş konuşma bağlamıyla devam eder; dublaj/altyazı istendiyse hata açık kalır. Kullanıcı iptali her iki akışı durdurur.
 
 ## TURKISH DUBBING PIPELINE
 

@@ -1,6 +1,6 @@
 # VIDEOQUEST Türkçe medya migration uygulama raporu
 
-Tarih: 2026-10-02. Taslak PR: [#103](https://github.com/anirzamir34-collab/source-video-interactive-app/pull/103). Kod commit'i: `b3dce68c1c06b03718cf003ec3f5e526ac18d09d`. Kalite pipeline'ı uygulandı ve testler geçti; aşağıdaki fast/production kalite sınırları giderilmiş sayılmıyor.
+Tarih: 2026-10-02. Taslak PR: [#103](https://github.com/anirzamir34-collab/source-video-interactive-app/pull/103). Kod commit'i: `a3e2e95091882b255eef325958bb6d6d9f708011`. Kalite pipeline'ı uygulandı ve testler geçti; aşağıdaki fast/production kalite sınırları giderilmiş sayılmıyor.
 
 ## 1. Oluşturulan dosyalar (31)
 
@@ -65,7 +65,7 @@ Tarih: 2026-10-02. Taslak PR: [#103](https://github.com/anirzamir34-collab/sourc
 - `test/video-download.test.js`
 - `test/video-manifest.test.js`
 
-Production entegrasyonu yalnız konuşma/çeviri/ses/altyazı ve gerekli player/save sınırlarına bağlıdır. Gemini storyboard, video resolver/proxy/HLS/DASH, occurrence/movement sahipliği ve kaynak doğrulama kuralları korundu. Normal seçimler artık dublaj bitişini beklemek yerine kendi gerçek `action.endTime` sınırında biter.
+Production entegrasyonu yalnız konuşma/çeviri/ses/altyazı ve gerekli player/save sınırlarına bağlıdır. Gemini storyboard, video resolver/proxy/HLS/DASH, occurrence/movement sahipliği ve kaynak doğrulama kuralları korundu. Normal seçimler artık dublaj bitişini beklemek yerine kendi gerçek `action.endTime` sınırında biter. Yalnız görsel analiz istendiğinde ASR arızası kare analizini durdurmaz; önceki konuşma kanıtı temizlenir, istenen Türkçe medya hataları açık kalır. Kullanıcı iptali görsel devam başlatmaz ve arayüzü `CANCELLED/IDLE` durumuna döndürür.
 
 ## 3. Silinen legacy dosyalar (29)
 
@@ -130,10 +130,10 @@ Eski `GEMINI_TRANSCRIBE_MODEL`, `GEMINI_DIALOGUE_MODEL`, `GEMINI_TTS_MODEL`, `KE
 
 ## 7. Test sonuçları
 
-[GitHub Actions run 36950798205](https://github.com/anirzamir34-collab/source-video-interactive-app/actions/runs/36950798205), kod commit'i `b3dce68`:
+[GitHub Actions run 36952599947](https://github.com/anirzamir34-collab/source-video-interactive-app/actions/runs/36952599947), son kod commit'i `a3e2e95`:
 
 - Temiz `npm ci`: **başarılı**.
-- Tam `npm test`: **741/741 geçti; 0 fail, 0 skip**.
+- Tam `npm test`: **744/744 geçti; 0 fail, 0 skip**.
 - Bütün 52 production JavaScript dosyasının syntax kontrolü: **başarılı**.
 - Gerçek Express auth/upload/artifact Range, IndexedDB v2/v1 import, gerçek FFmpeg/FFprobe ve source video/interaction/playback regresyonları kurulu bağımlılık ortamında çalıştı.
 - Ücretli sağlayıcı endpoint'leri test doubles ile sınanır. Test geçmesi canlı hesabın erişimini veya Türkçe dinleme doğallığını kanıtlamaz.
@@ -142,7 +142,7 @@ Yerel sandbox'ta `npm ci` network EPERM ile engellendi ve bir gerçek HTTP bench
 
 ## 8. Build sonucu
 
-Repository ayrı bundle/build/lint komutu tanımlamaz. Render build komutu olan `npm ci` CI'da başarılı; `npm run check` 52 production dosyayı doğrular ve `npm test` bunu da çalıştırır. Mevcut GitHub Actions ve deployment yapılandırması değiştirilmedi. Bu raporun eklenmesi yalnız dokümantasyon değişikliğidir.
+Repository ayrı bundle/build/lint komutu tanımlamaz. Render build komutu olan `npm ci` CI'da başarılı; `npm run check` 52 production dosyayı doğrular ve `npm test` bunu da çalıştırır. Mevcut GitHub Actions ve deployment yapılandırması değiştirilmedi. Son CI kaynak analizinin servis hatası/iptal ayrımı dahil bütün kod değişikliklerini kapsar. Sonraki rapor güncellemesi yalnız dokümantasyondur.
 
 ## 9. Kalan bilinen problemler / doğrulama sınırları
 
@@ -163,6 +163,6 @@ Rollback: `backup/videoquest-before-turkish-media-2026-10-02` remote branch'i `a
 
 ## git diff --stat özeti
 
-`86 files changed, 8984 insertions(+), 11026 deletions(-)`
+`86 files changed, 9062 insertions(+), 11017 deletions(-)`
 
 Dosya bazlı tam değişiklik: PR #103 Files changed veya `git diff ac7bd6abb6065e90a599013873e4fe78d75ab180..HEAD --stat`.
