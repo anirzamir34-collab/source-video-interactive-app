@@ -72,9 +72,26 @@ test('normalizes story evidence without upgrading uncertainty', () => {
   assert.equal(context.inferences[0].confidence, 0.65);
   assert.deepEqual(context.characters[0], {
     id: 'CHAR_A', participantTrackId: 'PARTNER_A', displayName: 'Meral',
-    sourceRole: 'ev sahibi', role: 'ev sahibi', description: '',
+    sourceRole: 'ev sahibi', role: 'ev sahibi', gender: 'uncertain', voiceTone: '', voiceEmotion: '', description: '',
     evidenceLevel: 'fact', confidence: 0.94, evidence: 'Diyalogda adı söyleniyor.'
   });
+});
+
+test('preserves verified speaker matches and voice traits for automatic dubbing', () => {
+  const context = normalizeStoryContext({
+    emotionalTone: 'gergin',
+    characters: [{
+      id: 'MAIN', participantTrackId: 'MAIN_MALE', sourceRole: 'erkek',
+      gender: 'male', voiceTone: 'energetic', voiceEmotion: 'excited',
+      speakerIds: ['speaker-a', 'speaker-b'], voiceMatchEvidence: 'İki zaman aralığında aynı erkek konuşurken görülüyor.',
+      evidenceLevel: 'fact', confidence: 0.96, evidence: 'Kaynak kareler'
+    }]
+  });
+  assert.equal(context.characters[0].gender, 'male');
+  assert.equal(context.characters[0].voiceTone, 'energetic');
+  assert.equal(context.characters[0].voiceEmotion, 'excited');
+  assert.deepEqual(context.characters[0].speakerIds, ['speaker-a', 'speaker-b']);
+  assert.match(context.characters[0].voiceMatchEvidence, /aynı erkek/u);
 });
 
 test('merges chunk story context while keeping facts and unknowns', () => {
