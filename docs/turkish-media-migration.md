@@ -1,6 +1,6 @@
 # Türkçe medya migration kaydı
 
-Tarih: 2026-10-02. Bu belge eski Gemini konuşma/çeviri ve satır başına Eleven v3 motorundan, kaynağa bağlı Scribe v2 → OpenAI sahne çevirisi → Eleven v4 Text-to-Dialogue → Forced Alignment → tek Türkçe miks akışına geçişi kaydeder. Görsel analiz ve gameplay bu medya sağlayıcısı değişikliğinden ayrıdır. Resmi endpoint/model kanıtları ve Turbo sınırı [sağlayıcı sözleşmesinde](turkish-media-api-contract.md) bulunur.
+Tarih: 2026-10-02. Bu belge eski Gemini konuşma/çeviri ve satır başına Eleven v3 motorundan, kaynağa bağlı Scribe v2 → Gemini sahne çevirisi → Eleven v4 Text-to-Dialogue → Forced Alignment → tek Türkçe miks akışına geçişi kaydeder. İlk migration commit'i `a3e2e95` OpenAI çevirisi ve backend-only ElevenLabs anahtarı kullanıyordu. Aynı tarihli `fix/browser-elevenlabs-gemini-2026-10-02` düzeltmesi çeviriyi Gemini'ye taşıdı ve tarayıcı ElevenLabs anahtarını yeniden destekledi; OpenAI aktif sağlayıcı veya gereksinim değildir. Görsel analiz ve gameplay bu medya sağlayıcısı değişikliğinden ayrıdır. Resmi endpoint/model kanıtları ve Turbo sınırı [sağlayıcı sözleşmesinde](turkish-media-api-contract.md) bulunur.
 
 ## Başlangıç ve geri dönüş referansları
 
@@ -30,9 +30,9 @@ Eski aktif akış, `public/app.js` içinde ses çıkarma/yükleme, Gemini ASR ve
 | `GET /api/dialogue-upload/:uploadId/status` | Eski kaynak/ses yükleme durumu | `GET /api/turkish-media/uploads/:id/status` |
 | `GET /api/dialogue-upload/:uploadId/chunk/:chunkIndex/status` | Tek eski parçanın alınıp alınmadığı | Yeni status cevabındaki `receivedChunks` |
 | `POST /api/dialogue-upload/:uploadId/chunk` | Header ile offset/index, eski geçici dosyaya yazma | `POST /api/turkish-media/uploads/:id/chunk/:index` |
-| `POST /api/gemini-dialogue-analyze` | Gemini transcribe + çeviri + konuşmacı/duygu çözümleme | Yeni job: Scribe ve OpenAI aşamaları |
+| `POST /api/gemini-dialogue-analyze` | Gemini transcribe + çeviri + konuşmacı/duygu çözümleme | Yeni job: Scribe ASR ve canonical transcript üzerinde Gemini çevirisi |
 | `POST /api/gemini-dub-segment` | Gemini TTS ses ucu | Türkçe medya akışında kaldırılır; Gemini ses fallback'i yok |
-| `POST /api/elevenlabs-status` | Tarayıcı anahtarıyla subscription ve voice kontrolü | Anahtarsız `GET /api/turkish-media/capabilities`; gerçek model/voice doğrulaması backend sağlayıcısında |
+| `POST /api/elevenlabs-status` | Tarayıcı anahtarıyla subscription ve voice kontrolü | `GET /api/turkish-media/capabilities`, opsiyonel yeni anahtar header'ları; gerçek model/voice doğrulaması backend sağlayıcısında |
 | `POST /api/elevenlabs-voice-plan` | Eski konuşmacı roster'ına katalog atama | `voice-mapping.js`, yeni job içinde |
 | `POST /api/elevenlabs-dub-segment` | Eleven v3 satır TTS, base64 cevap | Eleven v4 Text-to-Dialogue, final dosya artifact'i |
 | `GET /api/ai-usage-status` | Eski Gemini diyalog kotası ve dublaj bağımlılığı | Türkçe medya yapılandırması/job hataları; görsel Gemini anahtar kontrolü ayrı kalır |
@@ -51,7 +51,7 @@ Eski aktif akış, `public/app.js` içinde ses çıkarma/yükleme, Gemini ASR ve
 | `public/dialogue-integrity.js` | Eski zaman onarımı/normalize ve konuşma yardımcıları | Canonical kaynak kanıtı yeniden zamanlanmaz; bu dosyaya bağlı ortak gameplay yardımcıları yalnız gerçek ortak kullanım varsa korunur |
 | `public/mp4-audio.js`, `public/media-limits.js` | Eski tarayıcı MP4 ses çıkarma yolu ve paylaşılan boyut sınırları | Medya upload tam yerel kaynağı kullanır; ortak medya sınırları diğer video yolları için korunur |
 | `state.dialogue`, `dubCache`, `dubRequests`, `dubQueue`, `dubChannels`, `dubSegmentMetadata`, `dubSpeakerVoices` | Eski app konuşma, istek ve kanal state'i | `sourceTranscript`, `sourceContext` ve medya client manifest/state'i |
-| `videoquest_elevenlabs_api_key`, `X-ElevenLabs-Key`, anahtar kaydet/test/sil UI'si | Tarayıcı ElevenLabs anahtarı | Kaldırılır; `ELEVENLABS_API_KEY` yalnız backend |
+| `videoquest_elevenlabs_api_key`, `X-ElevenLabs-Key`, anahtar kaydet/test/sil UI'si | Eski depolanan tarayıcı ElevenLabs anahtarı | Eski storage/header kaldırıldı; yeni parola alanı/geçici bellek ve `x-elevenlabs-api-key` isteği, backend env fallback'i |
 | Eski `subtitleToggleBtn`, `keepOriginalAudio` modu | Tek TR track ve canlı kaynak ses karıştırma | `subtitleTrack`: off/source_tr/dub_tr; sabit final mix |
 | `dubBufferStatus`, retry/source-audio UI'si, sync kontrolleri | Playback kurtarma ve kullanıcı eşitlemesi | Yeni client/playback/job durumuna bağlanır; kaynak video seek hookları korunur |
 
@@ -61,11 +61,11 @@ Gameplay/media regresyonları bu migration ile kaldırılmaz: `adult-gameplay`, 
 
 ## Korunan video, gameplay ve deployment bağımlılıkları
 
-`/api/gemini-storyboard-analyze`, Gemini görsel ikinci kontrolü, `/api/gemini-key-status`, `/api/external-health`, `/api/external-capabilities`, `/api/external-analyze`, `/api/resolve-video-url`, `/api/video-proxy`, login/logout ve `/health` korunur. Gemini yalnız görsel/oyun analizi içindir; Türkçe medya katmanı Gemini'yi ASR, çeviri veya TTS olarak kullanmaz.
+`/api/gemini-storyboard-analyze`, Gemini görsel ikinci kontrolü, `/api/gemini-key-status`, `/api/external-health`, `/api/external-capabilities`, `/api/external-analyze`, `/api/resolve-video-url`, `/api/video-proxy`, login/logout ve `/health` korunur. Gemini görsel/oyun analizine ek olarak yeni canonical Türkçe çeviri adapter'ında kullanılır; Türkçe medya ASR ve TTS görevleri ElevenLabs'tadır.
 
 `public/storyboard.js`, `adult-gameplay.js`, interaction modülleri, source-verified occurrence filtreleri, `video-download.js`, `video-range-stream.js` ve `url-video-cache.js` ortak kaynak video akışının parçalarıdır. İndirilen URL kaynağının tarayıcı IndexedDB cache'i 24 saattir; URL çözümleme sunucu metadata cache'i 20 dakikadır. Bunlar sağlayıcı medya artifact cache'iyle aynı depo değildir. Yerel videonun bytes'ı korunur; analiz kareleri ve backend upload bu kaynağı kullanır.
 
-Paket envanteri başlangıçta: `@google/genai ^2.21.0`, `express ^5.1.0`, `ffmpeg-static ^5.2.0`, `multer ^2.0.2`, `youtube-dl-exec ^3.1.15`; dev dependency `fake-indexeddb ^6.2.5`. Yeni medya modülleri Node built-in API'leri ve `fetch` kullanır; ayrıca ElevenLabs/OpenAI SDK'sı gerektirmez. `@google/genai` görsel analiz için, multer storyboard/external dosya yüklemeleri için, yt-dlp video çözümleme için kalır.
+Paket envanteri başlangıçta: `@google/genai ^2.21.0`, `express ^5.1.0`, `ffmpeg-static ^5.2.0`, `multer ^2.0.2`, `youtube-dl-exec ^3.1.15`; dev dependency `fake-indexeddb ^6.2.5`. Yeni medya modülleri Node built-in API'leri ve `fetch` kullanır; ek sağlayıcı SDK'sı gerektirmez. Gemini çevirisi resmi SDK sözleşmesine bağlı REST isteğidir. `@google/genai` görsel analiz için, multer storyboard/external dosya yüklemeleri için, yt-dlp video çözümleme için kalır.
 
 `package.json` Node alt sınırı 20.3.0'dır; çalışma doğrulamaları Node 24 üzerinde yapılır. Render web service build `npm ci`, start `npm start`, port varsayılanı 10000, `/health` owner-auth dışında süreç kontrolüdür. Repoda Render Blueprint veya `.env.example` bulunmaz. CI `.github/workflows/reliability-tests.yml` Node 24, sistem FFmpeg ve `npm ci` ardından `npm test` kullanır. Browser smoke ayrı `.mjs` komutudur; npm test wildcard'ına dahil değildir.
 
@@ -79,7 +79,7 @@ Paket envanteri başlangıçta: `@google/genai ^2.21.0`, `express ^5.1.0`, `ffmp
 | `routes.js` | Owner-auth altındaki job/upload uçları, artifact allowlist, Range dosya cevabı ve transfer lease |
 | `http.js`, `errors.js` | Timeout, AbortSignal, bounded retry/backoff/jitter/Retry-After, safe error ve secret redaction |
 | `elevenlabs.js` | Backend auth, canlı model/language/limit kontrolü, sayfalı voice kataloğu, Scribe/TTD/Forced Alignment |
-| `translation.js` | OpenAI scene context, strict JSON schema, segment identity/count ve süreye uygun çeviri |
+| `translation.js` | Gemini scene context, `generateContent` response schema, segment identity/count ve süreye uygun çeviri |
 | `voice-mapping.js`, `pronunciation.js` | Her gerçek speaker için ayrı voice; kanıtlanmış gender sınırı; versioned dictionary locators |
 | `model.js` | Canonical source transcript, hash'e bağlı segment/speaker ID, source context adapter, coverage assertions |
 | `audio.js` | Merkezi FFmpeg/probe, source padding/offset, gerçek turn split, süre ayarı, gerçek Türkçe mix |
@@ -106,7 +106,9 @@ Sunucu modülleri `lib/turkish-media/` altındadır. API prefix'i `/api/turkish-
 | GET | `/jobs/:id/result` | READY manifest; hazır değilse 409 |
 | GET | `/jobs/:id/artifacts/:name` | Allowlist: `mix.wav`, `source_tr.srt/.vtt`, `dub_tr.srt/.vtt`; gerçek dosya bytes/Range |
 
-Provider REST yolları: `GET /v1/models`, `GET /v2/voices`, `POST /v1/speech-to-text`, `POST /v1/text-to-dialogue/with-timestamps`, `POST /v1/forced-alignment`. OpenAI çeviri yolu `/v1/chat/completions`. Bunların auth header'ları backend içinde oluşturulur; client provider URL'sine istek göndermez.
+Provider REST yolları: `GET /v1/models`, `GET /v2/voices`, `POST /v1/speech-to-text`, `POST /v1/text-to-dialogue/with-timestamps`, `POST /v1/forced-alignment`. Gemini çeviri yolu `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`, header `x-goog-api-key`; ElevenLabs header'ı `xi-api-key` olur. Bunların auth header'ları backend içinde oluşturulur; client provider URL'sine istek göndermez ve OpenAI isteği yapılmaz.
+
+Tarayıcı `x-elevenlabs-api-key` / `x-gemini-api-key` değerlerini yalnız capabilities, voices, job create ve retry isteklerinde iletir. İstek anahtarı ilgili backend env anahtarına önceliklidir; header yoksa env fallback'i kullanılır. Upload, job status/result/artifact ve cancel için sağlayıcı anahtarı tekrar istenmez; mevcut `APP_PASSWORD` owner-auth koruması devam eder. Anahtarlar JSON body, upload metadata veya manifest alanı değildir. Jobs API bunları ayrı `create(input, credentials)` / `retry(id, credentials)` argümanıyla alır; voices/capabilities aynı geçici credential sözleşmesini kullanır.
 
 ## Canonical kanıt ve zaman sınırları
 
@@ -122,19 +124,19 @@ Kaynak video oyuncunun saatidir. Client yalnız Türkçe mix Audio saatini video
 
 ## Cache, güvenlik ve iptal
 
-Eski upload/key cache'i 30 dakika ve process memory'deydi. Eski Eleven v3 voice cache'i 10 dakika; base64 audio cache'i 30 dakika/en çok 72 entry; in-flight synthesis map'i memory'deydi. Yeni cache varsayılan 86400 saniye, en çok 24 saattir. Hash identity source SHA-256, pipeline version, model, language, çeviri sürümü/text, speaker voice, output format, dictionary ve aşamaya özgü parametreleri kapsar. Aynı kaynakta provider aşamaları yeniden kullanılabilir; URL yeniden indirmeyi önleyen browser source cache'i ayrı korunur.
+Eski upload/key cache'i 30 dakika ve process memory'deydi. Eski Eleven v3 voice cache'i 10 dakika; base64 audio cache'i 30 dakika/en çok 72 entry; in-flight synthesis map'i memory'deydi. Yeni cache varsayılan 86400 saniye, en çok 24 saattir. Hash identity source SHA-256, pipeline version, model, language, çeviri sürümü/text, speaker voice, output format, dictionary, aşamaya özgü parametreler ve etkin sağlayıcı anahtarlarının SHA-256 kapsamını içerir. Ham anahtarlar hash girdisi dışında saklanmaz. Aynı credential kapsamıyla tamamlanan aşamalar kullanılabilir; yanlış/farklı anahtarlı yeni create eski hesabın final cache'ini geri vermez. Retry aynı credential kapsamını ister, aksi halde 403 `MEDIA_CREDENTIAL_SCOPE_MISMATCH` verir. URL yeniden indirmeyi önleyen browser source cache'i ayrı korunur.
 
 Disk kökü `DUB_CACHE_DIRECTORY` altında `uploads/`, `jobs/`, `cache/` ve audio çalışma alanlarıdır. Kaynak upload tamamlanmadan job başlatılamaz. JSON ve artifact nesilleri atomik yayınlanır, JSON/artifact SHA-256 doğrulanır, bozuk/expired giriş hit sayılmaz. Büyük ses dosyaları `{path}` ile copy/stream hash yapılabilir; WAV/video bütünü cache yazmak için Node belleğine alınmaz. `getArtifactPath` kullanımında tüketim bitene kadar dış lease tutulur. Per-process kaynak/artifact lease'leri TTL temizliği sırasında aktif işleri korur.
 
 UUID upload/job kimlikleri, 64 haneli cache key ve güvenli artifact filename/allowlist path traversal'ı engeller. Cache okuması düzenli dosya ve symlink sınırını kontrol eder. FFmpeg shell kullanmadan argv ile çağrılır, ağ protokolleri dosya girişi için açılmaz. Provider base URL'leri backend sabittir. Client artifact URL'si aynı origin ve `/api/turkish-media/` altında olmalı; credentials, query veya fragment kabul edilmez. Subtitle DOM'a `textContent` ile yazılır.
 
-Yeni routes mevcut owner-auth middleware'inden sonra kurulur. Public capability/job cevapları API key, input disk yolu veya cache artifactKey içermez. Hata metinleri yapılandırılmış anahtarları ve Bearer/header token değerlerini maskeler. Saved/export sanitization URL, backend path, API key, secret/token/cookie/credential ve cache/job metadata alanlarını çıkarır; gerçek sourceText/çeviri/evidence korunur.
+Yeni routes mevcut owner-auth middleware'inden sonra kurulur. Public capability/job cevapları API key, input disk yolu veya cache artifactKey içermez. Etkin anahtarlar job closure'ında bellekte kalır; persisted job yalnız credential scope hash'i tutar. Hata metinleri hem env hem o istekle sağlanan anahtarları ve Bearer/header token değerlerini maskeler. Saved/export sanitization URL, backend path, API key, secret/token/cookie/credential ve cache/job metadata alanlarını çıkarır; gerçek sourceText/çeviri/evidence korunur.
 
 Client reset/source change/destroy eski generation'ı iptal eder; sonradan gelen kabul edilmiş job descriptor'ı da cancel edilir. Provider HTTP retry yalnız 429/5xx/ağ/süre aşımı için sınırlıdır; kalıcı 4xx hemen hata olur. FFmpeg timeout/cancel SIGTERM ardından gerektiğinde SIGKILL uygular ve süreç kapanmadan slot/dosya işi tamamlandı sayılmaz. Limiter kuyruktaki iptal edilmiş işi başlatmaz, aktif slotu task gerçekten settle olana kadar bırakmaz.
 
 Jobs kuyruğu aynı process'te bir full pipeline çalıştırır; böylece farklı job'ların source extraction/Scribe işleri sınırsız paralel başlamaz ve bir job'ın iptali başka job'ın ortak provider isteğini sahiplenmez. Tek pipeline içindeki scene çeviri/üretim paralelliği `DUB_MAX_CONCURRENCY` ile sınırlıdır. Kaynak dosya lease'i job kuyrukta beklerken de tutulur; provider-stage ve completed-segment cache yolları dosyayı kullanan pipeline boyunca lease taşır.
 
-Bu sürüm tek Node process'inin yerel disk deposudur. Single-flight, upload kilitleri ve lease'ler process belleğindedir; aynı disk kökünü birden fazla process/instance paylaşmak için dağıtık kilit yoktur. Restart'ta cache/job/upload metadata okunur, yarım artifact yayınları hit olmaz; nonterminal persisted job `JOB_INTERRUPTED` ve retryable FAILED olur. Provider işi restart sonrası kendiliğinden sürmez; kullanıcı retry ile tamamlanan aşamaları kullanır. `/tmp` ephemeral deployment'ta restart/redeploy disk verilerini kaybedebilir; kalıcı resume gerekiyorsa tek instance'a bağlı persistent disk ve `DUB_CACHE_DIRECTORY` ayarlanmalıdır. Cleanup 10 dakika arayla çalışır; TTL bir background job schedule garantisi değildir.
+Bu sürüm tek Node process'inin yerel disk deposudur. Single-flight, upload kilitleri ve lease'ler process belleğindedir; aynı disk kökünü birden fazla process/instance paylaşmak için dağıtık kilit yoktur. Restart'ta cache/job/upload metadata okunur, yarım artifact yayınları hit olmaz; nonterminal persisted job `JOB_INTERRUPTED` ve retryable FAILED olur. Provider işi restart sonrası kendiliğinden sürmez; kullanıcı retry ile aynı anahtarları yeniden sağlar ve tamamlanan aşamaları kullanır. Browser anahtarı diskte bulunmadığından restart'ta otomatik geri getirilemez. `/tmp` ephemeral deployment'ta restart/redeploy disk verilerini kaybedebilir; kalıcı resume gerekiyorsa tek instance'a bağlı persistent disk ve `DUB_CACHE_DIRECTORY` ayarlanmalıdır. Cleanup 10 dakika arayla çalışır; TTL bir background job schedule garantisi değildir.
 
 ## Ortam değişkenleri
 
@@ -142,17 +144,17 @@ Bu sürüm tek Node process'inin yerel disk deposudur. Single-flight, upload kil
 | --- | --- |
 | `APP_PASSWORD`, `PORT` | Mevcut owner-auth; port 10000 |
 | `EXTERNAL_ANALYSIS_URL` | Mevcut harici görsel analiz servisi |
-| `GEMINI_API_KEY`, `GEMINI_MODEL` | Yalnız görsel/gameplay analizi; storyboard model default `gemini-3.8-flash` |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Görsel/gameplay ve Türkçe çeviri için server fallback; ortak model default `gemini-3.8-flash` |
 | `VIDEO_RESOLUTION_PROBE_URL`, `VIDEO_RESOLUTION_PROBE_UNTIL` | Mevcut tek başlangıç video çözümleme teşhisi, geçici kullanım |
-| `ELEVENLABS_API_KEY` | Backend Scribe/voice/model/TTD/alignment anahtarı; transcript-only için de gerekli |
+| `ELEVENLABS_API_KEY` | Scribe/voice/model/TTD/alignment server fallback; tarayıcı anahtarı varsa zorunlu değil |
 | `ELEVENLABS_STT_MODEL` | `scribe_v2`; başka model yapılandırılırsa başlangıç hatası |
 | `ELEVENLABS_DUB_MODEL` | `eleven_v4`; eski modele fallback yok |
 | `ELEVENLABS_FAST_MODEL` | `eleven_v4_turbo`; protocol gate açılmaz |
 | `ELEVENLABS_OUTPUT_FORMAT` | `mp3_44100_128`; final mix gerçek WAV dosyasıdır |
 | `ELEVENLABS_PRONUNCIATION_DICTIONARY_ID`, `ELEVENLABS_PRONUNCIATION_DICTIONARY_VERSION_ID` | İkisi birlikte veya ikisi boş; versioned provider dictionary |
-| `TRANSLATION_PROVIDER` | `openai`; Gemini seçimi kabul edilmez |
-| `OPENAI_API_KEY`, `TRANSLATION_MODEL` | Backend scene translation; model default `gpt-4.1-mini` |
-| `TRANSLATION_VERSION` | `scene-tr-v1`; prompt/çeviri politika değişikliği cache kimliğini yeniler |
+| `TRANSLATION_PROVIDER` | `gemini`; yalnız bu sağlayıcı kabul edilir |
+| `TRANSLATION_MODEL` | Scene translation model önceliği: bu değer → `GEMINI_MODEL` → `gemini-3.8-flash` |
+| `TRANSLATION_VERSION` | `scene-tr-gemini-v2`; prompt/çeviri politika değişikliği cache kimliğini yeniler |
 | `DUB_DEFAULT_LANGUAGE` | `tr` |
 | `DUB_QUALITY_MODE` | `quality`; `fast` resmi WS gate'i nedeniyle görünür hata verir |
 | `DUB_MAX_CONCURRENCY` | Tek aktif job içindeki sahne/aşama paralelliği 2, kabul edilen 1–8; full pipeline job kuyruğu 1 |
@@ -161,7 +163,7 @@ Bu sürüm tek Node process'inin yerel disk deposudur. Single-flight, upload kil
 | `DUB_REQUEST_TIMEOUT_MS` | 120000 ms, kabul edilen 1000–600000 |
 | `DUB_MAX_RETRIES` | 3, kabul edilen 0–5; ilk isteğe ek bounded retry |
 
-Eski `GEMINI_TRANSCRIBE_MODEL`, `GEMINI_DIALOGUE_MODEL`, `GEMINI_TTS_MODEL` ve `KEEP_GEMINI_FILES` yeni Türkçe medya akışının ayarları değildir; eski audio/translation deploy ayarları kaldırılmalıdır. Tarayıcı Gemini session anahtarı görsel analiz için ayrı kalabilir; ElevenLabs ve OpenAI anahtarı için frontend giriş/storage/header yolu yoktur.
+Eski `GEMINI_TRANSCRIBE_MODEL`, `GEMINI_DIALOGUE_MODEL`, `GEMINI_TTS_MODEL` ve `KEEP_GEMINI_FILES` yeni Türkçe medya akışının ayarları değildir. `OPENAI_API_KEY` kullanılmaz; eski `TRANSLATION_PROVIDER=openai` override'ı yeni sürümde geçersizdir. ElevenLabs parola alanına anahtarı yazmak yeterlidir; yeni anahtarın kullanımı için “Kullan” butonuna basılması gerekmez. ElevenLabs anahtarı localStorage/sessionStorage'a yazılmaz. Gemini kullanıcı anahtarı mevcut session davranışını korur ve çeviride server Gemini anahtarına önceliklidir; kullanıcı anahtarı yoksa mevcut server fallback'i yeterlidir. Anahtar değişimi eski medya sonucunu/katalog durumunu geçersiz kılar; hazır kayıtlı offline mix yeniden sağlayıcı anahtarı istemez.
 
 ## Saved-game ve .vqgame v2
 
@@ -201,12 +203,14 @@ Bu belgenin saved migration doğrulamasında syntax kontrolü ve `git diff --che
 - Konuşmacı/cinsiyet: Scribe `speaker_id`, word timing ve logprob sağlar; cinsiyet/duygu kanıtı sağlamaz. `speaker_0` erkek diye atanmaz. Doğrulanmış kaynak metadata veya kullanıcı eşleşmesi olmadan otomatik kadın/erkek doğruluğu vaat edilmez; voice katalog gender label'ı kaynak kişisinin kanıtı değildir. Male protagonist önceliği görsel gameplay kuralıdır, ASR speaker sırası değildir.
 - Arka plan/SFX: Varsayılan speech-ducking, konuşma dışındaki gerçek kaynak sesi korur; source konuşma aralıklarında kaynak sesini sıfırlar. Böylece orijinal dil sızmaz, ancak aynı aralıktaki gerçek müzik/SFX/ambience de kesilir. Audio helper ayrılmış background destekler; mevcut ürün pipeline'ı harici bed kabul etmez. Ayrıştırılmış gerçek background verilmeden aynı anda konuşma + ambience tam korunmuş sayılamaz; kaynakta olmayan SFX üretilmez.
 - FFprobe: Sistem `/usr/bin/ffprobe` varsa container metadata kullanılır; yoksa merkezi servis FFmpeg header/decode sample sayımına geçer. Human-readable video header süresi yüzdelik saniyeye yuvarlanabilir; exact container tail doğruluğu için production FFprobe bulunması gerekir. `ffmpeg-static` FFprobe sağlamaz. Provider compressed bitrate süre tahmini dub ölçümü olarak kabul edilmez.
-- Canlı sağlayıcı: Mock contract testleri actual hesabın model erişimi, Türkçe ses doğallığı, kaynak konuşmacı ayrım doğruluğu veya pronunciation dictionary uyumluluğunu kanıtlamaz. Bu migration sırasında ücretli Scribe/TTD/alignment/OpenAI deneme çağrısı yapılmadı. Gerçek credential/erişim ve kaynakla dinleme QA'sı tamamlanmış diye gösterilmez.
+- Canlı sağlayıcı: Mock contract testleri actual hesabın model erişimi, Türkçe ses doğallığı, kaynak konuşmacı ayrım doğruluğu veya pronunciation dictionary uyumluluğunu kanıtlamaz. Bu düzeltmenin regresyonlarında Scribe/TTD/alignment/Gemini ağı taklit edildi; ücretli canlı deneme çağrısı yapılmadı. Gerçek credential/erişim ve kaynakla dinleme QA'sı tamamlanmış diye gösterilmez.
 - Tarayıcı: `saved-games-browser.smoke.mjs` Playwright/Chromium ve FFmpeg gerektiren opsiyonel source save/restart/replay/backup smoke'udur; provider çağrısı yapmaz ve final Türkçe mix'i gerçek mobil codec/autoplay davranışıyla ayrıca doğrulamaz. Mock client testleri Android/iOS audio policy yerine geçmez.
 - Disk/concurrency: Local single-flight ve lease'ler cross-process koordinasyon değildir. Çok instance ile ortak cache diski kullanımı ayrıca tasarlanmalıdır; disk kapasitesi/kota ve büyük kaynakların biriktirdiği derived WAV depolaması deployment'ta ölçülmelidir.
 
 Son QA'da gerçek kaynağın hash'i, source/translations/dubs tam ID/speaker/sayı eşitliği, actual mix süresi ve clipping, overlap, Forced Alignment kelimeleri, seek/pause/loop/panel akışı, her iki UTF-8 subtitle export'u, v1/v2 import ve offline mix playback birlikte değerlendirilir. Görsel kaynak kanıtı, `sourceVerified:false` seçilememe ve occurrence movement izolasyonu medya üretimi başarısıyla gevşetilmez.
 
-## Nihai CI doğrulaması
+## İlk migration CI kaydı ve anahtar regresyonu
 
-Son kod commit'i `a3e2e95` için [GitHub Actions run 36952599947](https://github.com/anirzamir34-collab/source-video-interactive-app/actions/runs/36952599947) temiz `npm ci` ve tam `npm test` geçti: **744 test, 744 pass, 0 fail, 0 skip**. Production JavaScript syntax: **52 dosya**. Önceki yerel bağımlılık skip'leri bu nihai tam sonucun yerine kullanılmaz. Ayrıntılı dosya/build/env/remaining/deploy raporu: [Implementation report](turkish-media-implementation-report.md).
+İlk migration commit'i `a3e2e95` için [GitHub Actions run 36952599947](https://github.com/anirzamir34-collab/source-video-interactive-app/actions/runs/36952599947) temiz `npm ci` ve tam `npm test` geçti: **744 test, 744 pass, 0 fail, 0 skip**. O commit'te production JavaScript syntax kontrolü **52 dosya** kapsadı; bu tarihsel sonuç sonraki branch'in tam CI sonucu değildir.
+
+Tarayıcı anahtarı regresyonu production değişikliğinden önce test-only commit `dce2767409a6188e2ad7ed34e0257e5c66437e4a` ile yayınlandı: **4 fail** (`ELEVENLABS_NOT_CONFIGURED`). Düzeltme sonrasında aynı `test/turkish-media-browser-credentials.test.js` **4 pass, 0 fail, 0 skip** verdi. Gerçek jobs/provider/translation/canonical/cache/alignment adapter'ları; yalnız request ElevenLabs + server Gemini, kullanıcı Gemini override'ı, restart retry, yanlış anahtar cache izolasyonu ve disk/response/log secret redaction sınandı. Ağ ve audio helper test doubles kullanır; test OpenAI URL'sini reddeder. Ayrıntılı dosya/build/env/remaining/deploy raporu: [Implementation report](turkish-media-implementation-report.md).

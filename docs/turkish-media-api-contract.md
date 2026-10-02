@@ -1,6 +1,6 @@
 # Türkçe medya sağlayıcı sözleşmesi
 
-Kontrol tarihi: 2026-10-02. Kaynaklar ElevenLabs'ın resmi GitHub organizasyonundaki, aşağıdaki commitlere sabitlenmiş dokümantasyon ve API tanımlarıdır. Canlı model kataloğu veya ücretli üretim API'si bu araştırmada çağrılmadı. SDK model listesinin geride olması yeni bir modelin olmadığı anlamına gelmez.
+Kontrol tarihi: 2026-10-02. Kaynaklar ElevenLabs ve Google'ın resmi GitHub organizasyonlarındaki, aşağıdaki commitlere sabitlenmiş dokümantasyon ve API tanımlarıdır. Güncel çeviri sağlayıcısı Gemini'dir; OpenAI bölümü ilk migration'ın tarihsel kaydıdır. Canlı model kataloğu veya ücretli üretim API'si bu araştırmada çağrılmadı. SDK model listesinin geride olması yeni bir modelin olmadığı anlamına gelmez.
 
 ## Kaynaklar
 
@@ -32,7 +32,7 @@ Scribe için [dil listesi L229–240](https://github.com/elevenlabs/skills/blob/
 
 Ses kataloğu `GET /v2/voices?page_size=100` ile okunur; `has_more` ve `next_page_token` ile sayfalanır. [Resmi VoicesSearchRequest](https://github.com/elevenlabs/elevenlabs-js/blob/b6deef08ed7c65134176482af69ceb4d348e1817/src/api/resources/voices/client/requests/VoicesSearchRequest.ts) en fazla 100 ses/sayfa ve gerçek `gender` label tabanlı filtreyi açıklar. Eski `/v1/voices` deprecated olup 500'den büyük çalışma alanlarında çalışmaz. Ses etiketindeki cinsiyet, kaynaktaki konuşmacının cinsiyetine dair kanıt değildir.
 
-`POST /v1/text-to-dialogue/with-timestamps?output_format=...`, JSON, sunucunun `xi-api-key` başlığı. [Client L335–361](https://github.com/elevenlabs/elevenlabs-js/blob/b6deef08ed7c65134176482af69ceb4d348e1817/src/api/resources/textToDialogue/client/Client.ts#L335-L361). VideoQuest `model_id=eleven_v4` ile `language_code=tr` gönderir; canlı model kataloğunun modeli ve Türkçe'yi doğrulaması gerekir.
+`POST /v1/text-to-dialogue/with-timestamps?output_format=...`, JSON, backend'in etkin anahtarla oluşturduğu `xi-api-key` başlığı. [Client L335–361](https://github.com/elevenlabs/elevenlabs-js/blob/b6deef08ed7c65134176482af69ceb4d348e1817/src/api/resources/textToDialogue/client/Client.ts#L335-L361). VideoQuest `model_id=eleven_v4` ile `language_code=tr` gönderir; canlı model kataloğunun modeli ve Türkçe'yi doğrulaması gerekir.
 
 [İstek L24–47](https://github.com/elevenlabs/elevenlabs-js/blob/b6deef08ed7c65134176482af69ceb4d348e1817/src/api/resources/textToDialogue/client/requests/BodyTextToDialogueFullWithTimestamps.ts#L24-L47):
 
@@ -63,6 +63,24 @@ Eski `/v1/text-to-speech/{voiceId}/stream-input` farklı TTS endpointidir. [Stre
 
 Alignment Türkçe metin ile aynı metni söyleyen üretilmiş Türkçe ses üzerinde yapılır. Kaynak başka dildeyse Türkçe çeviriyi kaynak sese hizalamak kaynak video zamanlarını kanıtlamaz. Çıktı zamanı önce üretilen sese aittir; VideoQuest konuşma parçasını kendi doğrulanmış kaynak aralığına yerleştirir. Kaynak zamanları alignment cevabıyla değiştirilemez. Kullanıcının açık gereksinimi uyarınca kelime zamanları her üretilmiş Türkçe parçanın son tempo/süre ayarı uygulanmış gerçek ses bytes'ı ve aynı Türkçe metin üzerinde Forced Alignment ile oluşturulur. V4 native alignment debug/cache izi olarak korunur; altyazının gerçek kelime zamanı yerine kullanılmaz.
 
-## OpenAI contextual translation sözleşmesi
+## Gemini contextual translation sözleşmesi
+
+Resmi Google Gen AI JavaScript SDK commit'i `4ce63d11497cc86567ecc7e44677cd687f28deac`:
+
+- [API client L23](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/_api_client.ts#L23) ve [L326–328](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/_api_client.ts#L326-L328): `v1beta`, `https://generativelanguage.googleapis.com`.
+- [Model path L35–38](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/_transformers.ts#L35-L38), [models L762–775](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/models.ts#L762-L775) ve [Node auth L63](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/node/_node_auth.ts#L63): `POST /v1beta/models/{model}:generateContent`, JSON body, `x-goog-api-key` header. Anahtar URL query'sine konmaz.
+- [Root systemInstruction L1479–1487](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/converters/_models_converters.ts#L1479-L1487) ve [contents/generationConfig L2034–2050](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/converters/_models_converters.ts#L2034-L2050): body `systemInstruction.parts[].text`, `contents[].parts[].text`, `generationConfig` taşır.
+- [Resmi JSON schema örneği L20–35](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/sdk-samples/generate_content_with_response_schema.ts#L20-L35): `responseMimeType=application/json`, `responseSchema` içinde `OBJECT/ARRAY/STRING`, `properties/items/required`. [Schema conversion L416–418](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/_transformers.ts#L416-L418) `additionalProperties` kaldırır; VideoQuest bunu göndermez ve bilinmeyen satır alanlarını uygulamada reddeder.
+- [Response text L3833–3849](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/types.ts#L3833-L3849), [promptFeedback L3722–3729](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/types.ts#L3722-L3729) ve [finishReason L498–538](https://github.com/googleapis/js-genai/blob/4ce63d11497cc86567ecc7e44677cd687f28deac/src/types.ts#L498-L538): `candidates[0].content.parts` içindeki thought olmayan metin birleştirilir; engellenmiş veya tamamlanmamış yanıt eksik çeviri olarak yayınlanmaz.
+
+VideoQuest cevap şeması `{translations:[{segmentId,text}]}` ister. Önceki/sonraki kaynak replikler, sabit konuşmacılar ve hedef kaynak süreleri bağlam olarak gönderilir; her kaynak segmenti tam bir kez dönmeli, speaker ve kaynak zamanları uygulamada korunmalıdır. Model önceliği `TRANSLATION_MODEL` → `GEMINI_MODEL` → `gemini-3.8-flash`; çeviri cache sürümü `scene-tr-gemini-v2` olur. Varsayılan ad canlı hesap/model erişiminin kanıtı değildir. OpenAI URL'sine çağrı veya fallback yoktur.
+
+## Browser credential ve backend sınırı
+
+Owner-auth altındaki capabilities/voices/create/retry istekleri `x-elevenlabs-api-key` / `x-gemini-api-key` alabilir. Her sağlayıcı için request anahtarı env anahtarından önce seçilir; yoksa `ELEVENLABS_API_KEY` / `GEMINI_API_KEY` kullanılır. Tarayıcı ElevenLabs anahtarı + sunucu Gemini anahtarı yeterlidir; kullanıcı Gemini anahtarı isteğe bağlı override'dır. Provider anahtarları body veya persisted job/result/cache/log içinde bulunmaz; backend bunları ilgili `xi-api-key` / `x-goog-api-key` header'ına dönüştürür. Cache ve retry etkin anahtarların hash kapsamına bağlıdır. Status/result/artifact/cancel mevcut owner-auth ile okunur; hazır offline mix sağlayıcı anahtarı istemez.
+
+## İlk migration: tarihsel OpenAI sözleşmesi
+
+`a3e2e95` commit'inin OpenAI adapter'ı 2 Ekim 2026 tarayıcı anahtarı düzeltmesinde Gemini ile değiştirildi. Aşağıdaki kaynak aktif endpoint/config talimatı değildir; `OPENAI_API_KEY` gerekmez.
 
 Resmî OpenAI Node SDK commit `e39bd99f338d929c3de5a8c45a26f62e653c9523`: [shared.ts L387–429](https://github.com/openai/openai-node/blob/e39bd99f338d929c3de5a8c45a26f62e653c9523/src/resources/shared.ts#L387-L429) `response_format` içindeki `json_schema` ve `name/schema/strict` alanlarını doğrular. [Chat completions L194–203](https://github.com/openai/openai-node/blob/e39bd99f338d929c3de5a8c45a26f62e653c9523/src/resources/chat/completions/completions.ts#L194-L203) POST `/chat/completions`; [client.ts L570](https://github.com/openai/openai-node/blob/e39bd99f338d929c3de5a8c45a26f62e653c9523/src/client.ts#L570) varsayılan `https://api.openai.com/v1` base URL'sini verir. Model ismi config'tedir; modelin Structured Outputs erişimi API cevabıyla ayrıca doğrulanmalıdır.
