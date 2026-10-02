@@ -215,6 +215,8 @@ test('request-only ElevenLabs plus server Gemini completes the real v4/FA pipeli
   const ready = await settled(f.jobs, created.id);
   assertComplete(ready);
   assert.equal(f.jobs.capabilities(credentials()).configured, true);
+  assert.equal(f.jobs.capabilities(credentials()).openAIRequired, false);
+  assert.equal(f.jobs.capabilities(credentials()).serverMediaConfigured, false);
   assert.equal((await f.jobs.voices(credentials())).length, 2);
   for (const pathname of ['/v1/speech-to-text', '/v1/text-to-dialogue/with-timestamps', '/v1/forced-alignment']) {
     const requests = f.calls.filter(call => new URL(call.url).pathname === pathname);
