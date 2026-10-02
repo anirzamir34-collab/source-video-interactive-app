@@ -140,6 +140,7 @@ const state = {
   voiceMappingGeneration: 0,
   voiceCatalog: null,
   voiceCatalogPromise: null,
+  voiceMappingManualRequested: false,
   mediaCredentialGeneration: 0,
   geminiProviderStatus: null,
   subtitlesEnabled: false,
@@ -1135,7 +1136,16 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
 function renderVoiceMappingPanel() {
   const speakers = state.sourceTranscript?.speakers || [];
   if (!els.voiceMappingPanel || !els.voiceMappingRows) return;
-  els.voiceMappingPanel.classList.toggle('hidden', !speakers.length);
+  // Voice selection is automatic in the normal VideoQuest flow. Keep the
+  // legacy manual editor available only when an explicit override is enabled;
+  // analysis failures must never ask the user to assign speakers by hand.
+  const manual = state.voiceMappingManualRequested === true;
+  els.voiceMappingPanel.classList.toggle('hidden', !manual || !speakers.length);
+  if (!manual) {
+    els.voiceMappingPanel.open = false;
+    els.voiceMappingRows.replaceChildren();
+    return;
+  }
   if (!els.voiceMappingPanel.open || !state.voiceCatalog) return;
   const previous = mediaClient.capture()?.manifest.voiceMapping || {};
   const draft = new Map([...els.voiceMappingRows.querySelectorAll('select')]
@@ -1188,6 +1198,57 @@ function verifiedMediaSceneContext() {
     Number.isFinite(action.endTime) && action.endTime > action.startTime)
     .slice(0, 64).map(action => ({ startTime: action.startTime, endTime: action.endTime,
       description: String(typeof action.sourceEvidence === 'string' ? action.sourceEvidence : action.label || '').slice(0, 400) }));
+}
+
+function verifiedSpeakerVoiceHints(analysis = state.analysis) {
+  const story = analysis?.storyContext || {};
+  const characters = Array.isArray(story.characters) ? story.characters : [];
+  const proposals = new Map();
+  const genderFrom = character => {
+    if (['male', 'female'].includes(character?.gender)) return character.gender;
+    const role = String(character?.sourceRole || character?.role || '').toLocaleLowerCase('tr-TR');
+    const male = /(?:^|\s)(?:erkek|adam|male|man)(?:\s|$)/iu.test(role);
+    const female = /(?:^|\s)(?:kadın|kadin|female|woman)(?:\s|$)/iu.test(role);
+    return male && !female ? 'male' : female && !male ? 'female' : undefined;
+  };
+  for (const character of characters) {
+    const speakerIds = Array.isArray(character?.speakerIds)
+      ? character.speakerIds.map(value => String(value || '').trim()).filter(Boolean)
+      : [];
+    if (!speakerIds.length || character?.evidenceLevel !== 'fact') continue;
+    const characterId = String(character.id || character.participantTrackId || '').trim();
+    if (!characterId) continue;
+    const gender = genderFrom(character);
+    const emotion = String(character.voiceEmotion || character.emotion || character.emotionalTone || '').trim();
+    const tone = String(character.voiceTone || character.tone || story.emotionalTone || '').trim();
+    for (const speakerId of speakerIds) {
+      if (!proposals.has(speakerId)) proposals.set(speakerId, []);
+      proposals.get(speakerId).push({
+        characterId,
+        ...(gender ? { gender } : {}),
+        ...(emotion ? { emotion: emotion.slice(0, 80) } : {}),
+        ...(tone ? { tone: tone.slice(0, 80) } : {}),
+      });
+    }
+  }
+
+  const hints = {};
+  for (const [speakerId, rows] of proposals) {
+    const characterIds = [...new Set(rows.map(row => row.characterId))];
+    // One Scribe ID matched to two visible people is ambiguous evidence. Do not
+    // force a voice identity from it; keep the raw speaker separate.
+    if (characterIds.length !== 1) continue;
+    const genders = [...new Set(rows.map(row => row.gender).filter(Boolean))];
+    const emotions = [...new Set(rows.map(row => row.emotion).filter(Boolean))];
+    const tones = [...new Set(rows.map(row => row.tone).filter(Boolean))];
+    hints[speakerId] = {
+      characterId: characterIds[0],
+      ...(genders.length === 1 ? { gender: genders[0] } : {}),
+      ...(emotions.length ? { emotion: emotions[0] } : {}),
+      ...(tones.length ? { tone: tones[0] } : {}),
+    };
+  }
+  return hints;
 }
 
 function restorePreviousVoices(plan, preserveJob = false) {
@@ -1393,20 +1454,33 @@ els.analyzeBtn.addEventListener('click', async () => {
   fastStoryboardPreparation?.catch(() => {});
   session.audioContextStatus = 'pending';
   const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality });
-  const reusableMedia = session.mediaManifest && session.mediaModeKey === mediaModeKey;
+  const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
+  const reusableMedia = !contextualMedia && session.mediaManifest && session.mediaModeKey === mediaModeKey;
   session.mediaModeKey = mediaModeKey;
   let result;
   try {
-    result = reusableMedia
-      ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
-        subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
-      : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
-        transcriptOnly: !modes.dubbing && !modes.subtitles }, qualityMode: modes.dubQuality, sceneContext: [] });
-    session.mediaManifest = result;
+    if (contextualMedia) {
+      // First pass is source-only: Scribe establishes real words/timestamps.
+      // Final translation/voice selection waits for the visual analysis so
+      // verified speaker↔character matches can collapse diarization fragments
+      // and choose the correct stable voice automatically.
+      result = session.sourceTranscript
+        ? { sourceTranscript: session.sourceTranscript }
+        : await mediaClient.start(file, { outputs: { dub: false, subtitles: false, transcriptOnly: true },
+          qualityMode: modes.dubQuality, sceneContext: [] });
+      session.transcriptManifest = result;
+    } else {
+      result = reusableMedia
+        ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
+          subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
+        : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
+          transcriptOnly: !modes.dubbing && !modes.subtitles }, qualityMode: modes.dubQuality, sceneContext: [] });
+      session.mediaManifest = result;
+    }
     updateSourceTranscript(result.sourceTranscript);
     renderMediaControls();
   } catch (error) {
-    session.mediaManifest = null;
+    if (!contextualMedia) session.mediaManifest = null;
     session.audioContextStatus = 'unavailable';
     logEngineEvent('SOURCE_TRANSCRIPT_UNAVAILABLE', { message: String(error.message || error).slice(0, 300) });
     if (fastStoryboardPreparation) {
@@ -1941,6 +2015,27 @@ els.analyzeBtn.addEventListener('click', async () => {
   } catch (error) {
     console.warn("Analysis could not be saved locally:", error);
   }
+  if (modes.motion && (modes.dubbing || modes.subtitles)) {
+    const speakerHints = verifiedSpeakerVoiceHints(normalized);
+    els.analysisState.textContent = 'PREPARING_TURKISH_MEDIA';
+    els.analysisTitle.textContent = 'Konuşmacılar eşleştiriliyor ve Türkçe medya hazırlanıyor';
+    els.analysisOutput.textContent = [
+      `${Object.keys(speakerHints).length} kaynak konuşmacı kimliği görsel karakterlerle doğrulandı.`,
+      'Aynı kişiye ait parçalanmış konuşmacı kimlikleri tek sabit Türkçe sese bağlanıyor.',
+      'Ses seçimi; doğrulanmış karakter profili, Türkçe desteği ve mevcut duygu/ton etiketleriyle otomatik yapılıyor.'
+    ].join('\n');
+    const finalMedia = await mediaClient.start(file, {
+      outputs: { dub: modes.dubbing, subtitles: modes.subtitles },
+      qualityMode: modes.dubQuality,
+      sceneContext: verifiedMediaSceneContext(),
+      speakerHints
+    });
+    session.mediaManifest = finalMedia;
+    session.mediaModeKey = mediaModeKey;
+    updateSourceTranscript(finalMedia.sourceTranscript);
+    renderMediaControls();
+  }
+
   els.analysisState.textContent = body.partial ? 'PARTIAL_TIMELINE_READY' : 'TIMELINE_READY';
   els.analysisTitle.textContent = `${body.partial ? 'Kısmi analiz hazır · ' : ''}${normalized.actions.length} doğrulanmış aksiyon`;
   els.analysisOutput.textContent = [

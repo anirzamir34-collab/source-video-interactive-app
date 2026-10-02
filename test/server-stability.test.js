@@ -539,6 +539,31 @@ test('job routes accept bounded manual voice IDs and refuse malformed mappings b
   assert.equal(sourceCalls, 1);
 });
 
+test('job routes accept bounded verified speaker hints and reject malformed voice metadata', async () => {
+  const f = mediaRouteFixture();
+  const hint = {
+    'speaker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-001': {
+      characterId: 'MAIN_MALE', gender: 'male', emotion: 'excited', tone: 'energetic'
+    }
+  };
+  const ok = await f.request('POST', '/jobs', { uploadId: 'upload', speakerHints: hint });
+  assert.equal(ok.statusCode, 202);
+  assert.deepEqual(f.calls[0].speakerHints, hint);
+
+  const invalidHints = [
+    null, [], 'bad',
+    { bad: { gender: 'robot' } },
+    { 'speaker valid': { characterId: 'MAIN_MALE' } },
+    { 'speaker-valid-1234567890': { characterId: '../bad' } },
+    { 'speaker-valid-1234567890': { emotion: 'x'.repeat(81) } },
+  ];
+  for (const speakerHints of invalidHints) {
+    const result = await f.request('POST', '/jobs', { uploadId: 'upload', speakerHints });
+    assert.equal(result.statusCode, 400);
+    assert.equal(result.jsonBody.reason, 'SPEAKER_HINTS_INVALID');
+  }
+});
+
 test('browser scene context requires valid source intervals and cannot certify source evidence', async () => {
   const f = mediaRouteFixture();
   const result = await f.request('POST', '/jobs', { uploadId: 'upload', sceneContext: [

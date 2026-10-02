@@ -424,7 +424,9 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       qualityMode: String(options.qualityMode || 'quality'),
       voiceMapping: jsonCopy(options.voiceMapping || {}),
       previousVoiceMapping: jsonCopy(options.previousVoiceMapping || {}),
-      sceneContext: jsonCopy(Array.isArray(options.sceneContext) ? options.sceneContext : []) } };
+      sceneContext: jsonCopy(Array.isArray(options.sceneContext) ? options.sceneContext : []),
+      ...(options.speakerHints && Object.keys(options.speakerHints).length
+        ? { speakerHints: jsonCopy(options.speakerHints) } : {}) } };
     const selected = lastStart;
     notify({ state: 'UPLOADING', progress: { percent: 0 }, message: 'Kaynak video hazırlanıyor.' });
     try {

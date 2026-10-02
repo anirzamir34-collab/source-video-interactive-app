@@ -215,7 +215,7 @@ const catalogue = [
   { voiceId: 'catalogue-custom-b', name: 'Katalog Ses B', gender: 'female', language: 'tr' }
 ];
 
-function uiFixture({ start, retry } = {}) {
+function uiFixture({ start, retry, manual = true } = {}) {
   const previous = { manifest: manifest('previous-job', { 'source-a': 'catalogue-custom-a', 'source-b': 'catalogue-custom-b' }),
     dubEnabled: false, subtitleTrack: 'source_tr', syncOffset: -0.25 };
   let captured = previous;
@@ -231,7 +231,7 @@ function uiFixture({ start, retry } = {}) {
   els.dubMode.checked = true;
   const session = { file: source, mediaManifest: previous.manifest };
   const state = { selectedFile: source, analysisSession: session, sourceTranscript: previous.manifest.sourceTranscript,
-    voiceCatalog: catalogue, voiceMappingGeneration: 0, analysisInProgress: false, savedGameBusy: false,
+    voiceCatalog: catalogue, voiceMappingManualRequested: manual, voiceMappingGeneration: 0, analysisInProgress: false, savedGameBusy: false,
     savedGameReady: true, gameState: 'DECISION_PENDING', mediaRevoice: null,
     activePositionId: 'position-2', activeAdultOccurrenceId: 'occurrence-2', activeMovementId: 'movement-2',
     gameCursorTime: 12.25, adultProgress: 61, adultMovementPlayCounts: new Map([['movement-2', 2]]),
@@ -280,12 +280,52 @@ function uiFixture({ start, retry } = {}) {
     section('function selectedAnalysisModes(', '\nfunction updateAnalysisModesUI('),
     section('function updateSourceTranscript(', '\nfunction onTurkishMediaStatus('),
     section('function renderVoiceMappingPanel(', '\nels.voiceMappingPanel?.addEventListener('),
+    section('function verifiedSpeakerVoiceHints(', '\nfunction restorePreviousVoices('),
     section("els.voiceMappingApplyBtn?.addEventListener('click'", '\nfunction analysisSourceKey('),
     section('async function captureSavedGame(', '\nasync function openSavedGame(')
   ].join('\n');
   vm.runInContext(code, scope);
   return { scope, els, state, session, previous, source, oldAudio, calls, mediaClient };
 }
+
+test('verified visual character matches turn four raw speaker IDs into two automatic voice profiles', () => {
+  const f = uiFixture({ manual: false });
+  f.state.analysis = { storyContext: {
+    emotionalTone: 'intense',
+    characters: [
+      { id: 'MAIN', participantTrackId: 'MAIN_MALE', sourceRole: 'erkek', gender: 'male',
+        voiceTone: 'energetic', voiceEmotion: 'excited', evidenceLevel: 'fact',
+        speakerIds: ['raw-1', 'raw-3'], voiceMatchEvidence: 'Kaynakta aynı erkek konuşuyor.' },
+      { id: 'WOMAN', participantTrackId: 'PARTNER_A', sourceRole: 'kadın', gender: 'female',
+        voiceTone: 'warm', voiceEmotion: 'calm', evidenceLevel: 'fact',
+        speakerIds: ['raw-2', 'raw-4'], voiceMatchEvidence: 'Kaynakta aynı kadın konuşuyor.' },
+    ]
+  } };
+  const hints = f.scope.verifiedSpeakerVoiceHints();
+  assert.deepEqual(Object.keys(hints).sort(), ['raw-1', 'raw-2', 'raw-3', 'raw-4']);
+  assert.deepEqual(copy(hints['raw-1']), { characterId: 'MAIN', gender: 'male', emotion: 'excited', tone: 'energetic' });
+  assert.deepEqual(copy(hints['raw-4']), { characterId: 'WOMAN', gender: 'female', emotion: 'calm', tone: 'warm' });
+});
+
+test('ambiguous raw speaker IDs matched to two visible people are not forced into one character voice', () => {
+  const f = uiFixture({ manual: false });
+  f.state.analysis = { storyContext: { characters: [
+    { id: 'A', participantTrackId: 'MAIN_MALE', evidenceLevel: 'fact', gender: 'male',
+      speakerIds: ['raw-conflict'], voiceMatchEvidence: 'İlk aralıkta erkek konuşuyor.' },
+    { id: 'B', participantTrackId: 'PARTNER_A', evidenceLevel: 'fact', gender: 'female',
+      speakerIds: ['raw-conflict'], voiceMatchEvidence: 'Başka aralıkta kadın konuşuyor.' },
+  ] } };
+  assert.deepEqual(copy(f.scope.verifiedSpeakerVoiceHints()), {});
+});
+
+test('normal VideoQuest flow keeps manual speaker voice selection hidden', () => {
+  const f = uiFixture({ manual: false });
+  f.els.voiceMappingPanel.open = true;
+  f.scope.renderVoiceMappingPanel();
+  assert.equal(f.els.voiceMappingPanel.open, false);
+  assert.equal(f.els.voiceMappingRows.children.length, 0);
+  assert.equal(f.els.voiceMappingPanel.classes.has('hidden'), true);
+});
 
 test('manual voice UI labels uncertain source gender and displays catalogue names and IDs without invented defaults', () => {
   const f = uiFixture();
