@@ -307,6 +307,17 @@ test('verified visual character matches turn four raw speaker IDs into two autom
   assert.deepEqual(hints['raw-4'], { characterId: 'WOMAN', gender: 'female', emotion: 'calm', tone: 'warm' });
 });
 
+test('ambiguous raw speaker IDs matched to two visible people are not forced into one character voice', () => {
+  const f = uiFixture({ manual: false });
+  f.state.analysis = { storyContext: { characters: [
+    { id: 'A', participantTrackId: 'MAIN_MALE', evidenceLevel: 'fact', gender: 'male',
+      speakerIds: ['raw-conflict'], voiceMatchEvidence: 'İlk aralıkta erkek konuşuyor.' },
+    { id: 'B', participantTrackId: 'PARTNER_A', evidenceLevel: 'fact', gender: 'female',
+      speakerIds: ['raw-conflict'], voiceMatchEvidence: 'Başka aralıkta kadın konuşuyor.' },
+  ] } };
+  assert.deepEqual(f.scope.verifiedSpeakerVoiceHints(), {});
+});
+
 test('normal VideoQuest flow keeps manual speaker voice selection hidden', () => {
   const f = uiFixture({ manual: false });
   f.els.voiceMappingPanel.open = true;
