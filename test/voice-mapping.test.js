@@ -280,12 +280,32 @@ function uiFixture({ start, retry, manual = true } = {}) {
     section('function selectedAnalysisModes(', '\nfunction updateAnalysisModesUI('),
     section('function updateSourceTranscript(', '\nfunction onTurkishMediaStatus('),
     section('function renderVoiceMappingPanel(', '\nels.voiceMappingPanel?.addEventListener('),
+    section('function verifiedSpeakerVoiceHints(', '\nfunction restorePreviousVoices('),
     section("els.voiceMappingApplyBtn?.addEventListener('click'", '\nfunction analysisSourceKey('),
     section('async function captureSavedGame(', '\nasync function openSavedGame(')
   ].join('\n');
   vm.runInContext(code, scope);
   return { scope, els, state, session, previous, source, oldAudio, calls, mediaClient };
 }
+
+test('verified visual character matches turn four raw speaker IDs into two automatic voice profiles', () => {
+  const f = uiFixture({ manual: false });
+  f.state.analysis = { storyContext: {
+    emotionalTone: 'intense',
+    characters: [
+      { id: 'MAIN', participantTrackId: 'MAIN_MALE', sourceRole: 'erkek', gender: 'male',
+        voiceTone: 'energetic', voiceEmotion: 'excited', evidenceLevel: 'fact',
+        speakerIds: ['raw-1', 'raw-3'], voiceMatchEvidence: 'Kaynakta aynı erkek konuşuyor.' },
+      { id: 'WOMAN', participantTrackId: 'PARTNER_A', sourceRole: 'kadın', gender: 'female',
+        voiceTone: 'warm', voiceEmotion: 'calm', evidenceLevel: 'fact',
+        speakerIds: ['raw-2', 'raw-4'], voiceMatchEvidence: 'Kaynakta aynı kadın konuşuyor.' },
+    ]
+  } };
+  const hints = f.scope.verifiedSpeakerVoiceHints();
+  assert.deepEqual(Object.keys(hints).sort(), ['raw-1', 'raw-2', 'raw-3', 'raw-4']);
+  assert.deepEqual(hints['raw-1'], { characterId: 'MAIN', gender: 'male', emotion: 'excited', tone: 'energetic' });
+  assert.deepEqual(hints['raw-4'], { characterId: 'WOMAN', gender: 'female', emotion: 'calm', tone: 'warm' });
+});
 
 test('normal VideoQuest flow keeps manual speaker voice selection hidden', () => {
   const f = uiFixture({ manual: false });
