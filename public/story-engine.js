@@ -58,6 +58,10 @@ export function normalizeStoryContext(input = {}) {
       displayName: cleanText(item?.displayName ?? item?.name, 100),
       sourceRole: cleanText(item?.sourceRole ?? item?.role, 100),
       role: cleanText(item?.role ?? item?.sourceRole, 100),
+      gender: ['male', 'female', 'uncertain'].includes(String(item?.gender || '').toLowerCase())
+        ? String(item.gender).toLowerCase() : 'uncertain',
+      voiceTone: cleanText(item?.voiceTone ?? item?.tone, 80),
+      voiceEmotion: cleanText(item?.voiceEmotion ?? item?.emotion, 80),
       description: cleanText(item?.description, 280),
       evidenceLevel: normalizeEvidenceLevel(item?.evidenceLevel),
       confidence: clamp(item?.confidence),
