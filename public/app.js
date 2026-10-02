@@ -140,6 +140,7 @@ const state = {
   voiceMappingGeneration: 0,
   voiceCatalog: null,
   voiceCatalogPromise: null,
+  voiceMappingManualRequested: false,
   mediaCredentialGeneration: 0,
   geminiProviderStatus: null,
   subtitlesEnabled: false,
@@ -1135,7 +1136,16 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
 function renderVoiceMappingPanel() {
   const speakers = state.sourceTranscript?.speakers || [];
   if (!els.voiceMappingPanel || !els.voiceMappingRows) return;
-  els.voiceMappingPanel.classList.toggle('hidden', !speakers.length);
+  // Voice selection is automatic in the normal VideoQuest flow. Keep the
+  // legacy manual editor available only when an explicit override is enabled;
+  // analysis failures must never ask the user to assign speakers by hand.
+  const manual = state.voiceMappingManualRequested === true;
+  els.voiceMappingPanel.classList.toggle('hidden', !manual || !speakers.length);
+  if (!manual) {
+    els.voiceMappingPanel.open = false;
+    els.voiceMappingRows.replaceChildren();
+    return;
+  }
   if (!els.voiceMappingPanel.open || !state.voiceCatalog) return;
   const previous = mediaClient.capture()?.manifest.voiceMapping || {};
   const draft = new Map([...els.voiceMappingRows.querySelectorAll('select')]
@@ -1188,6 +1198,39 @@ function verifiedMediaSceneContext() {
     Number.isFinite(action.endTime) && action.endTime > action.startTime)
     .slice(0, 64).map(action => ({ startTime: action.startTime, endTime: action.endTime,
       description: String(typeof action.sourceEvidence === 'string' ? action.sourceEvidence : action.label || '').slice(0, 400) }));
+}
+
+function verifiedSpeakerVoiceHints(analysis = state.analysis) {
+  const story = analysis?.storyContext || {};
+  const characters = Array.isArray(story.characters) ? story.characters : [];
+  const hints = {};
+  const genderFrom = character => {
+    if (['male', 'female'].includes(character?.gender)) return character.gender;
+    const role = String(character?.sourceRole || character?.role || '').toLocaleLowerCase('tr-TR');
+    const male = /(?:^|\s)(?:erkek|adam|male|man)(?:\s|$)/iu.test(role);
+    const female = /(?:^|\s)(?:kadın|kadin|female|woman)(?:\s|$)/iu.test(role);
+    return male && !female ? 'male' : female && !male ? 'female' : undefined;
+  };
+  for (const character of characters) {
+    const speakerIds = Array.isArray(character?.speakerIds)
+      ? character.speakerIds.map(value => String(value || '').trim()).filter(Boolean)
+      : [];
+    if (!speakerIds.length || character?.evidenceLevel !== 'fact') continue;
+    const characterId = String(character.id || character.participantTrackId || '').trim();
+    if (!characterId) continue;
+    const gender = genderFrom(character);
+    const emotion = String(character.emotion || character.emotionalTone || '').trim();
+    const tone = String(character.tone || story.emotionalTone || '').trim();
+    for (const speakerId of speakerIds) {
+      hints[speakerId] = {
+        characterId,
+        ...(gender ? { gender } : {}),
+        ...(emotion ? { emotion: emotion.slice(0, 80) } : {}),
+        ...(tone ? { tone: tone.slice(0, 80) } : {}),
+      };
+    }
+  }
+  return hints;
 }
 
 function restorePreviousVoices(plan, preserveJob = false) {
