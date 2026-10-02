@@ -2,10 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { dubSpeakerKey } from '../public/dub-speakers.js';
 import { createVideoDownloader } from '../public/video-download.js';
-import { canDecodeDialogueLocally, dialogueUploadMimeType } from '../public/media-limits.js';
-import { createDubRequestQueue } from '../public/dubbing-queue.js';
 import { resetInteractionSelection } from '../public/interaction-panel.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -38,10 +35,10 @@ function fixture(code, overrides = {}) {
   const scope = vm.createContext({
     AbortController, AbortSignal, URL, Blob, File, FormData, performance, setTimeout, clearTimeout,
     console: { error: (...args) => errors.push(args), warn() {} },
-    els: elements(), state: {}, savedGames: null, $: () => new Element(), updateDubMix() {}, ...overrides
+    els: elements(), state: {}, savedGames: null, voiceMappingGeneration: 0,
+    renderVoiceMappingPanel() {}, $: () => new Element(), ...overrides
   });
   scope.videoDownloads ||= createVideoDownloader({ fetch: (...args) => scope.fetch(...args), storage: null, locks: null });
-  scope.canDecodeDialogueLocally = canDecodeDialogueLocally;
   vm.runInContext(code, scope);
   return { scope, errors };
 }
@@ -90,364 +87,44 @@ test('analysis ignores duplicate starts and releases controls even if initial se
   assert.equal(f.errors.length, 1);
 });
 
-test('missing dubbing credentials fail before expensive analysis and unlock controls', async () => {
-  let handler;
-  const els = elements();
-  els.analyzeBtn.addEventListener = (_event, callback) => { handler = callback; };
-  const state = { selectedFile: { name: 'clip.mp4' } };
-  fixture(section("els.analyzeBtn.addEventListener('click', async () => {", '\nfunction assignPositionOccurrenceIds('), {
-    els, state, videoUrlInput: {}, resolveUrlBtn: {}, setGameState() {}, renderDebug() {}, updateAnalyzeAvailability() {},
-    selectedAnalysisModes: () => ({ dubbing: true }), activeElevenLabsApiKey: () => '',
-    extractStoryboard: () => assert.fail('must not spend analysis work without required credentials')
-  });
-  await handler();
-  assert.match(els.analysisOutput.textContent, /ElevenLabs anahtarı gerekli/);
-  assert.equal(state.analysisInProgress, false);
-  assert.equal(els.videoInput.disabled, false);
-});
-
-class UploadRequest extends EventTarget {
-  upload = new EventTarget();
-  status = 0;
-  response = null;
-  open() {}
-  setRequestHeader() {}
-  send(chunk) { this.chunk = chunk; }
-  abort() { this.aborted = true; this.dispatchEvent(new Event('abort')); }
-}
-
-test('completed mobile upload is not aborted while waiting for the server response', async () => {
-  const timers = new Map();
-  let nextTimer = 0;
-  let request;
-  const f = fixture(functions('sendDialogueChunk'), {
-    XMLHttpRequest: class extends UploadRequest { constructor() { super(); request = this; } },
-    setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
-    clearTimeout: id => timers.delete(id)
-  });
-  const result = f.scope.sendDialogueChunk({ uploadId: 'one', chunk: new Blob(['speech']), chunkIndex: 0,
-    completedBytes: 0, totalBytes: 6, startedAt: performance.now(), onProgress() {} });
-  request.upload.dispatchEvent(new Event('progress'));
-  request.upload.dispatchEvent(new Event('load'));
-  for (const callback of [...timers.values()]) callback();
-  assert.equal(request.aborted, undefined);
-  request.status = 200;
-  request.response = { available: true, nextChunk: 1 };
-  request.dispatchEvent(new Event('load'));
-  assert.equal((await result).nextChunk, 1);
-});
-
-test('dialogue analysis is single-flight so concurrent callers cannot upload the same audio twice', async () => {
-  const gate = deferred();
-  let calls = 0;
-  const session = {};
-  const f = fixture(functions('analyzeSelectedDialogue'), {
-    state: { analysisSession: session },
-    logEngineEvent() {},
-    analyzeSelectedDialogueOnce() { calls++; return gate.promise; }
-  });
-  const first = f.scope.analyzeSelectedDialogue(new Blob(['video']), session);
-  const second = f.scope.analyzeSelectedDialogue(new Blob(['video']), session);
-  assert.equal(calls, 1);
-  gate.resolve({ segments: [] });
-  await Promise.all([first, second]);
-  assert.equal(session.dialogueAnalysisPromise, null);
-});
-
-test('dialogue transport prepares local audio before considering remote-source fallback', () => {
-  const block = section('async function analyzeSelectedDialogueOnce(', '\nfunction languageClockTime(');
-  const local = block.indexOf('const dialogueFile = await prepareDialoguePayload(file, session)');
-  const remote = block.indexOf("else if (state.selectedSourceKind === 'url')");
-  assert.ok(local >= 0 && remote > local);
-  assert.doesNotMatch(block, /Sunucuda kaynak sesi hazırlanamadı; telefon sesine geçiliyor/);
-});
-
-test('device dialogue upload uses one stable logical upload key and reused starts do not resend bytes', () => {
-  const block = section('function dialogueUploadClientKey(', '\nasync function prepareDialoguePayload(');
-  assert.match(block, /clientUploadKey/);
-  assert.match(block, /startBody\.reused === true/);
-  assert.match(block, /\/api\/dialogue-upload\/\$\{encodeURIComponent\(uploadId\)\}\/status/);
-  assert.match(block, /if \(completedChunks\.has\(chunkIndex\)\) continue/);
-});
-
-test('dialogue upload bounds concurrency and keeps compact or constrained uploads serial', async () => {
-  for (const [sizeMb, effectiveType, saveData, expectedConnections] of
-    [[20, '4g', false, 2], [20, '3g', false, 1], [20, '2g', false, 1], [20, '4g', true, 1], [5, '4g', false, 1]]) {
-    const file = new Blob([new Uint8Array(sizeMb * 1024 * 1024)], { type: 'audio/mpeg' });
-    const form = new FormData(); form.set('video', file);
-    let active = 0, maximum = 0, sent = 0;
-    const f = fixture(functions('uploadDialogueWithProgress'), {
-      navigator: { connection: { effectiveType, saveData } },
-      waitUntilPageVisible: async () => {}, geminiRequestHeaders: () => ({}), dialogueUploadMimeType,
-      fetch: async url => ({ ok: true, json: async () => url.endsWith('/start')
-        ? { available: true, uploadId: 'one' } : { available: true } }),
-      sendDialogueChunk: async ({ chunk }) => {
-        active++; maximum = Math.max(maximum, active); sent += chunk.size;
-        await tick(); active--;
-      }
-    });
-    await f.scope.uploadDialogueWithProgress(form, () => {}, () => {});
-    assert.equal(maximum, expectedConnections);
-    assert.equal(sent, file.size, 'each source byte is uploaded once');
-  }
-});
-
-test('HTTP upload errors expose status and do not retry permanent authorization failures', async () => {
-  let request;
-  const f = fixture(functions('sendDialogueChunk'), {
-    XMLHttpRequest: class extends UploadRequest { constructor() { super(); request = this; } }
-  });
-  const result = f.scope.sendDialogueChunk({ uploadId: 'one', chunk: new Blob(['speech']), chunkIndex: 0,
-    completedBytes: 0, totalBytes: 6, startedAt: performance.now(), onProgress() {} });
-  request.upload.dispatchEvent(new Event('load'));
-  request.status = 401;
-  request.response = { reason: 'AUTH_REQUIRED', message: 'Oturum süresi doldu.' };
-  request.dispatchEvent(new Event('load'));
-  await assert.rejects(result, error => error.status === 401 && error.retryable === false && /Oturum/.test(error.message));
-});
-
-test('quota status does not advertise an unused provider as ready for dubbing', async () => {
-  const badges = [];
-  const f = fixture(functions('checkAiUsageStatus'), {
-    fetch: async () => ({ json: async () => ({ subtitles: { state: 'available' }, dubbing: { state: 'available' } }) }),
-    geminiRequestHeaders: () => ({}), activeElevenLabsApiKey: () => '',
-    renderQuotaBadge: (_el, status) => badges.push(status)
-  });
-  await f.scope.checkAiUsageStatus();
-  assert.equal(badges.at(-1).state, 'unconfigured');
-  assert.match(badges.at(-1).message, /ElevenLabs/);
-});
-
-function dubbingFixture() {
-  const pending = [];
-  const state = {
-    dialogue: { segments: [] }, dubRequestController: new AbortController(),
-    dubUnavailableUntil: 0, dubCache: new Map(), dubRequests: new Map(), dubSyncGeneration: 0,
-    dubQueue: createDubRequestQueue(), dubVoiceIds: {}, dubStableSpeakerGenders: new Map(), dubPlayedSegmentIds: new Set()
-  };
-  const f = fixture(functions('ensureDubSegment', 'resetDubState', 'prepareCompleteDubTimeline'), {
-    state, createDubRequestQueue, dubSpeakerKey,
-    ensureDubVoicePlan: async () => new Map([['speaker-unknown', { speakerId: 'speaker-unknown', voiceId: 'new-voice', gender: 'female' }]]),
-    dubTimeline: () => state.dialogue.segments,
-    getDubSegmentId: segment => segment.id, stableDubGender: () => 'female',
-    activeElevenLabsApiKey: () => 'test-key', elevenLabsHeaders: value => value,
-    logEngineEvent() {}, stopDubPlayback() {}, stopDubClock() {}, clearPreparedDubAudio() {}, checkAiUsageStatus() {},
-    fetch: (_url, options) => { const item = { ...deferred(), signal: options.signal }; pending.push(item); return item.promise; }
-  });
-  return { ...f, state, pending };
-}
-function voiceResponse(audio = 'new-audio') { return { ok: true, json: async () => ({ available: true, audioBase64: audio, voiceId: 'new-voice' }) }; }
-
-test('a different provider cannot populate an ElevenLabs dub cache', async () => {
-  const f = dubbingFixture();
-  const segment = { id: 'one', turkishText: 'Merhaba.' };
-  f.state.dialogue.segments = [segment];
-  const request = f.scope.ensureDubSegment(segment);
-  await tick();
-  f.pending[0].resolve({ ok: true, json: async () => ({ available: true, provider: 'other-provider', audioBase64: 'audio', voiceId: 'new-voice' }) });
-  assert.equal(await request, null);
-  assert.equal(f.state.dubCache.size, 0);
-  assert.equal(f.pending.length, 1);
-  assert.equal(f.state.dubFailureReason, 'DUB_PROVIDER_MISMATCH');
-});
-
-test('mismatched provider voice is neither cached nor retried as a transient error', async () => {
-  const f = dubbingFixture();
-  const segment = { id: 'line-1', turkishText: 'Merhaba' };
-  f.state.dialogue.segments = [segment];
-  const request = f.scope.ensureDubSegment(segment);
-  await tick();
-  f.pending[0].resolve({ ok: true, json: async () => ({ available: true, audioBase64: 'wrong-audio', voiceId: 'someone-else' }) });
-  assert.equal(await request, null);
-  assert.equal(f.pending.length, 1);
-  assert.equal(f.state.dubCache.size, 0);
-  assert.equal(f.state.dubFailureReason, 'DUB_VOICE_MISMATCH');
-});
-
-test('late audio from an old source cannot replace new audio or delete a new pending request with the same id', async () => {
-  const f = dubbingFixture();
-  const old = { id: 'line-1', turkishText: 'Önceki konuşma' };
-  f.state.dialogue.segments = [old];
-  const oldRequest = f.scope.ensureDubSegment(old);
-  await tick();
-  f.scope.resetDubState();
-  assert.equal(f.pending[0].signal.aborted, true);
-  const current = { id: 'line-1', turkishText: 'Yeni konuşma' };
-  f.state.dialogue.segments = [current];
-  const newRequest = f.scope.ensureDubSegment(current);
-  await tick();
-  f.pending[0].resolve(voiceResponse('old-audio'));
-  assert.equal(await oldRequest, null);
-  assert.equal(f.state.dubCache.size, 0);
-  assert.equal(f.state.dubRequests.size, 1);
-  f.pending[1].resolve(voiceResponse());
-  assert.match(await newRequest, /new-audio$/);
-  assert.equal(f.state.dubRequests.size, 0);
-  assert.equal(f.errors.length, 0);
-});
-
-test('late quota errors cannot disable dubbing in the new source', async () => {
-  const f = dubbingFixture();
-  const segment = { id: 'line-1', turkishText: 'Merhaba' };
-  f.state.dialogue.segments = [segment];
-  const request = f.scope.ensureDubSegment(segment);
-  await tick();
-  f.scope.resetDubState();
-  f.state.dubbingEnabled = true;
-  f.pending[0].resolve({ ok: false, json: async () => ({ reason: 'ELEVENLABS_QUOTA_LIMIT' }) });
-  await request;
-  assert.equal(f.state.dubbingEnabled, true);
-  assert.equal(f.state.dubUnavailableUntil, 0);
-});
-
-test('reset cancels queued work before any request for the previous source starts', async () => {
-  const f = dubbingFixture();
-  const old = { id: 'line-1', turkishText: 'Merhaba' };
-  f.state.dialogue.segments = [old];
-  const request = f.scope.ensureDubSegment(old);
-  f.scope.resetDubState();
-  f.state.dialogue.segments = [];
-  assert.equal(await request, null);
-  assert.equal(await f.scope.ensureDubSegment(old), null);
-  assert.equal(f.pending.length, 0);
-});
-
-test('a long provider rate limit is surfaced without retrying before its deadline', async () => {
-  const f = dubbingFixture();
-  const segment = { id: 'line-1', turkishText: 'Merhaba' };
-  f.state.dialogue.segments = [segment];
-  const request = f.scope.ensureDubSegment(segment);
-  await tick();
-  f.pending[0].resolve({ ok: false, json: async () => ({ reason: 'ELEVENLABS_RATE_LIMIT', retryAfterSeconds: 120 }) });
-  assert.equal(await request, null);
-  assert.equal(f.pending.length, 1);
-  assert.equal(f.state.dubFailureReason, 'ELEVENLABS_RATE_LIMIT');
-  assert.ok(f.state.dubUnavailableUntil > Date.now());
-  assert.equal(await f.scope.ensureDubSegment(segment), null);
-  assert.equal(f.pending.length, 1);
-});
-
-test('preparation workers stop when their source changes', async () => {
-  const f = dubbingFixture();
-  const old = [{ id: 'one', turkishText: 'Merhaba' }, { id: 'two', turkishText: 'Nasılsın' }];
-  f.state.dialogue.segments = old;
-  f.state.dubbingEnabled = true;
-  const preparation = f.scope.prepareCompleteDubTimeline(old);
-  await tick();
-  f.scope.resetDubState();
-  f.pending[0].resolve(voiceResponse());
-  assert.equal(await preparation, 0);
-  assert.equal(f.pending.length, 1);
-});
-
-test('complete preparation reports every translated line ready before playback', async () => {
-  const f = dubbingFixture();
-  const segments = ['one', 'two', 'three'].map(id => ({ id, turkishText: `Türkçe ${id}` }));
-  const progress = [];
-  f.state.dialogue.segments = segments;
-  f.state.dubbingEnabled = true;
-  const preparation = f.scope.prepareCompleteDubTimeline(
-    segments,
-    1,
-    (ready, total) => progress.push([ready, total])
-  );
-  for (let index = 0; index < segments.length; index += 1) {
-    await tick();
-    f.pending[index].resolve(voiceResponse(`audio-${index}`));
-  }
-  assert.equal(await preparation, segments.length);
-  assert.deepEqual(progress.at(-1), [segments.length, segments.length]);
-  assert.deepEqual([...f.state.dubCache.keys()], ['one', 'two', 'three']);
-});
-
-test('cached speech remains playable during a provider cooldown', async () => {
-  const f = dubbingFixture();
-  const segment = { id: 'cached', turkishText: 'Merhaba' };
-  f.state.dialogue.segments = [segment];
-  f.state.dubCache.set('cached', 'cached-audio');
-  f.state.dubUnavailableUntil = Date.now() + 120000;
-  assert.equal(await f.scope.ensureDubSegment(segment, 100), 'cached-audio');
-  assert.equal(f.pending.length, 0);
-});
-
-test('saved-game replay uses stored audio and never synthesizes missing audio', async () => {
-  const f = dubbingFixture();
-  const cached = { id: 'saved', turkishText: 'Merhaba' };
-  const missing = { id: 'missing', turkishText: 'Görüşürüz' };
-  f.state.dialogue.segments = [cached, missing];
-  f.state.savedPlaybackOnly = true;
-  f.state.dubCache.set('saved', 'saved-audio');
-  assert.equal(await f.scope.ensureDubSegment(cached), 'saved-audio');
-  assert.equal(await f.scope.ensureDubSegment(missing), null);
-  assert.equal(f.pending.length, 0);
-});
-
-test('the selected line overtakes queued preload work without duplicate synthesis', async () => {
-  const f = dubbingFixture();
-  const segments = ['running', 'preload', 'selected'].map(id => ({ id, turkishText: id }));
-  f.state.dialogue.segments = segments;
-  const running = f.scope.ensureDubSegment(segments[0]);
-  await tick();
-  const preload = f.scope.ensureDubSegment(segments[1]);
-  const selected = f.scope.ensureDubSegment(segments[2]);
-  const promoted = f.scope.ensureDubSegment(segments[2], 100);
-  f.pending[0].resolve(voiceResponse('running'));
-  await running;
-  await tick();
-  assert.equal(f.pending.length, 2);
-  f.pending[1].resolve(voiceResponse('selected'));
-  assert.match(await selected, /selected$/);
-  assert.equal(await promoted, await selected);
-  await tick();
-  f.pending[2].resolve(voiceResponse('preload'));
-  assert.match(await preload, /preload$/);
-  assert.equal(f.pending.length, 3);
-});
-
-test('queued requests respect a cooldown imposed after they were queued', async () => {
-  const f = dubbingFixture();
-  const segments = ['a', 'b'].map(id => ({ id, turkishText: 'Merhaba' }));
-  f.state.dialogue.segments = segments;
-  const first = f.scope.ensureDubSegment(segments[0]);
-  await tick();
-  const queued = f.scope.ensureDubSegment(segments[1]);
-  f.pending[0].resolve({ ok: false, json: async () => ({ reason: 'ELEVENLABS_RATE_LIMIT', retryAfterSeconds: 120 }) });
-  assert.equal(await first, null);
-  assert.equal(await queued, null);
-  assert.equal(f.pending.length, 1);
-});
-
-test('quota exhaustion does not silently change the chosen audio mode', async () => {
-  const f = dubbingFixture();
-  const segment = { id: 'a', turkishText: 'Merhaba' };
-  f.state.dialogue.segments = [segment];
-  f.state.dubbingEnabled = true;
-  const request = f.scope.ensureDubSegment(segment);
-  await tick();
-  f.pending[0].resolve({ ok: false, json: async () => ({ reason: 'ELEVENLABS_QUOTA_LIMIT' }) });
-  assert.equal(await request, null);
-  assert.equal(f.state.dubbingEnabled, true);
-  assert.equal(f.state.dubFailureReason, 'ELEVENLABS_QUOTA_LIMIT');
-  assert.ok(f.state.dubUnavailableUntil > Date.now());
-});
-
 test('changing source removes the previous time boundary listener and clears old analysis', () => {
   const els = elements();
   let staleCallbacks = 0;
+  let mediaResets = 0;
+  let savedResets = 0;
+  const releasedFiles = [];
+  const cancelledDownload = new AbortController();
   const listener = () => staleCallbacks++;
   els.video.addEventListener('timeupdate', listener);
-  const state = { stopListener: listener, analysis: { actions: [{}] }, dialogue: { segments: [{}] } };
+  const sourceFile = new Blob(['old source video']);
+  const sessionFile = new Blob(['old session source']);
+  const state = { stopListener: listener, analysis: { actions: [{}] },
+    sourceTranscript: { utterances: [{}] }, sourceContext: { segments: [{}] }, turkishMediaStatus: { state: 'READY' },
+    selectedFile: sourceFile, analysisSession: { file: sessionFile },
+    remoteFileDownload: { controller: cancelledDownload }, dubbingEnabled: true, subtitlesEnabled: true };
   const f = fixture(functions('clearInteractionSelection') + '\n' +
     section('function clearPreviousGameResidue()', '\nclearPreviousGameResidue();'), {
     resetInteractionSelection,
     state, els, cancelTimelineNavigation() {}, cancelAdultSeek() {}, removeStoredValue() {},
-    RUNTIME_SAVE_KEY: 'runtime', releaseVideoObjectUrl() {}, resetDubState() {}, updateLanguageSyncControls() {}, setGameState(value) { state.gameState = value; }
+    RUNTIME_SAVE_KEY: 'runtime', releaseVideoObjectUrl() {}, updateLanguageSyncControls() {}, renderMediaControls() {},
+    mediaClient: { reset() { mediaResets++; } }, savedGames: { resetCurrent() { savedResets++; } },
+    videoDownloads: { release: async file => { releasedFiles.push(file); } },
+    setGameState(value) { state.gameState = value; }
   });
   f.scope.clearPreviousGameResidue();
   els.video.dispatchEvent(new Event('timeupdate'));
   assert.equal(staleCallbacks, 0);
   assert.equal(state.analysis, null);
-  assert.equal(state.dialogue, null);
+  assert.equal(state.sourceTranscript, null);
+  assert.equal(state.sourceContext, null);
+  assert.equal(state.turkishMediaStatus, null);
+  assert.equal(state.dubbingEnabled, false);
+  assert.equal(state.subtitlesEnabled, false);
+  assert.equal(mediaResets, 1);
+  assert.equal(savedResets, 1);
+  assert.equal(cancelledDownload.signal.aborted, true);
+  assert.equal(state.remoteFileDownload, null);
+  assert.deepEqual(releasedFiles, [sourceFile, sessionFile]);
   assert.equal(state.stopListener, null);
   assert.equal(state.gameState, 'IDLE');
 });
@@ -807,18 +484,4 @@ test('a stale transfer or incomplete file cannot replace the current source', as
   incomplete.scope.state.selectedRemoteVideo.size = 100;
   await assert.rejects(incomplete.scope.ensureSelectedRemoteFile(), /aktarım.*eksik/);
   assert.equal(incomplete.scope.state.selectedFile, null);
-});
-
-
-test('large or long videos skip full browser decoding before chunked upload', async () => {
-  const f = fixture(functions('prepareDialoguePayload'), {
-    setInterval, clearInterval,
-    extractMp4Audio: async () => null,
-    extractDialogueAudio() { assert.fail('large source must not be read into an ArrayBuffer'); }
-  });
-  for (const [size, duration] of [[700 * 1024 * 1024, 300], [10 * 1024 * 1024, 1800]]) {
-    const file = { size };
-    f.scope.els.video.duration = duration;
-    assert.equal(await f.scope.prepareDialoguePayload(file), file);
-  }
 });

@@ -252,7 +252,7 @@
   width: 20px; height: 20px; pointer-events: none;
 }
 #playerSection .video-stage.scene-player.cinematic-ui .game-hud { display: none !important; }
-#playerSection .video-stage.scene-player.cinematic-ui :is(#subtitleToggleBtn, #dubToggleBtn) {
+#playerSection .video-stage.scene-player.cinematic-ui :is(#subtitleTrack, #dubToggleBtn) {
   position: absolute !important;
   left: max(52px, calc(env(safe-area-inset-left) + 44px)) !important; right: auto !important;
   margin: 0 !important; min-height: 28px !important; padding: 4px 7px !important;
@@ -261,7 +261,7 @@
   background: rgba(4, 10, 12, .28) !important; box-shadow: none !important;
   backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
 }
-#playerSection .video-stage.scene-player.cinematic-ui #subtitleToggleBtn {
+#playerSection .video-stage.scene-player.cinematic-ui #subtitleTrack {
   top: max(8px, env(safe-area-inset-top)) !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #dubToggleBtn {

@@ -1272,6 +1272,7 @@ section {
   font-weight: 750;
   line-height: 1.25;
   text-shadow: 0 2px 5px #000;
+  white-space: pre-line;
 }
 
 .subtitle-toggle-btn {
@@ -3434,8 +3435,8 @@ pre {
   border-radius: 10px !important;
 }
 
-#playerSection .video-stage:fullscreen #subtitleToggleBtn,
-#playerSection .video-stage:-webkit-full-screen #subtitleToggleBtn {
+#playerSection .video-stage:fullscreen #subtitleTrack,
+#playerSection .video-stage:-webkit-full-screen #subtitleTrack {
   position: absolute !important;
   z-index: 90 !important;
   top: max(10px, env(safe-area-inset-top)) !important;
@@ -4709,6 +4710,39 @@ body { font-size: 13px; }
     overflow: visible !important;
     text-overflow: clip !important;
   }
+}
+
+/* Finished Turkish media controls retain the source player's layout. */
+.media-quality-control { display: grid; gap: 7px; padding: 12px 0; }
+.media-quality-control label { font-size: 12px; font-weight: 700; }
+.media-quality-control select { width: 100%; min-height: 42px; }
+.media-quality-control small { color: var(--muted, #9aacc2); font-size: 11px; line-height: 1.45; }
+.media-job-status { display: grid; gap: 10px; margin-top: 14px; padding: 14px; border: 1px solid #284250; border-radius: 12px; }
+.media-job-status p { margin: 0; line-height: 1.5; }
+.media-job-status progress { width: 100%; accent-color: #35ddb0; }
+.media-job-actions, .media-exports { display: flex; flex-wrap: wrap; gap: 8px; }
+.media-job-actions button, .media-exports a { min-height: 40px; padding: 10px 12px; }
+.media-exports { margin-top: 12px; }
+.media-exports a { color: #a2f3d9; border: 1px solid #284250; border-radius: 9px; text-decoration: none; }
+.voice-mapping-panel { margin-top: 14px; padding: 14px; border: 1px solid #284250; border-radius: 12px; }
+.voice-mapping-panel summary { cursor: pointer; min-height: 32px; font-weight: 700; }
+.voice-mapping-panel p { color: var(--muted, #9aacc2); font-size: 12px; line-height: 1.5; }
+.voice-mapping-rows { display: grid; gap: 12px; margin-bottom: 12px; }
+.voice-mapping-rows label { display: grid; gap: 6px; font-size: 12px; }
+.voice-mapping-rows select { min-height: 42px; width: 100%; max-width: 100%; }
+.voice-mapping-panel > button { min-height: 42px; }
+#playerSection .subtitle-track-selector { max-width: min(220px, 55vw); padding-right: 22px; cursor: pointer; }
+#playerSection .subtitle-track-selector option { background: #101820; color: white; }
+#playerSection .subtitle-text { white-space: pre-line; }
+#playerSection .video-stage.scene-player.cinematic-ui #subtitleTrack {
+  position: absolute !important; z-index: 90 !important;
+  top: max(8px, env(safe-area-inset-top)) !important;
+  left: max(52px, calc(env(safe-area-inset-left) + 44px)) !important;
+  right: auto !important; bottom: auto !important; margin: 0 !important;
+  min-height: 28px !important; max-width: calc(100% - 104px) !important;
+  padding: 4px 22px 4px 7px !important; font-size: 9px !important;
+  border-radius: 7px !important; background: rgba(4, 10, 12, .28) !important;
+  box-shadow: none !important; backdrop-filter: none !important;
 }
 
 /* V17 final cascade: keep these after every legacy panel revision. */

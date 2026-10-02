@@ -4,6 +4,8 @@ import { repairableAnalysisGaps } from './analysis-gap-repair.js';
 const sizeText = bytes => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const durationText = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 
+export const savedGameHasDub = row => row?.dubReady === true && Number(row.mixBytes) > 0;
+
 export function savedGameOperationError(error) {
   if (error?.code === 'GEMINI_CREDITS_DEPLETED') {
     return 'Eksik bölümler analiz edilemedi: Gemini API kredisi veya proje kotası şu anda kullanılamıyor. Kayıtlı video ve mevcut analiz korunuyor. Kullanılabilir bir Gemini anahtarı ekledikten veya kota yenilendikten sonra yeniden dene.';
@@ -11,8 +13,7 @@ export function savedGameOperationError(error) {
   return storageError(error);
 }
 
-export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, onBusy, onSaved, onDeleted }) {
-  const store = createGameStore();
+export function mountSavedGames({ root, capture, getCurrentGame = capture, store = createGameStore(), openGame, repairGame, isBusy, onBusy, onSaved, onDeleted }) {
   const list = root.querySelector('[data-games-list]');
   const status = root.querySelector('[data-games-status]');
   const storage = root.querySelector('[data-games-storage]');
@@ -20,19 +21,28 @@ export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, o
   const fileInput = root.querySelector('[data-games-import]');
   let busy = false;
   let rows = [];
+  let controlsGeneration = 0;
 
   function message(text, error = false) {
     status.textContent = text;
     status.classList.toggle('save-error', error);
   }
-  function refreshControls() {
+  async function refreshControls() {
+    const generation = ++controlsGeneration;
     const locked = busy || isBusy();
     for (const el of root.querySelectorAll('button,input')) el.disabled = locked;
-    const current = capture();
-    root.querySelector('[data-game-save]').disabled = locked || !current;
-    root.querySelector('[data-game-export-current]').disabled = locked || !current;
-    title.disabled = locked || !current;
-    title.placeholder = current?.fileName || 'Oyun adı (isteğe bağlı)';
+    const save = root.querySelector('[data-game-save]');
+    const backup = root.querySelector('[data-game-export-current]');
+    save.disabled = backup.disabled = title.disabled = true;
+    if (locked) return;
+    try {
+      const current = await getCurrentGame();
+      if (generation !== controlsGeneration || busy || isBusy()) return;
+      save.disabled = backup.disabled = title.disabled = !current;
+      title.placeholder = current?.fileName || 'Oyun adı (isteğe bağlı)';
+    } catch (error) {
+      if (generation === controlsGeneration) message(storageError(error), true);
+    }
   }
   async function storageStatus(request = false) {
     try {
@@ -74,7 +84,7 @@ export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, o
       name.textContent = row.title;
       const detail = document.createElement('p');
       const gapCount = Number(row.analysisGapCount || 0);
-      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${row.dubCount ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}`;
+      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'saved-game-actions';
       for (const [label, action] of [['Baştan oyna', 'play'], ...(gapCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
@@ -132,7 +142,7 @@ export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, o
   }
   async function saveCurrent(automatic = false) {
     return run(async () => {
-      const current = capture();
+      const current = await getCurrentGame();
       if (!current) throw new Error('Önce bir video analizi tamamlanmalı.');
       message('Video ve analiz cihazına kaydediliyor; bu işlem bitene kadar sayfayı kapatma…');
       await storageStatus(true);
@@ -145,7 +155,7 @@ export function mountSavedGames({ root, capture, openGame, repairGame, isBusy, o
   }
   root.querySelector('[data-game-save]').addEventListener('click', () => void saveCurrent());
   root.querySelector('[data-game-export-current]').addEventListener('click', () => void run(async () => {
-    const current = capture();
+    const current = await getCurrentGame();
     if (!current) return;
     download({ ...current, title: title.value.trim() || current.title });
     message('Video ve analiz yedeği indirilmeye gönderildi. İndirmenin tamamlandığını kontrol et.');

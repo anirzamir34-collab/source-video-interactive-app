@@ -1,4 +1,3 @@
-import { DUB_CACHE_ENGINE_VERSION, compatibleSavedDubCache } from './dub-cache.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import {
   adultPositionFamily,
@@ -49,26 +48,7 @@ import {
   verifiedAdultPositionFamily,
   verifiedPartnerTransition
 } from './adult-gameplay.js';
-import {
-  buildDubBlocks,
-  dialogueSegmentAt,
-  dialogueSegmentsAt,
-  dialogueSegmentsForTarget,
-  dialogueSegmentsForTargets,
-  decisionBoundaryAfterDialogue,
-  dubMasterClockCorrection,
-  dubSegmentKey,
-  fittedDubPlaybackRate,
-  analysisGapBridgeTarget,
-  hasRemainingVideo,
-  isCompleteChunkAnalysis,
-  languageTimelineTime,
-  mapVideoTimeToDubTime,
-  nextDialogueSegments,
-  resolveDubGender,
-  sceneExitTime,
-  seekMediaTo
-} from './playback-logic.js';
+import { analysisGapBridgeTarget, hasRemainingVideo, isCompleteChunkAnalysis, sceneExitTime, seekMediaTo } from './playback-logic.js';
 import {
   ANALYSIS_SCHEMA_VERSION,
   ENGINE_VERSION,
@@ -100,9 +80,6 @@ import {
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 
-import { createDubMixer, naturalDubRate, canFinishDubTail, correctDubClock } from './dubbing-audio.js';
-import { createDubScheduler } from './dubbing-scheduler.js';
-import { createDubRequestQueue } from './dubbing-queue.js';
 import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
 import { validateGame } from './saved-games.js';
@@ -112,16 +89,13 @@ import {
   createTactileEngine
 } from './tactile-controls.js';
 
-import { dubSpeakerKey, buildDubSpeakerRoster, validateDubVoicePlan } from './dub-speakers.js';
-import { activeDubSegments, dubSpeechEnd, sourceSpeechOverlaps } from './dub-overlap.js';
+import { createTurkishMediaClient } from './turkish-media-client.js';
+import { sourceContextAdapter, sourceSpeechOverlaps } from './source-transcript.js';
 import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
-import { normalizeDialogueTimeline } from './dialogue-integrity.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
-import { canDecodeDialogueLocally, dialogueUploadMimeType } from './media-limits.js';
-import { extractMp4Audio } from './mp4-audio.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
   selectVerifiedChoiceQueue } from './interaction-engine.js';
@@ -152,7 +126,6 @@ const state = {
   selectedRemoteVideo: null,
   selectedRemoteToken: '',
   urlCacheKey: '',
-  audioReuseToken: '',
   urlCacheSavePromise: null,
   remoteFileDownload: null,
   videoObjectUrl: '',
@@ -160,33 +133,16 @@ const state = {
   analysisInProgress: false,
   urlResolutionInProgress: false,
   analysis: null,
-  dialogue: null,
-  subtitlesEnabled: true,
+  sourceTranscript: null,
+  sourceContext: null,
+  turkishMediaStatus: null,
+  mediaRevoice: null,
+  voiceMappingGeneration: 0,
+  voiceCatalog: null,
+  voiceCatalogPromise: null,
+  subtitlesEnabled: false,
   dubbingEnabled: false,
-  keepOriginalAudioEnabled: true,
   languageSyncOffset: 0,
-  activeDubSegmentId: null,
-  dubCache: new Map(),
-  dubRequests: new Map(),
-  dubSyncGeneration: 0,
-  dubStartingToken: null,
-  dubResumeTime: null,
-  dubVideoWaiting: false,
-  dubPlaybackBlocked: false,
-  dubRequestController: new AbortController(),
-  dubUnavailableUntil: 0,
-  dubFailureReason: '',
-  dubProviderLock: '',
-  dubQueue: createDubRequestQueue(2),
-  dubBuffer: null,
-  dubSpeakerVoices: new Map(),
-  dubVoicePlanRequest: null,
-  dubStableSpeakerGenders: new Map(),
-  dubPlayedSegmentIds: new Set(),
-  dubSkippedSegmentIds: new Set(),
-  dubSegmentMetadata: new Map(),
-  dubDiagnostics: null,
-  decisionDubHold: false,
   aiUsage: {
     requests: 0,
     inputTokens: 0,
@@ -273,23 +229,28 @@ const els = {
   fileMeta: $('fileMeta'),
   analyzeBtn: $('analyzeBtn'),
   qualityMode: $('qualityMode'),
+  dubQualityMode: $('dubQualityMode'),
+  subtitleTrack: $('subtitleTrack'),
+  mediaJobStatus: $('mediaJobStatus'),
+  mediaJobMessage: $('mediaJobMessage'),
+  mediaJobProgress: $('mediaJobProgress'),
+  mediaJobCancelBtn: $('mediaJobCancelBtn'),
+  mediaJobRetryBtn: $('mediaJobRetryBtn'),
+  mediaExports: $('mediaExports'),
+  voiceMappingPanel: $('voiceMappingPanel'),
+  voiceMappingRows: $('voiceMappingRows'),
+  voiceMappingMessage: $('voiceMappingMessage'),
+  voiceMappingApplyBtn: $('voiceMappingApplyBtn'),
   geminiApiKeyInput: $('geminiApiKeyInput'),
   saveGeminiApiKeyBtn: $('saveGeminiApiKeyBtn'),
   testGeminiApiKeyBtn: $('testGeminiApiKeyBtn'),
   clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
   apiKeyStatus: $('apiKeyStatus'),
-  elevenLabsApiKeyInput: $('elevenLabsApiKeyInput'),
-  saveElevenLabsBtn: $('saveElevenLabsBtn'),
-  testElevenLabsBtn: $('testElevenLabsBtn'),
-  clearElevenLabsBtn: $('clearElevenLabsBtn'),
-  elevenLabsStatus: $('elevenLabsStatus'),
   motionMode: $('motionMode'),
   subtitleMode: $('subtitleMode'),
   dubMode: $('dubMode'),
   subtitleQuotaStatus: $('subtitleQuotaStatus'),
   dubQuotaStatus: $('dubQuotaStatus'),
-  keepOriginalAudio: $('keepOriginalAudio'),
-  originalAudioRow: $('originalAudioRow'),
   selectedModesSummary: $('selectedModesSummary'),
   protagonistInput: $('protagonistInput'),
   analysisCard: $('analysisCard'),
@@ -301,7 +262,6 @@ const els = {
   subtitleOverlay: $('subtitleOverlay'),
   subtitleSpeaker: $('subtitleSpeaker'),
   subtitleText: $('subtitleText'),
-  subtitleToggleBtn: $('subtitleToggleBtn'),
   dubToggleBtn: $('dubToggleBtn'),
   languageSyncControls: $('languageSyncControls'),
   languageEarlierBtn: $('languageEarlierBtn'),
@@ -597,7 +557,7 @@ function renderQuotaBadge(element, status) {
       ? `Limit dolu · ${Math.ceil(retry / 3600)} sa.`
       : `Limit dolu · ${Math.ceil(retry / 60)} dk.`;
   } else if (stateName === 'available') {
-    element.textContent = status.lastSuccessAt ? 'Kullanılabilir' : 'Hazır · miktar bilinmiyor';
+    element.textContent = 'Servis hazır';
   } else if (stateName === 'unconfigured') {
     element.textContent = 'Kullanılamıyor';
   } else {
@@ -607,7 +567,6 @@ function renderQuotaBadge(element, status) {
 }
 
 const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
-const ELEVENLABS_SESSION_KEY = 'videoquest_elevenlabs_api_key';
 
 function activeGeminiApiKey() {
   try { return String(sessionStorage.getItem(GEMINI_SESSION_KEY) || '').trim(); }
@@ -641,7 +600,6 @@ function saveGeminiApiKey() {
   }
   try { sessionStorage.setItem(GEMINI_SESSION_KEY, key); } catch {}
   renderGeminiApiKeyState();
-  checkAiUsageStatus();
   testGeminiApiKey();
 }
 
@@ -683,109 +641,16 @@ function clearGeminiApiKey() {
   try { sessionStorage.removeItem(GEMINI_SESSION_KEY); } catch {}
   if (els.geminiApiKeyInput) els.geminiApiKeyInput.value = '';
   renderGeminiApiKeyState();
-  checkAiUsageStatus();
 }
 
-function activeElevenLabsApiKey() {
-  try { return String(sessionStorage.getItem(ELEVENLABS_SESSION_KEY) || '').trim(); }
-  catch { return ''; }
-}
-
-function elevenLabsHeaders(base = {}) {
-  const key = activeElevenLabsApiKey();
-  return key ? { ...base, 'X-ElevenLabs-Key': key } : base;
-}
-
-function renderElevenLabsState() {
-  const active = Boolean(activeElevenLabsApiKey());
-  if (els.elevenLabsStatus) {
-    els.elevenLabsStatus.className = active ? 'available' : '';
-    els.elevenLabsStatus.textContent = active ? 'ElevenLabs etkin · test edilmedi' : 'Anahtar girilmedi';
-  }
-  els.testElevenLabsBtn?.classList.toggle('hidden', !active);
-  els.clearElevenLabsBtn?.classList.toggle('hidden', !active);
-  if (active && els.elevenLabsApiKeyInput) els.elevenLabsApiKeyInput.value = '';
-}
-
-function saveElevenLabsKey() {
-  const key = String(els.elevenLabsApiKeyInput?.value || '').trim();
-  if (key.length < 20 || key.length > 256 || /\s/.test(key)) {
-    if (els.elevenLabsStatus) els.elevenLabsStatus.textContent = 'Anahtar eksik veya geçersiz';
-    return;
-  }
-  try { sessionStorage.setItem(ELEVENLABS_SESSION_KEY, key); } catch {}
-  resetDubState();
-  renderElevenLabsState();
-  testElevenLabsKey();
-}
-
-async function testElevenLabsKey() {
-  if (!activeElevenLabsApiKey()) return;
-  if (els.testElevenLabsBtn) {
-    els.testElevenLabsBtn.disabled = true;
-    els.testElevenLabsBtn.textContent = 'Test...';
-  }
-  if (els.elevenLabsStatus) {
-    els.elevenLabsStatus.className = 'checking';
-    els.elevenLabsStatus.textContent = 'Anahtar, sesler ve kredi kontrol ediliyor';
-  }
+async function checkTurkishMediaCapabilities() {
   try {
-    const response = await fetch('/api/elevenlabs-status', {
-      method: 'POST',
-      headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }),
-      body: '{}'
-    });
-    const body = await response.json().catch(() => ({}));
-    if (els.elevenLabsStatus) {
-      els.elevenLabsStatus.className = response.ok ? String(body.state || 'available') : String(body.state || 'invalid');
-      els.elevenLabsStatus.textContent = body.message || (response.ok ? 'ElevenLabs çalışıyor' : 'ElevenLabs kullanılamıyor');
-    }
-    if (response.ok && els.dubToggleBtn) {
-      delete els.dubToggleBtn.dataset.unavailable;
-      els.dubToggleBtn.title = '';
-      els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
-    }
-    checkAiUsageStatus();
-  } catch {
-    if (els.elevenLabsStatus) {
-      els.elevenLabsStatus.className = 'invalid';
-      els.elevenLabsStatus.textContent = 'ElevenLabs bağlantısı kurulamadı';
-    }
-  } finally {
-    if (els.testElevenLabsBtn) {
-      els.testElevenLabsBtn.disabled = false;
-      els.testElevenLabsBtn.textContent = 'Test et';
-    }
-  }
-}
-
-function clearElevenLabsKey() {
-  try { sessionStorage.removeItem(ELEVENLABS_SESSION_KEY); } catch {}
-  if (els.elevenLabsApiKeyInput) els.elevenLabsApiKeyInput.value = '';
-  resetDubState();
-  renderElevenLabsState();
-  checkAiUsageStatus();
-}
-
-async function checkAiUsageStatus() {
-  try {
-    const response = await fetch('/api/ai-usage-status', {
-      cache: 'no-store',
-      headers: geminiRequestHeaders()
-    });
-    const body = await response.json();
-    renderQuotaBadge(els.subtitleQuotaStatus, body.subtitles);
-    const dialogueBlocked = body.keySource !== 'browser_session' && body.subtitles?.available === false &&
-      Number(body.subtitles?.retryAfterSeconds) > 0;
-    renderQuotaBadge(els.dubQuotaStatus, activeElevenLabsApiKey()
-      ? (dialogueBlocked
-        ? {
-            state: 'blocked',
-            retryAfterSeconds: body.subtitles.retryAfterSeconds,
-            message: 'ElevenLabs hazır; ancak Türkçe dublaj metni için gereken Gemini konuşma analizi kotası şu anda engelli.'
-          }
-        : { state: 'available', message: 'ElevenLabs anahtarı tanımlı. Kullanılabilir kota sağlayıcı isteğinde doğrulanır.' })
-      : { state: 'unconfigured', message: 'Oynatıcı dublajı için ElevenLabs anahtarı gerekli.' });
+    const capabilities = await mediaClient.getCapabilities();
+    const available = Boolean(capabilities.configured);
+    renderQuotaBadge(els.subtitleQuotaStatus, { state: available ? 'available' : 'unconfigured',
+      message: available ? 'Türkçe altyazı servisi hazır.' : 'Türkçe medya servisi sunucuda yapılandırılmalı.' });
+    renderQuotaBadge(els.dubQuotaStatus, { state: available ? 'available' : 'unconfigured',
+      message: available ? 'Türkçe dublaj servisi hazır.' : 'Türkçe medya servisi sunucuda yapılandırılmalı.' });
   } catch {
     renderQuotaBadge(els.subtitleQuotaStatus, { state: 'unknown' });
     renderQuotaBadge(els.dubQuotaStatus, { state: 'unknown' });
@@ -797,7 +662,7 @@ function selectedAnalysisModes() {
     motion: Boolean(els.motionMode?.checked),
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
-    keepOriginalAudio: Boolean(els.keepOriginalAudio?.checked),
+    dubQuality: String(els.dubQualityMode?.value || 'quality'),
     quality: String(els.qualityMode?.value || 'ultra')
   };
 }
@@ -809,12 +674,6 @@ function updateAnalysisModesUI() {
     balanced: 'Dengeli',
     ultra: 'Ultra'
   };
-
-  if (els.keepOriginalAudio) {
-    els.keepOriginalAudio.disabled = !modes.dubbing;
-  }
-
-  els.originalAudioRow?.classList.toggle('disabled', !modes.dubbing);
 
   const active = [];
   if (modes.motion) active.push('hareket ve seçim');
@@ -837,6 +696,11 @@ function updateAnalyzeAvailability() {
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
+  [els.qualityMode, els.dubQualityMode, els.motionMode, els.subtitleMode, els.dubMode]
+    .forEach(control => { if (control) control.disabled = busy; });
+  if (els.mediaJobRetryBtn) els.mediaJobRetryBtn.disabled = busy;
+  if (els.voiceMappingApplyBtn) els.voiceMappingApplyBtn.disabled = busy || !els.dubMode.checked;
+  els.voiceMappingRows?.querySelectorAll?.('select').forEach(select => { select.disabled = busy; });
   savedGames?.refreshControls();
 }
 
@@ -845,7 +709,7 @@ function updateAnalyzeAvailability() {
   els.motionMode,
   els.subtitleMode,
   els.dubMode,
-  els.keepOriginalAudio
+  els.dubQualityMode
 ].forEach(control => {
   control?.addEventListener('change', updateAnalyzeAvailability);
 });
@@ -857,14 +721,8 @@ els.clearGeminiApiKeyBtn?.addEventListener('click', clearGeminiApiKey);
 els.geminiApiKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveGeminiApiKey();
 });
-els.saveElevenLabsBtn?.addEventListener('click', saveElevenLabsKey);
-els.testElevenLabsBtn?.addEventListener('click', testElevenLabsKey);
-els.clearElevenLabsBtn?.addEventListener('click', clearElevenLabsKey);
-els.elevenLabsApiKeyInput?.addEventListener('keydown', event => {
-  if (event.key === 'Enter') saveElevenLabsKey();
-});
 renderGeminiApiKeyState();
-renderElevenLabsState();
+removeStoredValue('sessionStorage', 'videoquest_elevenlabs_api_key');
 
 function releaseVideoObjectUrl() {
   if (!state.videoObjectUrl) return;
@@ -881,7 +739,6 @@ els.videoInput.addEventListener('change', () => {
   state.selectedRemoteVideo = null;
   state.selectedRemoteToken = '';
   state.urlCacheKey = '';
-  state.audioReuseToken = '';
   state.urlCacheSavePromise = null;
   state.analysisSession = null;
   if (file) {
@@ -899,1352 +756,6 @@ els.videoInput.addEventListener('change', () => {
   renderDebug();
 });
 
-function createDialogueWav(audioBuffer, targetRate = 16000) {
-  const sourceRate = audioBuffer.sampleRate;
-  const sampleCount = Math.ceil(audioBuffer.duration * targetRate);
-  const wavBuffer = new ArrayBuffer(44 + sampleCount * 2);
-  const view = new DataView(wavBuffer);
-  const channels = audioBuffer.numberOfChannels;
-  const channelData = Array.from(
-    { length: channels },
-    (_, index) => audioBuffer.getChannelData(index)
-  );
-
-  const writeText = (offset, value) => {
-    for (let index = 0; index < value.length; index += 1) {
-      view.setUint8(offset + index, value.charCodeAt(index));
-    }
-  };
-
-  writeText(0, 'RIFF');
-  view.setUint32(4, 36 + sampleCount * 2, true);
-  writeText(8, 'WAVE');
-  writeText(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, targetRate, true);
-  view.setUint32(28, targetRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeText(36, 'data');
-  view.setUint32(40, sampleCount * 2, true);
-
-  const ratio = sourceRate / targetRate;
-  const mono = new Float32Array(sampleCount);
-
-  // Keep the strongest usable channel when stereo averaging would cancel a
-  // quiet voice. This preserves whispers before speech recognition.
-  for (let index = 0; index < sampleCount; index += 1) {
-    const sourceIndex = Math.min(
-      Math.floor(index * ratio),
-      audioBuffer.length - 1
-    );
-
-    let sum = 0;
-    let strongest = 0;
-    for (let channel = 0; channel < channels; channel += 1) {
-      const value = channelData[channel][sourceIndex] || 0;
-      sum += value;
-      if (Math.abs(value) > Math.abs(strongest)) strongest = value;
-    }
-
-    const average = sum / channels;
-    mono[index] = Math.abs(average) >= Math.abs(strongest) * 0.35
-      ? average
-      : strongest * 0.72;
-  }
-
-  // Windowed speech normalization raises low-volume dialogue without applying
-  // one destructive gain value to the whole soundtrack.
-  const windowSize = Math.max(1, Math.round(targetRate * 0.4));
-  let smoothedGain = 1;
-
-  for (let windowStart = 0; windowStart < sampleCount; windowStart += windowSize) {
-    const windowEnd = Math.min(sampleCount, windowStart + windowSize);
-    let energy = 0;
-    let peak = 0;
-
-    for (let index = windowStart; index < windowEnd; index += 1) {
-      const value = mono[index];
-      energy += value * value;
-      peak = Math.max(peak, Math.abs(value));
-    }
-
-    const rms = Math.sqrt(energy / Math.max(1, windowEnd - windowStart));
-    const desiredGain = rms > 0.0008
-      ? Math.min(6, Math.max(1, 0.105 / rms, 0.86 / Math.max(peak, 0.001)))
-      : 1;
-    smoothedGain = smoothedGain * 0.45 + desiredGain * 0.55;
-
-    for (let index = windowStart; index < windowEnd; index += 1) {
-      const sample = Math.tanh(mono[index] * smoothedGain * 1.12);
-      view.setInt16(
-        44 + index * 2,
-        sample < 0 ? sample * 32768 : sample * 32767,
-        true
-      );
-    }
-  }
-
-  return new Blob([wavBuffer], { type: 'audio/wav' });
-}
-
-async function extractDialogueAudio(file) {
-  const AudioEngine = window.AudioContext || window.webkitAudioContext;
-
-  if (!AudioEngine) {
-    throw new Error('Bu tarayıcı ses çıkarma işlemini desteklemiyor.');
-  }
-
-  els.analysisTitle.textContent = 'Videodan konuşma sesi ayrılıyor';
-  els.analysisOutput.textContent =
-    'Video telefonda işleniyor...\n' +
-    'Konuşma için ses kanalı cihazdaki dosyadan hazırlanıyor.';
-
-  const audioContext = new AudioEngine();
-
-  try {
-    const sourceBuffer = await file.arrayBuffer();
-    const decodedAudio = await audioContext.decodeAudioData(sourceBuffer);
-    const wavBlob = createDialogueWav(decodedAudio, 16000);
-    const baseName = (file.name || 'video').replace(/\.[^.]+$/, '');
-
-    return new File(
-      [wavBlob],
-      `${baseName}-dialogue.wav`,
-      { type: 'audio/wav' }
-    );
-  } finally {
-    await audioContext.close().catch(() => {});
-  }
-}
-
-function waitUntilPageVisible() {
-  if (document.visibilityState === 'visible') {
-    return Promise.resolve();
-  }
-
-  return new Promise(resolve => {
-    document.addEventListener(
-      'visibilitychange',
-      () => {
-        if (document.visibilityState === 'visible') resolve();
-      },
-      { once: true }
-    );
-  });
-}
-
-function sendDialogueChunk({
-  uploadId,
-  chunk,
-  chunkIndex,
-  chunkOffset = null,
-  completedBytes = 0,
-  totalBytes,
-  startedAt,
-  onProgress,
-  onChunkProgress
-}) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    let settled = false;
-    let stallTimer = null;
-    let uploadComplete = false;
-    const chunkError = (message, details = {}) => Object.assign(new Error(message), details);
-    const finish = (handler, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(stallTimer);
-      handler(value);
-    };
-    const armStallTimer = () => {
-      if (uploadComplete) return;
-      clearTimeout(stallTimer);
-      stallTimer = setTimeout(() => {
-        const error = chunkError('Bu parçada 45 saniye veri gönderilemedi.', {
-          code: 'CHUNK_UPLOAD_STALLED', retryable: true
-        });
-        finish(reject, error);
-        xhr.abort();
-      }, 45000);
-    };
-
-    xhr.open('POST', `/api/dialogue-upload/${encodeURIComponent(uploadId)}/chunk`);
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
-    if (Number.isSafeInteger(chunkOffset) && chunkOffset >= 0) {
-      xhr.setRequestHeader('X-Chunk-Offset', String(chunkOffset));
-    }
-    xhr.timeout = 120000;
-    xhr.responseType = 'json';
-    armStallTimer();
-
-    xhr.upload.addEventListener('progress', event => {
-      armStallTimer();
-      if (typeof onChunkProgress === 'function') {
-        onChunkProgress(Math.min(chunk.size, Number(event.loaded) || 0));
-        return;
-      }
-      const loaded = Math.min(totalBytes, completedBytes + (event.loaded || 0));
-      const elapsed = Math.max((performance.now() - startedAt) / 1000, 0.1);
-      onProgress?.({
-        loaded,
-        total: totalBytes,
-        percent: Math.min(100, Math.round(loaded / totalBytes * 100)),
-        speed: (loaded / 1024 / 1024) / elapsed
-      });
-    });
-    xhr.upload.addEventListener('load', () => {
-      uploadComplete = true;
-      clearTimeout(stallTimer);
-      stallTimer = null;
-    });
-    xhr.addEventListener('load', () => {
-      const body = xhr.response || {};
-      if (xhr.status >= 200 && xhr.status < 300 && body.available) {
-        finish(resolve, body);
-      } else {
-        const retryable = xhr.status === 0 || xhr.status === 408 || xhr.status === 409 ||
-          xhr.status === 425 || xhr.status === 429 || xhr.status >= 500;
-        finish(reject, chunkError(
-          body.message || body.reason || `Parça yükleme hatası: HTTP ${xhr.status}`,
-          { code: body.reason || 'CHUNK_UPLOAD_HTTP_ERROR', status: xhr.status, retryable }
-        ));
-      }
-    });
-    xhr.addEventListener('error', () => finish(reject,
-      chunkError('Parça sunucuya ulaşamadı.', { code: 'CHUNK_NETWORK_ERROR', retryable: true })));
-    xhr.addEventListener('timeout', () => finish(reject,
-      chunkError('Sunucu bu parçaya 120 saniye içinde yanıt vermedi.', { code: 'CHUNK_RESPONSE_TIMEOUT', retryable: true })));
-    xhr.addEventListener('abort', () => finish(reject,
-      chunkError('Takılan parça iptal edilip yeniden başlatıldı.', { code: 'CHUNK_UPLOAD_ABORTED', retryable: true })));
-    xhr.send(chunk);
-  });
-}
-
-function dialogueUploadClientKey(session, sourceFile, dialogueFile) {
-  if (session?.dialogueUploadKey) return session.dialogueUploadKey;
-  const sourceKey = String(session?.sourceKey || '').slice(0, 260);
-  const sourceMeta = [
-    sourceFile?.name || '',
-    Number(sourceFile?.size) || 0,
-    Number(sourceFile?.lastModified) || 0,
-    dialogueFile?.name || '',
-    Number(dialogueFile?.size) || 0,
-    dialogueFile?.type || ''
-  ].join(':');
-  const key = `vq-upload:${sourceKey}:${sourceMeta}`.slice(0, 480);
-  if (session) session.dialogueUploadKey = key;
-  return key;
-}
-
-async function uploadDialogueWithProgress(form, onProgress, onUploadComplete) {
-  const file = form.get('video');
-  const duration = String(form.get('duration') || '0');
-  const protagonistProfile = String(form.get('protagonistProfile') || '');
-  const retainAudioForReuse = String(form.get('retainAudioForReuse') || '');
-  const clientUploadKey = String(form.get('clientUploadKey') || '').trim();
-  if (!(file instanceof Blob)) throw new Error('Yüklenecek ses dosyası bulunamadı.');
-  await waitUntilPageVisible();
-
-  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  const effectiveType = String(connection?.effectiveType || '').toLowerCase();
-  const constrained = connection?.saveData === true || ['slow-2g', '2g'].includes(effectiveType);
-  const compactSingleRequest = file.size <= 9 * 1024 * 1024;
-  let chunkSize = compactSingleRequest
-    ? file.size
-    : constrained ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
-  const startResponse = await fetch('/api/dialogue-upload/start', {
-    method: 'POST',
-    signal: AbortSignal.timeout(45000),
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      totalSize: file.size,
-      fileName: file.name || 'dialogue.wav',
-      mimeType: dialogueUploadMimeType(file),
-      chunkSize,
-      clientUploadKey
-    })
-  });
-  const startBody = await startResponse.json();
-  if (!startResponse.ok || !startBody.available) {
-    const error = new Error(startBody.message || startBody.reason || `Yükleme başlatılamadı: HTTP ${startResponse.status}`);
-    error.code = startBody.reason || 'UPLOAD_START_FAILED';
-    error.retryable = false;
-    throw error;
-  }
-
-  // Keep the original layout if connectivity changes during a retry.
-  const retainedChunkSize = Number(startBody.chunkSize);
-  if (Number.isSafeInteger(retainedChunkSize) && retainedChunkSize > 0 && retainedChunkSize <= 10 * 1024 * 1024) {
-    chunkSize = retainedChunkSize;
-  }
-  const chunkCount = Math.ceil(file.size / chunkSize);
-  const maxConnections = compactSingleRequest || constrained ? 1 : effectiveType === '3g' ? 1 : 2;
-  const connections = Math.max(1, Math.min(maxConnections, chunkCount));
-
-  const uploadId = startBody.uploadId;
-  const startedAt = performance.now();
-  const loadedByChunk = new Array(chunkCount).fill(0);
-  const completedChunks = new Set(
-    (Array.isArray(startBody.receivedChunks) ? startBody.receivedChunks : [])
-      .map(Number).filter(index => Number.isInteger(index) && index >= 0 && index < chunkCount)
-  );
-  for (const index of completedChunks) {
-    const start = index * chunkSize;
-    loadedByChunk[index] = Math.min(chunkSize, file.size - start);
-  }
-  let cursor = 0;
-  const report = () => {
-    const loaded = Math.min(file.size, loadedByChunk.reduce((sum, value) => sum + value, 0));
-    const elapsed = Math.max((performance.now() - startedAt) / 1000, 0.1);
-    onProgress({
-      loaded,
-      total: file.size,
-      percent: Math.min(100, Math.round(loaded / file.size * 100)),
-      speed: (loaded / 1024 / 1024) / elapsed,
-      connections,
-      completedChunks: completedChunks.size,
-      chunkCount
-    });
-  };
-
-  const uploadOne = async chunkIndex => {
-    const start = chunkIndex * chunkSize;
-    const end = Math.min(file.size, start + chunkSize);
-    const chunk = file.slice(start, end);
-    let retryCount = 0;
-    while (true) {
-      await waitUntilPageVisible();
-      loadedByChunk[chunkIndex] = 0;
-      report();
-      try {
-        await sendDialogueChunk({
-          uploadId,
-          chunk,
-          chunkIndex,
-          chunkOffset: start,
-          totalBytes: file.size,
-          startedAt,
-          onChunkProgress: loaded => {
-            loadedByChunk[chunkIndex] = Math.min(chunk.size, loaded);
-            report();
-          }
-        });
-        completedChunks.add(chunkIndex);
-        loadedByChunk[chunkIndex] = chunk.size;
-        report();
-        return;
-      } catch (error) {
-        if (error.retryable !== false) {
-          try {
-            const statusUrl = `/api/dialogue-upload/${encodeURIComponent(uploadId)}/chunk/${chunkIndex}/status?offset=${start}&length=${chunk.size}`;
-            const statusResponse = await fetch(statusUrl, { signal: AbortSignal.timeout(5000) });
-            if (statusResponse.ok && (await statusResponse.json()).received) {
-              completedChunks.add(chunkIndex);
-              loadedByChunk[chunkIndex] = chunk.size;
-              report();
-              return;
-            }
-          } catch { /* A failed status check leaves the existing retry path intact. */ }
-        }
-        retryCount += 1;
-        if (error.retryable === false || retryCount >= 5) throw error;
-        els.analysisTitle.textContent =
-          `Parça yeniden deneniyor (${retryCount}/5) · ${chunkIndex + 1}/${chunkCount}`;
-        els.analysisOutput.textContent =
-          `${error.message || 'Parça gönderilemedi.'}\n` +
-          `${navigator.onLine === false ? 'Telefon çevrimdışı görünüyor. Bağlantı gelince devam edilecek.' : 'Bağlantı açık; aynı parça yeniden gönderilecek.'}`;
-        if (navigator.onLine === false) {
-          await new Promise(resolve => window.addEventListener('online', resolve, { once: true }));
-        } else {
-          await new Promise(resolve => setTimeout(resolve, Math.min(6000, 1000 * retryCount)));
-        }
-      }
-    }
-  };
-
-  if (startBody.reused === true) {
-    const statusResponse = await fetch(`/api/dialogue-upload/${encodeURIComponent(uploadId)}/status`, {
-      signal: AbortSignal.timeout(7000)
-    });
-    const status = await statusResponse.json().catch(() => ({}));
-    if (statusResponse.ok && status.available) {
-      for (const index of Array.isArray(status.receivedChunks) ? status.receivedChunks : []) {
-        const n = Number(index);
-        if (!Number.isInteger(n) || n < 0 || n >= chunkCount) continue;
-        completedChunks.add(n);
-        const start = n * chunkSize;
-        loadedByChunk[n] = Math.min(chunkSize, file.size - start);
-      }
-      report();
-    }
-  }
-
-  const workers = Array.from({ length: connections }, async () => {
-    while (true) {
-      const chunkIndex = cursor++;
-      if (chunkIndex >= chunkCount) return;
-      if (completedChunks.has(chunkIndex)) continue;
-      await uploadOne(chunkIndex);
-    }
-  });
-  await Promise.all(workers);
-  onUploadComplete();
-
-  const finishForm = new FormData();
-  finishForm.append('uploadId', uploadId);
-  finishForm.append('duration', duration);
-  finishForm.append('protagonistProfile', protagonistProfile);
-  if (retainAudioForReuse) finishForm.append('retainAudioForReuse', retainAudioForReuse);
-
-  const response = await fetch('/api/gemini-dialogue-analyze', {
-    method: 'POST',
-    headers: geminiRequestHeaders(),
-    body: finishForm
-  });
-  const body = await response.json();
-  return { ok: response.ok, status: response.status, body };
-}
-
-async function prepareDialoguePayload(file, session = state.analysisSession) {
-  if (session?.audioSource === file && session.audioFile instanceof Blob) return session.audioFile;
-  const duration = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
-  const controller = new AbortController();
-  session?.audioPreparationController?.abort();
-  if (session) session.audioPreparationController = controller;
-  const startedAt = performance.now();
-  let progress = null;
-  const showPreparation = () => {
-    if (controller.signal.aborted || (session && session !== state.analysisSession)) return;
-    const elapsed = Math.round((performance.now() - startedAt) / 1000);
-    const total = Number(progress?.total) || 0;
-    const loaded = Number(progress?.loaded) || 0;
-    const percent = total ? Math.min(100, Math.round(loaded / total * 100)) : null;
-    els.analysisTitle.textContent = percent === null
-      ? `Videonun ses bilgileri okunuyor · ${elapsed} sn`
-      : `Konuşma sesi hazırlanıyor · %${percent}`;
-    els.analysisOutput.textContent = (total
-      ? `Hazırlanan ses: ${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n`
-      : 'Video cihazda kalıyor; ses kanalı bulunuyor.\n') +
-      `${elapsed} sn geçti. Cihazda hazırlama için 15 dakika tanınıyor; video cihazda kalıyor.`;
-  };
-  showPreparation();
-  const preparationTimer = setInterval(showPreparation, 1000);
-  try {
-    const audioFile = await extractMp4Audio(file, {
-      signal: controller.signal,
-      onProgress: value => { progress = value; showPreparation(); }
-    });
-    controller.signal.throwIfAborted();
-    if (audioFile) {
-      if (session) { session.audioSource = file; session.audioFile = audioFile; }
-      return audioFile;
-    }
-  } catch (error) {
-    if (controller.signal.aborted) throw error;
-    if (error?.code === 'LOCAL_AUDIO_PREPARATION_TIMEOUT') {
-      // A stuck file read must not start another full-file local decoder.
-      // Reuse the original bytes with the existing server audio preparation.
-      els.analysisTitle.textContent = 'Ses hazırlığı sunucuda devam edecek';
-      els.analysisOutput.textContent = 'Cihazda ses hazırlama 15 dakikada tamamlanamadı. Mevcut video sunucuya yüklenerek devam edilecek.';
-      if (session) { session.audioSource = file; session.audioFile = file; }
-      return file;
-    }
-    console.warn('Sıkıştırılmış ses kanalı ayrılamadı; mevcut ses hazırlığı kullanılacak:', error);
-  } finally {
-    clearInterval(preparationTimer);
-    if (session?.audioPreparationController === controller) delete session.audioPreparationController;
-  }
-  if (!canDecodeDialogueLocally(file, duration)) {
-    els.analysisOutput.textContent = 'Bu dosyanın ses kanalı cihazda ayrılamadı. Video, ses hazırlığı için sunucuya yüklenecek.';
-    return file;
-  }
-  try {
-    const audioFile = await extractDialogueAudio(file);
-    if (session) {
-      session.audioSource = file;
-      session.audioFile = audioFile;
-    }
-    return audioFile;
-  } catch (error) {
-    console.warn('Ses ayrılamadı; cihazdaki özgün video kullanılacak:', error);
-    els.analysisOutput.textContent = 'Ses ayrılamadı. Cihazdaki dosyanın ses kanalı doğrudan analiz edilecek.';
-    return file;
-  }
-}
-
-async function analyzeSelectedDialogue(file, session = state.analysisSession) {
-  if (session?.dialogueAnalysisPromise) {
-    logEngineEvent('DIALOGUE_ANALYSIS_INFLIGHT_REUSED', {});
-    return session.dialogueAnalysisPromise;
-  }
-  const task = analyzeSelectedDialogueOnce(file, session);
-  if (session) session.dialogueAnalysisPromise = task;
-  try {
-    return await task;
-  } catch (error) {
-    // Preserve the logical upload identity: provider retries reuse received bytes.
-    throw error;
-  } finally {
-    if (session?.dialogueAnalysisPromise === task) session.dialogueAnalysisPromise = null;
-  }
-}
-
-async function analyzeSelectedDialogueOnce(file, session = state.analysisSession) {
-  els.analysisCard.classList.remove('hidden');
-  els.analysisState.textContent = 'AUDIO_ANALYSIS';
-  if (!file) throw new Error('Diyalog analizi için video bulunamadı.');
-
-  const duration = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
-  const protagonistProfile = String(els.protagonistInput?.value || '').trim();
-  let remoteToken = state.selectedSourceKind === 'url'
-    ? String(session?.remoteToken || state.selectedRemoteToken || '').trim()
-    : '';
-  const reusableAudio = String(
-    session?.audioReuseToken ||
-    (state.selectedSourceKind === 'url' ? state.audioReuseToken : '') ||
-    ''
-  ).trim();
-  let processingTimer = null;
-  let upload;
-
-  if (session?.dialogueUploadId) {
-    els.analysisTitle.textContent = 'Yüklenmiş kaynak sesi kullanılıyor';
-    const form = new FormData();
-    form.append('uploadId', session.dialogueUploadId);
-    form.append('duration', String(duration));
-    form.append('protagonistProfile', protagonistProfile);
-    form.append('retainAudioForReuse', '1');
-    const response = await fetch('/api/gemini-dialogue-analyze', {
-      method: 'POST', headers: geminiRequestHeaders(), body: form
-    });
-    const body = await response.json().catch(() => ({}));
-    if (response.status === 410 || body.reason === 'UPLOAD_SESSION_EXPIRED') {
-      session.dialogueUploadId = '';
-    } else upload = { ok: response.ok, status: response.status, body };
-  }
-
-  if (!upload && reusableAudio) {
-    els.analysisTitle.textContent = '24 saatlik ses önbelleği kullanılıyor';
-    els.analysisOutput.textContent = 'Ses tekrar yüklenmiyor; daha önce hazırlanan Gemini ses dosyası kullanılıyor.';
-    const form = new FormData();
-    form.append('audioReuseToken', reusableAudio);
-    form.append('duration', String(duration));
-    form.append('protagonistProfile', protagonistProfile);
-    const startedAt = performance.now();
-    const show = () => {
-      els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-      els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
-      els.analysisOutput.textContent =
-        `Ses yüklemesi atlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
-        `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
-    };
-    show();
-    processingTimer = setInterval(show, 1000);
-    try {
-      const response = await fetch('/api/gemini-dialogue-analyze', {
-        method: 'POST',
-        headers: geminiRequestHeaders(),
-        body: form
-      });
-      const body = await response.json().catch(() => ({}));
-      if (response.ok && body.available) {
-        upload = { ok: true, status: response.status, body };
-      } else if (response.status === 410 || body.reason === 'AUDIO_REUSE_EXPIRED') {
-        state.audioReuseToken = '';
-        if (state.urlCacheKey) void urlVideoCache.update(state.urlCacheKey, { audioReuseToken: '' }).catch(() => {});
-      } else {
-        upload = { ok: response.ok, status: response.status, body };
-      }
-    } finally {
-      if (processingTimer !== null) clearInterval(processingTimer);
-      processingTimer = null;
-    }
-  }
-
-  if (!upload) {
-    const refreshRemoteToken = async () => {
-      if (state.selectedSourceKind !== 'url' || !state.urlCacheKey) return false;
-      els.analysisTitle.textContent = 'Video kaynağı yeniden bağlanıyor';
-      els.analysisOutput.textContent = 'Video yeniden indirilmiyor; yalnız kaynak oturumu yenileniyor.';
-      try {
-        const response = await fetch('/api/resolve-video-url', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(20000),
-          body: JSON.stringify({ url: state.urlCacheKey })
-        });
-        const result = await response.json().catch(() => ({}));
-        if (response.ok && result.ok && result.remoteToken) {
-          remoteToken = String(result.remoteToken);
-          state.selectedRemoteToken = remoteToken;
-          if (session) session.remoteToken = remoteToken;
-          void urlVideoCache.update(state.urlCacheKey, { remoteToken }).catch(() => {});
-          return true;
-        }
-      } catch (error) {
-        console.warn('Kaynak bağlantısı yenilenemedi:', error);
-      }
-      return false;
-    };
-
-    els.analysisTitle.textContent = 'Cihazdaki konuşma sesi hazırlanıyor';
-    els.analysisOutput.textContent =
-      `Konuşma sesi hazırlanıyor...\n` +
-      `${(file.size / 1024 / 1024).toFixed(1)} MB`;
-
-    // Choose exactly one transport for this run:
-    // 1) locally isolated audio -> upload once;
-    // 2) if local isolation failed, let Render fetch source audio once;
-    // 3) only local files without a remote source may upload the full file.
-    const dialogueFile = await prepareDialoguePayload(file, session);
-    const audioOnly = dialogueFile instanceof Blob &&
-      String(dialogueFile.type || '').startsWith('audio/');
-
-    if (audioOnly) {
-      const form = new FormData();
-      form.append('video', dialogueFile, dialogueFile.name || 'dialogue.wav');
-      form.append('duration', String(duration));
-      form.append('protagonistProfile', protagonistProfile);
-      form.append('retainAudioForReuse', '1');
-      form.append('clientUploadKey', dialogueUploadClientKey(session, file, dialogueFile));
-      try {
-        upload = await uploadDialogueWithProgress(
-          form,
-          ({ loaded, total, percent, speed, connections = 1, completedChunks = 0, chunkCount = 1 }) => {
-            els.analysisState.textContent = 'AUDIO_UPLOAD';
-            els.analysisTitle.textContent = `Yalnızca konuşma sesi sunucuya yükleniyor · %${percent}`;
-            const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
-            els.analysisOutput.textContent =
-              `Video cihazda kalıyor; ses bu analizde yalnızca bir kez gönderiliyor.\n` +
-              `Gerçek yükleme ilerlemesi: %${percent}\n` +
-              `${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n` +
-              `Tamamlanan parça: ${completedChunks}/${chunkCount}\n` +
-              `Ortalama yükleme hızı: ${speedText} MB/sn${connections > 1 ? ` · ${connections} paralel bağlantı` : ''}`;
-          },
-          () => {
-            const startedAt = performance.now();
-            const show = () => {
-              els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-              els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
-              els.analysisOutput.textContent =
-                `Tek ses yüklemesi tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
-                `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
-            };
-            show();
-            processingTimer = setInterval(show, 1000);
-          }
-        );
-      } finally {
-        if (processingTimer !== null) clearInterval(processingTimer);
-        processingTimer = null;
-      }
-    } else if (state.selectedSourceKind === 'url') {
-      if (!remoteToken && state.urlCacheKey) await refreshRemoteToken();
-      if (!remoteToken) {
-        throw new Error('Ses cihazda ayrılamadı ve kaynak oturumu yenilenemedi. Aynı sesi ikinci kez göndermemek için analiz durduruldu.');
-      }
-
-      els.analysisTitle.textContent = 'Konuşma sesi sunucuda hazırlanıyor';
-      els.analysisOutput.textContent = 'Yerel ses ayrılamadı; telefon yüklemesi yapılmadan kaynak sesi sunucuda bir kez hazırlanıyor.';
-      const startedAt = performance.now();
-      const show = () => {
-        els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-        els.analysisTitle.textContent = 'Sunucuda ses + Gemini analizi';
-        els.analysisOutput.textContent =
-          `Telefonundan ses gönderilmiyor. Tek kaynak oturumu kullanılıyor...\n` +
-          `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
-      };
-      show();
-      processingTimer = setInterval(show, 1000);
-      try {
-        const remoteForm = new FormData();
-        remoteForm.append('remoteToken', remoteToken);
-        remoteForm.append('duration', String(duration));
-        remoteForm.append('protagonistProfile', protagonistProfile);
-        if (state.urlCacheKey) remoteForm.append('retainAudioForReuse', '1');
-        let response = await fetch('/api/gemini-dialogue-analyze', {
-          method: 'POST', headers: geminiRequestHeaders(), body: remoteForm
-        });
-        let body = await response.json().catch(() => ({}));
-
-        // A 410 means the expired token was rejected before source audio was
-        // transferred. Refreshing it is safe and does not duplicate audio.
-        if (response.status === 410 && body.reason === 'VIDEO_SESSION_EXPIRED' &&
-            await refreshRemoteToken()) {
-          const retryForm = new FormData();
-          retryForm.append('remoteToken', remoteToken);
-          retryForm.append('duration', String(duration));
-          retryForm.append('protagonistProfile', protagonistProfile);
-          if (state.urlCacheKey) retryForm.append('retainAudioForReuse', '1');
-          response = await fetch('/api/gemini-dialogue-analyze', {
-            method: 'POST', headers: geminiRequestHeaders(), body: retryForm
-          });
-          body = await response.json().catch(() => ({}));
-        }
-        upload = { ok: response.ok, status: response.status, body };
-      } finally {
-        if (processingTimer !== null) clearInterval(processingTimer);
-        processingTimer = null;
-      }
-    } else {
-      const form = new FormData();
-      form.append('video', dialogueFile, dialogueFile.name || file.name || 'video.mp4');
-      form.append('duration', String(duration));
-      form.append('protagonistProfile', protagonistProfile);
-      form.append('retainAudioForReuse', '1');
-      form.append('clientUploadKey', dialogueUploadClientKey(session, file, dialogueFile));
-      try {
-        upload = await uploadDialogueWithProgress(
-          form,
-          ({ loaded, total, percent, speed, connections = 1, completedChunks = 0, chunkCount = 1 }) => {
-            els.analysisState.textContent = 'AUDIO_UPLOAD';
-            els.analysisTitle.textContent = `Cihazdaki video sunucuya yükleniyor · %${percent}`;
-            const speedText = speed > 0 && speed < 0.05 ? '<0.1' : speed.toFixed(1);
-            els.analysisOutput.textContent =
-              `Ses ayrılamadığı için yerel dosya bu analizde yalnızca bir kez gönderiliyor.\n` +
-              `Gerçek yükleme ilerlemesi: %${percent}\n` +
-              `${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB\n` +
-              `Tamamlanan parça: ${completedChunks}/${chunkCount}\n` +
-              `Ortalama yükleme hızı: ${speedText} MB/sn${connections > 1 ? ` · ${connections} paralel bağlantı` : ''}`;
-          },
-          () => {
-            const startedAt = performance.now();
-            const show = () => {
-              els.analysisState.textContent = 'DIALOGUE_PROCESSING';
-              els.analysisTitle.textContent = 'Gemini konuşmaları analiz ediyor';
-              els.analysisOutput.textContent =
-                `Tek yükleme tamamlandı. Konuşma ve karakter bağlamı inceleniyor...\n` +
-                `${Math.round((performance.now() - startedAt) / 1000)} sn geçti`;
-            };
-            show();
-            processingTimer = setInterval(show, 1000);
-          }
-        );
-      } finally {
-        if (processingTimer !== null) clearInterval(processingTimer);
-        processingTimer = null;
-      }
-    }
-  }
-
-  const { body } = upload;
-
-  recordAiUsage(body?.aiUsage);
-
-  // An ASR retry reuses uploaded source audio, including partial window failure.
-  if (session && body?.uploadId) session.dialogueUploadId = String(body.uploadId);
-  if (session && body?.coverageAudit) session.dialogueCoverageAudit = body.coverageAudit;
-  if (body?.audioReuseToken) {
-    const token = String(body.audioReuseToken);
-    if (session) session.audioReuseToken = token;
-    if (state.urlCacheKey) {
-      state.audioReuseToken = token;
-      if (state.urlCacheSavePromise) await state.urlCacheSavePromise.catch(() => null);
-      void urlVideoCache.update(state.urlCacheKey, { audioReuseToken: token })
-        .catch(error => console.warn('Ses önbelleği bilgisi kaydedilemedi:', error));
-    }
-  }
-
-  if (!upload.ok || !body.available) {
-    if (body?.reason === 'DIALOGUE_TIMING_INVALID') {
-      state.dubFailureReason = body.reason;
-      logEngineEvent(body.reason, body.timingIntegrity || {});
-    }
-    const error = new Error(body.reason === 'DIALOGUE_TIMING_INVALID'
-      ? body.message : (body.error || body.message || `HTTP ${upload.status}`));
-    error.code = body.reason || 'DIALOGUE_ANALYSIS_FAILED';
-    throw error;
-  }
-
-  const durationSeconds = Number(els.video.duration) || Number(session?.sourceDuration) || 0;
-  const normalizedDialogue = normalizeDialogueTimeline(body, durationSeconds);
-  if (normalizedDialogue.timingIntegrity?.valid === false) {
-    logEngineEvent('DIALOGUE_TIMING_INVALID', normalizedDialogue.timingIntegrity);
-    throw new Error('Konuşma zamanları kaynaktan doğrulanamadı. Yüklenmiş sesle analizi yeniden dene.');
-  }
-  if (normalizedDialogue.timestampRepair?.repaired) {
-    logEngineEvent('DIALOGUE_TIMELINE_REPAIRED', normalizedDialogue.timestampRepair);
-  }
-  state.dialogue = {
-    ...normalizedDialogue,
-    dubSegments: buildDubBlocks(normalizedDialogue.segments, {
-      mergeAdjacent: true, maxGap: 0.5, maxDuration: 18
-    })
-  };
-  updateLanguageSyncControls();
-
-  try {
-    // Dialogue persistence intentionally disabled: refresh must start clean.
-    localStorage.removeItem('videoquest:last-dialogue');
-  } catch (error) {
-    console.warn('Dialogue could not be saved:', error);
-  }
-
-  return state.dialogue;
-}
-
-function languageClockTime(videoTime = els.video.currentTime) {
-  return languageTimelineTime(videoTime, state.languageSyncOffset);
-}
-
-function renderSubtitle() {
-  const segments = state.dialogue?.segments || [];
-  const now = languageClockTime();
-
-  if (!state.subtitlesEnabled || !segments.length) {
-    els.subtitleOverlay?.classList.add('hidden');
-    return;
-  }
-
-  const heldVoice = dubBoundaryHold && state.dubbingEnabled
-    ? [...dubBoundaryHold.ids].map(id => dubChannels.get(id)?._vqSegment).filter(Boolean)
-    : [];
-  const active = heldVoice.length ? heldVoice : activeDubSegments(segments, now, 0.015);
-  if (!active.length) {
-    els.subtitleOverlay?.classList.add('hidden');
-    return;
-  }
-  const label = segment => {
-    const profile = (state.dialogue?.speakers || []).find(item => dubSpeakerKey(item) === dubSpeakerKey(segment));
-    return String(segment.speakerName || profile?.speakerName || profile?.displayName || 'Konuşmacı').trim();
-  };
-  const speakerText = active.length === 1 ? label(active[0]) : '';
-  const captionText = active.length === 1 ? active[0].turkishText :
-    active.map(segment => `${label(segment)}: ${segment.turkishText}`).join('\n');
-  if (els.subtitleSpeaker.textContent !== speakerText) els.subtitleSpeaker.textContent = speakerText;
-  if (els.subtitleText.textContent !== captionText) els.subtitleText.textContent = captionText;
-  els.subtitleOverlay.classList.remove('hidden');
-}
-
-const dubChannels = new Map();
-const dubRecoveryOffsets = new Map();
-let dubBoundaryHold = null;
-const preparedDubAudio = new Map();
-const dubPreparationGroups = new Set();
-let dubScheduler = null;
-let dubSchedulerTimeline = null;
-let dubSchedulerGeneration = null;
-let dubSegmentIdTimeline = null;
-let dubSegmentIds = new WeakMap();
-let dubSpeechEnds = new WeakMap();
-const dubMixer = createDubMixer(els.video);
-let dubPlaybackTimer = null;
-
-function getDubPlaybackScheduler() {
-  const timeline = dubTimeline();
-  if (!dubScheduler || dubSchedulerTimeline !== timeline) {
-    dubSchedulerTimeline = timeline;
-    dubSchedulerGeneration = state.dubSyncGeneration;
-    dubScheduler = createDubScheduler(timeline, { getId: getDubSegmentId, generation: state.dubSyncGeneration });
-    dubSpeechEnds = new WeakMap();
-    const followingStarts = new Map();
-    for (const segment of [...timeline].sort((a, b) => Number(b.startTime) - Number(a.startTime))) {
-      const speaker = dubSpeakerKey(segment);
-      const start = Number(segment.startTime);
-      const next = followingStarts.get(speaker);
-      const end = next && next.start > start ? next.start : next?.following;
-      dubSpeechEnds.set(segment, Math.min(Number(segment.endTime), end ?? Infinity));
-      followingStarts.set(speaker, { start, following: end });
-    }
-    for (const segment of timeline) {
-      const id = getDubSegmentId(segment);
-      if (state.dubCache?.has(id)) dubScheduler.markCached(id);
-      if (preparedDubAudio.get(id)?.readyState >= 2) dubScheduler.markReady(id);
-    }
-    if (state.dubResumeTime !== null) dubScheduler.seek(languageClockTime(), state.dubSyncGeneration);
-  } else if (dubSchedulerGeneration !== state.dubSyncGeneration) {
-    dubSchedulerGeneration = state.dubSyncGeneration;
-    dubScheduler.seek(languageClockTime(), state.dubSyncGeneration);
-  }
-  return dubScheduler;
-}
-
-function getDubSpeechEnd(segment) {
-  return dubSpeechEnds.get(segment) ?? Number(segment.endTime);
-}
-
-function indexedActiveDubSegments(time) {
-  const voices = new Map();
-  for (const row of getDubPlaybackScheduler().active(time)) voices.set(dubSpeakerKey(row.segment), row.segment);
-  return [...voices.values()];
-}
-
-function dubPlaybackOwner() {
-  return { generation: state.dubSyncGeneration, controller: state.dubRequestController,
-    selectionToken: state.adultSelectionToken, playbackGeneration: state.playbackGeneration, gameState: state.gameState };
-}
-
-function isDubPlaybackOwnerCurrent(owner) {
-  return owner.generation === state.dubSyncGeneration && owner.controller === state.dubRequestController &&
-    owner.selectionToken === state.adultSelectionToken && owner.playbackGeneration === state.playbackGeneration &&
-    owner.gameState === state.gameState && state.dubbingEnabled && !els.video.seeking;
-}
-
-function getDubDiagnostics() {
-  return state.dubDiagnostics ||= {
-    preparedIds: new Set(), playedIds: new Set(), firstPlaybackEvents: [],
-    playbackEventCount: 0, playbackFailureReason: ''
-  };
-}
-
-function dubbingDebugReport() {
-  const diagnostics = getDubDiagnostics();
-  const timeline = dubTimeline();
-  const scheduler = getDubPlaybackScheduler();
-  const scheduling = scheduler.counts();
-  const now = languageClockTime();
-  const activeIds = new Set(indexedActiveDubSegments(now).map(getDubSegmentId));
-  // Decode recovery has a ten-second timeout and speech tails have a 1.1s
-  // budget. Give newly latched sparse ticks the same grace before warning.
-  const pendingOverdueGraceSeconds = 12;
-  const readyCount = [...preparedDubAudio.values()].filter(audio => audio.readyState >= 2 && !audio.error).length;
-  const segmentReports = timeline.map(segment => {
-    const id = getDubSegmentId(segment);
-    const row = scheduler.get(id);
-    const cached = state.dubCache?.has(id) || false;
-    const pending = Boolean(row?.due);
-    const overdue = pending && row.due.origin === 'natural' &&
-      now - Math.max(Number(segment.endTime), row.due.time) > pendingOverdueGraceSeconds;
-    const skipped = row?.state === 'SKIPPED_BY_EXPLICIT_SEEK';
-    return {
-      segmentId: id, speakerId: dubSpeakerKey(segment),
-      startTime: segment.startTime, endTime: segment.endTime,
-      ...(state.dubSegmentMetadata?.get(id) || {}),
-      voiceId: state.dubSegmentMetadata?.get(id)?.voiceId || state.dubSpeakerVoices?.get(dubSpeakerKey(segment))?.voiceId || '',
-      generated: cached, cached,
-      prepared: diagnostics.preparedIds.has(id),
-      ready: Boolean(preparedDubAudio.get(id)?.readyState >= 2 && !preparedDubAudio.get(id)?.error),
-      due: pending, dueSelection: row?.due || null,
-      playing: Boolean(dubChannels.get(id) && !dubChannels.get(id).paused && !dubChannels.get(id).ended),
-      played: diagnostics.playedIds.has(id),
-      skipped, skipReason: skipped ? row?.skipReason || row?.reason || 'EXPLICIT_SEEK_PAST_SEGMENT' : '',
-      explicitSeekGeneration: row?.explicitSeekGeneration ?? null,
-      playAttemptCount: row?.playAttemptCount || 0,
-      lastPlayAttemptTime: row?.lastPlayAttemptTime ?? null,
-      lastPlayAttemptGeneration: row?.lastPlayAttemptGeneration ?? null,
-      playbackState: row?.state || 'GENERATED',
-      preparationState: row?.preparationState || 'GENERATED',
-      playedThisVisit: Boolean(row?.playedThisVisit),
-      pendingStatus: pending ? overdue ? 'DELAYED_PENDING' : 'PENDING' : null,
-      missedWithoutSeek: overdue,
-      active: activeIds.has(id)
-    };
-  });
-  const missed = segmentReports.filter(row => row.missedWithoutSeek);
-  const warning = missed.length ? `${missed.length} naturally due dubbing segment(s) remain pending beyond the ${pendingOverdueGraceSeconds}-second grace; playback or recovery is still pending.` : '';
-  return {
-    dubbingEnabled: state.dubbingEnabled,
-    provider: state.dubProviderLock || 'unknown',
-    voiceAssignments: [...(state.dubSpeakerVoices?.values() || [])],
-    selectedModel: [...(state.dubSegmentMetadata?.values() || [])].find(row => row.model)?.model || '',
-    modelId: [...(state.dubSegmentMetadata?.values() || [])].find(row => row.model)?.model || '',
-    activeSegmentId: state.activeDubSegmentId,
-    lastPlaybackEvents: (state.engineEvents || []).filter(event => /^DUB_PLAYBACK_|^DUB_SOURCE_/.test(event.type)).slice(-10),
-    generatedSegmentCount: state.dubCache?.size || 0,
-    cachedSegmentCount: state.dubCache?.size || 0,
-    decodedPreparedSegmentCount: diagnostics.preparedIds.size,
-    preparedDecodedCount: diagnostics.preparedIds.size,
-    readySegmentCount: readyCount,
-    playedSegmentCount: diagnostics.playedIds.size,
-    playbackEventCount: diagnostics.playbackEventCount,
-    firstPlaybackEvents: diagnostics.firstPlaybackEvents,
-    segmentStateCounts: scheduling.states,
-    dueSegmentCount: scheduler.due().length,
-    skippedByExplicitSeekSegmentCount: scheduling.skippedByExplicitSeekCount,
-    detectedDialogueCount: state.dialogue?.segments?.length ?? timeline.length,
-    generatedCount: state.dubCache?.size || 0,
-    readyCount,
-    dueCount: scheduling.due,
-    playedCount: diagnostics.playedIds.size,
-    skippedBySeekCount: scheduling.skippedByExplicitSeekCount,
-    missedWithoutSeekCount: missed.length,
-    pendingOverdueGraceSeconds,
-    warning,
-    warnings: missed.length ? [{ code: 'DUB_DUE_OVERDUE_WITHOUT_SEEK', segmentIds: missed.map(row => row.segmentId), message: warning }] : [],
-    schedulerGeneration: state.dubSyncGeneration,
-    repairedTimestamps: state.dialogue?.timestampRepair || null,
-    timingIntegrity: state.dialogue?.timingIntegrity || null,
-    coverageAudit: state.dialogue?.coverageAudit || state.analysisSession?.dialogueCoverageAudit || null,
-    transcriptionEngine: state.dialogue?.transcriptionEngine || '',
-    translationEngine: state.dialogue?.translationEngine || '',
-    sourceLanguage: state.dialogue?.sourceLanguage || '',
-    failureReason: state.dubFailureReason || '',
-    playbackFailureReason: diagnostics.playbackFailureReason,
-    playbackBlocked: Boolean(state.dubPlaybackBlocked),
-    videoTime: Number(els.video.currentTime) || 0,
-    timeline: segmentReports
-  };
-}
-
-function cancelDubBoundaryHold() {
-  if (dubBoundaryHold) clearTimeout(dubBoundaryHold.timer);
-  dubBoundaryHold = null;
-}
-
-function isDubBoundaryHoldCurrent(hold) {
-  return dubBoundaryHold === hold && state.dubbingEnabled &&
-    hold.generation === state.dubSyncGeneration && hold.controller === state.dubRequestController &&
-    hold.selectionToken === state.adultSelectionToken && hold.playbackGeneration === state.playbackGeneration &&
-    hold.gameState === state.gameState && !els.video.seeking && !els.video.ended &&
-    Math.abs(Number(els.video.currentTime) - hold.videoTime) < 0.35;
-}
-
-function beginDubBoundaryHold(ids) {
-  if (dubBoundaryHold || !ids.size) return;
-  const hold = {
-    ids, generation: state.dubSyncGeneration, controller: state.dubRequestController,
-    selectionToken: state.adultSelectionToken, playbackGeneration: state.playbackGeneration,
-    gameState: state.gameState, videoTime: Number(els.video.currentTime), resuming: false
-  };
-  dubBoundaryHold = hold;
-  // Let only the overdue speakers finish. Other overlapping voices retain
-  // their exact sample offsets while the source clock is stopped.
-  for (const [id, audio] of dubChannels) if (!ids.has(id)) audio.pause();
-  els.video.pause();
-  stopDubClock();
-  updateDubMix();
-  const remaining = Math.max(0, ...[...ids].map(id => {
-    const audio = dubChannels.get(id);
-    return audio ? (audio.duration - audio.currentTime) / Math.max(.25, audio.playbackRate) : 0;
-  }));
-  // A decoder that never emits ended must expose recovery, not hang forever.
-  hold.timer = setTimeout(() => {
-    if (!isDubBoundaryHoldCurrent(hold)) { if (dubBoundaryHold === hold) cancelDubBoundaryHold(); return; }
-    const audio = [...hold.ids].map(id => dubChannels.get(id)).find(item => item && !item.ended);
-    if (!audio) { void resumeDubBoundaryHold(); return; }
-    cancelDubBoundaryHold();
-    beginDubBuffer(audio._vqSegment, false);
-  }, (remaining + 8) * 1000);
-}
-
-async function resumeDubBoundaryHold() {
-  const hold = dubBoundaryHold;
-  if (!hold || hold.resuming) return;
-  if (!isDubBoundaryHoldCurrent(hold)) { cancelDubBoundaryHold(); return; }
-  if ([...hold.ids].some(id => dubChannels.has(id))) return;
-  clearTimeout(hold.timer);
-  if (state.decisionDubHold) { cancelDubBoundaryHold(); return; }
-  hold.resuming = true;
-  for (const audio of dubChannels.values()) {
-    audio._vqAnchorVideoTime = languageClockTime();
-    audio._vqAnchorAudioTime = audio.currentTime;
-  }
-  try {
-    await els.video.play();
-    if (!isDubBoundaryHoldCurrent(hold)) return;
-    cancelDubBoundaryHold();
-    renderSubtitle();
-    startDubClock();
-    void syncDubPlayback();
-  } catch {
-    if (isDubBoundaryHoldCurrent(hold)) {
-      cancelDubBoundaryHold();
-      beginDubBuffer(activeDubSegments(dubTimeline(), languageClockTime())[0], false);
-    }
-  }
-}
-
-function renderDubBuffer(message, loading = false) {
-  els.dubBufferStatus?.classList.toggle('hidden', !state.dubBuffer);
-  if (els.dubBufferMessage) els.dubBufferMessage.textContent = message;
-  if (els.dubRetryBtn) els.dubRetryBtn.disabled = loading;
-}
-
-function cancelDubBuffer() {
-  state.dubBuffer = null;
-  renderDubBuffer('');
-}
-
-function isDubBufferCurrent(buffer) {
-  return state.dubBuffer === buffer && buffer.generation === state.dubSyncGeneration &&
-    buffer.controller === state.dubRequestController &&
-    buffer.selectionToken === state.adultSelectionToken &&
-    buffer.playbackGeneration === state.playbackGeneration && buffer.gameState === state.gameState &&
-    !els.video.seeking && !els.video.ended;
-}
-
-function beginDubBuffer(segment, loading = true) {
-  cancelDubBoundaryHold();
-  const buffer = {
-    segment, generation: state.dubSyncGeneration, controller: state.dubRequestController,
-    selectionToken: state.adultSelectionToken, playbackGeneration: state.playbackGeneration,
-    gameState: state.gameState, videoTime: Number(els.video.currentTime), loading
-  };
-  state.dubBuffer = buffer;
-  // Freeze the source, not just the voice: an unprepared line must not become
-  // an undubbed gap while TTS or audio decoding is still in flight.
-  els.video.pause();
-  dubChannels.forEach(audio => audio.pause());
-  updateDubMix();
-  stopDubClock();
-  renderDubBuffer(loading ? 'Türkçe dublaj hazırlanıyor… Video aynı noktada bekliyor.' :
-    'Dublaj oynatılamadı. Devam etmek için yeniden dene.', loading);
-  return buffer;
-}
-
-async function retryDubBuffer(useOriginal = false) {
-  const buffer = state.dubBuffer;
-  if (!buffer || !isDubBufferCurrent(buffer) || (buffer.loading && !useOriginal)) return;
-  if (!useOriginal && state.dubUnavailableUntil > Date.now()) {
-    const seconds = Math.ceil((state.dubUnavailableUntil - Date.now()) / 1000);
-    renderDubBuffer(`Dublaj servisi bekletiyor. ${seconds} saniye sonra yeniden deneyebilirsin.`);
-    return;
-  }
-  cancelDubBuffer();
-  state.dubStartingToken = null;
-  state.dubPlaybackBlocked = false;
-  if (useOriginal) {
-    state.dubbingEnabled = false;
-    stopDubPlayback();
-    if (els.dubToggleBtn) els.dubToggleBtn.textContent = 'TR DUBLAJ: KAPALI';
-  } else {
-    state.dubbingEnabled = true;
-  }
-  try {
-    // Invoke every blocked voice's play() in the click task, before the
-    // first await consumes transient browser activation. A video gesture alone
-    // does not authorize a new HTMLAudioElement on every mobile browser.
-    const sourcePlayback = els.video.play();
-    const voiceStarts = state.dubbingEnabled ? [...dubChannels]
-      .filter(([, audio]) => audio.paused && !audio.ended)
-      .map(([id, audio]) => playDubAudio(audio, id, state.dubSyncGeneration, sourcePlayback)) : [];
-    await Promise.all([sourcePlayback, ...voiceStarts]);
-    if (state.dubbingEnabled) { startDubClock(); void syncDubPlayback(); }
-  } catch (error) {
-    dubChannels.forEach(audio => audio.pause());
-    getDubDiagnostics().playbackFailureReason = `${error?.name || 'DUB_SOURCE_PLAY_ERROR'}:${error?.message || String(error)}`;
-    // Keep an actionable control if the browser requires a fresh play gesture.
-    if (buffer.generation !== state.dubSyncGeneration || buffer.controller !== state.dubRequestController ||
-        buffer.selectionToken !== state.adultSelectionToken || buffer.playbackGeneration !== state.playbackGeneration) return;
-    buffer.loading = false;
-    state.dubBuffer = buffer;
-    renderDubBuffer('Tarayıcı oynatmayı engelledi. Devam etmek için yeniden dokun.');
-  }
-}
-
-async function prepareDubForPlayback(segment) {
-  const group = await prepareDubGroupForPlayback([segment]);
-  const audio = group?.get(getDubSegmentId(segment)) || null;
-  if (group?._vqPreparationGroup) dubPreparationGroups.delete(group._vqPreparationGroup);
-  return audio;
-}
-
-async function prepareDubGroupForPlayback(segments, owner = dubPlaybackOwner()) {
-  const result = new Map();
-  const group = { ids: new Set(segments.map(getDubSegmentId)), owner };
-  dubPreparationGroups.add(group);
-  result._vqPreparationGroup = group;
-  const release = () => dubPreparationGroups.delete(group);
-  const missing = [];
-  for (const segment of segments) {
-    const id = getDubSegmentId(segment);
-    const audio = preparedDubAudio.get(id);
-    if (audio?.readyState >= 2 && !audio.error) result.set(id, audio);
-    else missing.push(segment);
-  }
-  if (!isDubPlaybackOwnerCurrent(owner)) { release(); return null; }
-  if (!missing.length) return result;
-  // One preparation hold covers every simultaneous speaker. Independent holds
-  // would cancel each other and resume with only the last prepared voice.
-  const buffer = beginDubBuffer(missing[0]);
-  try {
-    await Promise.all(missing.map(async segment => {
-      const audio = await prepareDubAudio(segment, 100);
-      if (audio) result.set(getDubSegmentId(segment), audio);
-    }));
-  } catch (error) {
-    logEngineEvent('DUB_PREPARATION_FAILED', { message: error?.message || String(error) });
-  }
-  if (!isDubBufferCurrent(buffer) || !isDubPlaybackOwnerCurrent(owner)) {
-    if (state.dubBuffer === buffer) cancelDubBuffer();
-    release();
-    return null;
-  }
-  buffer.loading = false;
-  if (result.size !== segments.length) {
-    renderDubBuffer('Bu bölümün Türkçe dublajı hazırlanamadı. Yeniden dene veya dublajı kapatarak devam et.');
-    release();
-    return null;
-  }
-  try { await els.video.play(); }
-  catch {
-    if (isDubBufferCurrent(buffer)) renderDubBuffer('Ses hazır. Oynatmak için yeniden dokun.');
-    release();
-    return null;
-  }
-  if (!isDubBufferCurrent(buffer) || !isDubPlaybackOwnerCurrent(owner)) {
-    if (state.dubBuffer === buffer) cancelDubBuffer();
-    release();
-    return null;
-  }
-  cancelDubBuffer();
-  startDubClock();
-  return result;
-}
-
-function updateDubMix() {
-  dubMixer.update({
-    enabled: state.dubbingEnabled,
-    keepOriginal: state.keepOriginalAudioEnabled,
-    speaking: [...dubChannels.values()].some(audio => !audio.paused && !audio.ended)
-  });
-  const voices = [...dubChannels.values()].filter(audio => !audio.ended).length;
-  for (const audio of dubChannels.values()) audio.volume = dubMixer.voiceVolume(voices);
-}
-
-function clearPreparedDubAudio() {
-  for (const audio of preparedDubAudio.values()) {
-    audio.pause();
-    audio._vqCancelReady?.();
-    audio.removeAttribute('src');
-    audio.load();
-  }
-  preparedDubAudio.clear();
-  dubPreparationGroups.clear();
-}
-
-function trimPreparedDubAudio() {
-  const activeIds = new Set(dubChannels.keys());
-  for (const group of dubPreparationGroups) {
-    if (!isDubPlaybackOwnerCurrent(group.owner)) { dubPreparationGroups.delete(group); continue; }
-    for (const id of group.ids) activeIds.add(id);
-  }
-  const limit = Math.max(16, activeIds.size + 8);
-  for (const [id, audio] of preparedDubAudio) {
-    if (preparedDubAudio.size <= limit) break;
-    if (activeIds.has(id) || audio.readyState < 2) continue;
-    preparedDubAudio.delete(id);
-    dubScheduler?.markCached(id);
-    audio.pause();
-    audio._vqCancelReady?.();
-    audio.removeAttribute('src');
-    audio.load();
-  }
-}
-
-async function prepareDubAudio(segment, priority = 0) {
-  const controller = state.dubRequestController;
-  const scheduler = getDubPlaybackScheduler();
-  const id = getDubSegmentId(segment);
-  const existing = preparedDubAudio.get(id);
-  if (existing && !existing.error) {
-    if (existing.readyState >= 2) scheduler.markReady(id);
-    else scheduler.markPreparing(id);
-    return existing._vqReady;
-  }
-  scheduler.markPreparing(id);
-  let source;
-  try { source = await ensureDubSegment(segment, priority); }
-  catch (error) {
-    if (controller === state.dubRequestController) scheduler.markFailed(id, { reason: error?.message || 'DUB_PREPARATION_FAILED' });
-    throw error;
-  }
-  if (controller !== state.dubRequestController || !dubTimeline().includes(segment)) return null;
-  if (!source) { scheduler.markFailed(id, { reason: 'DUB_SOURCE_UNAVAILABLE' }); return null; }
-  scheduler.markCached(id);
-  if (preparedDubAudio.has(id)) {
-    const shared = preparedDubAudio.get(id);
-    if (shared.readyState >= 2 && !shared.error) scheduler.markReady(id);
-    else scheduler.markPreparing(id);
-    return shared._vqReady;
-  }
-  scheduler.markPreparing(id);
-  const audio = new Audio();
-  audio.preload = 'auto';
-  audio.volume = dubMixer.voiceVolume();
-  audio.preservesPitch = true;
-  audio.webkitPreservesPitch = true;
-  audio._vqSegment = segment;
-  audio._vqReady = new Promise(resolve => {
-    let timer;
-    let cancelled = false;
-    const done = () => {
-      clearTimeout(timer);
-      for (const event of ['canplay', 'error']) audio.removeEventListener(event, done);
-      const sourceCurrent = controller === state.dubRequestController && dubTimeline().includes(segment);
-      const ready = !cancelled && sourceCurrent && audio.readyState >= 2 && !audio.error;
-      if (!ready && preparedDubAudio.get(id) === audio) preparedDubAudio.delete(id);
-      const diagnostics = getDubDiagnostics();
-      if (ready) {
-        diagnostics.preparedIds.add(id);
-        scheduler.markReady(id);
-        logEngineEvent('DUB_AUDIO_PREPARED', { segmentId: id, duration: Number(audio.duration) || 0 });
-      } else if (!cancelled && sourceCurrent) {
-        diagnostics.playbackFailureReason = audio.error ? `DUB_DECODE_ERROR:${audio.error.code}` : 'DUB_DECODE_TIMEOUT';
-        scheduler.markFailed(id, { reason: diagnostics.playbackFailureReason });
-        logEngineEvent('DUB_DECODE_FAILED', { segmentId: id, reason: diagnostics.playbackFailureReason });
-      }
-      resolve(ready ? audio : null);
-      if (ready) trimPreparedDubAudio();
-    };
-    for (const event of ['canplay', 'error']) audio.addEventListener(event, done);
-    audio._vqCancelReady = () => { cancelled = true; done(); };
-    timer = setTimeout(done, 10000);
-  });
-  audio.addEventListener('ended', () => {
-    if (dubChannels.get(id) !== audio) return;
-    getDubPlaybackScheduler().markEnded(id, { generation: audio._vqPlayGeneration });
-    dubChannels.delete(id);
-    if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
-    updateDubMix();
-    if (dubBoundaryHold) void resumeDubBoundaryHold();
-    else if (state.dubbingEnabled && !els.video.paused) void syncDubPlayback();
-  });
-  audio.addEventListener('error', () => {
-    if (dubChannels.get(id) !== audio) return;
-    audio.pause();
-    dubChannels.delete(id);
-    if (state.activeDubSegmentId === id) state.activeDubSegmentId = null;
-    getDubDiagnostics().playbackFailureReason = `DUB_DECODE_ERROR:${audio.error?.code || 'unknown'}`;
-    getDubPlaybackScheduler().markFailed(id, { generation: audio._vqPlayGeneration, reason: getDubDiagnostics().playbackFailureReason });
-    logEngineEvent('DUB_PLAYBACK_FAILED', { segmentId: id, reason: getDubDiagnostics().playbackFailureReason });
-    state.dubPlayedSegmentIds.delete(id);
-    dubRecoveryOffsets.set(id, { segment, offset: Math.max(0, Number(audio.currentTime) || 0) });
-    preparedDubAudio.delete(id);
-    if (state.dubbingEnabled) beginDubBuffer(segment, false);
-    updateDubMix();
-  });
-  preparedDubAudio.set(id, audio);
-  trimPreparedDubAudio();
-  audio.src = source;
-  audio.load();
-  return audio._vqReady;
-}
-
-function finishDubPlaybackAtVideoEnd() {
-  cancelDubBoundaryHold();
-  cancelDubBuffer();
-  state.dubStartingToken = null;
-  // The video's natural end emits pause before ended. Neither event should
-  // truncate a voice that is already playing. The source cannot drift into
-  // another scene after its natural end, so no artificial tail limit is needed.
-  for (const [id, audio] of dubChannels) {
-    if (!audio.paused && !audio.ended) continue;
-    audio.pause();
-    dubChannels.delete(id);
-  }
-  state.activeDubSegmentId = dubChannels.keys().next().value || null;
-  updateDubMix();
-  stopDubClock();
-}
-
-function startDubClock() {
-  if (dubPlaybackTimer !== null || (!state.dubbingEnabled && !state.subtitlesEnabled)) return;
-  // timeupdate can be as sparse as four events per second on mobile.
-  dubPlaybackTimer = setInterval(() => {
-    if (state.subtitlesEnabled) renderSubtitle();
-    if (state.dubbingEnabled) void syncDubPlayback();
-  }, 50);
-}
-
-function stopDubClock() {
-  if (dubPlaybackTimer !== null) clearInterval(dubPlaybackTimer);
-  dubPlaybackTimer = null;
-}
-
 function recordAiUsage(usage) {
   if (!usage || typeof usage !== 'object') return;
   for (const key of ['requests', 'inputTokens', 'outputTokens', 'thinkingTokens', 'totalTokens']) {
@@ -2253,656 +764,314 @@ function recordAiUsage(usage) {
   logEngineEvent('AI_USAGE', { ...state.aiUsage });
 }
 
-function getDubSegmentAt(videoTime) {
-  return dialogueSegmentAt(dubTimeline(), languageClockTime(videoTime), 0.12);
-}
+const mediaClient = createTurkishMediaClient({
+  video: els.video,
+  captionElements: { overlay: els.subtitleOverlay, speaker: els.subtitleSpeaker, text: els.subtitleText },
+  onStatus: onTurkishMediaStatus
+});
 
-function dubTimeline() {
-  return state.dialogue?.dubSegments || state.dialogue?.segments || [];
-}
-
-function getDubSegmentId(segment) {
-  if (!segment) return '';
-  const segments = dubTimeline();
-  if (dubSegmentIdTimeline !== segments) {
-    dubSegmentIdTimeline = segments;
-    dubSegmentIds = new WeakMap();
-    segments.forEach((row, index) => dubSegmentIds.set(row, dubSegmentKey(row, index)));
-  }
-  return dubSegmentIds.get(segment) || dubSegmentKey(segment);
-}
-
-function stableDubGender(segment) {
-  const speakerId = String(segment?.speakerId || '').trim() || 'speaker-unknown';
-  const profile = (state.dialogue?.speakers || []).find(item =>
-    String(item?.speakerId || '') === speakerId
-  );
-  // The time-aligned segment is the closest evidence to the audible line.
-  // A global speaker profile can be wrong for an isolated diarization turn;
-  // preferring it made a woman's voice read a man's line (and vice versa).
-  const resolved = resolveDubGender(
-    segment?.gender,
-    profile?.gender,
-    state.dubStableSpeakerGenders.get(speakerId)
-  );
-  if (resolved !== 'uncertain') state.dubStableSpeakerGenders.set(speakerId, resolved);
-  return resolved;
-}
-
-async function ensureDubVoicePlan() {
-  const controller = state.dubRequestController;
-  const dialogue = state.dialogue;
-  const roster = buildDubSpeakerRoster(dialogue?.segments || dubTimeline(), dialogue?.speakers || []);
-  state.dubSpeakerVoices ||= new Map();
-  if (roster.every(row => state.dubSpeakerVoices.has(row.speakerId))) return state.dubSpeakerVoices;
-  if (state.dubVoicePlanRequest?.controller === controller && state.dubVoicePlanRequest.dialogue === dialogue) {
-    return state.dubVoicePlanRequest.promise;
-  }
-  const task = { controller, dialogue, promise: null };
-  task.promise = (async () => {
-    const response = await fetch('/api/elevenlabs-voice-plan', {
-      method: 'POST', headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }),
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(70000)]),
-      body: JSON.stringify({ speakers: roster, previous: [...state.dubSpeakerVoices.values()] })
-    });
-    const body = await response.json().catch(() => ({}));
-    if (controller !== state.dubRequestController || dialogue !== state.dialogue || controller.signal.aborted) return null;
-    if (!response.ok || !body.available) throw new Error(body.message || 'Karakterler için ayrı sesler hazırlanamadı.');
-    const plan = validateDubVoicePlan(roster, body.assignments);
-    state.dubSpeakerVoices = plan;
-    return plan;
-  })().finally(() => {
-    if (state.dubVoicePlanRequest === task) state.dubVoicePlanRequest = null;
-  });
-  state.dubVoicePlanRequest = task;
-  return task.promise;
-}
-
-async function ensureDubSegment(segment, priority = 0) {
-  if (!segment?.turkishText) return null;
-  if (!dubTimeline().includes(segment)) return null;
-  const requestController = state.dubRequestController;
-  const isCurrent = () => requestController === state.dubRequestController && !requestController.signal.aborted;
-  const segmentId = getDubSegmentId(segment);
-  if (!segmentId) return null;
-  if (state.dubCache.has(segmentId)) return state.dubCache.get(segmentId);
-  if (state.savedPlaybackOnly) return null;
-  if (state.dubRequests.has(segmentId)) {
-    state.dubQueue.promote(segmentId, priority);
-    return state.dubRequests.get(segmentId);
-  }
-  // Provider cooldowns do not invalidate audio that is already available.
-  if (state.dubUnavailableUntil > Date.now()) return null;
-
-  const runRequest = async () => {
-    if (!isCurrent() || state.dubbingEnabled === false || state.dubUnavailableUntil > Date.now()) return null;
-    if (!activeElevenLabsApiKey()) throw new Error('ElevenLabs anahtarı gerekli');
-    const plan = await ensureDubVoicePlan();
-    if (!isCurrent()) return null;
-    const assignment = plan?.get(dubSpeakerKey(segment));
-    if (!assignment?.voiceId) throw new Error('Bu konuşmacıya ayrı ses atanamadı.');
-    const timeline = dubTimeline();
-    const segmentIndex = timeline.indexOf(segment);
-    const adjacentText = offset => {
-      const neighbor = timeline[segmentIndex + offset];
-      return neighbor && dubSpeakerKey(neighbor) === dubSpeakerKey(segment)
-        ? String(neighbor.turkishText || '') : '';
-    };
-    const payload = JSON.stringify({
-      text: segment.turkishText, speakerId: dubSpeakerKey(segment),
-      gender: assignment.gender, voiceId: assignment.voiceId,
-      emotion: segment.emotion || 'uncertain',
-      sourceContext: {
-        segmentId, startTime: segment.startTime, endTime: segment.endTime,
-        originalText: segment.originalText || '',
-        previousText: adjacentText(-1),
-        nextText: adjacentText(1)
-      }
-    });
-    let lastFailure = null;
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
-      if (!isCurrent()) return null;
-      try {
-        const response = await fetch('/api/elevenlabs-dub-segment', {
-          method: 'POST', headers: elevenLabsHeaders({ 'Content-Type': 'application/json' }), body: payload,
-          signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(70000)])
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!isCurrent()) return null;
-        if (response.ok && body?.available && body?.audioBase64) {
-          if (body.provider && body.provider !== 'elevenlabs') {
-            throw Object.assign(new Error('Dublaj sağlayıcısı eşleşmedi; yanıt oynatılmadı.'), { code: 'DUB_PROVIDER_MISMATCH' });
-          }
-          if (state.dubFailureReason && els.dubToggleBtn) {
-            delete els.dubToggleBtn.dataset.unavailable;
-            els.dubToggleBtn.title = '';
-            els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
-          }
-          state.dubFailureReason = '';
-          if (body.voiceId !== assignment.voiceId || (body.speakerId && body.speakerId !== assignment.speakerId)) {
-            throw Object.assign(new Error('Dublaj yanıtının konuşmacı sesi eşleşmedi; yanlış ses oynatılmadı.'), { code: 'DUB_VOICE_MISMATCH' });
-          }
-          state.dubProviderLock = 'elevenlabs';
-          state.dubSegmentMetadata ||= new Map();
-          state.dubSegmentMetadata.set(segmentId, { provider: 'elevenlabs', model: body.model || '', voiceId: body.voiceId });
-          const source = `data:${body.mimeType || 'audio/mpeg'};base64,${body.audioBase64}`;
-          state.dubCache.set(segmentId, source);
-          logEngineEvent('DUB_PROVIDER_USED', { provider: 'elevenlabs', segmentId, voiceId: body.voiceId });
-          return source;
-        }
-        lastFailure = { response, body };
-        if (body?.reason === 'ELEVENLABS_RATE_LIMIT' && attempt < 4) {
-          const retrySeconds = Math.max(1, Number(body.retryAfterSeconds) || attempt * 2);
-          // Do not retry before the provider's deadline or block every queued
-          // line behind a long rate-limit wait. Surface it for a later retry.
-          if (retrySeconds > 30) break;
-          await new Promise(resolve => setTimeout(resolve, retrySeconds * 1000));
-          continue;
-        }
-        break;
-      } catch (error) {
-        if (!isCurrent()) return null;
-        lastFailure = { error };
-        if (['DUB_VOICE_MISMATCH', 'DUB_PROVIDER_MISMATCH'].includes(error.code)) break;
-        if (attempt < 4) {
-          await new Promise(resolve => setTimeout(resolve, attempt * 1200));
-          continue;
-        }
-      }
-    }
-
-    if (!isCurrent()) return null;
-    const body = lastFailure?.body || {};
-    if (body.reason === 'ELEVENLABS_RATE_LIMIT') {
-      state.dubUnavailableUntil = Date.now() + Math.max(1, Number(body.retryAfterSeconds) || 30) * 1000;
-    }
-    if (body.reason === 'ELEVENLABS_QUOTA_LIMIT') {
-      const retrySeconds = Math.max(60, Number(body.retryAfterSeconds) || 3600);
-      state.dubUnavailableUntil = Date.now() + retrySeconds * 1000;
-      state.dubFailureReason = body.reason;
-      // Keep the user's dubbing preference. At a missing line the player will
-      // pause with an explicit retry/original-audio choice, not silently switch.
-      if (els.dubToggleBtn) {
-        els.dubToggleBtn.textContent = 'TR DUBLAJ: LİMİT DOLDU';
-        els.dubToggleBtn.classList.remove('hidden');
-        els.dubToggleBtn.dataset.unavailable = 'true';
-      }
-      logEngineEvent('DUB_QUOTA_EXHAUSTED', { retrySeconds });
-      checkAiUsageStatus();
-      return null;
-    }
-    const message = body?.message || body?.error || lastFailure?.error?.message || 'ElevenLabs dublaj üretilemedi';
-    state.dubFailureReason = body?.reason || lastFailure?.error?.code || 'DUB_PROVIDER_ERROR';
-    if (els.dubToggleBtn) {
-      els.dubToggleBtn.textContent = `DUBLAJ HATASI: ${message}`;
-      els.dubToggleBtn.title = message;
-      els.dubToggleBtn.classList.remove('hidden');
-      els.dubToggleBtn.dataset.unavailable = 'true';
-    }
-    throw lastFailure?.error || new Error(message);
-  };
-
-  const request = state.dubQueue.enqueue(segmentId, runRequest, priority).catch(error => {
-    if (isCurrent()) console.error('Dub segment failed:', segmentId, error);
-    return null;
-  }).finally(() => {
-    if (state.dubRequests.get(segmentId) === request) state.dubRequests.delete(segmentId);
-  });
-
-  state.dubRequests.set(segmentId, request);
-  return request;
-}
-
-function stopDubPlayback() {
-  if (dubChannels.size) logEngineEvent('DUB_PLAYBACK_STOPPED', { segmentIds: [...dubChannels.keys()], videoTime: Number(els.video.currentTime) || 0 });
-  cancelDubBoundaryHold();
-  cancelDubBuffer();
-  state.dubStartingToken = null;
-  dubRecoveryOffsets.clear();
-  dubPreparationGroups.clear();
-  dubChannels.forEach(audio => { audio._vqPlayAttempt = null; audio.pause(); });
-  dubChannels.clear();
-  state.activeDubSegmentId = null;
-  updateDubMix();
-  if (!state.dubbingEnabled && !state.subtitlesEnabled) stopDubClock();
-}
-
-function resetDubState() {
-  state.dubRequestController.abort();
-  state.dubRequestController = new AbortController();
-  stopDubPlayback();
-  stopDubClock();
-  clearPreparedDubAudio();
-  state.dubResumeTime = null;
-  state.dubVideoWaiting = false;
-  state.dubPlaybackBlocked = false;
-  state.dubCache.clear();
-  state.dubRequests.clear();
-  state.dubSyncGeneration += 1;
-  dubScheduler = null;
-  dubSchedulerTimeline = null;
-  dubSchedulerGeneration = null;
-  state.activeDubSegmentId = null;
-  state.dubFailureReason = '';
-  state.dubProviderLock = '';
-  state.dubDiagnostics = null;
-  state.dubSegmentMetadata = new Map();
-  state.dubSkippedSegmentIds = new Set();
-  state.dubQueue.clear();
-  state.dubQueue = createDubRequestQueue(2);
-  state.dubStableSpeakerGenders.clear();
-  state.dubPlayedSegmentIds.clear();
-  state.dubSkippedSegmentIds?.clear();
-  state.dubSpeakerVoices = new Map();
-  state.dubVoicePlanRequest = null;
-  state.decisionDubHold = false;
-  state.dubUnavailableUntil = 0;
-  state.aiUsage = {
-    requests: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    thinkingTokens: 0,
-    totalTokens: 0
-  };
-}
-
-function prefetchDubSegmentsAround(videoTime) {
-  if (!state.dubbingEnabled) return;
-  getDubPlaybackScheduler().upcoming(languageClockTime(videoTime), 8)
-    .forEach((row, index) => void prepareDubAudio(row.segment, 30 - index));
-}
-
-async function prepareCompleteDubTimeline(segments = [], concurrency = 1, onProgress = null) {
-  const requestController = state.dubRequestController;
-  const queue = (Array.isArray(segments) ? segments : [])
-    .filter(segment => String(segment?.turkishText || '').trim());
-  let cursor = 0;
-  const worker = async () => {
-    while (state.dubbingEnabled && requestController === state.dubRequestController) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= queue.length) return;
-      await ensureDubSegment(queue[index], 10);
-      if (typeof onProgress === 'function') {
-        onProgress(
-          queue.filter(segment => state.dubCache.has(getDubSegmentId(segment))).length,
-          queue.length
-        );
-      }
-    }
-  };
-  await Promise.all(Array.from(
-    { length: Math.min(Math.max(1, concurrency), Math.max(1, queue.length)) },
-    () => worker()
-  ));
-  if (requestController !== state.dubRequestController) return 0;
-  const missing = queue.filter(segment => !state.dubCache.has(getDubSegmentId(segment)));
-  for (const segment of missing) {
-    if (!state.dubbingEnabled || requestController !== state.dubRequestController) break;
-    await ensureDubSegment(segment, 10);
-    if (typeof onProgress === 'function') {
-      onProgress(
-        queue.filter(item => state.dubCache.has(getDubSegmentId(item))).length,
-        queue.length
-      );
-    }
-  }
-  return queue.filter(segment => state.dubCache.has(getDubSegmentId(segment))).length;
-}
-
-function primeLanguageTracksAt(videoTime, count = 2) {
-  if (!state.dubbingEnabled) return;
-  getDubPlaybackScheduler().upcoming(languageClockTime(videoTime), count)
-    .forEach((row, index) => void prepareDubAudio(row.segment, 50 - index));
-}
-
-function primeAdultPositionLanguage(position) {
-  if (!state.dubbingEnabled || !position) return;
-  const requestController = state.dubRequestController;
-  const selectionToken = state.adultSelectionToken;
-  const targetTimes = [
-    position.startTime,
-    ...(position.movements || []).map(item => item.loopStartTime)
-  ];
-  const segments = dialogueSegmentsForTargets(
-    dubTimeline(),
-    targetTimes.map(languageClockTime),
-    12
-  );
-  void (async () => {
-    for (const segment of segments) {
-      if (!state.dubbingEnabled || requestController !== state.dubRequestController ||
-          selectionToken !== state.adultSelectionToken) break;
-      await ensureDubSegment(segment);
-    }
-  })();
-}
-
-function resyncLanguageTracks() {
-  renderSubtitle();
-  if (!state.dubbingEnabled) return;
-  // The seeking event already invalidates the old voice. Doing it a second
-  // time after seeked discarded the freshly prepared line as "already played".
-  const time = Math.max(0, Number(els.video?.currentTime) || 0);
-  primeLanguageTracksAt(time, 3);
-  updateDubMix();
-  void syncDubPlayback();
-}
-
-async function playDubAudio(audio, segmentId, generation, sourcePlayback = null) {
-  const owner = dubPlaybackOwner();
-  const attempt = { generation, owner, pending: true };
-  try {
-    audio._vqPlayGeneration = generation;
-    audio._vqPlayAttempt = attempt;
-    if (generation !== owner.generation || !isDubPlaybackOwnerCurrent(owner)) return false;
-    const scheduler = getDubPlaybackScheduler();
-    if (audio.readyState >= 2 && !audio.error) scheduler.markReady(segmentId);
-    const selection = scheduler.get(segmentId)?.due;
-    if (!scheduler.markPlaying(segmentId, { generation, time: Number(els.video.currentTime) || 0 })) return false;
-    if (audio.muted || audio.volume <= 0) throw Object.assign(new Error('Dublaj çıkışı sessiz; ses seviyesini açıp yeniden dene.'), { name: 'DUB_OUTPUT_MUTED' });
-    await audio.play();
-    if (sourcePlayback) await sourcePlayback;
-    if (audio._vqPlayAttempt !== attempt || !isDubPlaybackOwnerCurrent(owner) || dubChannels.get(segmentId) !== audio ||
-        !state.dubbingEnabled || (els.video.paused && !state.decisionDubHold) ||
-        state.dubVideoWaiting || els.video.seeking) {
-      if (audio._vqPlayAttempt === attempt || (!audio._vqPlayAttempt && els.video.paused)) audio.pause();
-      return false;
-    }
-    // A queued or blocked play() is not a heard sentence.
-    if (!scheduler.markPlayed(segmentId, { generation })) return false;
-    state.dubPlayedSegmentIds.add(segmentId);
-    const diagnostics = getDubDiagnostics();
-    diagnostics.playedIds.add(segmentId);
-    diagnostics.playbackEventCount += 1;
-    diagnostics.playbackFailureReason = '';
-    const event = { segmentId, generation, dueOrigin: selection?.origin || 'resume',
-      sourceStartTime: Number(audio._vqSegment?.startTime) || 0, sourceEndTime: Number(audio._vqSegment?.endTime) || 0,
-      videoTime: Number(els.video.currentTime) || 0,
-      audioTime: Number(audio.currentTime) || 0, duration: Number(audio.duration) || 0,
-      provider: state.dubSegmentMetadata?.get(segmentId)?.provider || state.dubProviderLock || 'unknown',
-      model: state.dubSegmentMetadata?.get(segmentId)?.model || '',
-      voiceId: state.dubSegmentMetadata?.get(segmentId)?.voiceId || state.dubSpeakerVoices?.get(dubSpeakerKey(audio._vqSegment))?.voiceId || '' };
-    if (event.provider === 'elevenlabs') state.dubProviderLock = 'elevenlabs';
-    if (diagnostics.firstPlaybackEvents.length < 10) diagnostics.firstPlaybackEvents.push(event);
-    logEngineEvent('DUB_PLAYBACK_STARTED', event);
-    dubRecoveryOffsets.delete(segmentId);
-    state.dubResumeTime = null;
-    if (state.dubBuffer?.segment === audio._vqSegment) cancelDubBuffer();
-    updateDubMix();
-    return true;
-  } catch (error) {
-    if (audio._vqPlayAttempt !== attempt || !isDubPlaybackOwnerCurrent(owner) || dubChannels.get(segmentId) !== audio) return false;
-    // pause()/seek() may legitimately interrupt a pending play promise.
-    if (error?.name !== 'AbortError') {
-      state.dubPlaybackBlocked = true;
-      getDubDiagnostics().playbackFailureReason = `${error?.name || 'DUB_PLAY_ERROR'}:${error?.message || String(error)}`;
-      getDubPlaybackScheduler().markFailed(segmentId, { generation, reason: getDubDiagnostics().playbackFailureReason });
-      logEngineEvent('DUB_PLAYBACK_BLOCKED', { message: error?.message || String(error) });
-      beginDubBuffer(audio._vqSegment, false);
-    }
-    updateDubMix();
-    return false;
-  } finally {
-    attempt.pending = false;
+function updateSourceTranscript(transcript) {
+  state.sourceTranscript = transcript || null;
+  state.sourceContext = sourceContextAdapter(transcript);
+  const session = state.analysisSession;
+  if (session) {
+    session.sourceTranscript = state.sourceTranscript;
+    session.audioContextStatus = transcript
+      ? (state.sourceContext?.segments.length ? 'ready' : 'no_speech') : 'unavailable';
   }
 }
 
-async function syncDubPlayback() {
-  if (!state.dubbingEnabled) return stopDubPlayback();
-  const scheduler = getDubPlaybackScheduler();
-  // Observe source progress before an existing async preparation returns.
-  // Every crossed boundary stays due until heard or explicitly sought away.
-  if (!els.video.seeking) scheduler.update(languageClockTime());
-  if (els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked || state.dubStartingToken) return;
-  const generation = state.dubSyncGeneration;
-  const token = dubPlaybackOwner();
-  state.dubStartingToken = token;
-  const current = () => state.dubStartingToken === token && isDubPlaybackOwnerCurrent(token);
-  let prepared;
-  try {
-    const videoTime = languageClockTime();
-    const active = indexedActiveDubSegments(videoTime);
-    // A decoder retry resumes unheard samples even if its caption has ended.
-    // Explicit seeks and source changes clear these recovery entries.
-    for (const { segment } of dubRecoveryOffsets.values()) if (!active.includes(segment)) active.push(segment);
-    const activeIds = new Set(active.map(getDubSegmentId));
-    const due = scheduler.due().map(row => row.segment);
-    const candidates = [...new Set([...due, ...active])];
-    const waitingForTail = new Set();
-    const overdue = new Set();
-    let mustHold = false;
-    for (const [id, audio] of dubChannels) {
-      if (activeIds.has(id) && !audio.ended) {
-        correctDubClock(audio, videoTime, els.video.playbackRate || 1);
-        continue;
-      }
-      if (!audio.ended && (!audio.paused || state.dubPlayedSegmentIds.has(id))) {
-        overdue.add(id);
-        const remaining = (audio.duration - audio.currentTime) / Math.max(.25, audio._vqSpeechRate || 1);
-        if (!canFinishDubTail(audio, active[0], videoTime)) mustHold = true;
-        for (const segment of candidates) {
-          if (getDubSegmentId(segment) === id || state.dubPlayedSegmentIds.has(getDubSegmentId(segment))) continue;
-          // Only consecutive turns wait for a final syllable. Actual source
-          // overlap starts immediately on each speaker's independent channel.
-          if (dubSpeakerKey(audio._vqSegment) === dubSpeakerKey(segment) || !sourceSpeechOverlaps(audio._vqSegment, segment)) {
-            waitingForTail.add(getDubSegmentId(segment));
-            // A brief reply can expire entirely during the preceding tail.
-            if (remaining >= Number(segment.endTime) - videoTime - .12) mustHold = true;
-          }
-        }
-        continue;
-      }
-      audio.pause();
-      dubChannels.delete(id);
-    }
-    state.activeDubSegmentId = dubChannels.keys().next().value || null;
-    if (mustHold || waitingForTail.size) {
-      await Promise.all([...overdue].filter(id => dubChannels.get(id)?.paused)
-        .map(id => playDubAudio(dubChannels.get(id), id, generation)));
-      if (current() && !els.video.paused && !state.dubPlaybackBlocked) beginDubBoundaryHold(overdue);
-      return;
-    }
-    const eligible = candidates.filter(segment => {
-      const id = getDubSegmentId(segment);
-      return scheduler.get(id)?.due && !waitingForTail.has(id) && !dubChannels.has(id) && !state.dubPlayedSegmentIds.has(id) && !state.dubSkippedSegmentIds?.has(id);
-    });
-    const pending = [];
-    for (const segment of eligible) {
-      // Delayed ticks may discover several consecutive turns at once. Their
-      // due entries persist while each voice finishes; source overlaps can
-      // still speak together on independent channels.
-      const concurrent = [...dubChannels.values()].filter(audio => !audio.ended).map(audio => audio._vqSegment).concat(pending);
-      if (concurrent.some(other => dubSpeakerKey(other) === dubSpeakerKey(segment) || !sourceSpeechOverlaps(other, segment))) continue;
-      pending.push(segment);
-    }
-    prepared = await prepareDubGroupForPlayback(pending, token);
-    if (!prepared || !current() || els.video.paused || els.video.seeking || state.dubVideoWaiting || state.dubPlaybackBlocked) return;
-    const now = languageClockTime();
-    scheduler.update(now);
-    for (const segment of pending) {
-      const id = getDubSegmentId(segment);
-      const audio = prepared.get(id);
-      const dueEntry = scheduler.get(id)?.due;
-      if (!audio || !dueEntry || dueEntry.generation !== generation || state.dubPlayedSegmentIds.has(id)) continue;
-      const sourceRate = naturalDubRate(audio.duration, getDubSpeechEnd(segment) - Number(segment.startTime));
-      // Only an explicit source seek skips heard material. A late callback,
-      // initial preparation or preceding speaker must not cut the beginning.
-      const offset = dubRecoveryOffsets.get(id)?.offset ??
-        (dueEntry.origin === 'explicit-seek'
-          ? Math.min(audio.duration, dueEntry.offset * sourceRate) : 0);
-      if (offset >= audio.duration - 0.02) {
-        state.dubSkippedSegmentIds ||= new Set();
-        state.dubSkippedSegmentIds.add(id);
-        scheduler.markSkipped(id, { generation, reason: 'DUB_SEEK_PAST_AUDIO' });
-        logEngineEvent('DUB_SEEK_PAST_AUDIO', { segmentId: id, offset, duration: audio.duration });
-        continue;
-      }
-      audio.currentTime = offset;
-      audio._vqSpeechEnd = getDubSpeechEnd(segment);
-      audio._vqSpeechRate = naturalDubRate(audio.duration - offset, Math.max(0.05, getDubSpeechEnd(segment) - now));
-      audio._vqAnchorVideoTime = now;
-      audio._vqAnchorAudioTime = offset;
-      audio._vqClockHold = false;
-      audio.playbackRate = audio._vqSpeechRate * (els.video.playbackRate || 1);
-      dubChannels.set(id, audio);
-    }
-    state.activeDubSegmentId = dubChannels.keys().next().value || null;
-    const starts = [...dubChannels].filter(([, audio]) => audio.paused && !audio.ended && !audio._vqClockHold);
-    updateDubMix();
-    if (starts.length) dubMixer.update({ enabled: true, keepOriginal: state.keepOriginalAudioEnabled, speaking: true });
-    await Promise.all(starts.map(([id, audio]) => playDubAudio(audio, id, generation)));
-    if (current()) prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
-  } finally {
-    if (prepared?._vqPreparationGroup) dubPreparationGroups.delete(prepared._vqPreparationGroup);
-    trimPreparedDubAudio();
-    if (state.dubStartingToken === token) state.dubStartingToken = null;
+function onTurkishMediaStatus(status) {
+  state.turkishMediaStatus = status;
+  if (status.sourceTranscript) { updateSourceTranscript(status.sourceTranscript); renderVoiceMappingPanel(); }
+  logEngineEvent('TURKISH_MEDIA_STATUS', { state: status.state, jobId: status.jobId || null });
+  if (['PLAYBACK_BLOCKED', 'PLAYBACK_FAILED'].includes(status.state)) {
+    els.dubBufferMessage.textContent = status.message || 'Türkçe ses oynatılamadı.';
+    els.dubBufferStatus.classList.remove('hidden');
+    return;
+  }
+  els.mediaJobStatus?.classList.remove('hidden');
+  if (els.mediaJobMessage) els.mediaJobMessage.textContent = status.message || 'Türkçe medya hazırlanıyor.';
+  const percent = Number(status.progress?.percent ?? status.progress);
+  if (els.mediaJobProgress) {
+    if (Number.isFinite(percent)) els.mediaJobProgress.value = Math.max(0, Math.min(100, percent));
+    else els.mediaJobProgress.removeAttribute('value');
+  }
+  const terminal = ['READY', 'FAILED', 'CANCELLED'].includes(status.state);
+  els.mediaJobCancelBtn?.classList.toggle('hidden', terminal);
+  els.mediaJobRetryBtn?.classList.toggle('hidden', status.state !== 'FAILED');
+  if (state.analysisInProgress && !terminal) {
+    els.analysisState.textContent = status.state;
+    els.analysisTitle.textContent = status.message || 'Türkçe medya hazırlanıyor';
   }
 }
 
-els.video.addEventListener('timeupdate', () => { renderSubtitle(); void syncDubPlayback(); });
-els.video.addEventListener('pause', () => {
-  if (state.dubbingEnabled) logEngineEvent('DUB_SOURCE_PAUSE', { videoTime: Number(els.video.currentTime) || 0 });
-  if (els.video.ended && state.dubbingEnabled) { finishDubPlaybackAtVideoEnd(); return; }
-  stopDubClock();
-  if (!state.decisionDubHold && !dubBoundaryHold) {
-    let cancelledStart = false;
-    for (const [id, audio] of dubChannels) {
-      cancelledStart ||= Boolean(audio._vqPlayAttempt?.pending);
-      audio._vqPlayAttempt = null;
-      audio.pause();
-      getDubPlaybackScheduler().markPaused(id, { generation: state.dubSyncGeneration });
+function renderMediaControls() {
+  const captured = mediaClient.capture();
+  state.dubbingEnabled = Boolean(captured?.dubEnabled);
+  state.subtitlesEnabled = Boolean(captured && captured.subtitleTrack !== 'off');
+  state.languageSyncOffset = Number(captured?.syncOffset) || 0;
+  const hasCues = track => Boolean((Array.isArray(track) ? track : track?.cues)?.length);
+  const subtitles = captured?.manifest.subtitles;
+  if (els.subtitleTrack) {
+    els.subtitleTrack.classList.toggle('hidden', !hasCues(subtitles?.source_tr) && !hasCues(subtitles?.dub_tr));
+    els.subtitleTrack.value = captured?.subtitleTrack || 'off';
+    for (const option of els.subtitleTrack.options) {
+      option.disabled = option.value !== 'off' && !hasCues(subtitles?.[option.value]);
     }
-    if (cancelledStart) state.dubStartingToken = null;
-    updateDubMix();
   }
-});
-els.video.addEventListener('waiting', () => {
-  state.dubVideoWaiting = true;
-  let cancelledStart = false;
-  if (!state.decisionDubHold && !dubBoundaryHold) for (const [id, audio] of dubChannels) {
-    cancelledStart ||= Boolean(audio._vqPlayAttempt?.pending);
-    audio._vqPlayAttempt = null;
-    audio.pause();
-    getDubPlaybackScheduler().markPaused(id, { generation: state.dubSyncGeneration });
+  els.dubToggleBtn.classList.toggle('hidden', !captured?.manifest.assets?.mix);
+  els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
+  els.dubToggleBtn.setAttribute('aria-pressed', String(state.dubbingEnabled));
+  updateLanguageSyncControls();
+  if (els.mediaExports) {
+    let available = false;
+    for (const link of els.mediaExports.querySelectorAll('[data-media-asset]')) {
+      const url = captured?.manifest.assets?.[link.dataset.mediaAsset]?.url;
+      link.classList.toggle('hidden', !url);
+      if (url) { link.href = url; available = true; }
+      else link.removeAttribute('href');
+    }
+    els.mediaExports.classList.toggle('hidden', !available);
   }
-  if (cancelledStart) state.dubStartingToken = null;
-  updateDubMix();
-});
-els.video.addEventListener('seeking', () => {
-  if (state.dubbingEnabled) logEngineEvent('DUB_SOURCE_SEEK', { videoTime: Number(els.video.currentTime) || 0 });
-  state.dubSyncGeneration += 1;
-  // Previously selected timestamps are now speculative, not urgent.
-  state.dubQueue?.deprioritize();
-  state.dubResumeTime = languageClockTime();
-  stopDubPlayback();
-  state.dubPlayedSegmentIds.clear();
-  state.dubSkippedSegmentIds?.clear();
-  getDubPlaybackScheduler();
-});
-els.video.addEventListener('seeked', () => {
-  renderSubtitle();
-  state.dubVideoWaiting = els.video.readyState < 3;
-  if (!state.dubbingEnabled) return;
-  void syncDubPlayback();
-  prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
-});
-els.video.addEventListener('play', () => {
-  // A new user play gesture takes ownership from an automatic speech hold.
-  if (dubBoundaryHold && !dubBoundaryHold.resuming) cancelDubBoundaryHold();
-  state.dubPlaybackBlocked = false;
-  // play() is still pending here. Pausing for TTS inside this event would
-  // reject the caller's play promise and incorrectly fail its navigation.
-  state.dubVideoWaiting = true;
-  prefetchDubSegmentsAround(Number(els.video.currentTime) || 0);
-});
-els.video.addEventListener('playing', () => {
-  state.dubVideoWaiting = false;
-  startDubClock();
-  // The browser settles play() only after dispatching `playing`. Wait for
-  // that task to finish before a preparation hold is allowed to pause it.
-  setTimeout(() => void syncDubPlayback(), 0);
-});
-els.video.addEventListener('ratechange', () => {
-  for (const audio of dubChannels.values()) {
-    audio.playbackRate = (audio._vqSpeechRate || 1) * (els.video.playbackRate || 1);
-  }
-});
-els.video.addEventListener('ended', () => {
-  finishDubPlaybackAtVideoEnd();
-});
-els.keepOriginalAudio?.addEventListener('change', () => {
-  state.keepOriginalAudioEnabled = Boolean(els.keepOriginalAudio.checked);
-  updateDubMix();
-});
-els.dubRetryBtn?.addEventListener('click', () => void retryDubBuffer());
-els.dubContinueOriginalBtn?.addEventListener('click', () => void retryDubBuffer(true));
+  renderVoiceMappingPanel();
+}
 
-els.subtitleToggleBtn?.addEventListener('click', () => {
-  state.subtitlesEnabled = !state.subtitlesEnabled;
-  els.subtitleToggleBtn.textContent =
-    `TR ALTYAZI: ${state.subtitlesEnabled ? 'AÇIK' : 'KAPALI'}`;
-  renderSubtitle();
-  if (state.subtitlesEnabled && !els.video.paused) startDubClock();
-  if (!state.subtitlesEnabled && !state.dubbingEnabled) stopDubClock();
-});
-
-let languageSyncSave = Promise.resolve();
 function updateLanguageSyncControls() {
-  els.languageSyncControls?.classList.toggle('hidden', !state.dialogue?.segments?.length);
+  els.languageSyncControls?.classList.toggle('hidden', !mediaClient.capture()?.manifest.assets?.mix);
   if (els.languageSyncValue) {
     const offset = Number(state.languageSyncOffset) || 0;
     els.languageSyncValue.textContent = `Ses/yazı ${offset > 0 ? '+' : ''}${offset.toFixed(2).replace('.', ',')} sn`;
   }
 }
 
+let languageSyncSave = Promise.resolve();
 function adjustLanguageSync(delta) {
-  const previous = Number(state.languageSyncOffset) || 0;
-  const offset = Math.max(-10, Math.min(10, Math.round((previous + delta) * 4) / 4));
-  if (offset === previous) return;
-  state.languageSyncOffset = offset;
+  state.languageSyncOffset = mediaClient.setSyncOffset((Number(state.languageSyncOffset) || 0) + delta);
   updateLanguageSyncControls();
-  state.dubSyncGeneration += 1;
-  stopDubPlayback();
-  state.dubPlayedSegmentIds.clear();
-  state.dubSkippedSegmentIds?.clear();
-  state.dubResumeTime = languageClockTime();
-  getDubPlaybackScheduler();
-  resyncLanguageTracks();
-  if (!els.video.paused) startDubClock();
-  const id = state.activeSavedGameId;
-  if (id) {
+  if (state.activeSavedGameId) {
+    const id = state.activeSavedGameId, offset = state.languageSyncOffset;
     languageSyncSave = languageSyncSave.then(() => savedGames?.setSyncOffset(id, offset))
-      .catch(error => {
-        if (els.analysisOutput) els.analysisOutput.textContent =
-          `Ses eşitlemesi bu kayda yazılamadı: ${error?.message || error}`;
-      });
+      .catch(error => console.warn('Eşitleme kaydedilemedi:', error));
   }
 }
+
+// Gameplay hooks follow the finished mix. They create no requests and never
+// extend a source clip to accommodate generated speech.
+function renderSubtitle() { mediaClient.sync(); }
+function primeLanguageTracksAt() { mediaClient.sync(); }
+function primeAdultPositionLanguage() { mediaClient.sync(); }
+function resyncLanguageTracks() { mediaClient.sync(); }
+function turkishMediaDebugReport() {
+  const media = mediaClient.capture();
+  return { dubbingEnabled: state.dubbingEnabled, subtitleTrack: media?.subtitleTrack || 'off',
+    qualityReport: media?.manifest.qualityReport || null, jobState: state.turkishMediaStatus?.state || null };
+}
+
+els.subtitleTrack?.addEventListener('change', () => {
+  mediaClient.setSubtitleTrack(els.subtitleTrack.value);
+  renderMediaControls();
+});
+els.dubToggleBtn?.addEventListener('click', () => {
+  mediaClient.setDubEnabled(!state.dubbingEnabled);
+  els.dubBufferStatus.classList.add('hidden');
+  renderMediaControls();
+});
+els.dubRetryBtn?.addEventListener('click', () => {
+  els.dubBufferStatus.classList.add('hidden');
+  mediaClient.retryPlayback();
+});
+els.dubContinueOriginalBtn?.addEventListener('click', () => {
+  mediaClient.setDubEnabled(false);
+  els.dubBufferStatus.classList.add('hidden');
+  renderMediaControls();
+});
 els.languageEarlierBtn?.addEventListener('click', () => adjustLanguageSync(0.25));
 els.languageLaterBtn?.addEventListener('click', () => adjustLanguageSync(-0.25));
-
-els.dubToggleBtn?.addEventListener('click', () => {
-  if (state.dubBuffer) { void retryDubBuffer(true); return; }
-  if (els.dubToggleBtn.dataset.unavailable === 'true') return;
-  state.dubbingEnabled = !state.dubbingEnabled;
-  els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
-  if (!state.dubbingEnabled) {
-    stopDubPlayback();
-    return;
+els.mediaJobCancelBtn?.addEventListener('click', () => {
+  const revoice = state.mediaRevoice;
+  if (revoice) revoice.cancelled = true;
+  void mediaClient.cancel();
+  if (revoice) {
+    restorePreviousVoices(revoice);
+    state.mediaRevoice = null;
   }
-  state.dubPlaybackBlocked = false;
-  state.dubPlayedSegmentIds.clear();
-  state.dubSkippedSegmentIds?.clear();
-  state.dubResumeTime = languageClockTime();
-  getDubPlaybackScheduler().seek(languageClockTime(), state.dubSyncGeneration);
-  updateDubMix();
-  if (!els.video.paused) startDubClock();
-  resyncLanguageTracks();
+  onTurkishMediaStatus({ state: 'CANCELLED', message: 'Türkçe medya işlemi iptal edildi.' });
+  renderMediaControls();
+});
+els.mediaJobRetryBtn?.addEventListener('click', async () => {
+  if (state.analysisInProgress || state.savedGameBusy) return;
+  if (state.mediaRevoice) { await regenerateTurkishVoices(state.mediaRevoice, true); return; }
+  const session = state.analysisSession;
+  if (!session) return;
+  state.analysisInProgress = true; updateAnalyzeAvailability();
+  setGameState('ANALYZING');
+  let completed = false, cancelled = false;
+  try {
+    const result = await mediaClient.retry();
+    if (state.analysisSession !== session) return;
+    session.mediaManifest = result;
+    updateSourceTranscript(result.sourceTranscript);
+    renderMediaControls(); completed = true;
+  } catch (error) {
+    cancelled = error.name === 'AbortError';
+    if (error.name !== 'AbortError') els.mediaJobMessage.textContent = error.message;
+  } finally {
+    state.analysisInProgress = false; updateAnalyzeAvailability();
+    if (!completed) setGameState(cancelled ? 'IDLE' : 'ERROR');
+  }
+  if (completed) els.analyzeBtn.click();
 });
 
-els.video.addEventListener('timeupdate', renderSubtitle);
-els.video.addEventListener('seeked', renderSubtitle);
+function renderVoiceMappingPanel() {
+  const speakers = state.sourceTranscript?.speakers || [];
+  if (!els.voiceMappingPanel || !els.voiceMappingRows) return;
+  els.voiceMappingPanel.classList.toggle('hidden', !speakers.length);
+  if (!els.voiceMappingPanel.open || !state.voiceCatalog) return;
+  const previous = mediaClient.capture()?.manifest.voiceMapping || {};
+  const draft = new Map([...els.voiceMappingRows.querySelectorAll('select')]
+    .map(select => [select.dataset.speakerId, select.value]));
+  const genderLabel = gender => gender === 'male' ? 'Erkek' : gender === 'female' ? 'Kadın' : 'Belirsiz';
+  const rows = speakers.map((speaker, index) => {
+    const label = document.createElement('label');
+    const title = document.createElement('span');
+    title.textContent = `Konuşmacı ${index + 1} · ${genderLabel(speaker.gender)}`;
+    const select = document.createElement('select');
+    select.dataset.speakerId = speaker.speakerId;
+    select.setAttribute('aria-label', `${title.textContent} için Türkçe ses`);
+    const automatic = document.createElement('option');
+    automatic.value = ''; automatic.textContent = 'Otomatik ses seçimi'; select.append(automatic);
+    for (const voice of state.voiceCatalog) {
+      const option = document.createElement('option'); option.value = voice.voiceId;
+      option.textContent = `${voice.name} · ${genderLabel(voice.gender)}${voice.language ? ` · ${voice.language}` : ''}`;
+      select.append(option);
+    }
+    const selected = draft.get(speaker.speakerId) ?? previous[speaker.speakerId] ?? '';
+    if (selected && !state.voiceCatalog.some(voice => voice.voiceId === selected)) {
+      const unavailable = document.createElement('option');
+      unavailable.value = selected; unavailable.disabled = true;
+      unavailable.textContent = 'Önceki ses · şu an erişilemiyor'; select.append(unavailable);
+    }
+    select.value = selected;
+    select.disabled = state.analysisInProgress || state.savedGameBusy;
+    label.append(title, select); return label;
+  });
+  els.voiceMappingRows.replaceChildren(...rows);
+  els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked;
+}
+
+async function loadVoiceCatalog() {
+  if (state.voiceCatalog) return state.voiceCatalog;
+  if (!state.voiceCatalogPromise) {
+    const generation = state.voiceMappingGeneration;
+    const pending = mediaClient.getVoices().then(voices => {
+      if (generation !== state.voiceMappingGeneration) throw new DOMException('Ses listesi iptal edildi.', 'AbortError');
+      state.voiceCatalog = voices; return voices;
+    }).finally(() => { if (state.voiceCatalogPromise === pending) state.voiceCatalogPromise = null; });
+    state.voiceCatalogPromise = pending;
+  }
+  return state.voiceCatalogPromise;
+}
+
+function verifiedMediaSceneContext() {
+  return (state.analysis?.actions || []).filter(action => action.sourceVerified === true &&
+    Number.isFinite(action.startTime) && action.startTime >= 0 &&
+    Number.isFinite(action.endTime) && action.endTime > action.startTime)
+    .slice(0, 64).map(action => ({ startTime: action.startTime, endTime: action.endTime,
+      description: String(typeof action.sourceEvidence === 'string' ? action.sourceEvidence : action.label || '').slice(0, 400) }));
+}
+
+function restorePreviousVoices(plan, preserveJob = false) {
+  if (!plan.previous) return;
+  mediaClient.loadResult(plan.previous.manifest, { ...plan.previous, audioBlob: plan.audioBlob, preserveJob });
+  updateSourceTranscript(plan.previous.manifest.sourceTranscript);
+  renderMediaControls();
+}
+
+async function regenerateTurkishVoices(plan, retry = false) {
+  if (state.analysisInProgress || state.savedGameBusy) return;
+  const generation = state.voiceMappingGeneration;
+  state.mediaRevoice = plan;
+  state.analysisInProgress = true;
+  updateAnalyzeAvailability();
+  // Pause the existing source range while its soundtrack is replaced. Its
+  // current time, selected occurrence, choices and progress remain untouched.
+  els.video.pause();
+  let completed = false;
+  try {
+    if (plan.previous?.manifest.assets?.mix && !plan.audioBlob) {
+      onTurkishMediaStatus({ state: 'UPLOADING', message: 'Önceki Türkçe ses korunuyor.' });
+      plan.audioBlob = await mediaClient.materializeAudio();
+    }
+    if (plan.cancelled || state.mediaRevoice !== plan) throw new DOMException('Ses değişimi iptal edildi.', 'AbortError');
+    const resume = retry && plan.started;
+    plan.started = true;
+    const result = resume ? await mediaClient.retry() : await mediaClient.start(plan.source, plan.options);
+    if (plan.cancelled || state.mediaRevoice !== plan) return;
+    if (plan.previous) {
+      mediaClient.setDubEnabled(plan.previous.dubEnabled);
+      mediaClient.setSubtitleTrack(plan.previous.subtitleTrack);
+      mediaClient.setSyncOffset(plan.previous.syncOffset);
+    }
+    updateSourceTranscript(result.sourceTranscript);
+    if (plan.session && state.analysisSession === plan.session) {
+      plan.session.mediaManifest = result;
+      plan.session.mediaModeKey = JSON.stringify({ dub: plan.options.outputs.dub,
+        subtitles: plan.options.outputs.subtitles, quality: plan.options.qualityMode });
+    }
+    state.mediaRevoice = null;
+    els.voiceMappingRows.replaceChildren();
+    renderMediaControls();
+    els.voiceMappingMessage.textContent = 'Konuşmacı sesleri hazır. Video seçili kaynak konumunda bekliyor.';
+    completed = true;
+    if (state.savedGameReady) await savedGames?.saveCurrent(true);
+  } catch (error) {
+    if (state.mediaRevoice !== plan) return;
+    const cancelled = error.name === 'AbortError';
+    restorePreviousVoices(plan, !cancelled && plan.started);
+    if (cancelled) state.mediaRevoice = null;
+    onTurkishMediaStatus({ state: cancelled ? 'CANCELLED' : 'FAILED', message: error.message });
+    els.voiceMappingMessage.textContent = `${error.message}${plan.previous ? ' Önceki Türkçe ses korundu.' : ''}`;
+  } finally {
+    if (generation === state.voiceMappingGeneration && (!state.mediaRevoice || state.mediaRevoice === plan)) {
+      state.analysisInProgress = false;
+      updateAnalyzeAvailability();
+    }
+  }
+  // A manual assignment can recover an initial unknown-speaker failure. The
+  // existing prepared frames and this new result continue that same analysis.
+  if (completed && generation === state.voiceMappingGeneration && !state.savedGameReady) els.analyzeBtn.click();
+}
+
+els.voiceMappingPanel?.addEventListener('toggle', async () => {
+  if (!els.voiceMappingPanel.open) return;
+  const generation = state.voiceMappingGeneration;
+  els.voiceMappingMessage.textContent = 'Kullanılabilir konuşmacı sesleri yükleniyor.';
+  try {
+    const voices = await loadVoiceCatalog();
+    if (generation !== state.voiceMappingGeneration || !els.voiceMappingPanel.open) return;
+    els.voiceMappingMessage.textContent = voices.length
+      ? `Konuşmacının cinsiyeti belirsizse sesini kendin seç. Ses etiketleri katalog bilgisidir.${els.dubMode.checked ? '' : ' Sesleri uygulamak için Türkçe dublaj modunu seç.'}`
+      : 'Bu hesapta kullanılabilir ses bulunamadı.';
+    renderVoiceMappingPanel();
+  } catch (error) {
+    if (generation === state.voiceMappingGeneration) els.voiceMappingMessage.textContent = error.message;
+  }
+});
+els.voiceMappingApplyBtn?.addEventListener('click', async () => {
+  if (state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked) return;
+  const source = state.selectedFile || state.analysisSession?.file;
+  if (!(source instanceof Blob) || !source.size) return;
+  const values = [...els.voiceMappingRows.querySelectorAll('select')].filter(select => select.value);
+  if (new Set(values.map(select => select.value)).size !== values.length) {
+    els.voiceMappingMessage.textContent = 'Her konuşmacı için ayrı bir ses seç.'; return;
+  }
+  const modes = selectedAnalysisModes(), previous = mediaClient.capture();
+  const options = { outputs: { dub: modes.dubbing, subtitles: modes.subtitles }, qualityMode: modes.dubQuality,
+    voiceMapping: Object.fromEntries(values.map(select => [select.dataset.speakerId, select.value])),
+    previousVoiceMapping: previous?.manifest.voiceMapping || {}, sceneContext: verifiedMediaSceneContext() };
+  await regenerateTurkishVoices({ source, options, previous, session: state.analysisSession, started: false });
+});
 
 function analysisSourceKey(file, remote) {
   if (state.urlCacheKey) return `url:${state.urlCacheKey}`;
@@ -2966,6 +1135,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   state.savedGameReady = false;
   state.savedPlaybackOnly = false;
   try {
+  updateAnalyzeAvailability();
   els.analyzeBtn.disabled = true;
   els.videoInput.disabled = true;
   els.video.pause();
@@ -2974,62 +1144,23 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisCard.classList.remove('hidden');
   els.analysisTitle.textContent = 'Harici servis analiz isteği';
   els.analysisState.textContent = 'ANALYZING';
-  els.analysisOutput.textContent = 'Video harici analiz servisine gönderiliyor…\nSahte fallback kullanılmayacak.';
+  els.analysisOutput.textContent = 'Kaynak video konuşma ve görüntü analizi için hazırlanıyor…';
   setGameState('ANALYZING');
 
   let file = state.selectedFile;
   const modes = selectedAnalysisModes();
-  if (modes.dubbing && !activeElevenLabsApiKey()) {
-    throw new Error('Türkçe dublaj için ElevenLabs anahtarı gerekli. Anahtarı ekle veya yalnız altyazı/hareket analizini seç.');
-  }
-  if ((modes.dubbing || modes.subtitles) && !activeGeminiApiKey()) {
-    const quotaResponse = await fetch('/api/ai-usage-status', {
-      cache: 'no-store',
-      headers: geminiRequestHeaders()
-    });
-    const quota = await quotaResponse.json().catch(() => ({}));
-    const retry = Number(quota?.subtitles?.retryAfterSeconds) || 0;
-    if (quota?.subtitles?.available === false && retry > 0) {
-      throw new Error(`Gemini konuşma analizi kotası dolu. Yaklaşık ${Math.ceil(retry / 60)} dk sonra yeniden dene veya üstteki Gemini alanına kotası olan başka bir API anahtarı ekle. ElevenLabs hazır olsa bile Türkçe dublaj için önce konuşmaların çözümlenmesi gerekiyor.`);
-    }
-  }
   const sourceKey = analysisSourceKey(file, state.selectedRemoteVideo);
   const requestedProtagonist = String(els.protagonistInput?.value || '').trim();
   let analysisModeKey = '';
-  let dubPreparation = null;
-  let dubPreparationPlan = null;
-  const finishCompleteDub = async () => {
-    if (!dubPreparation || !dubPreparationPlan) return;
-    const { dialogue, dubSegments } = dubPreparationPlan;
-    const ready = await dubPreparation;
-    if (ready !== dubSegments.length) {
-      const reason = state.dubFailureReason ? ` (${state.dubFailureReason})` : '';
-      throw new Error(`Dublaj eksik kaldı: ${ready}/${dubSegments.length} blok hazır${reason}. Video dublajsız başlatılmadı.`);
-    }
-    dialogue.dubCoverage = { ready, total: dubSegments.length, complete: true };
-    const initialSegments = nextDialogueSegments(dubSegments, 0, 12);
-    const prepared = await Promise.all(initialSegments.map((segment, index) => prepareDubAudio(segment, 40 - index)));
-    if (prepared.some(audio => !audio)) {
-      throw new Error(`Dublaj üretildi ancak ses çözümlenemedi: ${getDubDiagnostics().playbackFailureReason || 'DUB_DECODE_FAILED'}`);
-    }
-    dubPreparation = null;
-    dubPreparationPlan = null;
-  };
   const reusableSession = state.analysisSession?.sourceKey === sourceKey;
   const session = reusableSession ? state.analysisSession : {
-    sourceKey, file: file || null, dialogue: null, storyboard: null,
-    remoteToken: state.selectedSourceKind === 'url' ? String(state.selectedRemoteToken || '') : '',
+    sourceKey, file: file || null, sourceTranscript: null, mediaManifest: null, storyboard: null,
     analysisModeKey: '', chunkResults: [], protagonistProfile: '', storyContextMemory: null
   };
-  if (state.selectedSourceKind === 'url' && state.selectedRemoteToken && !session.remoteToken) {
-    session.remoteToken = state.selectedRemoteToken;
-  }
   state.analysisSession = session;
 
-  // Every analysis run must start from a clean dialogue/dub timeline.
-  // Reusing old segment ids or old translated dialogue can attach stale audio
-  // to new source-video timestamps after a re-analysis.
-  state.dialogue = session.dialogue || null;
+  mediaClient.reset();
+  updateSourceTranscript(session.sourceTranscript);
   removeStoredValue('localStorage', RUNTIME_SAVE_KEY);
   state.analysisFingerprint = '';
   state.engineEvents = [];
@@ -3040,140 +1171,59 @@ els.analyzeBtn.addEventListener('click', async () => {
     els.adultTraceOutput.textContent = '';
   }
   renderAdultAnalysisTrace();
-  state.dubbingEnabled = false;
-  updateDubMix();
-  state.subtitlesEnabled = false;
-  if (els.dubToggleBtn) {
-    if (modes.dubbing) {
-      els.dubToggleBtn.classList.remove('hidden');
-      els.dubToggleBtn.textContent = 'TR DUBLAJ: HAZIRLANIYOR';
-      els.dubToggleBtn.title = 'Konuşmalar analiz ediliyor ve Türkçe dublaj hazırlanıyor.';
-      delete els.dubToggleBtn.dataset.unavailable;
-    } else {
-      els.dubToggleBtn.classList.add('hidden');
+  renderMediaControls();
+  els.dubBufferStatus.classList.add('hidden');
+
+  // The URL cache supplies one complete local source to both independent
+  // pipelines. Frame preparation runs while the server processes source audio.
+  file = await prepareStoryboardSource(session, file);
+  const fastStoryboardPreparation = modes.motion && !session.storyboard
+    ? extractStoryboard(file, () => {}, undefined, { remoteSampling: Boolean(state.selectedRemoteVideo) })
+    : null;
+  // Attach a handler immediately; await below still surfaces the frame error.
+  fastStoryboardPreparation?.catch(() => {});
+  session.audioContextStatus = 'pending';
+  const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality });
+  const reusableMedia = session.mediaManifest && session.mediaModeKey === mediaModeKey;
+  session.mediaModeKey = mediaModeKey;
+  let result;
+  try {
+    result = reusableMedia
+      ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
+        subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
+      : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
+        transcriptOnly: !modes.dubbing && !modes.subtitles }, qualityMode: modes.dubQuality, sceneContext: [] });
+    session.mediaManifest = result;
+    updateSourceTranscript(result.sourceTranscript);
+    renderMediaControls();
+  } catch (error) {
+    session.mediaManifest = null;
+    session.audioContextStatus = 'unavailable';
+    logEngineEvent('SOURCE_TRANSCRIPT_UNAVAILABLE', { message: String(error.message || error).slice(0, 300) });
+    if (fastStoryboardPreparation) {
+      session.storyboard = await fastStoryboardPreparation.catch(() => null);
     }
+    if (error?.name === 'AbortError' || !modes.motion || modes.dubbing || modes.subtitles) throw error;
+    // Visual-only analysis may continue without speech evidence, including a
+    // genuinely silent source or an unavailable ASR service. Requested Turkish
+    // media still fails explicitly above; no alternate speech model is used.
+    updateSourceTranscript(null);
+    els.analysisOutput.textContent = 'Kaynak konuşma verisi kullanılamıyor. Görsel analiz yalnız kaynak video kareleriyle devam ediyor.';
   }
-  if (modes.dubbing || !reusableSession) resetDubState();
-  els.video.muted = false;
-  els.subtitleOverlay?.classList.add('hidden');
-
-  // Dialogue also supplies source evidence for character identity. Reuse the
-  // same audio result across motion, subtitles and dubbing for this video.
-  session.audioContextStatus = session.dialogue ? 'ready' : 'pending';
-  // Finish one complete download before any audio or frame request. A retained
-  // URL token must never override an already downloaded File on retry.
-  if ((!session.dialogue && (modes.motion || modes.subtitles || modes.dubbing)) ||
-      (modes.motion && !session.storyboard)) {
-    file = await prepareStoryboardSource(session, file);
-  }
-  let fastStoryboardPreparation = null;
-  if (modes.motion && !session.storyboard && session.remoteToken) {
-    // Remote audio work happens entirely on the server, so use that time to
-    // prepare local frames in parallel instead of doing the two long stages
-    // serially.
-    fastStoryboardPreparation = extractStoryboard(file, () => {}, undefined, { remoteSampling: false });
-  }
-
-  if (modes.motion || modes.subtitles || modes.dubbing) {
-    try {
-      const dialogue = session.dialogue || await analyzeSelectedDialogue(file, session);
-      session.dialogue = dialogue;
-      state.dialogue = dialogue;
-      session.audioContextStatus = dialogue.segments.length ? 'ready' : 'no_speech';
-
-      state.subtitlesEnabled = Boolean(modes.subtitles && dialogue.segments.length);
-      els.subtitleToggleBtn.classList.toggle('hidden', !state.subtitlesEnabled);
-      if (!state.subtitlesEnabled) {
-        // Keep the speaker/text nodes mounted. Removing the overlay contents
-        // leaves the cached element references detached, so a later successful
-        // analysis updates invisible nodes and subtitles never return.
-        els.subtitleSpeaker.textContent = '';
-        els.subtitleText.textContent = '';
-        els.subtitleOverlay.classList.add('hidden');
-      }
-
-      if (modes.dubbing && dialogue.segments.length) {
-        state.dubbingEnabled = true;
-        state.keepOriginalAudioEnabled = modes.keepOriginalAudio;
-        els.dubToggleBtn?.classList.remove('hidden');
-        if (els.dubToggleBtn) {
-          delete els.dubToggleBtn.dataset.unavailable;
-          els.dubToggleBtn.title = '';
-          els.dubToggleBtn.textContent = 'TR DUBLAJ: AÇIK';
-        }
-        updateDubMix();
-        const dubSegments = dialogue.dubSegments || dialogue.segments;
-        els.analysisState.textContent = 'PREPARING_DUB';
-        els.analysisTitle.textContent = 'Türkçe dublajın tamamı hazırlanıyor';
-        els.analysisOutput.textContent = `0/${dubSegments.length} konuşma bloğu hazır…`;
-        await ensureDubVoicePlan();
-        let completedDubBlocks = 0;
-        dubPreparationPlan = { dialogue, dubSegments };
-        dubPreparation = prepareCompleteDubTimeline(dubSegments, 2, (completed, total) => {
-          completedDubBlocks = completed;
-          if (!modes.motion) {
-            els.analysisOutput.textContent = `${completed}/${total} konuşma bloğu ElevenLabs ile hazırlandı…`;
-          }
-        });
-        if (!modes.motion) {
-          await finishCompleteDub();
-          els.analysisOutput.textContent = `${dialogue.dubCoverage.ready}/${dubSegments.length} konuşma bloğunun tamamı Türkçe dublaja hazır.`;
-        } else {
-          logEngineEvent('DUB_PREPARATION_OVERLAPPED', { total: dubSegments.length, completed: completedDubBlocks });
-        }
-      }
-
-      if (modes.dubbing && !dialogue.segments.length && els.dubToggleBtn) {
-        state.dubbingEnabled = false;
-        els.dubToggleBtn.classList.remove('hidden');
-        els.dubToggleBtn.dataset.unavailable = 'true';
-        const incomplete = dialogue.coverageAudit?.complete === false;
-        els.dubToggleBtn.textContent = incomplete
-          ? 'TR DUBLAJ: KONUŞMA ANALİZİ EKSİK'
-          : 'TR DUBLAJ: KONUŞMA BULUNAMADI';
-        els.dubToggleBtn.title = incomplete
-          ? 'Bazı ses pencereleri doğrulanamadığı için dublaj hazırlanamadı.'
-          : 'Doğrulanmış konuşma segmenti bulunmadığı için dublaj hazırlanamadı.';
-        updateDubMix();
-      }
-
-      if (!modes.motion) {
-        els.playerSection.classList.remove('hidden');
-        els.analysisState.textContent = dialogue.segments.length
-          ? 'DIALOGUE_READY'
-          : 'NO_DIALOGUE';
-        els.analysisTitle.textContent = dialogue.segments.length
-          ? `${dialogue.segments.length} Türkçe diyalog bölümü hazır`
-          : 'Anlaşılabilir diyalog bulunamadı';
-        els.analysisOutput.textContent = [
-          dialogue.summaryTr || 'Diyalog analizi tamamlandı.',
-          `${dialogue.speakers?.length || 0} konuşmacı algılandı.`,
-          modes.dubbing
-            ? `${dialogue.dubCoverage?.ready || 0}/${dialogue.dubCoverage?.total || 0} dublaj bloğunun tamamı hazır.`
-            : 'Türkçe altyazılar kullanıma hazır.'
-        ].join('\n');
-        setGameState('DIALOGUE_READY');
-        state.analysis = null;
-        state.savedGameReady = true;
-        await savedGames?.saveCurrent(true);
-        return;
-      }
-    } catch (error) {
-      session.audioContextStatus = 'unavailable';
-      logEngineEvent('AUDIO_CONTEXT_UNAVAILABLE', { message: String(error.message || error).slice(0, 300) });
-      els.analysisState.textContent = 'DIALOGUE_ERROR';
-      els.analysisOutput.textContent =
-        `Diyalog analizi başarısız: ${error.message}`;
-
-      if (modes.dubbing || !modes.motion) {
-        // A frame-preparation job may already be running in parallel with
-        // server-side audio. Settle it before leaving so failures never become
-        // detached/unhandled promises.
-        if (fastStoryboardPreparation) await fastStoryboardPreparation.catch(() => null);
-        setGameState('ERROR');
-        return;
-      }
-    }
+  if (!modes.motion) {
+    state.analysis = null;
+    els.playerSection.classList.remove('hidden');
+    els.analysisState.textContent = 'DIALOGUE_READY';
+    els.analysisTitle.textContent = 'Türkçe medya hazır';
+    els.analysisOutput.textContent = [
+      `${state.sourceContext?.segments.length || 0} kaynak konuşma bölümü ve ${state.sourceContext?.speakers.length || 0} konuşmacı algılandı.`,
+      modes.dubbing ? 'Türkçe ses ve kaynak arka planı tek ses dosyasında hazır.' : 'Türkçe altyazılar kaynak zamanlarına bağlı.',
+      'Altyazı menüsünden kaynak konuşma veya dublaj zamanlarını seçebilirsin.'
+    ].join('\n');
+    setGameState('DIALOGUE_READY');
+    state.savedGameReady = true;
+    await savedGames?.saveCurrent(true);
+    return;
   }
   const remoteStoryboardSource = state.selectedRemoteVideo;
   const storyboardSource = session.storyboard ? null : await prepareStoryboardSource(session, file);
@@ -3214,14 +1264,14 @@ els.analyzeBtn.addEventListener('click', async () => {
     const framesPerSheet = 12;
     const chunkCount = analysisPlan.chunkCount;
 
-    const dialogueRows = state.dialogue?.segments || [];
+    const dialogueRows = state.sourceContext?.segments || [];
     const dialogueSample = [
       dialogueRows.length,
       ...dialogueRows.slice(0, 4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`),
       ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
     ].join('|');
     analysisModeKey = JSON.stringify({
-      pipelineVersion: 'source-context-3',
+      pipelineVersion: 'canonical-source-context-4',
       chunks: analysisPlan.chunks,
       motion: modes.motion,
       quality: modes.quality,
@@ -3304,17 +1354,17 @@ els.analyzeBtn.addEventListener('click', async () => {
       form.append('chunkIndex', String(chunkIndex));
       form.append('chunkCount', String(chunkCount));
 
-    const chunkDialogue = (state.dialogue?.segments || []).filter(segment =>
+    const chunkDialogue = (state.sourceContext?.segments || []).filter(segment =>
       Number(segment.endTime) >= chunkStart &&
       Number(segment.startTime) <= chunkEnd
     );
 
     form.append('dialogueContext', JSON.stringify(chunkDialogue));
-    form.append('dialogueSpeakerContext', JSON.stringify((state.dialogue?.speakers || []).map(speaker => ({
+    form.append('dialogueSpeakerContext', JSON.stringify((state.sourceContext?.speakers || []).map(speaker => ({
       speakerId: speaker.speakerId, speakerName: speaker.speakerName,
-      description: speaker.description
+      gender: speaker.gender, emotion: speaker.emotion
     }))));
-    const chunkSensoryAudio = (state.dialogue?.nonSpeechEvents || []).filter(event =>
+    const chunkSensoryAudio = (state.sourceContext?.nonSpeechEvents || []).filter(event =>
       Number(event.endTime) >= chunkStart && Number(event.startTime) <= chunkEnd
     );
     form.append('sensoryAudioContext', JSON.stringify(chunkSensoryAudio));
@@ -3638,13 +1688,6 @@ els.analyzeBtn.addEventListener('click', async () => {
     return;
   }
 
-  if (dubPreparation) {
-    els.analysisState.textContent = 'FINALIZING_DUB';
-    els.analysisTitle.textContent = 'Görsel analiz hazır · dublaj tamamlanıyor';
-    els.analysisOutput.textContent = 'Görsel analiz sürerken hazırlanan Türkçe seslerin son kontrolü yapılıyor…';
-    await finishCompleteDub();
-  }
-
   let normalized = normalizeAnalysis(body);
   const hardened = reviewAndHardenAnalysis({
     ...body,
@@ -3711,11 +1754,11 @@ els.analyzeBtn.addEventListener('click', async () => {
   await savedGames?.saveCurrent(true);
   } catch (error) {
     console.error('Analysis failed:', error);
-    els.analysisState.textContent = 'ANALYSIS_ERROR';
+    els.analysisState.textContent = error?.name === 'AbortError' ? 'CANCELLED' : 'ANALYSIS_ERROR';
     els.analysisTitle.textContent = 'Analiz tamamlanamadı';
     els.analysisOutput.textContent =
       error?.message || 'Beklenmeyen bir analiz hatası oluştu.';
-    setGameState('ERROR');
+    setGameState(error?.name === 'AbortError' ? 'IDLE' : 'ERROR');
     renderDebug({ analysisError: error?.message || String(error) });
   } finally {
     state.analysisInProgress = false;
@@ -4294,9 +2337,9 @@ function prepareAdultScenes() {
     sourceActionCount: actions.length,
     storyContext: state.analysis?.storyContext || null,
     audioContext: {
-      status: state.analysisSession?.audioContextStatus || (state.dialogue ? 'ready' : 'unavailable'),
-      segmentCount: state.dialogue?.segments?.length || 0,
-      speakerCount: state.dialogue?.speakers?.length || 0
+      status: state.analysisSession?.audioContextStatus || (state.sourceContext ? 'ready' : 'unavailable'),
+      segmentCount: state.sourceContext?.segments?.length || 0,
+      speakerCount: state.sourceContext?.speakers?.length || 0
     },
     actions: traceRows,
     graph: null,
@@ -4341,7 +2384,7 @@ function prepareAdultScenes() {
 
   const isIntroduction = action => {
     const actionType = String(action.actionType || '').toLowerCase();
-    const dialogueBridge = actionType === 'other' && (state.dialogue?.segments || []).some(segment =>
+    const dialogueBridge = actionType === 'other' && (state.sourceContext?.segments || []).some(segment =>
       sourceSpeechOverlaps(action, segment));
     const warmupFamily = String(playableAdultPanelFamily(action) || '').toLowerCase();
     const warmupCandidate = ['oral', 'manual'].includes(warmupFamily);
@@ -4875,8 +2918,8 @@ function adultAnalysisTraceText() {
     interaction: genericInteractionTrace(),
     audioContext: {
       ...state.adultAnalysisTrace.audioContext,
-      ...dubbingDebugReport(),
-      events: state.engineEvents.filter(event => /^DUB_/.test(String(event.type || ''))).slice(-100)
+      ...turkishMediaDebugReport(),
+      events: state.engineEvents.filter(event => event.type === 'TURKISH_MEDIA_STATUS').slice(-100)
     }
   } : null;
   return JSON.stringify(report || {
@@ -7495,14 +5538,10 @@ async function playAction(action) {
     await seekMediaTo(els.video, seekTarget, { signal: controller.signal });
     if (controller.signal.aborted || state.activeAction !== action) return;
     state.navigationSeeking = false;
-    const decisionEndTime = decisionBoundaryAfterDialogue(
-      state.dialogue?.segments || [],
-      action.endTime,
-      state.analysis?.videoDuration || els.video.duration
-    );
+    const decisionEndTime = Number(action.endTime);
     state.stopListener = () => {
       if (state.activeAction === action && els.video.currentTime >= decisionEndTime - 0.03) {
-        void finishActionAfterDub(action, decisionEndTime);
+        finishAction(action, decisionEndTime);
       }
     };
     els.video.addEventListener('timeupdate', state.stopListener);
@@ -7529,61 +5568,6 @@ async function resumeActionPlayback(action) {
     showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.',
       () => void resumeActionPlayback(action), 'Videoya devam et');
   }
-}
-
-function waitForDubEnd(playing) {
-  return new Promise(resolve => {
-    const pending = new Set(playing);
-    const listeners = new Map();
-    const finish = () => {
-      clearTimeout(timer);
-      for (const [audio, done] of listeners) {
-        audio.removeEventListener('ended', done);
-        audio.removeEventListener('error', done);
-      }
-      resolve();
-    };
-    const remainingSeconds = Math.max(0, ...playing.map(audio => {
-      const remaining = (Number(audio.duration) - Number(audio.currentTime)) / Math.max(.25, Number(audio.playbackRate) || 1);
-      return Number.isFinite(remaining) ? Math.max(0, remaining) : 0;
-    }));
-    const timer = setTimeout(finish, (remainingSeconds + 8) * 1000);
-    for (const audio of playing) {
-      const done = () => {
-        pending.delete(audio);
-        if (!pending.size) finish();
-      };
-      listeners.set(audio, done);
-      audio.addEventListener('ended', done, { once: true });
-      audio.addEventListener('error', done, { once: true });
-      if (audio.ended) done();
-    }
-    if (!pending.size) finish();
-  });
-}
-
-async function finishActionAfterDub(action, decisionEndTime) {
-  if (state.decisionDubHold || state.activeAction !== action) return;
-  const generation = state.playbackGeneration;
-  const playing = [...dubChannels.values()].filter(audio =>
-    audio && !audio.paused && !audio.ended && Number(audio.currentTime) < Number(audio.duration || Infinity) - 0.03
-  );
-  if (!state.dubbingEnabled || !playing.length) {
-    finishAction(action, decisionEndTime);
-    return;
-  }
-
-  state.decisionDubHold = true;
-  if (state.stopListener) {
-    els.video.removeEventListener('timeupdate', state.stopListener);
-    state.stopListener = null;
-  }
-  els.video.pause();
-  await waitForDubEnd(playing);
-  if (generation !== state.playbackGeneration || state.activeAction !== action) return;
-  playing.forEach(audio => audio.pause());
-  state.decisionDubHold = false;
-  finishAction(action, decisionEndTime);
 }
 
 function finishAction(action, decisionEndTime = action.endTime) {
@@ -7783,12 +5767,17 @@ els.video.addEventListener('timeupdate', renderDebug);
 els.video.addEventListener('ended', handleSourceEnded);
 
 checkHealth();
-checkAiUsageStatus();
-setInterval(checkAiUsageStatus, 60 * 1000);
+checkTurkishMediaCapabilities();
+setInterval(checkTurkishMediaCapabilities, 60 * 1000);
 renderDebug();
 
 function clearPreviousGameResidue() {
-  state.analysisSession?.audioPreparationController?.abort();
+  mediaClient.reset();
+  state.mediaRevoice = null;
+  state.voiceMappingGeneration = (Number(state.voiceMappingGeneration) || 0) + 1;
+  state.voiceCatalogPromise = null;
+  els.voiceMappingRows?.replaceChildren?.();
+  if (els.voiceMappingPanel) els.voiceMappingPanel.open = false;
   state.activeSavedGameId = null;
   state.savedGameReady = false;
   state.savedPlaybackOnly = false;
@@ -7808,10 +5797,11 @@ function clearPreviousGameResidue() {
     }
   }
   state.analysis = null;
-  state.dialogue = null;
+  state.sourceTranscript = null;
+  state.sourceContext = null;
+  state.turkishMediaStatus = null;
   state.selectedRemoteToken = '';
   state.urlCacheKey = '';
-  state.audioReuseToken = '';
   state.urlCacheSavePromise = null;
   state.languageSyncOffset = 0;
   state.dubbingEnabled = false;
@@ -7841,6 +5831,7 @@ function clearPreviousGameResidue() {
   els.playerSection?.classList.add('hidden');
   els.analysisCard?.classList.add('hidden');
   els.subtitleOverlay?.classList.add('hidden');
+  els.dubBufferStatus?.classList.add('hidden');
   updateLanguageSyncControls();
   els.dubToggleBtn?.classList.add('hidden');
   if (els.video) {
@@ -7851,7 +5842,8 @@ function clearPreviousGameResidue() {
   }
   void videoDownloads.release(state.selectedFile);
   if (state.analysisSession?.file !== state.selectedFile) void videoDownloads.release(state.analysisSession?.file);
-  resetDubState();
+  renderMediaControls();
+  els.mediaJobStatus?.classList.add('hidden');
   setGameState('IDLE');
 }
 
@@ -7880,7 +5872,7 @@ attachPanelFeedback({
           state.adultMovementPlayCounts)
       })),
       clip, seeking: state.adultLoopSeeking || state.navigationSeeking,
-      buffering: Boolean(state.dubBuffer), failed: Boolean(els.panelPlaybackRecovery)
+      buffering: false, failed: Boolean(els.panelPlaybackRecovery)
     };
   }
 });
@@ -8063,7 +6055,6 @@ async function resolveVideoUrl() {
       state.selectedRemoteVideo = null;
       state.selectedRemoteToken = cached.remoteToken || '';
       state.urlCacheKey = pageUrl;
-      state.audioReuseToken = cached.audioReuseToken || '';
       state.analysisSession = null;
       state.videoObjectUrl = objectUrl;
       els.video.src = objectUrl;
@@ -8111,7 +6102,6 @@ async function resolveVideoUrl() {
     state.selectedRemoteVideo = null;
     state.selectedRemoteToken = String(result.remoteToken || '').trim();
     state.urlCacheKey = pageUrl;
-    state.audioReuseToken = '';
     state.analysisSession = null;
     state.urlCacheSavePromise = urlVideoCache.put(pageUrl, file, {
       remoteToken: state.selectedRemoteToken
@@ -8147,30 +6137,20 @@ videoUrlInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') resolveVideoUrl();
 });
 
-function captureSavedGame() {
+async function captureSavedGame() {
   const video = state.selectedFile || state.analysisSession?.file;
-  if (!state.savedGameReady || !(video instanceof Blob) || !video.size) return null;
+  if (!state.savedGameReady || state.mediaRevoice && state.analysisInProgress || !(video instanceof Blob) || !video.size) return null;
+  const turkishMedia = mediaClient.capture();
+  const dubAudio = turkishMedia?.manifest.assets?.mix ? await mediaClient.materializeAudio() : null;
   return {
     id: state.activeSavedGameId,
     title: video.name || 'Kayıtlı oyun',
     fileName: video.name || 'video.mp4',
     sourceKind: state.selectedSourceKind,
-    duration: Number(els.video.duration) || Number(state.analysis?.videoDuration),
-    video,
-    payload: {
-      analysis: state.analysis,
-      dialogue: state.dialogue,
-      dubCache: [...state.dubCache],
-      dubCacheEngineVersion: DUB_CACHE_ENGINE_VERSION,
-      dubSegmentMetadata: [...state.dubSegmentMetadata],
-      dubProviderLock: state.dubProviderLock,
-      dubSpeakerVoices: [...state.dubSpeakerVoices.values()],
-      dubStableSpeakerGenders: [...state.dubStableSpeakerGenders],
-      subtitlesEnabled: state.subtitlesEnabled,
-      dubbingEnabled: state.dubbingEnabled,
-      keepOriginalAudioEnabled: state.keepOriginalAudioEnabled,
-      languageSyncOffset: state.languageSyncOffset
-    }
+    duration: Number(els.video.duration) || Number(state.analysis?.videoDuration) ||
+      Number(turkishMedia?.manifest.sourceTranscript?.source?.duration),
+    video, turkishMedia, dubAudio,
+    payload: { analysis: state.analysis }
   };
 }
 
@@ -8178,6 +6158,11 @@ async function openSavedGame(game) {
   validateGame(game);
   if (game.payload.analysis?.schemaVersion > ANALYSIS_SCHEMA_VERSION) {
     throw new Error('Bu kayıt daha yeni bir uygulama sürümüyle oluşturulmuş. Sayfayı yenile.');
+  }
+  const turkishMedia = game.turkishMedia || null;
+  const savedSourceContext = sourceContextAdapter(turkishMedia?.manifest.sourceTranscript);
+  if (turkishMedia?.manifest.assets?.mix && !(game.dubAudio instanceof Blob)) {
+    throw new Error('Kayıtlı Türkçe ses dosyası eksik; kayıt silinmedi.');
   }
   // Validate media before replacing the current game. No source URL is needed.
   const file = new File([game.video], game.fileName, { type: game.video.type || 'video/mp4' });
@@ -8209,7 +6194,6 @@ async function openSavedGame(game) {
   state.selectedRemoteVideo = null;
   state.selectedRemoteToken = '';
   state.urlCacheKey = '';
-  state.audioReuseToken = '';
   state.urlCacheSavePromise = null;
   state.selectedSourceKind = game.sourceKind;
   state.analysisSession = null;
@@ -8222,21 +6206,8 @@ async function openSavedGame(game) {
       unownedSourceIntervals: mergeUnownedIntervals([...(savedAnalysis.unownedSourceIntervals || []),
         ...ownership.excluded.map(action => ({ startTime: action.startTime, endTime: action.endTime }))]) };
   } else state.analysis = savedAnalysis;
-  state.dialogue = normalizeDialogueTimeline(game.payload.dialogue, game.duration);
-  state.languageSyncOffset = Number(game.payload.languageSyncOffset) || 0;
-  state.dubCache = new Map(state.dialogue?.timingIntegrity?.valid === false
-    ? [] : compatibleSavedDubCache(game.payload));
-  state.dubSegmentMetadata = new Map(game.payload.dubSegmentMetadata || []);
-  state.dubProviderLock = game.payload.dubProviderLock || '';
-  state.dubDiagnostics = state.dialogue?.timingIntegrity?.valid === false
-    ? { preparedIds: new Set(), playedIds: new Set(), firstPlaybackEvents: [], playbackEventCount: 0,
-      playbackFailureReason: 'DIALOGUE_TIMING_INVALID' } : null;
-  state.dubSpeakerVoices = new Map((game.payload.dubSpeakerVoices || []).map(row => [row.speakerId, row]));
-  state.dubVoicePlanRequest = null;
-  state.dubStableSpeakerGenders = new Map(game.payload.dubStableSpeakerGenders || []);
-  state.subtitlesEnabled = Boolean(game.payload.subtitlesEnabled);
-  state.dubbingEnabled = Boolean(game.payload.dubbingEnabled && state.dubCache.size);
-  state.keepOriginalAudioEnabled = game.payload.keepOriginalAudioEnabled !== false;
+  state.sourceTranscript = turkishMedia?.manifest.sourceTranscript || null;
+  state.sourceContext = savedSourceContext;
   state.activeSavedGameId = game.id;
   state.savedGameReady = true;
   state.savedPlaybackOnly = true;
@@ -8246,14 +6217,11 @@ async function openSavedGame(game) {
   els.video.src = url;
   els.video.load();
   els.fileMeta.textContent = `${game.title} · kayıtlı video · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
-  els.subtitleToggleBtn.classList.toggle('hidden', !state.dialogue?.segments?.length);
-  els.subtitleToggleBtn.textContent = `TR ALTYAZI: ${state.subtitlesEnabled ? 'AÇIK' : 'KAPALI'}`;
-  updateLanguageSyncControls();
-  els.dubToggleBtn.classList.toggle('hidden', !state.dubCache.size);
-  delete els.dubToggleBtn.dataset.unavailable;
-  els.dubToggleBtn.title = '';
-  els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
-  updateDubMix();
+  if (turkishMedia) mediaClient.loadResult(turkishMedia.manifest, {
+    audioBlob: game.dubAudio, dubEnabled: turkishMedia.dubEnabled,
+    subtitleTrack: turkishMedia.subtitleTrack, syncOffset: turkishMedia.syncOffset
+  });
+  renderMediaControls();
   if (state.analysis) initializeInteractive(state.analysis);
   else {
     els.playerSection.classList.remove('hidden');
@@ -8268,6 +6236,7 @@ async function openSavedGame(game) {
 }
 
 async function repairSavedGame(game, onProgress = () => {}) {
+  const savedSourceContext = sourceContextAdapter(game.turkishMedia?.manifest.sourceTranscript);
   const previous = game.payload.analysis;
   const gaps = repairableAnalysisGaps(previous, game.duration);
   if (!gaps.length) throw new Error('Bu kayıtta eksik analiz aralığı yok.');
@@ -8289,10 +6258,10 @@ async function repairSavedGame(game, onProgress = () => {}) {
     form.append('chunkCount', String(gaps.length));
     form.append('qualityMode', 'ultra');
     form.append('storyContextMemory', JSON.stringify(previous.storyContext || {}));
-    form.append('dialogueContext', JSON.stringify((game.payload.dialogue?.segments || []).filter(item =>
+    form.append('dialogueContext', JSON.stringify((savedSourceContext?.segments || []).filter(item =>
       Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
-    form.append('dialogueSpeakerContext', JSON.stringify(game.payload.dialogue?.speakers || []));
-    form.append('sensoryAudioContext', JSON.stringify((game.payload.dialogue?.nonSpeechEvents || []).filter(item =>
+    form.append('dialogueSpeakerContext', JSON.stringify(savedSourceContext?.speakers || []));
+    form.append('sensoryAudioContext', JSON.stringify((savedSourceContext?.nonSpeechEvents || []).filter(item =>
       Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
     onProgress(`Eksik bölüm ${index + 1}/${gaps.length} analiz ediliyor…`);
     const headers = geminiRequestHeaders();

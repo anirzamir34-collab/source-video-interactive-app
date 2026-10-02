@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { analysisGapBridgeTarget, decisionBoundaryAfterDialogue, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const names = ['isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback', 'finishActionAfterDub', 'waitForDubEnd'];
+const names = ['isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} is present`);
@@ -63,10 +63,10 @@ function fixture() {
   };
   const els = new Proxy({ video: new Media() }, { get(target, key) { return target[key] ||= new Element(); } });
   const scope = vm.createContext({ state, els, AbortController, DOMException,
-    analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo, decisionBoundaryAfterDialogue,
-    setTimeout, clearTimeout, dubChannels: new Map(),
+    analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo,
+    setTimeout, clearTimeout,
     guardPlayable: () => ({ allowed: true }),
-    finishAction: action => { state.finishedAction = action; },
+    finishAction: (action, boundary) => { state.finishedAction = action; state.finishedBoundary = boundary; els.video.pause(); },
     document: { createElement: () => new Element(), querySelector: () => new Element() },
     setGameState: value => { state.gameState = value; },
     setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, clearInteractionSelection() {}, persistRuntimeSnapshot() {}, renderDebug() {},
@@ -326,35 +326,34 @@ test('a new navigation cancels an ordinary choice still seeking', async () => {
   assert.equal(f.els.video.paused, true);
 });
 
-test('old dubbing completion cannot finish a choice after navigation', async () => {
+test('a stale source stop callback cannot finish a choice after navigation', async () => {
   const f = fixture();
   const action = { actionId: 'talk', startTime: 20, endTime: 30 };
   await f.playAction(action);
-  f.state.dubbingEnabled = true;
-  const audio = new Media();
-  audio.paused = false;
-  f.dubChannels.set('line', audio);
-  const pending = f.finishActionAfterDub(action, 30);
-  assert.equal(f.state.decisionDubHold, true);
+  const previousStop = f.state.stopListener;
   await f.navigateTimelineTo(60);
-  audio.dispatchEvent(new Event('ended'));
-  await pending;
+  previousStop();
+  f.els.video.dispatchEvent(new Event('timeupdate'));
   assert.equal(f.state.finishedAction, undefined);
   assert.equal(f.state.gameCursorTime, 60);
-  assert.equal(f.state.decisionDubHold, false);
+  assert.equal(f.state.activeAction, null);
+  assert.equal(f.state.stopListener, null);
 });
 
-test('a decision boundary budgets the remaining voice duration at the chosen playback speed', async () => {
+test('a chosen clip stops at its exact source end even while speech continues', async () => {
   const f = fixture();
-  const audio = new Media();
-  audio.duration = 12;
-  audio.time = 2;
-  audio.playbackRate = .5;
-  let deadline;
-  f.setTimeout = (_callback, delay) => { deadline = delay; return 1; };
-  f.clearTimeout = () => {};
-  const pending = f.waitForDubEnd([audio]);
-  assert.ok(deadline > 20000, 'twenty seconds of remaining speech must not be cut by the former eight-second timer');
-  audio.dispatchEvent(new Event('ended'));
-  await pending;
+  const action = { actionId: 'talk', startTime: 20, endTime: 30 };
+  f.state.dubbingEnabled = true;
+  f.state.sourceContext = { segments: [{ startTime: 25, endTime: 42, text: 'Original source speech' }] };
+  await f.playAction(action);
+  assert.equal(f.els.video.currentTime, 20);
+  f.els.video.time = 29.95;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.finishedAction, undefined);
+  f.els.video.time = 30;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.finishedAction, action);
+  assert.equal(f.state.finishedBoundary, 30);
+  assert.equal(f.els.video.currentTime, 30);
+  assert.equal(f.els.video.paused, true);
 });

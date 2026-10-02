@@ -86,13 +86,12 @@ export function createUrlVideoCache({
     return {
       key: normalizedKey,
       file,
-      audioReuseToken: String(row.audioReuseToken || ''),
       remoteToken: String(row.remoteToken || ''),
       createdAt: Number(row.createdAt) || 0,
       expiresAt: Number(row.expiresAt)
     };
   }
-  async function put(key, file, { audioReuseToken = '', remoteToken = '' } = {}) {
+  async function put(key, file, { remoteToken = '' } = {}) {
     const normalizedKey = String(key || '').trim();
     if (!normalizedKey || !(file instanceof Blob) || !file.size) {
       throw new Error('Önbelleğe alınacak URL videosu geçersiz.');
@@ -106,7 +105,6 @@ export function createUrlVideoCache({
       size: file.size,
       createdAt,
       expiresAt: createdAt + ttlMs,
-      audioReuseToken: String(audioReuseToken || ''),
       remoteToken: String(remoteToken || '')
     };
     await transaction('readwrite', (store, done) => {
@@ -115,7 +113,7 @@ export function createUrlVideoCache({
     });
     return row;
   }
-  async function update(key, { audioReuseToken, remoteToken } = {}) {
+  async function update(key, { remoteToken } = {}) {
     const normalizedKey = String(key || '').trim();
     if (!normalizedKey) return false;
     return transaction('readwrite', (store, done) => {
@@ -127,7 +125,6 @@ export function createUrlVideoCache({
           done(false);
           return;
         }
-        if (audioReuseToken !== undefined) row.audioReuseToken = String(audioReuseToken || '');
         if (remoteToken !== undefined) row.remoteToken = String(remoteToken || '');
         store.put(row);
         done(true);
