@@ -112,6 +112,18 @@ test('typing an ElevenLabs password alone enables effective capabilities and for
   assert.deepEqual(f.writes, [], 'typing ElevenLabs never writes browser storage');
 });
 
+test('typed ElevenLabs assignments and opaque punctuation are normalized before request headers', async t => {
+  const f = fixture(); t.after(() => f.client.destroy());
+  const key = 'sk_live.v4/+opaque:=credential~1234567890';
+  f.els.elevenLabsApiKeyInput.value = `ELEVENLABS_API_KEY="${key}"`;
+  f.els.elevenLabsApiKeyInput.dispatchEvent(new Event('input'));
+  assert.equal(f.scope.activeElevenLabsApiKey(), key);
+  await f.flush();
+  await f.client.start(f.file, { outputs: { dub: true, subtitles: true } });
+  const job = f.requests.find(request => request.url.endsWith('/jobs') && request.init.method === 'POST');
+  assert.equal(new Headers(job.init.headers).get('x-elevenlabs-api-key'), key);
+});
+
 test('changing credentials immediately invalidates account media and voices while preserving source evidence, upload bytes, frames and gameplay', t => {
   const f = fixture(); t.after(() => f.client.destroy());
   const analysis = f.state.analysis;
