@@ -1203,7 +1203,7 @@ function verifiedMediaSceneContext() {
 function verifiedSpeakerVoiceHints(analysis = state.analysis) {
   const story = analysis?.storyContext || {};
   const characters = Array.isArray(story.characters) ? story.characters : [];
-  const hints = {};
+  const proposals = new Map();
   const genderFrom = character => {
     if (['male', 'female'].includes(character?.gender)) return character.gender;
     const role = String(character?.sourceRole || character?.role || '').toLocaleLowerCase('tr-TR');
@@ -1222,13 +1222,31 @@ function verifiedSpeakerVoiceHints(analysis = state.analysis) {
     const emotion = String(character.voiceEmotion || character.emotion || character.emotionalTone || '').trim();
     const tone = String(character.voiceTone || character.tone || story.emotionalTone || '').trim();
     for (const speakerId of speakerIds) {
-      hints[speakerId] = {
+      if (!proposals.has(speakerId)) proposals.set(speakerId, []);
+      proposals.get(speakerId).push({
         characterId,
         ...(gender ? { gender } : {}),
         ...(emotion ? { emotion: emotion.slice(0, 80) } : {}),
         ...(tone ? { tone: tone.slice(0, 80) } : {}),
-      };
+      });
     }
+  }
+
+  const hints = {};
+  for (const [speakerId, rows] of proposals) {
+    const characterIds = [...new Set(rows.map(row => row.characterId))];
+    // One Scribe ID matched to two visible people is ambiguous evidence. Do not
+    // force a voice identity from it; keep the raw speaker separate.
+    if (characterIds.length !== 1) continue;
+    const genders = [...new Set(rows.map(row => row.gender).filter(Boolean))];
+    const emotions = [...new Set(rows.map(row => row.emotion).filter(Boolean))];
+    const tones = [...new Set(rows.map(row => row.tone).filter(Boolean))];
+    hints[speakerId] = {
+      characterId: characterIds[0],
+      ...(genders.length === 1 ? { gender: genders[0] } : {}),
+      ...(emotions.length ? { emotion: emotions[0] } : {}),
+      ...(tones.length ? { tone: tones[0] } : {}),
+    };
   }
   return hints;
 }
