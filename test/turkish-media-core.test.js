@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { normalizeScribeTranscript, assertSegmentCoverage, sourceContextAdapter } from '../lib/turkish-media/model.js';
+import { normalizeScribeTranscript, applySpeakerHints, assertSegmentCoverage, sourceContextAdapter } from '../lib/turkish-media/model.js';
 import { buildSubtitleTracks, toSrt, toWebVtt } from '../lib/turkish-media/subtitles.js';
 import { createMediaCache, hashKey } from '../lib/turkish-media/cache.js';
 import { createLimiter } from '../lib/turkish-media/limiter.js';
+import { mapSpeakerVoices } from '../lib/turkish-media/voice-mapping.js';
 
 const word = (text, start, end, speaker_id = 'speaker_0', extra = {}) => ({ text, start, end, speaker_id, type: 'word', logprob: -0.15, ...extra });
 const fixture = () => normalizeScribeTranscript({ language_code: 'en', words: [
@@ -43,6 +44,48 @@ test('canonical transcript preserves every speech word, spacing metadata, repeat
   assert.ok(transcript.utterances.every(row => row.confidence === null && row.gender === null));
   assert.equal(transcript.utterances[0].speakerId, transcript.utterances[3].speakerId);
   assert.notEqual(transcript.utterances[0].segmentId, transcript.utterances[3].segmentId);
+});
+
+test('verified visual speaker hints collapse Scribe fragments into stable logical speakers', () => {
+  const raw = normalizeScribeTranscript({ language_code: 'en', words: [
+    word('Hello.', 0, 1, 'raw_male_a'),
+    word('Again.', 2, 3, 'raw_male_b'),
+    word('Hi.', 4, 5, 'raw_female_a'),
+    word('Sure.', 6, 7, 'raw_female_b')
+  ] }, { sourceHash: 'four-raw-two-real', duration: 8 });
+  assert.equal(raw.speakers.length, 4);
+  const byProvider = Object.fromEntries(raw.speakers.map(row => [row.providerId, row.speakerId]));
+  const merged = applySpeakerHints(raw, {
+    [byProvider.raw_male_a]: { characterId: 'MAIN_MALE', gender: 'male', emotion: 'excited', tone: 'energetic' },
+    [byProvider.raw_male_b]: { characterId: 'MAIN_MALE', gender: 'male', emotion: 'excited', tone: 'energetic' },
+    [byProvider.raw_female_a]: { characterId: 'PARTNER_A', gender: 'female', emotion: 'calm', tone: 'warm' },
+    [byProvider.raw_female_b]: { characterId: 'PARTNER_A', gender: 'female', emotion: 'calm', tone: 'warm' },
+  });
+  assert.equal(merged.speakers.length, 2);
+  assert.deepEqual(new Set(merged.utterances.slice(0, 2).map(row => row.speakerId)).size, 1);
+  assert.deepEqual(new Set(merged.utterances.slice(2).map(row => row.speakerId)).size, 1);
+  assert.notEqual(merged.utterances[0].speakerId, merged.utterances[2].speakerId);
+  assert.equal(merged.speakers.find(row => row.characterId === 'MAIN_MALE').gender, 'male');
+  assert.equal(merged.speakers.find(row => row.characterId === 'MAIN_MALE').emotion, 'excited');
+  assert.equal(merged.speakers.find(row => row.characterId === 'PARTNER_A').tone, 'warm');
+  assert.equal(raw.speakers.length, 4, 'raw Scribe evidence is not mutated');
+});
+
+test('automatic voice allocation ranks Turkish gender tone and emotion labels without asking the user', () => {
+  const speakers = [
+    { speakerId: 'male', gender: 'male', emotion: 'excited', tone: 'energetic' },
+    { speakerId: 'female', gender: 'female', emotion: 'calm', tone: 'warm' },
+  ];
+  const catalog = [
+    { voice_id: 'male-neutral', name: 'Male Neutral', labels: { gender: 'male', language: 'tr', style: 'neutral conversational' } },
+    { voice_id: 'male-energy', name: 'Male Energy', labels: { gender: 'male', language: 'tr', style: 'energetic excited dynamic' } },
+    { voice_id: 'female-bright', name: 'Female Bright', labels: { gender: 'female', language: 'tr', style: 'bright upbeat' } },
+    { voice_id: 'female-calm', name: 'Female Calm', labels: { gender: 'female', language: 'tr', style: 'calm warm gentle' } },
+  ];
+  assert.deepEqual(mapSpeakerVoices(speakers, catalog), {
+    male: 'male-energy',
+    female: 'female-calm',
+  });
 });
 
 test('canonical IDs are deterministic for source bytes and provider speaker mapping, and inputs remain untouched', () => {
