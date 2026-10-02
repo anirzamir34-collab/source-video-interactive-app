@@ -16,7 +16,9 @@ const badge = slice('function renderQuotaBadge(', '\nconst GEMINI_SESSION_KEY');
 const availability = slice('function selectedAnalysisModes(', '\n[\n  els.qualityMode');
 const listeners = slice("els.elevenLabsApiKeyInput?.addEventListener('input'", '\nrenderGeminiApiKeyState();');
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const json = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+const json = (value, init = {}) => new Response(JSON.stringify(value), {
+  ...init, headers: { 'Content-Type': 'application/json', ...(init.headers || {}) }
+});
 
 class Element extends EventTarget {
   value = ''; checked = false; textContent = ''; disabled = false;
@@ -32,7 +34,7 @@ class Video extends Element {
   pause() { this.paused = true; }
 }
 
-function fixture({ capability } = {}) {
+function fixture({ capability, geminiStatus } = {}) {
   const els = new Proxy({}, { get(target, id) { return target[id] ||= new Element(); } });
   els.video = new Video(); els.motionMode.checked = true; els.dubMode.checked = true;
   const file = new Blob(['complete source video'], { type: 'video/mp4' });
@@ -51,6 +53,15 @@ function fixture({ capability } = {}) {
   const scope = vm.createContext({ els, state, savedGames: null, $: () => new Element(),
     sessionStorage: { getItem: key => storage.get(key), setItem: (key, value) => { writes.push([key, value]); storage.set(key, value); },
       removeItem: key => { storage.delete(key); } },
+    fetch: async (url, init = {}) => {
+      const request = { url, init }; requests.push(request);
+      if (String(url).endsWith('/api/gemini-key-status')) {
+        if (geminiStatus) return geminiStatus(request);
+        return json({ ok: true, state: 'available', source: new Headers(init.headers).has('x-gemini-api-key') ? 'browser' : 'server',
+          message: 'Gemini hazır.' });
+      }
+      assert.fail(`Unexpected app fetch ${url}`);
+    },
     setTimeout: (work, delay) => { const id = ++timerId; timers.set(id, { work, delay }); return id; },
     clearTimeout: id => timers.delete(id), renderMediaControls() {}, renderVoiceMappingPanel() {} });
   vm.runInContext(`${badge}\n${credentials}\n${availability}\n${listeners}`, scope);
@@ -133,6 +144,26 @@ test('late unconfigured capability responses cannot overwrite the newly typed ac
   resolveOld(json({ configured: false, transcriptionConfigured: false, translationConfigured: true }));
   await pending; await tick();
   assert.equal(f.els.dubQuotaStatus.textContent, 'Servis hazır');
+});
+
+test('depleted server Gemini credit is detected before analysis and blocks Turkish media until another key is used', async t => {
+  const f = fixture({ geminiStatus: () => json({
+    ok: false, state: 'no_credits', source: 'server',
+    message: 'Sunucu Gemini kredisi tükendi. Kendi Gemini API anahtarını gir.'
+  }, { status: 402 }) });
+  t.after(() => f.client.destroy());
+
+  f.els.elevenLabsApiKeyInput.value = 'typed-elevenlabs-secret-123456789';
+  f.els.elevenLabsApiKeyInput.dispatchEvent(new Event('input'));
+  await f.flush();
+
+  assert.equal(f.scope.activeElevenLabsApiKey(), 'typed-elevenlabs-secret-123456789');
+  assert.equal(f.state.geminiProviderStatus.state, 'no_credits');
+  assert.equal(f.state.geminiProviderStatus.source, 'server');
+  assert.equal(f.els.dubQuotaStatus.textContent, 'Gemini kredisi yok');
+  assert.match(f.els.dubQuotaStatus.title, /Sunucu Gemini kredisi tükendi/);
+  assert.equal(f.els.apiKeyStatus.textContent, 'Sunucu Gemini kredisi tükendi');
+  assert.equal(f.els.analyzeBtn.disabled, true);
 });
 
 test('ElevenLabs Kullan and Sil retain a key only in memory and never share Gemini session storage', t => {

@@ -72,3 +72,39 @@ test('permission guidance never reclassifies other providers, operations, invali
     await assert.rejects(request(row.url), { code: 'PROVIDER_HTTP_' + status, retryable: status === 503 });
   }
 });
+
+
+test('Gemini prepaid credit exhaustion becomes an actionable non-retryable Turkish error', async () => {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent';
+  let calls = 0;
+  const request = createMediaRequest({ maxRetries: 3,
+    sleep: () => assert.fail('Exhausted prepaid credit must not be retried automatically.'),
+    fetchImpl: async () => {
+      calls++;
+      return Response.json({ error: {
+        code: 402,
+        message: 'Your prepayment credits are depleted. Please manage project billing.',
+        status: 'RESOURCE_EXHAUSTED'
+      } }, { status: 402 });
+    } });
+  const error = await request(url).then(() => null, value => value);
+  assert.equal(error?.code, 'GEMINI_CREDITS_EXHAUSTED');
+  assert.equal(error?.status, 402);
+  assert.equal(error?.retryable, false);
+  assert.equal(calls, 1);
+  assert.match(error.message, /Gemini API kredisi tükendi/u);
+  assert.match(error.message, /kendi Gemini API anahtarını/u);
+  assert.equal(error.cause?.code, 'PROVIDER_HTTP_402');
+});
+
+test('Gemini quota exhaustion stays retryable but no longer leaks raw provider JSON to the UI', async () => {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent';
+  const request = createMediaRequest({ maxRetries: 0, fetchImpl: async () =>
+    Response.json({ error: { code: 429, message: 'Quota exceeded', status: 'RESOURCE_EXHAUSTED' } }, { status: 429 }) });
+  const error = await request(url).then(() => null, value => value);
+  assert.equal(error?.code, 'GEMINI_QUOTA_EXHAUSTED');
+  assert.equal(error?.status, 429);
+  assert.equal(error?.retryable, true);
+  assert.match(error.message, /Gemini kota veya hız sınırına ulaştı/u);
+  assert.doesNotMatch(error.message, /\{|RESOURCE_EXHAUSTED/);
+});

@@ -141,6 +141,7 @@ const state = {
   voiceCatalog: null,
   voiceCatalogPromise: null,
   mediaCredentialGeneration: 0,
+  geminiProviderStatus: null,
   subtitlesEnabled: false,
   dubbingEnabled: false,
   languageSyncOffset: 0,
@@ -566,6 +567,16 @@ function renderQuotaBadge(element, status) {
     element.textContent = 'Kontrol ediliyor';
   } else if (stateName === 'available') {
     element.textContent = 'Servis hazır';
+  } else if (stateName === 'no_credits') {
+    element.textContent = 'Gemini kredisi yok';
+  } else if (stateName === 'daily_limit') {
+    element.textContent = 'Gemini kota dolu';
+  } else if (stateName === 'rate_limited') {
+    element.textContent = 'Gemini limitte';
+  } else if (stateName === 'invalid') {
+    element.textContent = 'Gemini anahtarı geçersiz';
+  } else if (stateName === 'forbidden') {
+    element.textContent = 'Gemini erişimi yok';
   } else if (stateName === 'unconfigured') {
     element.textContent = 'Kullanılamıyor';
   } else {
@@ -606,6 +617,7 @@ function invalidateTurkishMediaCredentials(refreshDelay = 0) {
   }
   mediaClient.reset();
   state.turkishMediaStatus = null;
+  state.geminiProviderStatus = null;
   els.voiceMappingRows?.replaceChildren?.();
   if (els.voiceMappingPanel) els.voiceMappingPanel.open = false;
   els.mediaJobStatus?.classList.add('hidden');
@@ -676,9 +688,20 @@ function geminiRequestHeaders(base = {}) {
 
 function renderGeminiApiKeyState() {
   const active = Boolean(activeGeminiApiKey());
-  if (els.apiKeyStatus) els.apiKeyStatus.textContent = active
-    ? 'Bu oturumda kendi anahtarın kullanılıyor'
-    : 'Sunucu anahtarı kullanılıyor';
+  const provider = state.geminiProviderStatus;
+  if (els.apiKeyStatus) {
+    els.apiKeyStatus.textContent = active
+      ? (provider?.state === 'no_credits'
+          ? 'Kendi Gemini anahtarında kredi yok'
+          : provider?.state === 'available'
+            ? 'Kendi Gemini anahtarın hazır'
+            : 'Bu oturumda kendi anahtarın kullanılıyor')
+      : (provider?.source === 'server' && provider?.state === 'no_credits'
+          ? 'Sunucu Gemini kredisi tükendi'
+          : provider?.source === 'server' && provider?.state === 'available'
+            ? 'Sunucu Gemini anahtarı hazır'
+            : 'Sunucu anahtarı kullanılıyor');
+  }
   els.clearGeminiApiKeyBtn?.classList.toggle('hidden', !active);
   els.testGeminiApiKeyBtn?.classList.toggle('hidden', !active);
   if (active && els.geminiApiKeyInput) els.geminiApiKeyInput.value = '';
@@ -718,10 +741,13 @@ async function testGeminiApiKey() {
       body: '{}'
     });
     const body = await response.json().catch(() => ({}));
+    state.geminiProviderStatus = { ...body, state: String(body.state || (response.ok ? 'available' : 'unavailable')) };
+    renderGeminiApiKeyState();
     if (els.apiKeyStatus) {
       els.apiKeyStatus.className = String(body.state || 'unavailable');
       els.apiKeyStatus.textContent = body.message || (response.ok ? 'Anahtar çalışıyor' : 'Anahtar kullanılamıyor');
     }
+    updateAnalyzeAvailability();
   } catch {
     if (els.apiKeyStatus) {
       els.apiKeyStatus.className = 'unavailable';
@@ -748,20 +774,52 @@ async function checkTurkishMediaCapabilities() {
   try {
     const capabilities = await mediaClient.getCapabilities();
     if (generation !== state.mediaCredentialGeneration) return;
-    const available = Boolean(capabilities.configured);
-    const unavailableMessage = capabilities.transcriptionConfigured === false
+
+    let available = Boolean(capabilities.configured);
+    let stateName = available ? 'available' : 'unconfigured';
+    let message = capabilities.transcriptionConfigured === false
       ? 'Türkçe dublaj için ElevenLabs anahtarını gir.'
       : capabilities.translationConfigured === false
         ? 'Türkçe çeviri için Gemini anahtarı gerekiyor. Kendi anahtarını girebilirsin.'
-        : 'Türkçe medya servisi şu an kullanılamıyor.';
-    renderQuotaBadge(els.subtitleQuotaStatus, { state: available ? 'available' : 'unconfigured',
-      message: available ? 'Türkçe altyazı servisi hazır.' : unavailableMessage });
-    renderQuotaBadge(els.dubQuotaStatus, { state: available ? 'available' : 'unconfigured',
-      message: available ? 'Türkçe dublaj servisi hazır.' : unavailableMessage });
+        : available
+          ? 'Türkçe medya servisi hazır.'
+          : 'Türkçe medya servisi şu an kullanılamıyor.';
+
+    const modes = selectedAnalysisModes();
+    if (available && capabilities.translationConfigured !== false && (modes.dubbing || modes.subtitles)) {
+      try {
+        const response = await fetch('/api/gemini-key-status', {
+          method: 'POST',
+          headers: geminiRequestHeaders({ 'Content-Type': 'application/json' }),
+          body: '{}'
+        });
+        const provider = await response.json().catch(() => ({}));
+        if (generation !== state.mediaCredentialGeneration) return;
+        state.geminiProviderStatus = {
+          ...provider,
+          state: String(provider.state || (response.ok ? 'available' : 'unavailable'))
+        };
+        renderGeminiApiKeyState();
+        if (!response.ok && ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
+          .includes(state.geminiProviderStatus.state)) {
+          available = false;
+          stateName = state.geminiProviderStatus.state;
+          message = state.geminiProviderStatus.message || 'Gemini çeviri servisi kullanılamıyor.';
+        }
+      } catch {
+        // A status probe failure must not masquerade as a provider outage.
+        state.geminiProviderStatus = { state: 'unknown' };
+      }
+    }
+
+    renderQuotaBadge(els.subtitleQuotaStatus, { state: available ? 'available' : stateName, message });
+    renderQuotaBadge(els.dubQuotaStatus, { state: available ? 'available' : stateName, message });
+    updateAnalyzeAvailability();
   } catch {
     if (generation !== state.mediaCredentialGeneration) return;
     renderQuotaBadge(els.subtitleQuotaStatus, { state: 'unknown' });
     renderQuotaBadge(els.dubQuotaStatus, { state: 'unknown' });
+    updateAnalyzeAvailability();
   }
 }
 
@@ -800,7 +858,11 @@ function updateAnalysisModesUI() {
 function updateAnalyzeAvailability() {
   const hasMode = updateAnalysisModesUI();
   const busy = state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy;
-  els.analyzeBtn.disabled = busy || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
+  const needsGemini = Boolean(els.dubMode?.checked || els.subtitleMode?.checked);
+  const geminiBlocked = needsGemini &&
+    ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
+      .includes(String(state.geminiProviderStatus?.state || ''));
+  els.analyzeBtn.disabled = busy || geminiBlocked || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
@@ -925,7 +987,26 @@ function onTurkishMediaStatus(status) {
   const terminal = ['READY', 'FAILED', 'CANCELLED'].includes(status.state);
   els.mediaJobCancelBtn?.classList.toggle('hidden', terminal);
   els.mediaJobRetryBtn?.classList.toggle('hidden', status.state !== 'FAILED');
-  if (state.analysisInProgress && !terminal) {
+  if (status.state === 'FAILED' && status.error?.code) {
+    if (status.error.code === 'GEMINI_CREDITS_EXHAUSTED') {
+      state.geminiProviderStatus = {
+        state: 'no_credits',
+        source: activeGeminiApiKey() ? 'browser' : 'server',
+        message: status.error.message
+      };
+      renderGeminiApiKeyState();
+      renderQuotaBadge(els.subtitleQuotaStatus, state.geminiProviderStatus);
+      renderQuotaBadge(els.dubQuotaStatus, state.geminiProviderStatus);
+      updateAnalyzeAvailability();
+    }
+    if (state.analysisInProgress) {
+      els.analysisState.textContent = status.error.code;
+      els.analysisTitle.textContent = status.error.code === 'GEMINI_CREDITS_EXHAUSTED'
+        ? 'Gemini API kredisi tükendi'
+        : 'Türkçe medya hazırlanamadı';
+      els.analysisOutput.textContent = status.error.message || status.message || 'Türkçe medya işlemi tamamlanamadı.';
+    }
+  } else if (state.analysisInProgress && !terminal) {
     els.analysisState.textContent = status.state;
     els.analysisTitle.textContent = status.message || 'Türkçe medya hazırlanıyor';
   }
