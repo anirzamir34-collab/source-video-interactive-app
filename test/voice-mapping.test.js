@@ -215,7 +215,7 @@ const catalogue = [
   { voiceId: 'catalogue-custom-b', name: 'Katalog Ses B', gender: 'female', language: 'tr' }
 ];
 
-function uiFixture({ start, retry } = {}) {
+function uiFixture({ start, retry, manual = true } = {}) {
   const previous = { manifest: manifest('previous-job', { 'source-a': 'catalogue-custom-a', 'source-b': 'catalogue-custom-b' }),
     dubEnabled: false, subtitleTrack: 'source_tr', syncOffset: -0.25 };
   let captured = previous;
@@ -231,7 +231,7 @@ function uiFixture({ start, retry } = {}) {
   els.dubMode.checked = true;
   const session = { file: source, mediaManifest: previous.manifest };
   const state = { selectedFile: source, analysisSession: session, sourceTranscript: previous.manifest.sourceTranscript,
-    voiceCatalog: catalogue, voiceMappingGeneration: 0, analysisInProgress: false, savedGameBusy: false,
+    voiceCatalog: catalogue, voiceMappingManualRequested: manual, voiceMappingGeneration: 0, analysisInProgress: false, savedGameBusy: false,
     savedGameReady: true, gameState: 'DECISION_PENDING', mediaRevoice: null,
     activePositionId: 'position-2', activeAdultOccurrenceId: 'occurrence-2', activeMovementId: 'movement-2',
     gameCursorTime: 12.25, adultProgress: 61, adultMovementPlayCounts: new Map([['movement-2', 2]]),
@@ -286,6 +286,15 @@ function uiFixture({ start, retry } = {}) {
   vm.runInContext(code, scope);
   return { scope, els, state, session, previous, source, oldAudio, calls, mediaClient };
 }
+
+test('normal VideoQuest flow keeps manual speaker voice selection hidden', () => {
+  const f = uiFixture({ manual: false });
+  f.els.voiceMappingPanel.open = true;
+  f.scope.renderVoiceMappingPanel();
+  assert.equal(f.els.voiceMappingPanel.open, false);
+  assert.equal(f.els.voiceMappingRows.children.length, 0);
+  assert.equal(f.els.voiceMappingPanel.classes.has('hidden'), true);
+});
 
 test('manual voice UI labels uncertain source gender and displays catalogue names and IDs without invented defaults', () => {
   const f = uiFixture();
