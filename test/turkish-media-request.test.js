@@ -115,14 +115,16 @@ test('fresh multipart bodies survive bounded retry without changing source bytes
 });
 
 test('public configuration exposes capability flags and model names without provider keys', () => {
-  const config = loadMediaConfig({ ELEVENLABS_API_KEY: 'private-eleven', OPENAI_API_KEY: 'private-openai' });
+  const config = loadMediaConfig({ ELEVENLABS_API_KEY: 'private-eleven', GEMINI_API_KEY: 'private-gemini' });
   const published = publicMediaConfig(config);
   assert.equal(published.configured, true);
   assert.equal(published.models.quality, 'eleven_v4');
   assert.equal(published.models.fast, 'eleven_v4_turbo');
   assert.equal(published.models.transcription, 'scribe_v2');
   assert.ok(!JSON.stringify(published).includes('private-eleven'));
-  assert.ok(!JSON.stringify(published).includes('private-openai'));
+  assert.ok(!JSON.stringify(published).includes('private-gemini'));
+  assert.equal(published.translationProvider, 'gemini');
+  assert.deepEqual(published.browserKeysSupported, { gemini: true, elevenLabs: true });
   assert.throws(() => loadMediaConfig({ ELEVENLABS_DUB_MODEL: 'eleven_v3' }), /eleven_v4/);
   assert.throws(() => loadMediaConfig({ DUB_MAX_CONCURRENCY: '99' }));
 });
@@ -134,39 +136,43 @@ const scene = { utterances: [
 speakers: [{ speakerId: 'male-source', gender: 'male' }], sceneContext: [{ evidence: 'actual source scene' }] };
 
 test('translation preserves every speaker and source segment using structured scene context', async () => {
-  const config = loadMediaConfig({ OPENAI_API_KEY: 'server-openai-key' });
+  const config = loadMediaConfig({ GEMINI_API_KEY: 'server-gemini-key' });
   let requestBody;
-  const provider = createTranslationProvider({ config, request: async (_url, options) => {
-    assert.equal(options.headers.Authorization, 'Bearer server-openai-key');
+  const provider = createTranslationProvider({ config, request: async (url, options) => {
+    assert.equal(options.headers['x-goog-api-key'], 'server-gemini-key');
+    assert.equal(new URL(url).pathname, '/v1beta/models/gemini-3.8-flash:generateContent');
+    assert.equal(new URL(url).search, '');
     requestBody = JSON.parse(options.body);
-    return { choices: [{ message: { content: JSON.stringify({ translations: [
+    return { candidates: [{ content: { parts: [{ text: JSON.stringify({ translations: [
       { segmentId: 's2', text: 'Evet.' }, { segmentId: 's1', text: "Paul'un adını koru." },
-    ] }) } }] };
+    ] }) }] }, finishReason: 'STOP' }] };
   } });
   const result = await provider.translateScene(scene);
   assert.deepEqual(result.map(row => row.segmentId), ['s1', 's2']);
   assert.deepEqual(result.map(row => row.speakerId), ['male-source', 'female-source']);
   assert.equal(result[0].targetDuration, 2);
-  assert.equal(requestBody.response_format.type, 'json_schema');
-  const payload = JSON.parse(requestBody.messages[1].content);
+  assert.equal(requestBody.generationConfig.responseMimeType, 'application/json');
+  assert.equal(requestBody.generationConfig.responseSchema.type, 'OBJECT');
+  assert.ok(!JSON.stringify(requestBody.generationConfig.responseSchema).includes('additionalProperties'));
+  const payload = JSON.parse(requestBody.contents[0].parts[0].text);
   assert.equal(payload.utterances[0].sourceText, scene.utterances[0].sourceText);
   assert.equal(payload.previousContext[0].sourceText, scene.previousContext[0].sourceText);
   assert.equal(payload.sceneContext[0].evidence, 'actual source scene');
-  assert.match(requestBody.messages[0].content, /Never merge, drop or invent/);
-  assert.match(requestBody.messages[0].content, /without censorship/);
+  assert.match(requestBody.systemInstruction.parts[0].text, /Never merge, drop or invent/);
+  assert.match(requestBody.systemInstruction.parts[0].text, /without censorship/);
 });
 
 test('missing, duplicate and invented translation IDs cannot authorize generated dialogue', async () => {
-  const config = loadMediaConfig({ OPENAI_API_KEY: 'server-key' });
+  const config = loadMediaConfig({ GEMINI_API_KEY: 'server-key' });
   const variants = [
     [{ segmentId: 's1', text: 'A' }],
     [{ segmentId: 's1', text: 'A' }, { segmentId: 's1', text: 'B' }],
     [{ segmentId: 's1', text: 'A' }, { segmentId: 'invented', text: 'B' }],
   ];
   for (const translations of variants) {
-    const provider = createTranslationProvider({ config, request: async () => ({ choices: [{ message: {
-      content: JSON.stringify({ translations }),
-    } }] }) });
+    const provider = createTranslationProvider({ config, request: async () => ({ candidates: [{ content: {
+      parts: [{ text: JSON.stringify({ translations }) }],
+    }, finishReason: 'STOP' }] }) });
     await assert.rejects(provider.translateScene(scene), error =>
       ['TRANSLATION_MISSING_SEGMENTS', 'TRANSLATION_SEGMENT_MISMATCH'].includes(error.code));
   }

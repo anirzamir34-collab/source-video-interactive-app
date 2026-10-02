@@ -140,6 +140,7 @@ const state = {
   voiceMappingGeneration: 0,
   voiceCatalog: null,
   voiceCatalogPromise: null,
+  mediaCredentialGeneration: 0,
   subtitlesEnabled: false,
   dubbingEnabled: false,
   languageSyncOffset: 0,
@@ -246,6 +247,11 @@ const els = {
   testGeminiApiKeyBtn: $('testGeminiApiKeyBtn'),
   clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
   apiKeyStatus: $('apiKeyStatus'),
+  elevenLabsApiKeyInput: $('elevenLabsApiKeyInput'),
+  saveElevenLabsApiKeyBtn: $('saveElevenLabsApiKeyBtn'),
+  testElevenLabsApiKeyBtn: $('testElevenLabsApiKeyBtn'),
+  clearElevenLabsApiKeyBtn: $('clearElevenLabsApiKeyBtn'),
+  elevenLabsApiKeyStatus: $('elevenLabsApiKeyStatus'),
   motionMode: $('motionMode'),
   subtitleMode: $('subtitleMode'),
   dubMode: $('dubMode'),
@@ -556,6 +562,8 @@ function renderQuotaBadge(element, status) {
     element.textContent = retry >= 3600
       ? `Limit dolu · ${Math.ceil(retry / 3600)} sa.`
       : `Limit dolu · ${Math.ceil(retry / 60)} dk.`;
+  } else if (stateName === 'checking') {
+    element.textContent = 'Kontrol ediliyor';
   } else if (stateName === 'available') {
     element.textContent = 'Servis hazır';
   } else if (stateName === 'unconfigured') {
@@ -567,6 +575,94 @@ function renderQuotaBadge(element, status) {
 }
 
 const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
+// ElevenLabs credentials live only in the password control or this module's
+// memory. They are deliberately excluded from the serializable game state.
+let browserElevenLabsApiKey = '';
+let mediaCapabilitiesRefreshTimer = null;
+
+function activeElevenLabsApiKey() {
+  return String(els.elevenLabsApiKeyInput?.value || browserElevenLabsApiKey || '').trim();
+}
+
+function renderElevenLabsApiKeyState() {
+  const active = Boolean(activeElevenLabsApiKey());
+  if (els.elevenLabsApiKeyStatus) els.elevenLabsApiKeyStatus.textContent = active
+    ? 'Bu sekmede kendi anahtarın kullanılıyor' : 'Sunucu anahtarı kullanılıyor';
+  els.clearElevenLabsApiKeyBtn?.classList.toggle('hidden', !active);
+  els.testElevenLabsApiKeyBtn?.classList.toggle('hidden', !active);
+}
+
+function invalidateTurkishMediaCredentials(refreshDelay = 0) {
+  // A new account cannot reuse an earlier account's prepared package or
+  // catalogue. Source bytes, grounded speech, frames and gameplay stay intact.
+  state.mediaCredentialGeneration = (Number(state.mediaCredentialGeneration) || 0) + 1;
+  state.voiceMappingGeneration = (Number(state.voiceMappingGeneration) || 0) + 1;
+  state.voiceCatalog = null;
+  state.voiceCatalogPromise = null;
+  state.mediaRevoice = null;
+  if (state.analysisSession) {
+    state.analysisSession.mediaManifest = null;
+    state.analysisSession.mediaModeKey = '';
+  }
+  mediaClient.reset();
+  state.turkishMediaStatus = null;
+  els.voiceMappingRows?.replaceChildren?.();
+  if (els.voiceMappingPanel) els.voiceMappingPanel.open = false;
+  els.mediaJobStatus?.classList.add('hidden');
+  els.mediaJobRetryBtn?.classList.add('hidden');
+  els.dubBufferStatus?.classList.add('hidden');
+  renderMediaControls();
+  renderElevenLabsApiKeyState();
+  for (const badge of [els.subtitleQuotaStatus, els.dubQuotaStatus]) {
+    renderQuotaBadge(badge, { state: 'checking', message: 'Girilen anahtarlarla servis durumu kontrol ediliyor.' });
+  }
+  updateAnalyzeAvailability();
+  clearTimeout(mediaCapabilitiesRefreshTimer);
+  mediaCapabilitiesRefreshTimer = setTimeout(() => {
+    mediaCapabilitiesRefreshTimer = null;
+    void checkTurkishMediaCapabilities();
+  }, refreshDelay);
+}
+
+function saveElevenLabsApiKey() {
+  if (state.analysisInProgress || state.savedGameBusy) return;
+  const key = activeElevenLabsApiKey().replace(/^ELEVENLABS_API_KEY\s*=\s*/i, '')
+    .replace(/^['"]|['"]$/g, '').trim();
+  if (key.length < 20 || key.length > 512 || /\s/.test(key)) {
+    if (els.elevenLabsApiKeyStatus) els.elevenLabsApiKeyStatus.textContent = 'Anahtar eksik veya boşluk içeriyor';
+    return;
+  }
+  browserElevenLabsApiKey = key;
+  if (els.elevenLabsApiKeyInput) els.elevenLabsApiKeyInput.value = '';
+  invalidateTurkishMediaCredentials();
+}
+
+function clearElevenLabsApiKey() {
+  if (state.analysisInProgress || state.savedGameBusy) return;
+  browserElevenLabsApiKey = '';
+  if (els.elevenLabsApiKeyInput) els.elevenLabsApiKeyInput.value = '';
+  invalidateTurkishMediaCredentials();
+}
+
+async function testElevenLabsApiKey() {
+  if (!activeElevenLabsApiKey() || state.analysisInProgress || state.savedGameBusy) return;
+  const generation = state.mediaCredentialGeneration;
+  if (els.testElevenLabsApiKeyBtn) els.testElevenLabsApiKeyBtn.disabled = true;
+  if (els.elevenLabsApiKeyStatus) els.elevenLabsApiKeyStatus.textContent = 'Anahtar kontrol ediliyor';
+  try {
+    const voices = await mediaClient.getVoices();
+    if (generation !== state.mediaCredentialGeneration) return;
+    state.voiceCatalog = voices;
+    renderVoiceMappingPanel();
+    if (els.elevenLabsApiKeyStatus) els.elevenLabsApiKeyStatus.textContent = 'ElevenLabs anahtarı çalışıyor';
+  } catch (error) {
+    if (generation === state.mediaCredentialGeneration && els.elevenLabsApiKeyStatus) {
+      els.elevenLabsApiKeyStatus.textContent = error?.name === 'AbortError' ? 'Anahtar kontrolü iptal edildi' : 'Anahtar doğrulanamadı; tekrar dene';
+    }
+  } finally {
+    if (els.testElevenLabsApiKeyBtn) els.testElevenLabsApiKeyBtn.disabled = Boolean(state.analysisInProgress || state.savedGameBusy);
+  }
+}
 
 function activeGeminiApiKey() {
   try { return String(sessionStorage.getItem(GEMINI_SESSION_KEY) || '').trim(); }
@@ -589,6 +685,7 @@ function renderGeminiApiKeyState() {
 }
 
 function saveGeminiApiKey() {
+  if (state.analysisInProgress || state.savedGameBusy) return;
   const key = String(els.geminiApiKeyInput?.value || '')
     .trim()
     .replace(/^GEMINI_API_KEY\s*=\s*/i, '')
@@ -600,6 +697,7 @@ function saveGeminiApiKey() {
   }
   try { sessionStorage.setItem(GEMINI_SESSION_KEY, key); } catch {}
   renderGeminiApiKeyState();
+  invalidateTurkishMediaCredentials();
   testGeminiApiKey();
 }
 
@@ -638,20 +736,30 @@ async function testGeminiApiKey() {
 }
 
 function clearGeminiApiKey() {
+  if (state.analysisInProgress || state.savedGameBusy) return;
   try { sessionStorage.removeItem(GEMINI_SESSION_KEY); } catch {}
   if (els.geminiApiKeyInput) els.geminiApiKeyInput.value = '';
   renderGeminiApiKeyState();
+  invalidateTurkishMediaCredentials();
 }
 
 async function checkTurkishMediaCapabilities() {
+  const generation = state.mediaCredentialGeneration;
   try {
     const capabilities = await mediaClient.getCapabilities();
+    if (generation !== state.mediaCredentialGeneration) return;
     const available = Boolean(capabilities.configured);
+    const unavailableMessage = capabilities.transcriptionConfigured === false
+      ? 'Türkçe dublaj için ElevenLabs anahtarını gir.'
+      : capabilities.translationConfigured === false
+        ? 'Türkçe çeviri için Gemini anahtarı gerekiyor. Kendi anahtarını girebilirsin.'
+        : 'Türkçe medya servisi şu an kullanılamıyor.';
     renderQuotaBadge(els.subtitleQuotaStatus, { state: available ? 'available' : 'unconfigured',
-      message: available ? 'Türkçe altyazı servisi hazır.' : 'Türkçe medya servisi sunucuda yapılandırılmalı.' });
+      message: available ? 'Türkçe altyazı servisi hazır.' : unavailableMessage });
     renderQuotaBadge(els.dubQuotaStatus, { state: available ? 'available' : 'unconfigured',
-      message: available ? 'Türkçe dublaj servisi hazır.' : 'Türkçe medya servisi sunucuda yapılandırılmalı.' });
+      message: available ? 'Türkçe dublaj servisi hazır.' : unavailableMessage });
   } catch {
+    if (generation !== state.mediaCredentialGeneration) return;
     renderQuotaBadge(els.subtitleQuotaStatus, { state: 'unknown' });
     renderQuotaBadge(els.dubQuotaStatus, { state: 'unknown' });
   }
@@ -698,6 +806,10 @@ function updateAnalyzeAvailability() {
   $('resolveUrlBtn').disabled = busy;
   [els.qualityMode, els.dubQualityMode, els.motionMode, els.subtitleMode, els.dubMode]
     .forEach(control => { if (control) control.disabled = busy; });
+  [els.elevenLabsApiKeyInput, els.saveElevenLabsApiKeyBtn, els.testElevenLabsApiKeyBtn,
+    els.clearElevenLabsApiKeyBtn, els.geminiApiKeyInput, els.saveGeminiApiKeyBtn,
+    els.testGeminiApiKeyBtn, els.clearGeminiApiKeyBtn]
+    .forEach(control => { if (control) control.disabled = busy; });
   if (els.mediaJobRetryBtn) els.mediaJobRetryBtn.disabled = busy;
   if (els.voiceMappingApplyBtn) els.voiceMappingApplyBtn.disabled = busy || !els.dubMode.checked;
   els.voiceMappingRows?.querySelectorAll?.('select').forEach(select => { select.disabled = busy; });
@@ -721,7 +833,18 @@ els.clearGeminiApiKeyBtn?.addEventListener('click', clearGeminiApiKey);
 els.geminiApiKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveGeminiApiKey();
 });
+els.elevenLabsApiKeyInput?.addEventListener('input', () => {
+  if (state.analysisInProgress || state.savedGameBusy) return;
+  invalidateTurkishMediaCredentials(300);
+});
+els.elevenLabsApiKeyInput?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') saveElevenLabsApiKey();
+});
+els.saveElevenLabsApiKeyBtn?.addEventListener('click', saveElevenLabsApiKey);
+els.testElevenLabsApiKeyBtn?.addEventListener('click', testElevenLabsApiKey);
+els.clearElevenLabsApiKeyBtn?.addEventListener('click', clearElevenLabsApiKey);
 renderGeminiApiKeyState();
+renderElevenLabsApiKeyState();
 removeStoredValue('sessionStorage', 'videoquest_elevenlabs_api_key');
 
 function releaseVideoObjectUrl() {
@@ -766,6 +889,8 @@ function recordAiUsage(usage) {
 
 const mediaClient = createTurkishMediaClient({
   video: els.video,
+  getElevenLabsApiKey: activeElevenLabsApiKey,
+  getGeminiApiKey: activeGeminiApiKey,
   captionElements: { overlay: els.subtitleOverlay, speaker: els.subtitleSpeaker, text: els.subtitleText },
   onStatus: onTurkishMediaStatus
 });

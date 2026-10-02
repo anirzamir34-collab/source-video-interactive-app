@@ -37,6 +37,7 @@ function cueRows(track) {
 
 export function createTurkishMediaClient({ video, captionElements = {}, onStatus = () => {},
   fetchImpl = globalThis.fetch, AudioClass = globalThis.Audio, clock = {},
+  getElevenLabsApiKey = () => '', getGeminiApiKey = () => '',
   pollIntervalMs = 1200, requestTimeoutMs = 30000, assetTimeoutMs = 5 * 60 * 1000,
   chunkSize = 5 * 1024 * 1024,
   retryDelayMs = 1000, maxJobWaitMs = 6 * 60 * 60 * 1000,
@@ -64,6 +65,22 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   const current = owner => !destroyed && owner.generation === generation && !owner.signal.aborted;
   const assertCurrent = owner => { if (!current(owner)) throw abortError(); };
 
+  function requestHeaders(path, options) {
+    const headers = new Headers(options.headers);
+    const usesProviders = (options.method === 'POST' &&
+      (path === `${API}/jobs` || /^\/api\/turkish-media\/jobs\/[^/]+\/retry$/.test(path))) ||
+      ((!options.method || options.method === 'GET') && [ `${API}/capabilities`, `${API}/voices` ].includes(path));
+    if (usesProviders) {
+      // Read the password controls at request time. Keys never enter job
+      // options, manifests, upload identities or saved-game captures.
+      const elevenLabsKey = String(getElevenLabsApiKey() || '').trim();
+      const geminiKey = String(getGeminiApiKey() || '').trim();
+      if (elevenLabsKey) headers.set('x-elevenlabs-api-key', elevenLabsKey);
+      if (geminiKey) headers.set('x-gemini-api-key', geminiKey);
+    }
+    return headers;
+  }
+
   async function request(path, options = {}, owner = scope(), asBlob = false) {
     assertCurrent(owner);
     const requestController = new AbortController();
@@ -79,7 +96,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     try {
       const operation = (async () => {
         const response = await fetchImpl(internalUrl(path, baseUrl), { ...options,
-          credentials: 'same-origin', signal: requestController.signal });
+          headers: requestHeaders(path, options), credentials: 'same-origin', signal: requestController.signal });
         const body = asBlob && response.ok ? await response.blob() : await response.json().catch(() => ({}));
         if (!response.ok) throw Object.assign(new Error(errorMessage(body?.error || body?.message,
           `Türkçe medya isteği başarısız (HTTP ${response.status}).`)), { status: response.status });

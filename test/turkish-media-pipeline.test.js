@@ -28,7 +28,7 @@ async function fixture(t, { words = sourceWords(), failAlignmentOnce = false, mi
   t.after(() => rm(directory, { recursive: true, force: true }));
   const sourcePath = path.join(directory, 'source-video.mp4');
   await writeFile(sourcePath, 'fixed-source-video-bytes');
-  const config = loadMediaConfig({ ELEVENLABS_API_KEY: 'eleven-server-key', OPENAI_API_KEY: 'openai-server-key',
+  const config = loadMediaConfig({ ELEVENLABS_API_KEY: 'eleven-server-key', GEMINI_API_KEY: 'gemini-server-key',
     DUB_CACHE_DIRECTORY: path.join(directory, 'cache') });
   const cache = createMediaCache({ directory: config.directory });
   const limiter = createLimiter(2);
@@ -145,7 +145,7 @@ test('pipeline logs every required stage with paired durations and IDs without s
   }
   assert.equal(ends.filter(row => row.stage === 'forced_alignment' && row.segmentId).length, 2);
   const serialized = JSON.stringify(f.calls.logs);
-  for (const privateValue of ['Hello.', 'Yes.', 'Merhaba.', 'Evet.', 'eleven-server-key', 'openai-server-key']) {
+  for (const privateValue of ['Hello.', 'Yes.', 'Merhaba.', 'Evet.', 'eleven-server-key', 'gemini-server-key']) {
     assert.ok(!serialized.includes(privateValue));
   }
 });
@@ -175,7 +175,7 @@ test('transcript-only logging marks unused media stages skipped and records Scri
 test('failed alignment logs the full redacted provider error and useful stack with its source segment', async t => {
   const f = await fixture(t);
   f.elevenLabs.align = async (_file, text) => {
-    const error = new MediaError('PROVIDER_HTTP_422', `${'alignment-diagnostic '.repeat(120)}${text} eleven-server-key openai-server-key final-error-marker`);
+    const error = new MediaError('PROVIDER_HTTP_422', `${'alignment-diagnostic '.repeat(120)}${text} eleven-server-key gemini-server-key final-error-marker`);
     error.stack = `${error.name}: ${error.message}\n    at mockedAlignment (provider.js:12:4)`;
     throw error;
   };
@@ -185,7 +185,7 @@ test('failed alignment logs the full redacted provider error and useful stack wi
   assert.ok(failed.every(row => row.segmentId && row.jobId === 'failed-job' && row.error.message.length > 1500));
   assert.ok(failed.every(row => row.error.message.endsWith('final-error-marker') && row.error.stack.includes('provider.js:12:4')));
   const serialized = JSON.stringify(f.calls.logs);
-  for (const privateValue of ['Merhaba.', 'Evet.', 'eleven-server-key', 'openai-server-key']) assert.ok(!serialized.includes(privateValue));
+  for (const privateValue of ['Merhaba.', 'Evet.', 'eleven-server-key', 'gemini-server-key']) assert.ok(!serialized.includes(privateValue));
 });
 
 test('pipeline retains all source identities and actual Forced Alignment offsets in both exported tracks', async t => {
@@ -411,7 +411,7 @@ test('real jobs count physical ElevenLabs retries, redact keys and recover persi
   assert.equal(ready.result.qualityReport.elevenLabsRequestCount, 2);
   assert.equal(ready.result.qualityReport.retryCount, 1);
   assert.ok(!JSON.stringify(ready).includes('eleven-server-key'));
-  assert.ok(!JSON.stringify(ready).includes('openai-server-key'));
+  assert.ok(!JSON.stringify(ready).includes('gemini-server-key'));
   const interruptedId = 'b8eb5a12-f28d-4d23-b8ed-5d94cbbf5f1f';
   const interruptedPath = path.join(f.config.directory, 'jobs', interruptedId);
   await mkdir(interruptedPath, { recursive: true });

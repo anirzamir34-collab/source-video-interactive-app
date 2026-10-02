@@ -413,9 +413,10 @@ test('active source leases prevent 24-hour eviction and release refreshes its re
 function mediaRouteFixture(overrides = {}) {
   const routes = new Map();
   const calls = [];
+  const credentialCalls = [];
   const jobs = { capabilities: () => ({ configured: true, fastAvailable: false }),
     voices: async () => [{ voiceId: 'voice-1', name: 'Türkçe ses', gender: 'female', language: 'tr' }],
-    create: async input => { calls.push(input); return { id: 'job', state: 'PREPARING_AUDIO' }; },
+    create: async (input, credentials) => { calls.push(input); credentialCalls.push(credentials); return { id: 'job', state: 'PREPARING_AUDIO' }; },
     get: async () => ({ id: 'job', state: 'READY', result: { subtitles: {} } }),
     retry: async () => ({ id: 'job', state: 'PREPARING_AUDIO' }), cancel: async () => ({ id: 'job', state: 'CANCELLED' }),
     artifact: async () => null, ...overrides.jobs };
@@ -423,8 +424,8 @@ function mediaRouteFixture(overrides = {}) {
   installTurkishMediaRoutes(app, { uploads: { start: async value => value, status: async () => null,
     source: async () => ({ path: '/private/source.bin', hash: 'verified-hash' }), ...overrides.uploads },
     jobs, rawParser() {}, secrets: ['provider-secret'] });
-  return { calls, async request(method, url, body = {}, params = {}, res = new ResponseStream()) {
-    const req = Object.assign(new EventEmitter(), { body, params });
+  return { calls, credentialCalls, async request(method, url, body = {}, params = {}, res = new ResponseStream(), headers = {}, query = {}, rawHeaders) {
+    const req = Object.assign(new EventEmitter(), { body, params, headers, query, rawHeaders });
     await routes.get(`${method} /api/turkish-media${url}`)(req, res, error => { throw error; });
     return res;
   } };
@@ -443,6 +444,59 @@ test('job routes use server source bytes, preserve output modes and return the c
   assert.equal(retry.statusCode, 202); assert.equal(retry.jsonBody.jobId, 'job');
   const result = await f.request('GET', '/jobs/:id/result', {}, { id: 'job' });
   assert.deepEqual(result.jsonBody, { subtitles: {} });
+});
+
+test('provider headers travel separately from persisted job input and body/query keys are ignored', async () => {
+  const elevenKey = 'browser-eleven-route-test-123456';
+  const geminiKey = 'browser-gemini-route-test-123456';
+  const headers = { 'x-elevenlabs-api-key': elevenKey, 'x-gemini-api-key': geminiKey };
+  const seen = [];
+  const f = mediaRouteFixture({ jobs: {
+    capabilities: credentials => { seen.push(['capabilities', credentials]); return { configured: true }; },
+    voices: async credentials => { seen.push(['voices', credentials]); return []; },
+    retry: async (id, credentials) => { seen.push([id, credentials]); return { id, state: 'PREPARING_AUDIO' }; },
+  } });
+  await f.request('POST', '/jobs', { uploadId: 'upload', apiKey: elevenKey, elevenLabsApiKey: elevenKey,
+    geminiApiKey: geminiKey, credentials: headers }, {}, new ResponseStream(), headers);
+  assert.deepEqual(f.credentialCalls[0], { elevenLabsApiKey: elevenKey, geminiApiKey: geminiKey });
+  assert.doesNotMatch(JSON.stringify(f.calls[0]), /browser-eleven|browser-gemini|apiKey|credentials/);
+  await f.request('GET', '/capabilities', {}, {}, new ResponseStream(), headers);
+  await f.request('GET', '/voices', {}, {}, new ResponseStream(), headers);
+  await f.request('POST', '/jobs/:id/retry', {}, { id: 'job' }, new ResponseStream(), headers);
+  assert.deepEqual(seen.map(row => row[1]), Array(3).fill({ elevenLabsApiKey: elevenKey, geminiApiKey: geminiKey }));
+  await f.request('POST', '/jobs', { uploadId: 'upload', elevenLabsApiKey: elevenKey }, {}, new ResponseStream(), {}, { 'x-elevenlabs-api-key': elevenKey });
+  assert.deepEqual(f.credentialCalls[1], {});
+});
+
+test('invalid supplied provider headers fail before source access and never fall back silently', async () => {
+  let sourceCalls = 0;
+  const f = mediaRouteFixture({ uploads: { source: async () => { sourceCalls++; return { path: '/private/source.bin' }; } } });
+  for (const key of ['short', ' ', 'x'.repeat(257), 'valid-looking-key-123456 with-space', ['valid-looking-key-123456']]) {
+    const response = await f.request('POST', '/jobs', { uploadId: 'upload' }, {}, new ResponseStream(), { 'x-elevenlabs-api-key': key });
+    assert.equal(response.statusCode, 400); assert.equal(response.jsonBody.reason, 'MEDIA_CREDENTIAL_INVALID');
+    assert.doesNotMatch(JSON.stringify(response.jsonBody), /valid-looking-key|\/private/);
+  }
+  const duplicated = await f.request('GET', '/capabilities', {}, {}, new ResponseStream(),
+    { 'x-gemini-api-key': 'valid-gemini-key-123456' }, {}, ['x-gemini-api-key', 'valid-gemini-key-123456', 'X-Gemini-Api-Key', 'second-gemini-key-123456']);
+  assert.equal(duplicated.statusCode, 400);
+  assert.equal(sourceCalls, 0);
+});
+
+test('provider errors redact dynamic browser credentials and owned read endpoints need no provider headers', async () => {
+  const elevenKey = 'dynamic-eleven-secret-test-123456';
+  const geminiKey = 'dynamic-gemini-secret-test-123456';
+  const f = mediaRouteFixture({ jobs: { voices: async () => {
+    throw new MediaError(`FAIL_${elevenKey}`, `Provider ${elevenKey} and ${geminiKey} rejected`, { status: 401, segmentIds: [geminiKey] });
+  } } });
+  const error = await f.request('GET', '/voices', {}, {}, new ResponseStream(),
+    { 'x-elevenlabs-api-key': elevenKey, 'x-gemini-api-key': geminiKey });
+  assert.equal(error.statusCode, 401);
+  assert.equal(JSON.stringify(error.jsonBody).includes(elevenKey), false);
+  assert.equal(JSON.stringify(error.jsonBody).includes(geminiKey), false);
+  for (const route of ['/jobs/:id', '/jobs/:id/result']) {
+    const result = await f.request('GET', route, {}, { id: 'job' }, new ResponseStream(), { 'x-elevenlabs-api-key': 'invalid' });
+    assert.equal(result.statusCode, 200);
+  }
 });
 
 test('media route errors and capabilities never expose provider secrets or internal source paths', async () => {

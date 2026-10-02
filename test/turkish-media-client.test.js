@@ -174,6 +174,54 @@ test('resumable upload sends only missing chunks and reports source evidence bef
   assert.ok(JSON.stringify(f.client.capture()).includes('Source evidence'));
 });
 
+test('browser provider keys are read dynamically only for capabilities, voices, job creation and retry headers', async t => {
+  let elevenLabsKey = 'browser-elevenlabs-key-1234567890';
+  let geminiKey = '';
+  const f = fixture(({ url, init }) => {
+    if (url.endsWith('/capabilities')) return json({ configured: true });
+    if (url.endsWith('/voices')) return json({ voices: [{ voiceId: 'catalogue-voice', name: 'Ses', gender: 'male' }] });
+    if (url.endsWith('/uploads/start')) return json({ uploadId: 'upload-keys', chunkSize: 3 });
+    if (url.endsWith('/uploads/upload-keys/status')) return json({ receivedChunks: [0, 1, 2] });
+    if (url.endsWith('/jobs') && init.method === 'POST') return json({ jobId: 'failed-key-job' });
+    if (url.endsWith('/jobs/failed-key-job')) return json({ state: 'FAILED', error: { message: 'Retry required' } });
+    if (url.endsWith('/jobs/failed-key-job/retry')) return json({ jobId: 'ready-key-job' });
+    if (url.endsWith('/jobs/ready-key-job')) return json({ state: 'READY', result: manifest('ready-key-job') });
+    if (url.endsWith('/assets/mix')) return new Response('final sound', { headers: { 'Content-Type': 'audio/wav' } });
+    assert.fail(`Unexpected request ${url}`);
+  }, { getElevenLabsApiKey: () => elevenLabsKey, getGeminiApiKey: () => geminiKey });
+  t.after(() => f.client.destroy());
+  await f.client.getCapabilities();
+  await f.client.getVoices();
+  await assert.rejects(f.client.start(sourceFile()), /Retry required/);
+  geminiKey = 'browser-gemini-key-1234567890';
+  await f.client.retry();
+  await f.client.materializeAudio();
+  for (const { url, init } of f.requests) {
+    const headers = new Headers(init.headers);
+    const providerRoute = url.endsWith('/capabilities') || url.endsWith('/voices') ||
+      (init.method === 'POST' && (url.endsWith('/jobs') || url.endsWith('/retry')));
+    assert.equal(headers.get('x-elevenlabs-api-key'), providerRoute ? elevenLabsKey : null, url);
+    assert.equal(headers.get('x-gemini-api-key'), url.endsWith('/retry') ? geminiKey : null, url);
+    if (typeof init.body === 'string') {
+      assert.equal(init.body.includes(elevenLabsKey), false);
+      assert.equal(init.body.includes(geminiKey), false);
+    }
+  }
+  const serialized = JSON.stringify({ captured: f.client.capture(), statuses: f.statuses });
+  assert.equal(serialized.includes(elevenLabsKey), false);
+  assert.equal(serialized.includes(geminiKey), false);
+});
+
+test('empty browser key getters leave server credentials as the provider fallback', async t => {
+  const f = fixture(() => json({ configured: true }), {
+    getElevenLabsApiKey: () => ' ', getGeminiApiKey: () => ''
+  });
+  t.after(() => f.client.destroy());
+  await f.client.getCapabilities();
+  assert.equal(new Headers(f.requests[0].init.headers).has('x-elevenlabs-api-key'), false);
+  assert.equal(new Headers(f.requests[0].init.headers).has('x-gemini-api-key'), false);
+});
+
 test('a failed backend job surfaces its failure and never pretends final media is ready', async t => {
   const f = fixture(({ url, init }) => {
     if (url.endsWith('/uploads/start')) return json({ uploadId: 'failed-upload', chunkSize: 3, totalChunks: 3 });

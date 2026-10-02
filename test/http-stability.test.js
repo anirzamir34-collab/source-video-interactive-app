@@ -29,31 +29,34 @@ async function reservePort(t) {
   }
 }
 
-// The real application runs with provider secrets empty, so no paid API call
-// can occur. Upload persistence is tested across an actual process restart.
+// The real application has no ElevenLabs key. Its synthetic Gemini marker is
+// used only for capability flags; no paid API call can occur. Upload persistence
+// is tested across an actual process restart.
 test('HTTP integration: authentication, safe errors and restart-resumable full-source upload', { timeout: 30000 }, async t => {
   if (!dependenciesAvailable(t, ['express', 'multer', '@google/genai', 'ffmpeg-static', 'youtube-dl-exec'])) return;
   const port = await reservePort(t); if (port === null) return;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'vq-http-media-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const deploymentCommit = '0123456789abcdef0123456789abcdef01234567';
-  let server, exited, diagnostics = '';
+  const geminiMarker = 'server-gemini-http-capability-only-123456';
+  const browserMarker = 'browser-eleven-http-capability-only-123456';
+  let server, exited, diagnostics = '', startupLogs = '';
   const stop = async () => { if (server && server.exitCode === null) server.kill('SIGTERM'); await exited; };
   t.after(stop);
   const startServer = async () => {
     server = spawn(process.execPath, ['server.js'], {
       cwd: new URL('..', import.meta.url), stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PORT: String(port), APP_PASSWORD: 'local-stability-test', GEMINI_API_KEY: '',
+      env: { ...process.env, PORT: String(port), APP_PASSWORD: 'local-stability-test', GEMINI_API_KEY: geminiMarker,
         ELEVENLABS_API_KEY: '', OPENAI_API_KEY: '', DUB_CACHE_DIRECTORY: directory,
         DUB_QUALITY_MODE: 'quality', ELEVENLABS_STT_MODEL: 'scribe_v2', ELEVENLABS_DUB_MODEL: 'eleven_v4',
-        RENDER_GIT_COMMIT: deploymentCommit, TRANSLATION_PROVIDER: 'openai', EXTERNAL_ANALYSIS_URL: 'http://127.0.0.1:1' }
+        RENDER_GIT_COMMIT: deploymentCommit, TRANSLATION_PROVIDER: 'gemini', EXTERNAL_ANALYSIS_URL: 'http://127.0.0.1:1' }
     });
     server.stderr.on('data', chunk => { diagnostics += chunk; });
     exited = new Promise(resolve => server.once('exit', resolve));
     await new Promise((resolve, reject) => {
       const deadline = setTimeout(() => reject(Error(`Startup timed out: ${diagnostics}`)), 8000);
       server.once('exit', code => { clearTimeout(deadline); reject(Error(`Server exited ${code}: ${diagnostics}`)); });
-      server.stdout.on('data', chunk => { if (String(chunk).includes('listening on')) { clearTimeout(deadline); resolve(); } });
+      server.stdout.on('data', chunk => { startupLogs += chunk; if (String(chunk).includes('listening on')) { clearTimeout(deadline); resolve(); } });
     });
   };
   await startServer();
@@ -74,6 +77,7 @@ test('HTTP integration: authentication, safe errors and restart-resumable full-s
     assert.equal(body.service, 'source-video-interactive-app');
     assert.equal(body.deploymentCommit, deploymentCommit);
     assert.deepEqual(body.turkishMedia, { qualityMode: 'quality', pipelineVersion: 'turkish-media-v1',
+      translationProvider: 'gemini', openAIRequired: false, browserKeysSupported: { elevenLabs: true, gemini: true }, serverGeminiConfigured: true,
       models: { transcription: 'scribe_v2', quality: 'eleven_v4' } });
     assert.doesNotMatch(JSON.stringify(body), /local-stability-test|apiKey|authorization|x-elevenlabs-key/i);
     for (const route of ['/api/missing', '/api/turkish-media/capabilities', '/api/turkish-media/voices', '/api/turkish-media/jobs/id/artifacts/mix.wav']) {
@@ -158,6 +162,23 @@ test('HTTP integration: authentication, safe errors and restart-resumable full-s
     const response = await request('/api/turkish-media/capabilities', { headers: { Cookie: cookie } });
     const body = await response.json(); assert.equal(body.configured, false);
     assert.doesNotMatch(JSON.stringify(body), /apiKey|authorization|x-elevenlabs-key/i);
+  });
+  await t.test('browser ElevenLabs plus server Gemini is configured without OpenAI or any paid provider call', async () => {
+    const response = await request('/api/turkish-media/capabilities', {
+      headers: { Cookie: cookie, 'x-elevenlabs-api-key': browserMarker },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const body = await response.json();
+    assert.equal(body.configured, true); assert.equal(body.transcriptionConfigured, true); assert.equal(body.translationConfigured, true);
+    assert.equal(body.translationProvider, 'gemini'); assert.equal(body.openAIRequired, false);
+    for (const key of [geminiMarker, browserMarker]) {
+      assert.equal(JSON.stringify(body).includes(key), false); assert.equal(startupLogs.includes(key), false); assert.equal(diagnostics.includes(key), false);
+    }
+    const invalid = await request('/api/turkish-media/capabilities', { headers: { Cookie: cookie, 'x-elevenlabs-api-key': 'invalid' } });
+    assert.equal(invalid.status, 400); assert.equal((await invalid.json()).reason, 'MEDIA_CREDENTIAL_INVALID');
+    assert.ok(startupLogs.includes('synthetic-browser-capability'));
+    assert.ok(startupLogs.includes('"providerAccessVerified":false'));
   });
   await t.test('voice catalog fails safely when the backend key is absent', async () => {
     const response = await request('/api/turkish-media/voices', { headers: { Cookie: cookie } });
