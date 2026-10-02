@@ -114,7 +114,7 @@ Job QA: source duration/language/speakers, source/translated/generated utterance
 ## 5. ElevenLabs modelleri
 
 - STT: `scribe_v2`; diarization, word timestamps, automatic source language, audio event metadata, verbatim seçenekleri.
-- Final kalite: `eleven_v4`; doğrulanmış Text-to-Dialogue REST sözleşmesi ve canlı model/Türkçe capability kontrolü.
+- Final kalite: `eleven_v4`; doğrulanmış Text-to-Dialogue REST sözleşmesi ve uygulanan `/v1/models` model/Türkçe capability kontrolü.
 - Fast preview: `eleven_v4_turbo` config'de ayrılmıştır fakat resmî yeni Text-to-Dialogue WebSocket URL/protokolü erişilebilir kaynaklarda doğrulanamadığı için **kapalıdır**. Fast implementasyonu tamamlandı diye gösterilmez.
 - Forced Alignment: ayrı `/v1/forced-alignment`, gerçek fitted Türkçe ses + aynı metin; v4 STT yerine kullanılmaz.
 
@@ -122,7 +122,7 @@ Resmî kaynak/commit/parametre kanıtları: [API contract](turkish-media-api-con
 
 ## 6. Environment variables
 
-Backend'de `ELEVENLABS_API_KEY` ve yeni `OPENAI_API_KEY` gerekir; mevcut `APP_PASSWORD` erişim kontrolü korunur. Anahtarlar frontend, response, log veya commit'e eklenmedi.
+Çeviri/dublaj için backend'de `ELEVENLABS_API_KEY` ve yeni `OPENAI_API_KEY` gerekir; yalnız kaynak transkripti ElevenLabs anahtarıyla çalışır; mevcut `APP_PASSWORD` erişim kontrolü korunur. Anahtarlar frontend, response, log veya commit'e eklenmedi.
 
 Merkezi config: `DUB_QUALITY_MODE=quality`, `ELEVENLABS_DUB_MODEL=eleven_v4`, `ELEVENLABS_FAST_MODEL=eleven_v4_turbo`, `ELEVENLABS_STT_MODEL=scribe_v2`, `ELEVENLABS_OUTPUT_FORMAT=mp3_44100_128`, `DUB_MAX_CONCURRENCY=2`, `DUB_CACHE_TTL=86400`, `DUB_DEFAULT_LANGUAGE=tr`, `TRANSLATION_PROVIDER=openai`, `TRANSLATION_MODEL=gpt-4.1-mini`. Ek directory/timeout/retry/translation version ve opsiyonel pronunciation dictionary ayarlarının tamamı [README](../README.md) tablosundadır.
 
@@ -148,7 +148,7 @@ Repository ayrı bundle/build/lint komutu tanımlamaz. Render build komutu olan 
 
 - **Fast mode bekliyor:** yeni v4 Turbo WebSocket sözleşmesi olmadan URL/mesaj şeması tahmin edilmedi.
 - **Kaynak ses cinsiyeti otomatik doğrulanmıyor:** Scribe gender sağlamaz. Sabit mapping ve manuel katalog seçimi vardır; belirsiz source speaker erkek/kadın diye uydurulmaz.
-- **Speech ducking gerçek stem separation değildir:** konuşma sırasında orijinal konuşmayla birlikte müzik/SFX de susturulabilir. Kaynaktan ayrılmış gerçek background varsa servis kullanabilir; otomatik vocal separation eklenmedi.
+- **Speech ducking gerçek stem separation değildir:** konuşma sırasında orijinal konuşmayla birlikte müzik/SFX de kesilir. Ayrılmış gerçek background desteği audio helper'ındadır; mevcut ürün pipeline'ı harici background kabul etmez. Otomatik vocal separation eklenmedi.
 - **Live listening QA yapılmadı:** whisper/arka plan ASR doğruluğu, çeviri doğallığı/semantik sadakat, v4/TR erişimi, pronunciation dictionary uyumluluğu ve gerçek Android/iOS fullscreen/audio policy production kaynakla kontrol edilmelidir.
 - **FFprobe:** exact container duration için production'da bulunması gerekir; yoksa FFmpeg header fallback 0.01 saniye hassasiyetindedir.
 - **Abonelik/maliyet:** WAV açık format hatasında aynı model MP3 kullanılır. Sağlayıcı idempotency garantisi doğrulanmadığından yanıtı kaybolmuş ücretli HTTP retry'sinin ikinci kez ücretlendirilmesini kesin önleme garantisi verilmez.
