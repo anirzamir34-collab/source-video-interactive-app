@@ -591,8 +591,16 @@ const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
 let browserElevenLabsApiKey = '';
 let mediaCapabilitiesRefreshTimer = null;
 
+function normalizedProviderKey(value, assignmentName = '') {
+  return String(value || '')
+    .trim()
+    .replace(assignmentName ? new RegExp(`^${assignmentName}\\s*=\\s*`, 'i') : /^$/, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
+}
+
 function activeElevenLabsApiKey() {
-  return String(els.elevenLabsApiKeyInput?.value || browserElevenLabsApiKey || '').trim();
+  return normalizedProviderKey(els.elevenLabsApiKeyInput?.value || browserElevenLabsApiKey || '', 'ELEVENLABS_API_KEY');
 }
 
 function renderElevenLabsApiKeyState() {
@@ -638,9 +646,8 @@ function invalidateTurkishMediaCredentials(refreshDelay = 0) {
 
 function saveElevenLabsApiKey() {
   if (state.analysisInProgress || state.savedGameBusy) return;
-  const key = activeElevenLabsApiKey().replace(/^ELEVENLABS_API_KEY\s*=\s*/i, '')
-    .replace(/^['"]|['"]$/g, '').trim();
-  if (key.length < 20 || key.length > 512 || /\s/.test(key)) {
+  const key = activeElevenLabsApiKey();
+  if (key.length < 20 || key.length > 1024 || /\s/.test(key)) {
     if (els.elevenLabsApiKeyStatus) els.elevenLabsApiKeyStatus.textContent = 'Anahtar eksik veya boşluk içeriyor';
     return;
   }
@@ -709,12 +716,8 @@ function renderGeminiApiKeyState() {
 
 function saveGeminiApiKey() {
   if (state.analysisInProgress || state.savedGameBusy) return;
-  const key = String(els.geminiApiKeyInput?.value || '')
-    .trim()
-    .replace(/^GEMINI_API_KEY\s*=\s*/i, '')
-    .replace(/^['"]|['"]$/g, '')
-    .trim();
-  if (key.length < 20 || key.length > 256 || /\s/.test(key)) {
+  const key = normalizedProviderKey(els.geminiApiKeyInput?.value || '', 'GEMINI_API_KEY');
+  if (key.length < 20 || key.length > 512 || /\s/.test(key)) {
     if (els.apiKeyStatus) els.apiKeyStatus.textContent = 'Anahtar eksik veya boşluk içeriyor';
     return;
   }
