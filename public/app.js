@@ -1436,20 +1436,33 @@ els.analyzeBtn.addEventListener('click', async () => {
   fastStoryboardPreparation?.catch(() => {});
   session.audioContextStatus = 'pending';
   const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality });
-  const reusableMedia = session.mediaManifest && session.mediaModeKey === mediaModeKey;
+  const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
+  const reusableMedia = !contextualMedia && session.mediaManifest && session.mediaModeKey === mediaModeKey;
   session.mediaModeKey = mediaModeKey;
   let result;
   try {
-    result = reusableMedia
-      ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
-        subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
-      : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
-        transcriptOnly: !modes.dubbing && !modes.subtitles }, qualityMode: modes.dubQuality, sceneContext: [] });
-    session.mediaManifest = result;
+    if (contextualMedia) {
+      // First pass is source-only: Scribe establishes real words/timestamps.
+      // Final translation/voice selection waits for the visual analysis so
+      // verified speaker↔character matches can collapse diarization fragments
+      // and choose the correct stable voice automatically.
+      result = session.sourceTranscript
+        ? { sourceTranscript: session.sourceTranscript }
+        : await mediaClient.start(file, { outputs: { dub: false, subtitles: false, transcriptOnly: true },
+          qualityMode: modes.dubQuality, sceneContext: [] });
+      session.transcriptManifest = result;
+    } else {
+      result = reusableMedia
+        ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
+          subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
+        : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
+          transcriptOnly: !modes.dubbing && !modes.subtitles }, qualityMode: modes.dubQuality, sceneContext: [] });
+      session.mediaManifest = result;
+    }
     updateSourceTranscript(result.sourceTranscript);
     renderMediaControls();
   } catch (error) {
-    session.mediaManifest = null;
+    if (!contextualMedia) session.mediaManifest = null;
     session.audioContextStatus = 'unavailable';
     logEngineEvent('SOURCE_TRANSCRIPT_UNAVAILABLE', { message: String(error.message || error).slice(0, 300) });
     if (fastStoryboardPreparation) {
