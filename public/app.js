@@ -1219,8 +1219,8 @@ function verifiedSpeakerVoiceHints(analysis = state.analysis) {
     const characterId = String(character.id || character.participantTrackId || '').trim();
     if (!characterId) continue;
     const gender = genderFrom(character);
-    const emotion = String(character.emotion || character.emotionalTone || '').trim();
-    const tone = String(character.tone || story.emotionalTone || '').trim();
+    const emotion = String(character.voiceEmotion || character.emotion || character.emotionalTone || '').trim();
+    const tone = String(character.voiceTone || character.tone || story.emotionalTone || '').trim();
     for (const speakerId of speakerIds) {
       hints[speakerId] = {
         characterId,
