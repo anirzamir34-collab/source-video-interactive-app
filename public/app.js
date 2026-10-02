@@ -1997,6 +1997,27 @@ els.analyzeBtn.addEventListener('click', async () => {
   } catch (error) {
     console.warn("Analysis could not be saved locally:", error);
   }
+  if (modes.motion && (modes.dubbing || modes.subtitles)) {
+    const speakerHints = verifiedSpeakerVoiceHints(normalized);
+    els.analysisState.textContent = 'PREPARING_TURKISH_MEDIA';
+    els.analysisTitle.textContent = 'Konuşmacılar eşleştiriliyor ve Türkçe medya hazırlanıyor';
+    els.analysisOutput.textContent = [
+      `${Object.keys(speakerHints).length} kaynak konuşmacı kimliği görsel karakterlerle doğrulandı.`,
+      'Aynı kişiye ait parçalanmış konuşmacı kimlikleri tek sabit Türkçe sese bağlanıyor.',
+      'Ses seçimi; doğrulanmış karakter profili, Türkçe desteği ve mevcut duygu/ton etiketleriyle otomatik yapılıyor.'
+    ].join('\n');
+    const finalMedia = await mediaClient.start(file, {
+      outputs: { dub: modes.dubbing, subtitles: modes.subtitles },
+      qualityMode: modes.dubQuality,
+      sceneContext: verifiedMediaSceneContext(),
+      speakerHints
+    });
+    session.mediaManifest = finalMedia;
+    session.mediaModeKey = mediaModeKey;
+    updateSourceTranscript(finalMedia.sourceTranscript);
+    renderMediaControls();
+  }
+
   els.analysisState.textContent = body.partial ? 'PARTIAL_TIMELINE_READY' : 'TIMELINE_READY';
   els.analysisTitle.textContent = `${body.partial ? 'Kısmi analiz hazır · ' : ''}${normalized.actions.length} doğrulanmış aksiyon`;
   els.analysisOutput.textContent = [
