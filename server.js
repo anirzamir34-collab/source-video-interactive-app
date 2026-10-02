@@ -1439,7 +1439,7 @@ app.post('/api/gemini-key-status', async (req, res) => {
     });
   }
 
-  const model = process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
+  const model = process.env.TRANSLATION_MODEL || process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
   try {
     const ai = new GoogleGenAI({ apiKey });
     await ai.models.generateContent({
