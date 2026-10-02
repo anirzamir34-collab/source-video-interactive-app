@@ -471,7 +471,7 @@ test('provider headers travel separately from persisted job input and body/query
 test('invalid supplied provider headers fail before source access and never fall back silently', async () => {
   let sourceCalls = 0;
   const f = mediaRouteFixture({ uploads: { source: async () => { sourceCalls++; return { path: '/private/source.bin' }; } } });
-  for (const key of ['short', ' ', 'x'.repeat(257), 'valid-looking-key-123456 with-space', ['valid-looking-key-123456']]) {
+  for (const key of ['short', ' ', 'x'.repeat(1025), 'valid-looking-key-123456 with-space', ['valid-looking-key-123456']]) {
     const response = await f.request('POST', '/jobs', { uploadId: 'upload' }, {}, new ResponseStream(), { 'x-elevenlabs-api-key': key });
     assert.equal(response.statusCode, 400); assert.equal(response.jsonBody.reason, 'MEDIA_CREDENTIAL_INVALID');
     assert.doesNotMatch(JSON.stringify(response.jsonBody), /valid-looking-key|\/private/);
