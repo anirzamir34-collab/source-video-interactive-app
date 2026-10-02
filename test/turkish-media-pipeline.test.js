@@ -387,6 +387,7 @@ test('job retry reuses completed source extraction after a failed provider stage
   const failed = await completedJob(jobs, initial.id);
   assert.equal(failed.state, 'FAILED');
   assert.equal(failed.error.code, 'PROVIDER_HTTP_503');
+  assert.equal(failed.qualityReport.sourceDuration, 12, 'failed ASR retains the measured source duration in QA');
   assert.ok(!failed.error.message.includes('eleven-server-key'));
   await jobs.retry(initial.id);
   const restored = await completedJob(jobs, initial.id);

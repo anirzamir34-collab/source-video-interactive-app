@@ -14,6 +14,7 @@ function section(start, end) {
 }
 
 const branch = section('// The URL cache supplies one complete local source', '  const remoteStoryboardSource');
+const visualRequest = section('  const remoteStoryboardSource', '\n            body = await response.json();');
 const updateTranscript = section('function updateSourceTranscript(', '\nfunction onTurkishMediaStatus(');
 const selectedModes = section('function selectedAnalysisModes(', '\nfunction updateAnalysisModesUI(');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -56,7 +57,7 @@ function sourceManifest() {
 }
 
 function fixture({ motion = true, subtitles = false, dubbing = false, remote = true,
-  prepare, extract, start, load, save, session: suppliedSession } = {}) {
+  prepare, extract, start, load, save, visual = false, session: suppliedSession } = {}) {
   const completeFile = new Blob(['complete cached source video'], { type: 'video/mp4' });
   completeFile.name = 'cached-source.mp4';
   const session = suppliedSession || { file: null, sourceTranscript: null, mediaManifest: null, storyboard: null };
@@ -66,9 +67,13 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
   els.motionMode.checked = motion;
   els.subtitleMode.checked = subtitles;
   els.dubMode.checked = dubbing;
-  const calls = { prepare: [], extract: [], start: [], load: [], save: [], events: [], renders: 0 };
+  const calls = { prepare: [], extract: [], start: [], load: [], save: [], events: [], visual: [], renders: 0 };
   const scope = vm.createContext({
-    state, els, sourceContextAdapter,
+    state, els, sourceContextAdapter, Blob, FormData, AbortSignal,
+    adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
+    normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}),
+    geminiRequestHeaders: () => ({}),
+    fetch: async (url, options) => { calls.visual.push({ url, options }); return { ok: true }; },
     prepareStoryboardSource: async (selectedSession, file) => {
       calls.prepare.push({ session: selectedSession, file });
       const result = prepare ? await prepare(selectedSession, file) : completeFile;
@@ -97,7 +102,10 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     renderMediaControls: () => { calls.renders += 1; },
     logEngineEvent: (type, data) => calls.events.push({ type, data: copy(data) })
   });
-  vm.runInContext(`${updateTranscript}\n${selectedModes}\nasync function runBranch(file, session, modes) {\n${branch}\nreturn { file, fastStoryboardPreparation };\n}`, scope);
+  // The optional continuation executes the real storyboard request setup,
+  // then returns at the first fetch before unrelated response handling starts.
+  const continuation = visual ? `${visualRequest}\nreturn { file, fastStoryboardPreparation, response };\n}\n} finally {}\n}\n}` : '';
+  vm.runInContext(`${updateTranscript}\n${selectedModes}\nasync function runBranch(file, session, modes) {\nconst requestedProtagonist = '';\nlet analysisModeKey = '';\n${branch}\n${continuation}\nreturn { file, fastStoryboardPreparation };\n}`, scope);
   return { scope, state, els, session, calls, completeFile,
     run: file => scope.runBranch(file ?? null, session, scope.selectedAnalysisModes()) };
 }
@@ -193,10 +201,10 @@ test('subtitle-only analysis skips frame extraction and awaits the saved-game wr
   assert.equal(finished, true);
 });
 
-test('backend failure remains unavailable and cannot manufacture source speech or a ready game', async () => {
+test('requested subtitles fail explicitly when source transcription fails and cannot manufacture speech or a ready game', async () => {
   const failedJob = new Error('Backend source transcription failed');
   const preparedFrames = { frames: ['retained visual source frame'] };
-  const f = fixture({ start: async () => { throw failedJob; }, extract: () => Promise.resolve(preparedFrames) });
+  const f = fixture({ subtitles: true, start: async () => { throw failedJob; }, extract: () => Promise.resolve(preparedFrames) });
   await assert.rejects(f.run(), error => error === failedJob);
   assert.equal(f.session.mediaManifest, null);
   assert.equal(f.session.audioContextStatus, 'unavailable');
@@ -209,4 +217,51 @@ test('backend failure remains unavailable and cannot manufacture source speech o
   assert.equal(f.calls.save.length, 0);
   assert.equal(f.session.storyboard, preparedFrames, 'independent source frames remain available for a retry');
   assert.deepEqual(f.calls.events, [{ type: 'SOURCE_TRANSCRIPT_UNAVAILABLE', data: { message: failedJob.message } }]);
+});
+
+test('motion-only analysis continues to the real visual request with prepared source frames and no speech evidence after a media failure', async () => {
+  const failedJob = new Error('Source audio is silent or the media provider is unavailable');
+  const sheet = new Blob(['verified source frame sheet'], { type: 'image/jpeg' });
+  const storyboard = { sheets: [sheet], timestamps: [0, 15], duration: 30, totalBytes: sheet.size };
+  const f = fixture({ visual: true, start: async () => { throw failedJob; }, extract: () => Promise.resolve(storyboard) });
+  // A reused session must not carry its earlier speech into this visual run.
+  f.state.sourceTranscript = sourceManifest().sourceTranscript;
+  f.state.sourceContext = sourceContextAdapter(f.state.sourceTranscript);
+  f.session.sourceTranscript = f.state.sourceTranscript;
+  await f.run();
+  assert.equal(f.calls.extract.length, 1);
+  assert.equal(f.session.storyboard, storyboard);
+  assert.equal(f.calls.visual.length, 1, 'the actual source storyboard analysis request still runs');
+  const request = f.calls.visual[0];
+  assert.equal(request.url, '/api/gemini-storyboard-analyze');
+  assert.equal(request.options.method, 'POST');
+  assert.equal(request.options.body.getAll('storyboards').length, 1);
+  assert.equal(await request.options.body.get('storyboards').text(), await sheet.text());
+  assert.equal(request.options.body.get('duration'), '30');
+  assert.equal(request.options.body.get('dialogueContext'), '[]');
+  assert.equal(request.options.body.get('dialogueSpeakerContext'), '[]');
+  assert.equal(request.options.body.get('sensoryAudioContext'), '[]');
+  assert.equal(f.state.sourceTranscript, null);
+  assert.equal(f.state.sourceContext, null);
+  assert.equal(f.session.sourceTranscript, null);
+  assert.equal(f.session.mediaManifest, null);
+  assert.equal(f.session.audioContextStatus, 'unavailable');
+  assert.equal(f.state.savedGameReady, false);
+  assert.equal(f.calls.save.length, 0);
+  assert.equal(f.calls.start.length, 1, 'no alternate speech request is attempted');
+  assert.deepEqual(f.calls.events, [{ type: 'SOURCE_TRANSCRIPT_UNAVAILABLE', data: { message: failedJob.message } }]);
+});
+
+test('requested dubbing remains strict and prevents visual provider work after a source media failure', async () => {
+  const failedJob = new Error('Turkish dubbing failed');
+  const storyboard = { sheets: [new Blob(['source frames'])], timestamps: [0], duration: 30, totalBytes: 13 };
+  const f = fixture({ visual: true, dubbing: true, start: async () => { throw failedJob; },
+    extract: () => Promise.resolve(storyboard) });
+  await assert.rejects(f.run(), error => error === failedJob);
+  assert.equal(f.calls.visual.length, 0);
+  assert.equal(f.session.storyboard, storyboard);
+  assert.equal(f.session.audioContextStatus, 'unavailable');
+  assert.equal(f.state.sourceContext, null);
+  assert.equal(f.state.savedGameReady, false);
+  assert.equal(f.calls.save.length, 0);
 });

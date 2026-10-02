@@ -776,7 +776,8 @@ function updateSourceTranscript(transcript) {
   const session = state.analysisSession;
   if (session) {
     session.sourceTranscript = state.sourceTranscript;
-    session.audioContextStatus = state.sourceContext?.segments.length ? 'ready' : 'no_speech';
+    session.audioContextStatus = transcript
+      ? (state.sourceContext?.segments.length ? 'ready' : 'no_speech') : 'unavailable';
   }
 }
 
@@ -1202,7 +1203,12 @@ els.analyzeBtn.addEventListener('click', async () => {
     if (fastStoryboardPreparation) {
       session.storyboard = await fastStoryboardPreparation.catch(() => null);
     }
-    throw error;
+    if (!modes.motion || modes.dubbing || modes.subtitles) throw error;
+    // Visual-only analysis may continue without speech evidence, including a
+    // genuinely silent source or an unavailable ASR service. Requested Turkish
+    // media still fails explicitly above; no alternate speech model is used.
+    updateSourceTranscript(null);
+    els.analysisOutput.textContent = 'Kaynak konuşma verisi kullanılamıyor. Görsel analiz yalnız kaynak video kareleriyle devam ediyor.';
   }
   if (!modes.motion) {
     state.analysis = null;
