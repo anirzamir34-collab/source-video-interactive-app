@@ -112,7 +112,7 @@
 
         <div class="api-key-setting">
           <div class="api-key-setting__copy">
-            <b>HAREKET ANALİZİ İÇİN GEMINI ANAHTARIN</b>
+            <b>KENDİ GEMINI API ANAHTARIN</b>
             <small id="apiKeyStatus">Sunucu anahtarı kullanılıyor</small>
           </div>
           <div class="api-key-setting__row">
@@ -122,7 +122,22 @@
             <button id="testGeminiApiKeyBtn" class="hidden" type="button">Test et</button>
             <button id="clearGeminiApiKeyBtn" class="hidden" type="button">Sil</button>
           </div>
-          <small>Yalnız hareket ve görüntü analizi için kullanılır. Anahtar bu tarayıcı oturumunda tutulur.</small>
+          <small>İsteğe bağlıdır; boş bırakırsan sunucu anahtarı kullanılır. Hareket analizi ve Türkçe çeviride kendi anahtarın önceliklidir.</small>
+        </div>
+
+        <div class="api-key-setting">
+          <div class="api-key-setting__copy">
+            <b>ELEVENLABS DOĞAL DUBLAJ</b>
+            <small id="elevenLabsApiKeyStatus">Sunucu anahtarı kullanılıyor</small>
+          </div>
+          <div class="api-key-setting__row">
+            <input id="elevenLabsApiKeyInput" type="password" inputmode="text"
+              placeholder="ElevenLabs API anahtarın" autocomplete="off" spellcheck="false" maxlength="512" />
+            <button id="saveElevenLabsApiKeyBtn" type="button">Kullan</button>
+            <button id="testElevenLabsApiKeyBtn" class="hidden" type="button">Test et</button>
+            <button id="clearElevenLabsApiKeyBtn" class="hidden" type="button">Sil</button>
+          </div>
+          <small>Anahtarını yazman yeterli. Kaynak konuşma tespiti, doğal dublaj ve ses eşitleme için kullanılır; yalnız bu açık sekmede tutulur.</small>
         </div>
 
         <label class="mode-switch">

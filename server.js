@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
-import { loadMediaConfig } from './lib/turkish-media/config.js';
+import { loadMediaConfig, GEMINI_DEFAULT_MODEL } from './lib/turkish-media/config.js';
 import { createMediaCache } from './lib/turkish-media/cache.js';
 import { createLimiter } from './lib/turkish-media/limiter.js';
 import { createAudioService } from './lib/turkish-media/audio.js';
@@ -653,7 +653,7 @@ Rules:
       ];
       return generateStoryboardWithRetry(async () => {
         const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+          model: process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL,
           contents: [{ role: "user", parts }],
           config: {
             responseMimeType: "application/json",
@@ -1436,7 +1436,7 @@ app.post('/api/gemini-key-status', async (req, res) => {
     });
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const model = process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
   try {
     const ai = new GoogleGenAI({ apiKey });
     await ai.models.generateContent({
@@ -1488,6 +1488,9 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'source-video-interactive-app',
     deploymentCommit: process.env.RENDER_GIT_COMMIT || null,
     turkishMedia: { qualityMode: mediaConfig.qualityMode, pipelineVersion: mediaConfig.version,
+      translationProvider: mediaConfig.translation.provider, openAIRequired: false,
+      browserKeysSupported: { elevenLabs: true, gemini: true },
+      serverGeminiConfigured: Boolean(mediaConfig.translation.apiKey),
       models: { transcription: mediaConfig.elevenLabs.sttModel, quality: mediaConfig.elevenLabs.dubModel } } });
 });
 
@@ -1538,15 +1541,22 @@ async function runConfiguredVideoProbe() {
 async function checkTurkishMediaRoutes() {
   if (!APP_PASSWORD) return;
   try {
-    const response = await fetch(`http://127.0.0.1:${PORT}/api/turkish-media/capabilities`, {
-      headers: { Cookie: `${AUTH_COOKIE}=${expectedAuthToken()}` }, signal: AbortSignal.timeout(5000),
-    });
-    const result = await response.json();
-    console.log('[turkish-media-route-check]', JSON.stringify({
-      route: '/api/turkish-media/capabilities', status: response.status,
-      configured: result.configured === true, transcriptionConfigured: result.transcriptionConfigured === true,
-      translationConfigured: result.translationConfigured === true, qualityMode: result.qualityMode,
-    }));
+    for (const check of ['server-capability', 'synthetic-browser-capability']) {
+      const response = await fetch(`http://127.0.0.1:${PORT}/api/turkish-media/capabilities`, {
+        headers: { Cookie: `${AUTH_COOKIE}=${expectedAuthToken()}`,
+          ...(check === 'synthetic-browser-capability' ? { 'x-elevenlabs-api-key': 'browser-capability-check-only-123456' } : {}) },
+        signal: AbortSignal.timeout(5000),
+      });
+      const result = await response.json();
+      // This checks header routing and configuration only. It makes no model,
+      // voice-catalog or synthesis request and cannot prove provider access.
+      console.log('[turkish-media-route-check]', JSON.stringify({
+        check, providerAccessVerified: false, route: '/api/turkish-media/capabilities', status: response.status,
+        configured: result.configured === true, transcriptionConfigured: result.transcriptionConfigured === true,
+        translationConfigured: result.translationConfigured === true, translationProvider: result.translationProvider,
+        openAIRequired: false, qualityMode: result.qualityMode,
+      }));
+    }
   } catch {
     console.error('[turkish-media-route-check]', 'Authenticated media endpoint diagnostics failed.');
   }

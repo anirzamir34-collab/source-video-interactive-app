@@ -117,6 +117,7 @@ test('the live server handler reports refused chapters without retrying or split
       resolveGeminiApiKey: () => 'test-only', emptyGeminiUsage: () => ({ requests: 0 }),
       addGeminiUsage: usage => { usage.requests += 1; },
       storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
+      GEMINI_DEFAULT_MODEL: 'gemini-test-model',
       process: { env: {} }, console: { warn() {}, error() {} }
     });
     const req = { body: { chunkIndex, chunkCount: 12, chunkStart: chunkIndex * 12,

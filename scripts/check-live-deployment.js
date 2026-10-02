@@ -13,6 +13,12 @@ while (Date.now() < deadline) {
           health.turkishMedia?.models?.transcription !== 'scribe_v2') {
         throw new Error('The deployed Turkish media models or Quality mode differ from the production contract.');
       }
+      if (health.turkishMedia?.translationProvider !== 'gemini' ||
+          health.turkishMedia?.openAIRequired !== false ||
+          health.turkishMedia?.browserKeysSupported?.elevenLabs !== true ||
+          health.turkishMedia?.serverGeminiConfigured !== true) {
+        throw new Error('Production must accept browser ElevenLabs plus server Gemini without requiring OpenAI.');
+      }
       for (const route of ['/api/turkish-media/capabilities', '/api/turkish-media/voices']) {
         const check = await fetch(`${base}${route}`, { signal: AbortSignal.timeout(10000) });
         const body = await check.json();
@@ -21,6 +27,9 @@ while (Date.now() < deadline) {
       console.log(JSON.stringify({ event: 'production_health_verified', url: base, commit: expected,
         healthStatus: response.status, qualityMode: health.turkishMedia.qualityMode,
         transcriptionModel: health.turkishMedia.models.transcription, dubModel: health.turkishMedia.models.quality,
+        translationProvider: health.turkishMedia.translationProvider, openAIRequired: health.turkishMedia.openAIRequired,
+        browserElevenLabsSupported: health.turkishMedia.browserKeysSupported.elevenLabs,
+        serverGeminiConfigured: health.turkishMedia.serverGeminiConfigured,
         mediaAuthentication: 'verified' }));
       process.exit(0);
     }

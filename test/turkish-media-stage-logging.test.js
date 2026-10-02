@@ -101,7 +101,8 @@ test('full long errors retain their tail while redacting credentials and quoted 
   const text = 'x'.repeat(5000) + ' Tail survives. configured-secret ' +
     '{"authorization":"Bearer quoted-token", "xi-api-key":"quoted key with spaces", "api_key":"json-token"} ' +
     "{'Authorization':'Basic basic-token', 'api-key':'single-token'} " +
-    'Bearer plain-token xi-api-key: header-token api_key=bare-token ' + JSON.stringify('escaped-"secret');
+    'Bearer plain-token Authorization: Bearer header-bearer Authorization: Basic header-basic ' +
+    'xi-api-key: header-token api_key=bare-token ' + JSON.stringify('escaped-"secret');
   const error = new Error(text);
   f.logger.error('PROVIDER_REQUEST', error);
   const entry = f.entries[0];
@@ -111,7 +112,7 @@ test('full long errors retain their tail while redacting credentials and quoted 
   assert.ok(entry.error.stack.length > 5000);
   const logged = JSON.stringify(entry);
   for (const secret of ['configured-secret', 'quoted-token', 'quoted key with spaces', 'json-token', 'basic-token',
-    'single-token', 'plain-token', 'header-token', 'bare-token', 'escaped-']) assert.ok(!logged.includes(secret), secret);
+    'single-token', 'plain-token', 'header-bearer', 'header-basic', 'header-token', 'bare-token', 'escaped-']) assert.ok(!logged.includes(secret), secret);
   assert.ok(logged.includes('[REDACTED]'));
 });
 
@@ -165,16 +166,20 @@ test('synchronous or asynchronous logging sink failures do not alter success or 
 });
 
 test('configured logging secrets include backend credential categories without retaining unrelated environment values', () => {
-  const secrets = configuredLogSecrets({ elevenLabs: { apiKey: 'config-eleven' }, translation: { apiKey: 'config-openai' } }, {
+  const secrets = configuredLogSecrets({ elevenLabs: { apiKey: 'config-eleven' }, translation: { apiKey: 'config-gemini' } }, {
     APP_PASSWORD: 'app-password', GEMINI_API_KEY: 'gemini-key', ELEVENLABS_API_KEY: 'config-eleven',
     SERVICE_ACCESS_TOKEN: 'access', SERVICE_REFRESH_TOKEN: 'refresh', SERVICE_AUTH_TOKEN: 'auth',
     SERVICE_SECRET: 'secret', SERVICE_PASSWORD: 'password', SERVICE_PRIVATE_KEY: 'private',
     SERVICE_SIGNING_KEY: 'signing', AWS_SECRET_ACCESS_KEY: 'aws-secret', AWS_SESSION_TOKEN: 'aws-session',
+    OPENAI_API_KEY: 'legacy-provider-secret',
     PORT: '10000', GEMINI_MODEL: 'visible-model', DUB_CACHE_DIRECTORY: '/tmp/cache', TOKEN_BUDGET: '4096',
   });
-  assert.deepEqual(new Set(secrets), new Set(['config-eleven', 'config-openai', 'app-password', 'gemini-key', 'access',
-    'refresh', 'auth', 'secret', 'password', 'private', 'signing', 'aws-secret', 'aws-session']));
+  assert.deepEqual(new Set(secrets), new Set(['config-eleven', 'config-gemini', 'app-password', 'gemini-key', 'access',
+    'refresh', 'auth', 'secret', 'password', 'private', 'signing', 'aws-secret', 'aws-session', 'legacy-provider-secret']));
   assert.equal(secrets.filter(value => value === 'config-eleven').length, 1);
   assert.ok(!secrets.includes('10000'));
   assert.ok(!secrets.includes('visible-model'));
+  const f = fixture({ secrets });
+  f.logger.error('LEGACY_DIAGNOSTIC', new Error('legacy-provider-secret'));
+  assert.ok(!JSON.stringify(f.entries).includes('legacy-provider-secret'), 'generic API_KEY category still redacts legacy keys');
 });
