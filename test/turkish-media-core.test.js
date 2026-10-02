@@ -60,13 +60,49 @@ test('canonical IDs are deterministic for source bytes and provider speaker mapp
 
 test('invalid or untimed meaningful speech fails instead of becoming a silent successful transcript', () => {
   for (const words of [[word('Hello', -1, 1)], [word('Hello', 1, 0)], [word('Hello', 1, 13)],
-    [word('Hello', NaN, 1)], [word('Hello', 1, 1)], [word('Hello', '1', 2)]]) {
+    [word('Hello', NaN, 1)], [word('Hello', '1', 2)]]) {
     assert.throws(() => normalizeScribeTranscript({ words }, { sourceHash: 'video', duration: 12 }));
   }
   assert.throws(() => normalizeScribeTranscript({ text: 'Actual source speech', words: [] }, { sourceHash: 'video', duration: 12 }), /TIMING_MISSING/);
   assert.throws(() => normalizeScribeTranscript({ words: [word('source', 0, 1, 'a', { type: 'unknown' })] }, { sourceHash: 'video', duration: 12 }), /UNKNOWN_SCRIBE_WORD_TYPE/);
   const silent = normalizeScribeTranscript({ text: '', words: [] }, { sourceHash: 'video', duration: 12 });
   assert.deepEqual(silent.utterances, []);
+});
+
+test('provider-rounded zero-duration speech is repaired without mutating Scribe word evidence', () => {
+  const source = { language_code: 'en', words: [
+    word('Yes.', 1, 1),
+    word('Next', 1.4, 2),
+    word('Done', 12, 12)
+  ] };
+  const original = structuredClone(source);
+  const transcript = normalizeScribeTranscript(source, { sourceHash: 'zero-duration-video', duration: 12 });
+
+  assert.equal(transcript.utterances.length, 3);
+  assert.deepEqual(transcript.utterances.map(row => [row.sourceStart, row.sourceEnd]), [
+    [1, 1.4],
+    [1.4, 2],
+    [11.5, 12],
+  ]);
+  assert.equal(transcript.utterances[0].timingRepair, 'zero-duration-provider-timestamp');
+  assert.equal(transcript.utterances[2].timingRepair, 'zero-duration-provider-timestamp');
+  assert.equal(transcript.utterances[0].words.find(row => row.type === 'word').start, 1);
+  assert.equal(transcript.utterances[0].words.find(row => row.type === 'word').end, 1);
+  assert.equal(transcript.utterances[2].words.find(row => row.type === 'word').start, 12);
+  assert.equal(transcript.utterances[2].words.find(row => row.type === 'word').end, 12);
+  assert.deepEqual(source, original);
+});
+
+test('zero-duration speech before an equal next boundary is backfilled instead of overlapping the next turn', () => {
+  const transcript = normalizeScribeTranscript({ words: [
+    word('Wait.', 3, 3, 'speaker_0'),
+    word('Now', 3, 3.6, 'speaker_1')
+  ] }, { sourceHash: 'equal-boundary-video', duration: 5 });
+
+  assert.equal(transcript.utterances[0].sourceEnd, 3);
+  assert.equal(transcript.utterances[0].sourceStart, 2.5);
+  assert.equal(transcript.utterances[0].timingRepair, 'zero-duration-provider-timestamp');
+  assert.equal(transcript.utterances[1].sourceStart, 3);
 });
 
 test('translation and dub coverage rejects missing, duplicate, foreign or mutated identities and preserves source evidence', () => {
