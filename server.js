@@ -1427,12 +1427,15 @@ function quotaRetrySeconds(details) {
 }
 
 app.post('/api/gemini-key-status', async (req, res) => {
-  const apiKey = clientGeminiApiKey(req);
+  const browserApiKey = clientGeminiApiKey(req);
+  const apiKey = browserApiKey || String(process.env.GEMINI_API_KEY || '').trim();
+  const source = browserApiKey ? 'browser' : 'server';
   if (!apiKey) {
-    return res.status(400).json({
+    return res.status(503).json({
       ok: false,
-      state: 'invalid',
-      message: 'Geçerli bir Gemini API anahtarı gönderilmedi.'
+      state: 'unconfigured',
+      source,
+      message: 'Gemini API anahtarı yapılandırılmamış.'
     });
   }
 
@@ -1449,17 +1452,23 @@ app.post('/api/gemini-key-status', async (req, res) => {
       state: 'available',
       model,
       checkedAt: Date.now(),
-      message: 'Anahtar çalışıyor ve analiz kotası kullanılabilir.'
+      source,
+      message: source === 'browser'
+        ? 'Kendi Gemini anahtarın çalışıyor ve kota kullanılabilir.'
+        : 'Sunucu Gemini anahtarı çalışıyor ve kota kullanılabilir.'
     });
   } catch (error) {
     const details = String(error?.message || error);
     const normalized = details.toLowerCase();
     const retryAfterSeconds = quotaRetrySeconds(details) || 0;
     if (normalized.includes('api_key_invalid') || normalized.includes('api key not valid') || normalized.includes('invalid api key')) {
-      return res.status(401).json({ ok: false, state: 'invalid', message: 'API anahtarı geçersiz.' });
+      return res.status(401).json({ ok: false, state: 'invalid', source, message: 'API anahtarı geçersiz.' });
     }
     if (normalized.includes('no credits') || normalized.includes('credit balance') || normalized.includes('prepay')) {
-      return res.status(402).json({ ok: false, state: 'no_credits', message: 'Bu anahtara bağlı hesapta kullanılabilir kredi yok.' });
+      return res.status(402).json({ ok: false, state: 'no_credits', source,
+        message: source === 'browser'
+          ? 'Kendi Gemini anahtarında kullanılabilir kredi yok.'
+          : 'Sunucu Gemini kredisi tükendi. Kendi Gemini API anahtarını girebilir veya sunucu bakiyesini yenileyebilirsin.' });
     }
     if (normalized.includes('resource_exhausted') || normalized.includes('429') || normalized.includes('quota')) {
       const daily = normalized.includes('per_day') || normalized.includes('per day') || normalized.includes('daily');
@@ -1467,17 +1476,19 @@ app.post('/api/gemini-key-status', async (req, res) => {
         ok: false,
         state: daily ? 'daily_limit' : 'rate_limited',
         retryAfterSeconds,
+        source,
         message: daily
           ? 'Bu projenin günlük ücretsiz kotası dolmuş.'
           : 'Anahtar şu anda hız/kota sınırında; biraz sonra tekrar denenebilir.'
       });
     }
     if (normalized.includes('permission_denied') || normalized.includes('403')) {
-      return res.status(403).json({ ok: false, state: 'forbidden', message: 'Anahtarın Gemini modeline erişim izni yok.' });
+      return res.status(403).json({ ok: false, state: 'forbidden', source, message: 'Anahtarın Gemini modeline erişim izni yok.' });
     }
     return res.status(502).json({
       ok: false,
       state: 'unavailable',
+      source,
       message: 'Anahtar şu anda doğrulanamadı; daha sonra tekrar dene.'
     });
   }
