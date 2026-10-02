@@ -32,7 +32,7 @@ async function fixture(t, { words = sourceWords(), failAlignmentOnce = false, mi
     DUB_CACHE_DIRECTORY: path.join(directory, 'cache') });
   const cache = createMediaCache({ directory: config.directory });
   const limiter = createLimiter(2);
-  const calls = { extract: 0, transcribe: 0, translate: [], synthesize: [], align: [], mix: [], fit: [], join: [] };
+  const calls = { extract: 0, transcribe: 0, translate: [], synthesize: [], align: [], mix: [], fit: [], join: [], logs: [] };
   let alignmentFailed = false;
   const audio = {
     async extractSource(_source, { directory: work }) {
@@ -123,10 +123,70 @@ async function fixture(t, { words = sourceWords(), failAlignmentOnce = false, mi
       return missingTranslation ? rows.slice(0, -1) : rows;
     },
   };
-  const pipeline = createTurkishMediaPipeline({ config, cache, limiter, elevenLabs, translationProvider, audio });
+  const pipeline = createTurkishMediaPipeline({ config, cache, limiter, elevenLabs, translationProvider, audio,
+    log: entry => calls.logs.push(entry) });
   const input = { source: { path: sourcePath }, directory: path.join(directory, 'work'), outputs: { dub: true }, qualityMode: 'quality' };
   return { pipeline, config, cache, limiter, audio, elevenLabs, translationProvider, input, calls, directory, sourcePath };
 }
+
+test('pipeline logs every required stage with paired durations and IDs without source or spoken text', async t => {
+  const f = await fixture(t);
+  await f.pipeline(f.input, { jobId: 'job-stage-test' });
+  const ends = f.calls.logs.filter(row => row.event === 'media_stage_end');
+  for (const name of ['scribe', 'speaker_mapping', 'turkish_translation', 'elevenlabs_v4', 'forced_alignment', 'subtitle_generation', 'final_mix']) {
+    assert.ok(ends.some(row => row.stage === name && row.outcome === 'completed'), `${name} must be observable`);
+  }
+  for (const end of ends) {
+    const starts = f.calls.logs.filter(row => row.operationId === end.operationId && row.event === 'media_stage_start');
+    assert.equal(starts.length, 1);
+    assert.equal(end.jobId, 'job-stage-test');
+    assert.ok(Number.isFinite(end.durationMs) && end.durationMs >= 0);
+    assert.ok(Number.isFinite(Date.parse(end.startedAt)) && Number.isFinite(Date.parse(end.endedAt)));
+  }
+  assert.equal(ends.filter(row => row.stage === 'forced_alignment' && row.segmentId).length, 2);
+  const serialized = JSON.stringify(f.calls.logs);
+  for (const privateValue of ['Hello.', 'Yes.', 'Merhaba.', 'Evet.', 'eleven-server-key', 'openai-server-key']) {
+    assert.ok(!serialized.includes(privateValue));
+  }
+});
+
+test('final-package cache reuse logs cache hits instead of claiming new provider work', async t => {
+  const f = await fixture(t);
+  await f.pipeline(f.input);
+  f.calls.logs.length = 0;
+  await f.pipeline(f.input, { jobId: 'cached-job' });
+  const ends = f.calls.logs.filter(row => row.event === 'media_stage_end' && row.stage !== 'pipeline');
+  assert.equal(ends.length, 8);
+  assert.ok(ends.every(row => row.outcome === 'cache_hit' && row.cacheScope === 'final-package'));
+  assert.equal(f.calls.synthesize.length, 1);
+  assert.equal(f.calls.transcribe, 1);
+});
+
+test('transcript-only logging marks unused media stages skipped and records Scribe completion', async t => {
+  const f = await fixture(t);
+  await f.pipeline({ ...f.input, outputs: { transcriptOnly: true } }, { jobId: 'source-only-job' });
+  const ends = f.calls.logs.filter(row => row.event === 'media_stage_end');
+  assert.ok(ends.some(row => row.stage === 'scribe' && row.outcome === 'completed'));
+  const skipped = ends.filter(row => row.outcome === 'skipped');
+  assert.equal(skipped.length, 6);
+  assert.ok(skipped.every(row => row.reason === 'transcript_only'));
+});
+
+test('failed alignment logs the full redacted provider error and useful stack with its source segment', async t => {
+  const f = await fixture(t);
+  f.elevenLabs.align = async (_file, text) => {
+    const error = new MediaError('PROVIDER_HTTP_422', `${'alignment-diagnostic '.repeat(120)}${text} eleven-server-key openai-server-key final-error-marker`);
+    error.stack = `${error.name}: ${error.message}\n    at mockedAlignment (provider.js:12:4)`;
+    throw error;
+  };
+  await assert.rejects(f.pipeline(f.input, { jobId: 'failed-job' }), { code: 'PROVIDER_HTTP_422' });
+  const failed = f.calls.logs.filter(row => row.stage === 'forced_alignment' && row.outcome === 'failed');
+  assert.equal(failed.length, 2);
+  assert.ok(failed.every(row => row.segmentId && row.jobId === 'failed-job' && row.error.message.length > 1500));
+  assert.ok(failed.every(row => row.error.message.endsWith('final-error-marker') && row.error.stack.includes('provider.js:12:4')));
+  const serialized = JSON.stringify(f.calls.logs);
+  for (const privateValue of ['Merhaba.', 'Evet.', 'eleven-server-key', 'openai-server-key']) assert.ok(!serialized.includes(privateValue));
+});
 
 test('pipeline retains all source identities and actual Forced Alignment offsets in both exported tracks', async t => {
   const f = await fixture(t);

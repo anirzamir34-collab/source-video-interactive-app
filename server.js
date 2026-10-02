@@ -20,6 +20,7 @@ import { createAudioService } from './lib/turkish-media/audio.js';
 import { createMediaUploads, MAX_UPLOAD_CHUNK_BYTES } from './lib/turkish-media/uploads.js';
 import { createMediaJobs } from './lib/turkish-media/jobs.js';
 import { installTurkishMediaRoutes } from './lib/turkish-media/routes.js';
+import { runtimeReady } from './lib/turkish-media/readiness.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1392,9 +1393,12 @@ app.get('/api/video-proxy', async (req, res) => {
 const mediaConfig = loadMediaConfig();
 const mediaCache = createMediaCache({ directory: path.join(mediaConfig.directory, 'cache'), ttlSeconds: mediaConfig.cacheTtlSeconds });
 const mediaLimiter = createLimiter(mediaConfig.concurrency);
-const mediaAudio = createAudioService({
+const mediaBinaries = {
   ffmpegPath: ffmpegPath && fs.existsSync(ffmpegPath) ? ffmpegPath : fs.existsSync('/usr/bin/ffmpeg') ? '/usr/bin/ffmpeg' : ffmpegPath || 'ffmpeg',
   ffprobePath: fs.existsSync('/usr/bin/ffprobe') ? '/usr/bin/ffprobe' : null,
+};
+const mediaAudio = createAudioService({
+  ...mediaBinaries,
   directory: path.join(mediaConfig.directory, 'audio'),
 });
 const mediaUploads = createMediaUploads({ directory: path.join(mediaConfig.directory, 'uploads'), ttlSeconds: mediaConfig.cacheTtlSeconds });
@@ -1480,7 +1484,11 @@ app.post('/api/gemini-key-status', async (req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'source-video-interactive-app' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: 'ok', service: 'source-video-interactive-app',
+    deploymentCommit: process.env.RENDER_GIT_COMMIT || null,
+    turkishMedia: { qualityMode: mediaConfig.qualityMode, pipelineVersion: mediaConfig.version,
+      models: { transcription: mediaConfig.elevenLabs.sttModel, quality: mediaConfig.elevenLabs.dubModel } } });
 });
 
 app.use('/api', (_req, res) => {
@@ -1527,8 +1535,32 @@ async function runConfiguredVideoProbe() {
   }
 }
 
+async function checkTurkishMediaRoutes() {
+  if (!APP_PASSWORD) return;
+  try {
+    const response = await fetch(`http://127.0.0.1:${PORT}/api/turkish-media/capabilities`, {
+      headers: { Cookie: `${AUTH_COOKIE}=${expectedAuthToken()}` }, signal: AbortSignal.timeout(5000),
+    });
+    const result = await response.json();
+    console.log('[turkish-media-route-check]', JSON.stringify({
+      route: '/api/turkish-media/capabilities', status: response.status,
+      configured: result.configured === true, transcriptionConfigured: result.transcriptionConfigured === true,
+      translationConfigured: result.translationConfigured === true, qualityMode: result.qualityMode,
+    }));
+  } catch {
+    console.error('[turkish-media-route-check]', 'Authenticated media endpoint diagnostics failed.');
+  }
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Source Video Interactive listening on ${PORT}`);
   console.log(`External analysis endpoint: ${EXTERNAL_ANALYSIS_URL}`);
+  console.log('[turkish-media-deployment]', JSON.stringify({ commit: process.env.RENDER_GIT_COMMIT || null,
+    qualityMode: mediaConfig.qualityMode, pipelineVersion: mediaConfig.version }));
+  void runtimeReady({ config: mediaConfig, env: process.env, ...mediaBinaries,
+    ffprobePath: mediaBinaries.ffprobePath || 'ffprobe' })
+    .then(report => console.log('[turkish-media-runtime]', JSON.stringify(report)))
+    .catch(() => console.error('[turkish-media-runtime]', 'Runtime diagnostics could not complete.'));
+  void checkTurkishMediaRoutes();
   void runConfiguredVideoProbe();
 });

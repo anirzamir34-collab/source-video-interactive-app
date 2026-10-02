@@ -54,6 +54,8 @@ Konuşmacı kimliği video boyunca sabittir; her konuşmacı farklı bir sese e�
 
 Frontend `PREPARING_AUDIO`, `TRANSCRIBING`, `DIARIZING`, `TRANSLATING`, `GENERATING_DUB`, `ALIGNING`, `BUILDING_SUBTITLES`, `MIXING_AUDIO`, `READY`, `FAILED` durumlarını gösterir; iptal ve retry vardır. 429/5xx/network/timeout kontrollü backoff + jitter ile tekrar edilir. Sağlayıcının doğrulanmış idempotency desteği olmadığı için yanıtı kaybolan bir ücretli HTTP isteğinin yeniden ücretlendirilmesini kesin olarak önleme garantisi yoktur; tamamlanan aşama cache'i ve single-flight gereksiz tekrarları azaltır.
 
+Medya aşamaları `media_stage_start` / `media_stage_end` JSON logları üretir. `timestamp`, `startedAt` ve `endedAt` UTC'dir; `durationMs`, `jobId`, `operationId` ve ilgili konuşmada `segmentId` bulunur. Sonuç `completed`, `cache_hit`, `shared_result`, `skipped`, `failed` veya `cancelled` olarak görünür; cache kapsamı ve atlama nedeni ayrıca kaydedilebilir. Hataların mesaj/stack/cause alanları maskelenir; API anahtarları, kaynak konuşma metni ve özel dosya yolları log metadata'sına taşınmaz.
+
 ### Yapılandırma
 
 | Değişken | Varsayılan / kullanım |
@@ -136,5 +138,7 @@ Tamamlanan analiz bölümleri aynı sekmede yeniden kullanılabilir. Okunamayan 
 ## Dağıtım
 
 Render yapılandırması: Node web service, build `npm ci`, start `npm start`; gerekli ortam değişkenlerini servis üzerinde tanımlayın. `/health`, oturum gerektirmeyen temel süreç kontrolüdür; ücretli analiz veya dublaj sağlayıcılarının sağlıklı olduğunu tek başına kanıtlamaz.
+
+Dağıtım doğrulamasında `/health` cevabındaki `deploymentCommit`, hedef Git SHA ile aynı olmalıdır; değer Render'ın `RENDER_GIT_COMMIT` ortamından gelir. Yanıt `no-store` kullanır ve Türkçe medya `qualityMode`, `pipelineVersion`, `scribe_v2` / `eleven_v4` model ayarlarını bildirir. Bunlar çalışan sürümü ve yapılandırmayı gösterir; gerçek sağlayıcı/model erişimi kanıtı değildir. Başlangıçtaki salt okunur runtime/route tanılamaları ayrı loglanır ve sunucunun dinlemeye başlamasını bekletmez.
 
 Yeni migration envanteri ve doğrulama sınırları: [Migration notes](docs/turkish-media-migration.md). Önceki sürümün tarihsel güvenilirlik raporu: [STABILITY_REPORT.md](STABILITY_REPORT.md).

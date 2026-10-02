@@ -36,6 +36,7 @@ test('HTTP integration: authentication, safe errors and restart-resumable full-s
   const port = await reservePort(t); if (port === null) return;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'vq-http-media-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const deploymentCommit = '0123456789abcdef0123456789abcdef01234567';
   let server, exited, diagnostics = '';
   const stop = async () => { if (server && server.exitCode === null) server.kill('SIGTERM'); await exited; };
   t.after(stop);
@@ -44,7 +45,8 @@ test('HTTP integration: authentication, safe errors and restart-resumable full-s
       cwd: new URL('..', import.meta.url), stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PORT: String(port), APP_PASSWORD: 'local-stability-test', GEMINI_API_KEY: '',
         ELEVENLABS_API_KEY: '', OPENAI_API_KEY: '', DUB_CACHE_DIRECTORY: directory,
-        DUB_QUALITY_MODE: 'quality', TRANSLATION_PROVIDER: 'openai', EXTERNAL_ANALYSIS_URL: 'http://127.0.0.1:1' }
+        DUB_QUALITY_MODE: 'quality', ELEVENLABS_STT_MODEL: 'scribe_v2', ELEVENLABS_DUB_MODEL: 'eleven_v4',
+        RENDER_GIT_COMMIT: deploymentCommit, TRANSLATION_PROVIDER: 'openai', EXTERNAL_ANALYSIS_URL: 'http://127.0.0.1:1' }
     });
     server.stderr.on('data', chunk => { diagnostics += chunk; });
     exited = new Promise(resolve => server.once('exit', resolve));
@@ -64,7 +66,16 @@ test('HTTP integration: authentication, safe errors and restart-resumable full-s
   const sourcePath = id => path.join(directory, 'uploads', id, 'source.bin');
 
   await t.test('health is public; media API and artifacts require authentication', async () => {
-    assert.equal((await (await request('/health')).json()).status, 'ok');
+    const health = await request('/health');
+    assert.equal(health.status, 200);
+    assert.equal(health.headers.get('cache-control'), 'no-store');
+    const body = await health.json();
+    assert.equal(body.status, 'ok');
+    assert.equal(body.service, 'source-video-interactive-app');
+    assert.equal(body.deploymentCommit, deploymentCommit);
+    assert.deepEqual(body.turkishMedia, { qualityMode: 'quality', pipelineVersion: 'turkish-media-v1',
+      models: { transcription: 'scribe_v2', quality: 'eleven_v4' } });
+    assert.doesNotMatch(JSON.stringify(body), /local-stability-test|apiKey|authorization|x-elevenlabs-key/i);
     for (const route of ['/api/missing', '/api/turkish-media/capabilities', '/api/turkish-media/voices', '/api/turkish-media/jobs/id/artifacts/mix.wav']) {
       const response = await request(route); assert.equal(response.status, 401);
       assert.equal((await response.json()).reason, 'AUTH_REQUIRED');

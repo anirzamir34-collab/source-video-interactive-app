@@ -49,6 +49,22 @@ test('400 errors do not retry and all public messages redact configured credenti
   assert.equal(redactMediaSecrets('api_key=private', []), 'api_key=[REDACTED]');
 });
 
+test('server provider errors preserve full redacted details while public responses remain bounded', async () => {
+  let calls = 0;
+  const details = `provider validation ${'diagnostic '.repeat(400)} private-key final-diagnostic-marker`;
+  const request = createMediaRequest({ maxRetries: 3, secrets: ['private-key'],
+    fetchImpl: async () => { calls += 1; return new Response(details, { status: 400 }); } });
+  let caught;
+  try { await request('https://provider.invalid'); } catch (error) { caught = error; }
+  assert.equal(caught.code, 'PROVIDER_HTTP_400');
+  assert.equal(calls, 1);
+  assert.ok(caught.message.length > 4000);
+  assert.ok(caught.message.endsWith('final-diagnostic-marker'));
+  assert.ok(caught.message.includes('[REDACTED]'));
+  assert.ok(!caught.message.includes('private-key'));
+  assert.equal(publicMediaError(caught).message.length, 1500);
+});
+
 test('accepted invalid JSON is not retried as a network failure', async () => {
   let calls = 0;
   const request = createMediaRequest({ maxRetries: 3, sleep: async () => {},
