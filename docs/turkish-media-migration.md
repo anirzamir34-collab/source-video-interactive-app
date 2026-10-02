@@ -206,3 +206,7 @@ Bu belgenin saved migration doğrulamasında syntax kontrolü ve `git diff --che
 - Disk/concurrency: Local single-flight ve lease'ler cross-process koordinasyon değildir. Çok instance ile ortak cache diski kullanımı ayrıca tasarlanmalıdır; disk kapasitesi/kota ve büyük kaynakların biriktirdiği derived WAV depolaması deployment'ta ölçülmelidir.
 
 Son QA'da gerçek kaynağın hash'i, source/translations/dubs tam ID/speaker/sayı eşitliği, actual mix süresi ve clipping, overlap, Forced Alignment kelimeleri, seek/pause/loop/panel akışı, her iki UTF-8 subtitle export'u, v1/v2 import ve offline mix playback birlikte değerlendirilir. Görsel kaynak kanıtı, `sourceVerified:false` seçilememe ve occurrence movement izolasyonu medya üretimi başarısıyla gevşetilmez.
+
+## Nihai CI doğrulaması
+
+Kod commit'i `b3dce68` için [GitHub Actions run 36950798205](https://github.com/anirzamir34-collab/source-video-interactive-app/actions/runs/36950798205) temiz `npm ci` ve tam `npm test` geçti: **741 test, 741 pass, 0 fail, 0 skip**. Production JavaScript syntax: **52 dosya**. Önceki yerel bağımlılık skip'leri bu nihai tam sonucun yerine kullanılmaz. Ayrıntılı dosya/build/env/remaining/deploy raporu: [Implementation report](turkish-media-implementation-report.md).
