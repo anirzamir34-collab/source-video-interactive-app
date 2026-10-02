@@ -857,9 +857,9 @@ function updateAnalysisModesUI() {
 
 function updateAnalyzeAvailability() {
   const hasMode = updateAnalysisModesUI();
-  const modes = selectedAnalysisModes();
   const busy = state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy;
-  const geminiBlocked = (modes.dubbing || modes.subtitles) &&
+  const needsGemini = Boolean(els.dubMode?.checked || els.subtitleMode?.checked);
+  const geminiBlocked = needsGemini &&
     ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
       .includes(String(state.geminiProviderStatus?.state || ''));
   els.analyzeBtn.disabled = busy || geminiBlocked || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
