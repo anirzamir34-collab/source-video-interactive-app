@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createMediaJobs } from '../lib/turkish-media/jobs.js';
+import { createMediaJobs, validateMediaCredentials } from '../lib/turkish-media/jobs.js';
 import { createMediaCache } from '../lib/turkish-media/cache.js';
 import { createLimiter } from '../lib/turkish-media/limiter.js';
 import { loadMediaConfig } from '../lib/turkish-media/config.js';
@@ -21,6 +21,24 @@ const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), 
   status, headers: { 'Content-Type': 'application/json' }
 });
 const credentials = geminiApiKey => ({ elevenLabsApiKey: browserKey, ...(geminiApiKey ? { geminiApiKey } : {}) });
+
+test('provider credentials accept opaque printable API key formats without assuming provider alphabets', () => {
+  const eleven = 'sk_live.v4/+opaque:=credential~1234567890';
+  const gemini = 'AIzaSy.example-opaque_key+1234567890';
+  assert.deepEqual(validateMediaCredentials({ elevenLabsApiKey: eleven, geminiApiKey: gemini }), {
+    elevenLabsApiKey: eleven,
+    geminiApiKey: gemini,
+  });
+  assert.equal(validateMediaCredentials({ elevenLabsApiKey: ' '.repeat(4) + eleven + ' ' }).elevenLabsApiKey, eleven);
+});
+
+test('provider credential validation still rejects whitespace, controls, tiny and unbounded values', () => {
+  for (const bad of ['short', 'valid-looking-key-but has-space', 'valid-looking-key\nnewline']) {
+    assert.throws(() => validateMediaCredentials({ elevenLabsApiKey: bad }), /ElevenLabs API anahtarı/);
+  }
+  assert.throws(() => validateMediaCredentials({ elevenLabsApiKey: 'x'.repeat(1025) }), /ElevenLabs API anahtarı/);
+  assert.throws(() => validateMediaCredentials({ geminiApiKey: 'x'.repeat(513) }), /Gemini API anahtarı/);
+});
 
 function wave(duration) {
   const sampleRate = 8000;
