@@ -143,9 +143,10 @@ test('Scribe preserves verbatim words with fresh multipart bodies and cached sou
     const first = await options.bodyFactory();
     const second = await options.bodyFactory();
     assert.notEqual(first, second);
-    assert.deepEqual([...first.keys()].sort(), ['diarize', 'file', 'file_format', 'model_id', 'no_verbatim',
+    assert.deepEqual([...first.keys()].sort(), ['diarize', 'diarization_threshold', 'file', 'file_format', 'model_id', 'no_verbatim',
       'tag_audio_events', 'timestamps_granularity'].sort());
     assert.equal(first.get('diarize'), 'true');
+    assert.equal(first.get('diarization_threshold'), '0.32');
     assert.equal(first.get('no_verbatim'), 'false');
     assert.equal(first.get('model_id'), 'scribe_v2');
     assert.equal(first.get('file_format'), 'other');
