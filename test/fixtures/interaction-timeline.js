@@ -49,13 +49,6 @@ export function neutralInteractionFixture() {
   first.movements.push(invalidMovement);
   return {
     scene: { id: 'neutral-playback-fixture', choices, groups: [first, interlude, second, uncertain] },
-    first, second, invalidMovement,
-    dubSegments: [
-      { segmentId: 'voice-opening', startTime: 1, endTime: 3, speakerId: 'performer-left' },
-      { segmentId: 'voice-delayed-dialogue', startTime: 16.5, endTime: 19.5, speakerId: 'performer-right' },
-      { segmentId: 'voice-core-a', startTime: 46, endTime: 49, speakerId: 'performer-left' },
-      { segmentId: 'voice-interlude', startTime: 80, endTime: 83, speakerId: 'performer-right' },
-      { segmentId: 'voice-core-b', startTime: 98, endTime: 102, speakerId: 'performer-left' }
-    ]
+    first, second, invalidMovement
   };
 }

@@ -8,7 +8,6 @@ import {
   interactionClipGuard, interactionEntryGuard, interactionMovementVariants, interactionFamilyViews
 } from '../public/interaction-timeline.js';
 import { groupSourceChoiceCards, sourceDisplayLabel } from '../public/choice-groups.js';
-import { createDubScheduler } from '../public/dubbing-scheduler.js';
 import { neutralInteractionFixture } from './fixtures/interaction-timeline.js';
 
 class FakeSourceVideo {
@@ -18,7 +17,6 @@ class FakeSourceVideo {
     this.playbackRate = 1;
     this.seeks = [];
     this.runtime = createInteractionState(fixture.scene, { progressBudget: true });
-    this.dub = createDubScheduler(fixture.dubSegments, { initialTime: 0 });
   }
 
   advance(currentTime) {
@@ -27,7 +25,6 @@ class FakeSourceVideo {
     if (!this.paused && currentTime > startTime) this.runtime = transitionInteraction(this.runtime,
       { type: 'playback', startTime, endTime: currentTime, playing: true });
     this.runtime = transitionInteraction(this.runtime, { type: 'source-time', currentTime });
-    this.dub.update(currentTime);
     return interactionTrace(this.runtime, { overlayCount: 1 });
   }
 
@@ -36,7 +33,6 @@ class FakeSourceVideo {
     this.currentTime = currentTime;
     this.seeks.push(currentTime);
     this.runtime = transitionInteraction(this.runtime, { type: 'source-time', currentTime, rewind });
-    this.dub.seek(currentTime);
     return interactionTrace(this.runtime, { overlayCount: 1 });
   }
 
@@ -154,30 +150,6 @@ test('unverified records and tab entry cannot enter movement cards or authorize 
   assert.equal(families[0].label, 'Provider family Ω');
   assert.deepEqual(families[0].occurrences.map(group => group.id), ['core-a', 'core-b']);
   assert.equal(families[0].sourceRanges, undefined, 'a display family never invents a playable envelope');
-});
-
-test('delayed dialogue preparation stays due after natural playback and obsolete seek callbacks cannot claim playback', () => {
-  const video = new FakeSourceVideo(neutralInteractionFixture());
-  video.dub.markPreparing('voice-delayed-dialogue');
-  video.advance(20);
-  const selected = video.dub.get('voice-delayed-dialogue').due;
-  assert.equal(selected.origin, 'natural');
-  assert.equal(selected.offset, 0);
-  assert.equal(video.dub.counts().actualPlayedCount, 0);
-  video.advance(28);
-  video.dub.markReady('voice-delayed-dialogue');
-  assert.equal(video.dub.get('voice-delayed-dialogue').due, selected);
-  assert.equal(video.dub.get('voice-delayed-dialogue').state, 'DUE');
-  assert.equal(video.dub.markPlaying('voice-delayed-dialogue', { generation: selected.generation }), true);
-  assert.equal(video.dub.markPlayed('voice-delayed-dialogue', { generation: selected.generation }), true);
-  assert.equal(video.dub.counts().actualPlayedCount, 1);
-  assert.equal(video.dub.markPlayed('voice-delayed-dialogue', { generation: selected.generation }), false);
-  video.seek(99);
-  assert.equal(video.dub.get('voice-core-b').due.origin, 'explicit-seek');
-  assert.equal(video.dub.get('voice-core-b').due.offset, 1);
-  assert.equal(video.dub.markPlaying('voice-core-b', { generation: selected.generation }), false);
-  assert.equal(video.dub.counts().actualPlayedCount, 1);
-  assert.ok(video.dub.counts().skippedByExplicitSeekCount > 0);
 });
 
 test('cached interaction index queries two thousand source intervals without rereading provider timestamps', () => {

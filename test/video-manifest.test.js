@@ -26,7 +26,7 @@ test('DASH proxy produces a real playable MP4 containing both picture and sound'
     '-c:a', 'aac', '-f', 'dash', path.join(dir, 'manifest.mpd')], { timeout: 8000 });
   const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const from = source.indexOf("app.get('/api/video-proxy'");
-  const code = source.slice(from, source.indexOf('\n\nconst dialogueUpload', from));
+  const code = source.slice(from, source.indexOf('\n\n// TURKISH MEDIA JOBS', from));
   let handler;
   const sessions = new Map();
   const server = http.createServer((req, res) => {

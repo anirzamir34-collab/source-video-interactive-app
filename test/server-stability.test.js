@@ -5,11 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
-import { dialogueUploadLimit, MAX_VIDEO_BYTES } from '../public/media-limits.js';
+import { MAX_VIDEO_BYTES } from '../public/media-limits.js';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable, pipeline } from 'node:stream';
 import { selectExtractorSource, videoErrorDiagnostic } from '../lib/video-url.js';
-import { uniqueTimedSpeech, normalizeDialogueSegments } from '../public/dialogue-integrity.js';
+import { createMediaUploads } from '../lib/turkish-media/uploads.js';
+import { installTurkishMediaRoutes } from '../lib/turkish-media/routes.js';
+import { MediaError } from '../lib/turkish-media/errors.js';
 
 // Execute the production handlers with real streams and temporary files;
 // upstream providers and the transcoder are replaced to avoid paid calls.
@@ -37,9 +39,9 @@ function fixture(code, overrides = {}) {
   const timers = new Set();
   const errors = [];
   const scope = vm.createContext({
-    Buffer, URL, AbortController, AbortSignal, FormData, Blob, Date, uniqueTimedSpeech, normalizeDialogueSegments,
-    fs, Readable, pipeline, resolvedVideoSessions: new Map(), dialogueUploadSessions: new Map(),
-    dialogueChunkParser() {}, upload: { single: () => () => {} },
+    Buffer, URL, AbortController, AbortSignal, FormData, Blob, Date,
+    fs, Readable, pipeline, resolvedVideoSessions: new Map(),
+    upload: { single: () => () => {} },
     multer: { MulterError: class extends Error {} },
     app: { get: (url, ...handlers) => routes.set(url, handlers.at(-1)), post: (url, ...handlers) => routes.set(url, handlers.at(-1)) },
     setTimeout: (callback, ms) => { const timer = { callback, ms, unref() {} }; timers.add(timer); return timer; },
@@ -51,7 +53,7 @@ function fixture(code, overrides = {}) {
   vm.runInContext(code, scope);
   return { scope, routes, timers, errors };
 }
-const proxyCode = section("app.get('/api/video-proxy'", '\n\nconst dialogueUpload');
+const proxyCode = section("app.get('/api/video-proxy'", '\n\n// TURKISH MEDIA JOBS');
 function proxyFixture(overrides) {
   const f = fixture(proxyCode, overrides);
   const req = Object.assign(new EventEmitter(), { query: { url: 'https://example.com/video.mp4' }, headers: {} });
@@ -63,110 +65,6 @@ test('malformed cookie cannot crash login or authenticated route middleware', ()
   const f = fixture(section('function readCookie(', '\nfunction isAuthenticated('));
   assert.equal(f.scope.readCookie({ headers: { cookie: 'videoquest_owner=%E0%A4%A' } }, 'videoquest_owner'), '');
   assert.equal(f.scope.readCookie({ headers: { cookie: 'other=x; videoquest_owner=hello%3Dworld' } }, 'videoquest_owner'), 'hello=world');
-});
-
-test('Eleven v3 delivery keeps neutral lines clean and maps grounded emotion conservatively', () => {
-  const f = fixture(section('function elevenV3DeliveryTag(', '\n\nasync function elevenLabsSynthesize('));
-  assert.equal(f.scope.elevenV3DeliveryTag('uncertain'), '');
-  assert.equal(f.scope.elevenV3DeliveryTag('neutral'), '');
-  assert.equal(f.scope.elevenV3DeliveryTag('excited'), '[excited]');
-  assert.equal(f.scope.elevenV3DeliveryTag('soft and relaxed'), '[softly]');
-  assert.equal(f.scope.elevenV3DeliveryTag('unrecognized-state'), '');
-  assert.match(source, /model_id:\s*'eleven_v3'/);
-  assert.doesNotMatch(section('async function elevenLabsSynthesize(', '\n\nfunction elevenLabsErrorResponse('), /previous_text\s*:|next_text\s*:/);
-  assert.doesNotMatch(source, /model_id:\s*'eleven_multilingual_v2'/);
-});
-
-test('ElevenLabs voice pages are combined and cached without dropping later speakers', async () => {
-  const calls = [];
-  const female = { voice_id: 'f', labels: { gender: 'female' }, description: 'German human narration' };
-  const male = { voice_id: 'm', labels: { gender: 'male' } };
-  const f = fixture(section('function elevenVoiceGender(', '\nasync function elevenLabsSubscription('), {
-    crypto, URLSearchParams, elevenLabsVoiceCache: new Map(),
-    elevenLabsRequest: async (_key, url) => {
-      calls.push(url);
-      return { json: async () => calls.length === 1
-        ? { voices: [female], has_more: true, next_page_token: 'page two' }
-        : { voices: [female, male], has_more: false } };
-    }
-  });
-  const catalog = await f.scope.elevenLabsVoices('fake-key');
-  assert.equal(catalog.voices.length, 2);
-  assert.equal(new URL('https://example.com' + calls[1]).searchParams.get('next_page_token'), 'page two');
-  assert.equal(f.scope.elevenVoiceGender(female), 'female');
-  assert.equal(f.scope.elevenVoiceGender({ description: 'German human narrator' }), 'uncertain');
-  assert.equal(await f.scope.elevenLabsVoices('fake-key'), catalog);
-  assert.equal(calls.length, 2);
-});
-
-test('four speakers use their assigned voices even for identical text; cache never crosses voices', async () => {
-  const calls = [];
-  const voices = ['one', 'two', 'three', 'four'].map(voice_id => ({ voice_id, name: voice_id }));
-  const f = fixture(section('function elevenV3DeliveryTag(', '\n\nfunction elevenLabsErrorResponse('), {
-    crypto, elevenLabsAudioCache: new Map(), elevenLabsAudioInflight: new Map(),
-    ELEVENLABS_AUDIO_CACHE_TTL_MS: 60000, pruneElevenLabsAudioCache() {},
-    elevenLabsVoices: async () => ({ voices }),
-    elevenLabsRequest: async (_key, url, options) => {
-      calls.push({ url, body: JSON.parse(options.body) });
-      return { arrayBuffer: async () => Buffer.from(url) };
-    }
-  });
-  const synthesize = voiceId => f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Merhaba.', voiceId });
-  const output = await Promise.all(voices.map(voice => synthesize(voice.voice_id)));
-  assert.equal(new Set(output.map(row => row.audioBase64)).size, 4);
-  for (let i = 0; i < output.length; i++) {
-    assert.equal(output[i].voiceId, voices[i].voice_id);
-    assert.match(calls[i].url, new RegExp(`/text-to-speech/${voices[i].voice_id}\\?`));
-    assert.equal(calls[i].body.language_code, 'tr');
-    assert.equal(calls[i].body.model_id, 'eleven_v3');
-    assert.equal(calls[i].body.text, 'Merhaba.');
-    assert.equal(calls[i].body.voice_settings.stability, 0.5);
-  }
-  assert.equal((await synthesize('one')).cacheHit, true);
-  assert.equal(calls.length, 4);
-  await f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Bugün hep birlikte dışarı çıkıp biraz yürüyelim.', voiceId: 'one', emotion: 'excited' });
-  assert.equal(calls[4].body.text, 'Bugün hep birlikte dışarı çıkıp biraz yürüyelim.');
-  assert.equal(calls[4].body.voice_settings.stability, 0.5);
-  await assert.rejects(synthesize('removed-voice'), { code: 'ELEVENLABS_VOICE_PLAN_UNAVAILABLE' });
-  assert.equal(calls.length, 5);
-  const sourceContext = { segmentId: 'reply-1', startTime: 3, endTime: 4, originalText: 'Hello.', previousText: 'Nasılsın?' };
-  const contextual = context => f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Merhaba.', voiceId: 'one', sourceContext: context });
-  await contextual(sourceContext);
-  assert.equal((await contextual({ ...sourceContext })).cacheHit, true);
-  await contextual({ ...sourceContext, segmentId: 'reply-2', startTime: 20, endTime: 21 });
-  assert.equal(calls.length, 7, 'distinct source replies do not reuse the same generated take');
-  assert.ok(calls.slice(5).every(call => call.body.text === 'Merhaba.' && !('previous_text' in call.body) && !('next_text' in call.body)));
-});
-
-test('empty ElevenLabs audio is rejected and not cached, allowing another attempt', async () => {
-  let attempts = 0;
-  const f = fixture(section('function elevenV3DeliveryTag(', '\n\nfunction elevenLabsErrorResponse('), {
-    crypto, elevenLabsAudioCache: new Map(), elevenLabsAudioInflight: new Map(),
-    ELEVENLABS_AUDIO_CACHE_TTL_MS: 60000, pruneElevenLabsAudioCache() {},
-    elevenLabsVoices: async () => ({ voices: [{ voice_id: 'test-voice' }] }),
-    elevenLabsRequest: async () => ({ arrayBuffer: async () => Buffer.from(++attempts === 1 ? '' : 'audio') })
-  });
-  const synthesize = () => f.scope.elevenLabsSynthesize({ apiKey: 'fake-key', text: 'Merhaba.', voiceId: 'test-voice' });
-  await assert.rejects(synthesize(), { code: 'ELEVENLABS_EMPTY_AUDIO' });
-  assert.equal(f.scope.elevenLabsAudioCache.size, 0);
-  assert.equal(f.scope.elevenLabsAudioInflight.size, 0);
-  assert.ok((await synthesize()).audioBase64);
-  assert.equal(attempts, 2);
-});
-
-test('remote dialogue audio uses compact speech-optimized MP3 settings', () => {
-  const f = fixture(section('function remoteDialogueFfmpegArgs(', '\n\nasync function prepareRemoteDialogueAudio('));
-  const args = f.scope.remoteDialogueFfmpegArgs({
-    sourceUrl: 'https://example.com/video.mp4',
-    referer: 'https://example.com/watch',
-    userAgent: 'test-agent'
-  }, '/tmp/dialogue.mp3', 600);
-  assert.deepEqual(Array.from(args.slice(args.indexOf('-map'))), [
-    '-map', '0:a:0?', '-vn', '-ac', '1', '-ar', '16000',
-    '-c:a', 'libmp3lame', '-b:a', '64k', '-map_metadata', '-1',
-    '/tmp/dialogue.mp3'
-  ]);
-  assert.ok(args.includes('605'));
 });
 
 test('expired video token returns 410 without contacting any upstream', async () => {
@@ -344,60 +242,6 @@ test('redirect responses are cancelled and caller cancellation survives redirect
   assert.equal(cancelled, 1);
 });
 
-const chunkCode = section("app.post(\n  '/api/dialogue-upload/:uploadId/chunk'", '\nsetInterval(');
-async function chunkFixture(t, fsOverride) {
-  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'vq-stability-'));
-  t.after(() => fs.promises.rm(dir, { recursive: true, force: true }));
-  const filePath = path.join(dir, 'upload.part');
-  await fs.promises.writeFile(filePath, '');
-  const f = fixture(chunkCode, fsOverride ? { fs: { promises: { ...fs.promises, ...fsOverride } } } : {});
-  const session = { filePath, receivedSize: 0, nextChunk: 0, totalSize: 6, updatedAt: 0 };
-  f.scope.dialogueUploadSessions.set('upload', session);
-  return { ...f, session, send: async (index, data = 'abc') => {
-    const res = new ResponseStream();
-    await f.routes.get('/api/dialogue-upload/:uploadId/chunk')({ params: { uploadId: 'upload' }, headers: { 'x-chunk-index': index }, body: Buffer.from(data) }, res);
-    return res;
-  } };
-}
-
-test('simultaneous retries write a chunk once; completed duplicates remain idempotent', async t => {
-  let release;
-  const gate = new Promise(resolve => { release = resolve; });
-  const f = await chunkFixture(t, { appendFile: async (...args) => { await gate; return fs.promises.appendFile(...args); } });
-  const first = f.send(0);
-  const overlap = await f.send(0);
-  assert.equal(overlap.statusCode, 409);
-  assert.equal(overlap.jsonBody.reason, 'CHUNK_WRITE_IN_PROGRESS');
-  release(); await first;
-  const duplicate = await f.send(0);
-  assert.equal(duplicate.jsonBody.duplicate, true);
-  assert.equal(await fs.promises.readFile(f.session.filePath, 'utf8'), 'abc');
-  assert.equal(f.session.receivedSize, 3);
-});
-
-test('failed append rolls back partially written bytes before a successful retry', async t => {
-  let fail = true;
-  const f = await chunkFixture(t, { appendFile: async (file, data) => {
-    if (fail) { fail = false; await fs.promises.appendFile(file, data.subarray(0, 1)); throw Error('disk write interrupted'); }
-    await fs.promises.appendFile(file, data);
-  } });
-  assert.equal((await f.send(0)).statusCode, 500);
-  assert.equal((await fs.promises.stat(f.session.filePath)).size, 0);
-  assert.equal(f.session.writing, false);
-  assert.equal((await f.send(0)).statusCode, 200);
-  assert.equal((await f.send(1, 'def')).jsonBody.complete, true);
-  assert.equal(await fs.promises.readFile(f.session.filePath, 'utf8'), 'abcdef');
-});
-
-test('empty, out-of-order and oversized chunks never mutate upload state', async t => {
-  const f = await chunkFixture(t);
-  assert.equal((await f.send(0, '')).statusCode, 400);
-  assert.equal((await f.send(2)).statusCode, 409);
-  assert.equal((await f.send(0, '1234567')).statusCode, 400);
-  assert.equal(f.session.nextChunk, 0);
-  assert.equal((await fs.promises.stat(f.session.filePath)).size, 0);
-});
-
 test('request errors consistently return JSON with safe status codes', () => {
   const f = fixture(section('function handleRequestError(', '\napp.use(handleRequestError)'));
   for (const [error, status, reason] of [
@@ -436,190 +280,248 @@ test('external analysis streams the temporary upload and removes it after succes
   }
 });
 
-
-test('chunked video upload accepts up to 2 GiB but rejects oversized audio and video before disk creation', async () => {
-  const sessions = new Map();
-  let writes = 0;
-  const f = fixture(section("app.post('/api/dialogue-upload/start'", "app.post(\n  '/api/dialogue-upload/:uploadId/chunk'"), {
-    dialogueUploadLimit, crypto: { randomUUID: () => 'large-video' }, dialogueUploadSessions: sessions,
-    fs: { promises: { async mkdir() {}, async writeFile() { writes++; } } }
-  });
-  const handler = f.routes.get('/api/dialogue-upload/start');
-  for (const size of [700 * 1024 * 1024, MAX_VIDEO_BYTES]) {
-    const res = new ResponseStream();
-    await handler({ body: { totalSize: size, mimeType: 'video/mp4', fileName: 'large.mp4' } }, res);
-    assert.equal(res.statusCode, 200);
-    assert.equal(sessions.get('large-video').totalSize, size);
-  }
-  assert.equal(writes, 2);
-  for (const [mimeType, totalSize] of [['video/mp4', MAX_VIDEO_BYTES + 1], ['audio/wav', 251 * 1024 * 1024], ['text/html', 20]]) {
-    const res = new ResponseStream();
-    await handler({ body: { mimeType, totalSize } }, res);
-    assert.equal(res.statusCode, 400);
-  }
-  assert.equal(writes, 2);
-});
-
-test('repeated provider annotation steps do not duplicate words or erase later real repetitions', () => {
-  const f = fixture(section('function parseGeminiOffsetSeconds(', '\nasync function transcribeDialogueGemini35('));
-  const annotation = { type: 'word_info', speaker: 'a', text: 'Hello', start_offset: '1s', end_offset: '1.4s' };
-  const words = f.scope.extractTranscribeWordAnnotations({ steps: [
-    { content: [{ annotations: [annotation] }] },
-    { content: [{ annotations: [annotation, { ...annotation, speaker: 'b' },
-      { ...annotation, start_offset: '2s', end_offset: '2.4s' }] }] }
-  ] });
-  assert.deepEqual(Array.from(words, word => [word.speakerId, word.startTime]), [['a', 1], ['b', 1], ['a', 2]]);
-});
-
-test('overlapping word annotations preserve separate sentences while consecutive turns stay separate', () => {
-  const f = fixture(section('function groupTranscribeWords(', '\nasync function transcribeDialogueGemini35('));
-  const words = [
-    { speakerId: 'a', text: 'Merhaba', startTime: 0, endTime: 0.6 },
-    { speakerId: 'b', text: 'İyi', startTime: 0.3, endTime: 0.9 },
-    { speakerId: 'a', text: 'Elif.', startTime: 0.7, endTime: 1.2 },
-    { speakerId: 'b', text: 'akşamlar.', startTime: 1, endTime: 1.5 }
-  ];
-  const groups = f.scope.groupTranscribeWords(words);
-  assert.equal(groups.length, 2);
-  assert.equal(groups[0].originalText, 'Merhaba Elif.');
-  assert.equal(groups[1].originalText, 'İyi akşamlar.');
-  assert.equal(groups[0].endTime, 1.2);
-  const turns = f.scope.groupTranscribeWords([
-    { speakerId: 'a', text: 'Selam', startTime: 0, endTime: 0.2 },
-    { speakerId: 'b', text: 'Merhaba', startTime: 0.3, endTime: 0.4 },
-    { speakerId: 'a', text: 'Nasılsın?', startTime: 0.5, endTime: 0.7 }
-  ]);
-  assert.equal(turns.length, 3);
-});
-
-test('a long same-speaker sentence is not chopped at the former seven second boundary', () => {
-  const f = fixture(section('function groupTranscribeWords(', '\nasync function transcribeDialogueGemini35('));
-  const words = Array.from({ length: 12 }, (_, index) => ({
-    speakerId: 'a', text: index === 11 ? 'bitiyor.' : `kelime${index}`,
-    startTime: index * 0.75, endTime: index * 0.75 + 0.45
-  }));
-  const groups = f.scope.groupTranscribeWords(words);
-  assert.equal(groups.length, 1);
-  assert.match(groups[0].originalText, /bitiyor\.$/);
-});
-
-test('short completed ASR replies retain their pauses before caption and TTS grouping', () => {
-  const f = fixture(section('function groupTranscribeWords(', '\nasync function transcribeDialogueGemini35('));
-  const words = Array.from({ length: 5 }, (_, index) => ({ speakerId: 'a', text: 'Yes.',
-    startTime: index * .6, endTime: index * .6 + .4 }));
-  const groups = f.scope.groupTranscribeWords(words);
-  assert.equal(groups.length, 5);
-  assert.ok(groups.every((row, i) => row.originalText === 'Yes.' && row.startTime === words[i].startTime));
-});
-
-test('concurrent logical upload starts reserve one session before disk initialization', async () => {
-  const sessions = new Map();
-  const keys = new Map();
-  let release;
-  let writes = 0;
-  let ids = 0;
-  const pending = new Promise(resolve => { release = resolve; });
-  const f = fixture(section("app.post('/api/dialogue-upload/start'", "app.post(\n  '/api/dialogue-upload/:uploadId/chunk'"), {
-    dialogueUploadLimit, dialogueUploadSessions: sessions, dialogueUploadKeys: keys,
-    DIALOGUE_UPLOAD_KEY_TTL_MS: 1800000, crypto: { randomUUID: () => `logical-${++ids}` },
-    fs: { promises: { mkdir: () => pending, writeFile: async () => { writes++; }, unlink: async () => {} } }
-  });
-  const req = { body: { totalSize: 6, mimeType: 'audio/wav', clientUploadKey: 'same-file' } };
-  const first = new ResponseStream(), second = new ResponseStream();
-  const handler = f.routes.get('/api/dialogue-upload/start');
-  const a = handler(req, first), b = handler(req, second);
-  assert.equal(sessions.size, 1);
-  release();
-  await Promise.all([a, b]);
-  assert.equal(ids, 1);
-  assert.equal(writes, 1);
-  assert.equal(first.jsonBody.uploadId, second.jsonBody.uploadId);
-  assert.equal(second.jsonBody.reused, true);
-});
-
-test('failed upload initialization releases its reservation so retry cannot reuse a broken file', async () => {
-  const sessions = new Map(), keys = new Map();
-  let attempts = 0;
-  const f = fixture(section("app.post('/api/dialogue-upload/start'", "app.post(\n  '/api/dialogue-upload/:uploadId/chunk'"), {
-    dialogueUploadLimit, dialogueUploadSessions: sessions, dialogueUploadKeys: keys,
-    DIALOGUE_UPLOAD_KEY_TTL_MS: 1800000, crypto: { randomUUID: () => `try-${attempts}` },
-    fs: { promises: { mkdir: async () => {}, writeFile: async () => { if (++attempts === 1) throw Error('disk failure'); }, unlink: async () => {} } }
-  });
-  const req = { body: { totalSize: 6, mimeType: 'audio/wav', clientUploadKey: 'retry-file' } };
-  const handler = f.routes.get('/api/dialogue-upload/start');
-  const failed = new ResponseStream(); await handler(req, failed);
-  assert.equal(failed.statusCode, 500);
-  assert.equal(sessions.size, 0); assert.equal(keys.size, 0);
-  const retry = new ResponseStream(); await handler(req, retry);
-  assert.equal(retry.statusCode, 200); assert.equal(sessions.size, 1);
-});
-
-function uploadAnalysisLifecycle(work) {
-  const route = source.indexOf("  '/api/gemini-dialogue-analyze'");
-  const start = source.indexOf('    const dialogueStartedAt', route);
-  const end = source.indexOf('    const apiKey', start);
-  const finishStart = source.indexOf('      if (uploadSession) {\n        if (remoteFile?.name', end);
-  const finishEnd = source.indexOf("      res.removeListener('close'", finishStart);
-  assert.ok(start > route && end > start && finishStart > end && finishEnd > finishStart);
-  const sessions = new Map([['done', { filePath: '/tmp/retained.part', fileName: 'speech.wav',
-    mimeType: 'audio/wav', totalSize: 6, receivedSize: 6, activeWrites: 0, updatedAt: Date.now() }]]);
-  const scope = vm.createContext({ dialogueUploadSessions: sessions, emptyGeminiUsage: () => ({}),
-    console: { info() {} }, work, Date });
-  vm.runInContext(`async function analyze(req, res) { ${source.slice(start, end)}
-    const remoteFile = { name: 'already-uploaded-provider-source', state: 'ACTIVE' };
-    try { const output = await work(req); return res.status(output.status).json(output.body); }
-    finally { ${source.slice(finishStart, finishEnd)} }
-  }`, scope);
-  return { scope, sessions, request: context => ({ body: { uploadId: 'done', duration: '900', protagonistProfile: context || '' } }) };
+async function uploadFixture(t, options = {}) {
+  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'vq-new-uploads-'));
+  t.after(() => fs.promises.rm(directory, { recursive: true, force: true }));
+  return { directory, uploads: createMediaUploads({ directory, ...options }),
+    input: { totalSize: 6, chunkSize: 3, fileName: 'source.mp4', mimeType: 'video/mp4', clientUploadKey: 'device-source' } };
 }
 
-test('completed device audio survives provider failure and concurrent analysis shares a result', async () => {
-  let calls = 0, release;
-  const gate = new Promise(resolve => { release = resolve; });
-  const f = uploadAnalysisLifecycle(async () => {
-    calls++;
-    if (calls === 1) { await gate; return { status: 502, body: { available: false, reason: 'PROVIDER_TEMPORARY' } }; }
-    return { status: 200, body: { available: true, segments: [{ originalText: 'Hello' }] } };
-  });
-  const a = new ResponseStream(), b = new ResponseStream();
-  const first = f.scope.analyze(f.request(), a), same = f.scope.analyze(f.request(), b);
-  assert.equal(calls, 1); release(); await Promise.all([first, same]);
-  assert.equal(a.statusCode, 502); assert.equal(b.statusCode, 502);
-  assert.deepEqual(a.jsonBody, b.jsonBody);
-  assert.equal(f.sessions.size, 1, 'failed provider analysis retains the completed device upload');
-  const retry = new ResponseStream(); await f.scope.analyze(f.request(), retry);
-  assert.equal(calls, 2); assert.equal(retry.jsonBody.available, true);
-  assert.equal(f.sessions.get('done').remoteFile.name, 'already-uploaded-provider-source');
-  const cached = new ResponseStream(); await f.scope.analyze(f.request(), cached);
-  assert.equal(calls, 2); assert.deepEqual(cached.jsonBody, retry.jsonBody);
+test('concurrent upload starts share one disk session and restart resumes acknowledged chunks', async t => {
+  const f = await uploadFixture(t);
+  const starts = await Promise.all([f.uploads.start(f.input), f.uploads.start(f.input)]);
+  assert.equal(starts[0].uploadId, starts[1].uploadId);
+  assert.equal(starts[1].reused, true);
+  await f.uploads.writeChunk(starts[0].uploadId, 0, Buffer.from('abc'));
+  const restarted = createMediaUploads({ directory: f.directory });
+  const resumed = await restarted.start(f.input);
+  assert.equal(resumed.uploadId, starts[0].uploadId);
+  assert.deepEqual(resumed.receivedChunks, [0]);
+  assert.equal(resumed.complete, false);
+  await restarted.writeChunk(resumed.uploadId, 1, Buffer.from('def'));
+  const source = await restarted.source(resumed.uploadId);
+  assert.equal(await fs.promises.readFile(source.path, 'utf8'), 'abcdef');
+  assert.equal(source.hash, crypto.createHash('sha256').update('abcdef').digest('hex'));
+  assert.deepEqual((await createMediaUploads({ directory: f.directory }).status(resumed.uploadId)).receivedChunks, [0, 1]);
 });
 
-test('reusing completed source bytes with changed analysis context never returns a stale result', async () => {
-  let calls = 0;
-  const f = uploadAnalysisLifecycle(async req => ({ status: 200,
-    body: { available: true, context: req.body.protagonistProfile, generation: ++calls } }));
-  const first = new ResponseStream(); await f.scope.analyze(f.request('first'), first);
-  const changed = new ResponseStream(); await f.scope.analyze(f.request('second'), changed);
-  assert.equal(calls, 2); assert.equal(changed.jsonBody.context, 'second');
-  assert.equal(f.sessions.size, 1);
+test('simultaneous chunk retries publish once and conflicting duplicate bytes are rejected', async t => {
+  const f = await uploadFixture(t);
+  const { uploadId } = await f.uploads.start(f.input);
+  const results = await Promise.all([f.uploads.writeChunk(uploadId, 0, Buffer.from('abc')),
+    f.uploads.writeChunk(uploadId, 0, Buffer.from('abc'))]);
+  assert.equal(results.filter(row => row.duplicate).length, 1);
+  assert.equal(results[1].receivedSize, 3);
+  await assert.rejects(f.uploads.writeChunk(uploadId, 0, Buffer.from('xyz')), { code: 'CHUNK_ID_CONFLICT', status: 409 });
+  await f.uploads.writeChunk(uploadId, 1, Buffer.from('def'));
+  assert.equal((await f.uploads.writeChunk(uploadId, 0, Buffer.from('abc'))).complete, true);
+  await assert.rejects(f.uploads.writeChunk(uploadId, 1, Buffer.from('bad')), { code: 'CHUNK_ID_CONFLICT' });
 });
 
-test('parallel final chunk response is sent only after close and release of its write lock', async () => {
-  let releaseClose;
-  const closing = new Promise(resolve => { releaseClose = resolve; });
-  const session = { filePath: '/tmp/mock.part', totalSize: 6, receivedSize: 0,
-    nextChunk: 0, receivedChunks: new Map(), inflightRanges: new Map(), activeWrites: 0 };
-  const f = fixture(chunkCode, { dialogueUploadSessions: new Map([['upload', session]]),
-    fs: { promises: { open: async () => ({ write: async () => ({ bytesWritten: 6 }), close: () => closing }) } } });
-  const response = new ResponseStream();
-  const pending = f.routes.get('/api/dialogue-upload/:uploadId/chunk')({ params: { uploadId: 'upload' },
-    headers: { 'x-chunk-index': '0', 'x-chunk-offset': '0' }, body: Buffer.from('abcdef') }, response);
-  await tick();
-  assert.equal(response.jsonBody, undefined, 'a pending close must not advertise completion');
-  assert.equal(session.activeWrites, 1);
-  releaseClose(); await pending;
-  assert.equal(response.jsonBody.complete, true);
-  assert.equal(session.activeWrites, 0);
-  assert.equal(session.inflightRanges.size, 0);
-  assert.equal(session.receivedSize, 6);
+test('out-of-order delivery writes deterministic source offsets without holes or overlapping ranges', async t => {
+  const f = await uploadFixture(t);
+  const { uploadId } = await f.uploads.start(f.input);
+  assert.equal((await f.uploads.writeChunk(uploadId, 1, Buffer.from('def'))).complete, false);
+  await assert.rejects(f.uploads.source(uploadId), { code: 'UPLOAD_INCOMPLETE' });
+  assert.equal((await f.uploads.writeChunk(uploadId, 0, Buffer.from('abc'))).complete, true);
+  assert.equal(await fs.promises.readFile((await f.uploads.source(uploadId)).path, 'utf8'), 'abcdef');
+});
+
+test('short writes are completed; zero-byte failure cleans partial data before retry', async t => {
+  let fail = true;
+  const fsImpl = { ...fs.promises, async open(filename, ...options) {
+    const handle = await fs.promises.open(filename, ...options);
+    if (!path.basename(filename).startsWith('chunk-')) return handle;
+    return { sync: () => handle.sync(), close: () => handle.close(), write: async (buffer, offset, length, position) => {
+      if (fail && position > 0) { fail = false; return { bytesWritten: 0 }; }
+      return handle.write(buffer, offset, Math.min(1, length), position);
+    } };
+  } };
+  const f = await uploadFixture(t, { fsImpl });
+  const { uploadId } = await f.uploads.start(f.input);
+  await assert.rejects(f.uploads.writeChunk(uploadId, 0, Buffer.from('abc')), { code: 'CHUNK_SHORT_WRITE' });
+  assert.deepEqual((await f.uploads.status(uploadId)).receivedChunks, []);
+  assert.deepEqual(await fs.promises.readdir(path.join(f.directory, uploadId)), ['upload.json']);
+  await f.uploads.writeChunk(uploadId, 0, Buffer.from('abc'));
+  await f.uploads.writeChunk(uploadId, 1, Buffer.from('def'));
+  assert.equal(await fs.promises.readFile((await f.uploads.source(uploadId)).path, 'utf8'), 'abcdef');
+});
+
+test('aborted chunks and failed metadata publication never acknowledge partial source bytes', async t => {
+  const f = await uploadFixture(t);
+  const { uploadId } = await f.uploads.start(f.input);
+  await assert.rejects(f.uploads.writeChunk(uploadId, 0, Buffer.from('abc'), { signal: AbortSignal.abort(new Error('stopped')) }), /stopped/);
+  let fail = true;
+  const store = createMediaUploads({ directory: f.directory, fsImpl: { ...fs.promises, async rename(from, to) {
+    if (to.endsWith('upload.json') && fail) { fail = false; throw new Error('publication failed'); }
+    return fs.promises.rename(from, to);
+  } } });
+  await assert.rejects(store.writeChunk(uploadId, 0, Buffer.from('abc')), /publication failed/);
+  assert.deepEqual((await store.status(uploadId)).receivedChunks, []);
+  assert.deepEqual(await fs.promises.readdir(path.join(f.directory, uploadId)), ['upload.json']);
+  assert.equal((await store.writeChunk(uploadId, 0, Buffer.from('abc'))).receivedSize, 3);
+});
+
+test('failed initialization releases the device key reservation for a fresh retry', async t => {
+  let fail = true;
+  const f = await uploadFixture(t, { fsImpl: { ...fs.promises, async rename(...args) {
+    if (fail) { fail = false; throw new Error('disk initialization failed'); }
+    return fs.promises.rename(...args);
+  } } });
+  await assert.rejects(f.uploads.start(f.input), /disk initialization failed/);
+  assert.deepEqual(await fs.promises.readdir(f.directory), ['keys']);
+  assert.equal((await f.uploads.start(f.input)).reused, false);
+});
+
+test('uploads enforce the shared 2 GiB limit and fixed chunk ranges before publishing data', async t => {
+  const f = await uploadFixture(t);
+  assert.equal((await f.uploads.start({ ...f.input, totalSize: MAX_VIDEO_BYTES })).totalSize, MAX_VIDEO_BYTES);
+  await assert.rejects(f.uploads.start({ ...f.input, totalSize: MAX_VIDEO_BYTES + 1 }), { code: 'INVALID_SOURCE_SIZE' });
+  await assert.rejects(f.uploads.start({ ...f.input, totalSize: 1.5 }), { code: 'INVALID_SOURCE_SIZE' });
+  await assert.rejects(f.uploads.start({ ...f.input, mimeType: 'text/html' }), { code: 'UNSUPPORTED_VIDEO_FORMAT' });
+  const { uploadId } = await f.uploads.start({ ...f.input, clientUploadKey: 'small' });
+  for (const [index, bytes] of [[0, ''], [2, 'abc'], [0, 'ab'], [0, 'abcd']]) {
+    await assert.rejects(f.uploads.writeChunk(uploadId, index, Buffer.from(bytes)));
+  }
+  assert.deepEqual((await f.uploads.status(uploadId)).receivedChunks, []);
+  await assert.rejects(f.uploads.start({ ...f.input, clientUploadKey: 'small', chunkSize: 2 }), { code: 'UPLOAD_KEY_CONFLICT' });
+  const files = await fs.promises.readdir(path.join(f.directory, 'keys'));
+  assert.ok(files.every(name => /^[a-f0-9]{64}\.json$/.test(name)), 'raw client keys are never filenames');
+});
+
+test('active source leases prevent 24-hour eviction and release refreshes its retry lifetime', async t => {
+  let now = 1000;
+  const f = await uploadFixture(t, { clock: () => now });
+  const { uploadId } = await f.uploads.start(f.input);
+  await f.uploads.writeChunk(uploadId, 0, Buffer.from('abc'));
+  await f.uploads.writeChunk(uploadId, 1, Buffer.from('def'));
+  const source = await f.uploads.source(uploadId);
+  const release = await f.uploads.acquireLeaseByPath(source.path);
+  now += 86400001;
+  await f.uploads.removeExpired();
+  assert.equal((await f.uploads.status(uploadId)).complete, true);
+  await release(); await release();
+  now += 86399000;
+  await f.uploads.removeExpired();
+  assert.equal((await f.uploads.status(uploadId)).complete, true);
+  now += 2000;
+  await f.uploads.removeExpired();
+  assert.equal(await f.uploads.status(uploadId), null);
+  assert.equal(fs.existsSync(source.path), false);
+});
+
+function mediaRouteFixture(overrides = {}) {
+  const routes = new Map();
+  const calls = [];
+  const jobs = { capabilities: () => ({ configured: true, fastAvailable: false }),
+    voices: async () => [{ voiceId: 'voice-1', name: 'Türkçe ses', gender: 'female', language: 'tr' }],
+    create: async input => { calls.push(input); return { id: 'job', state: 'PREPARING_AUDIO' }; },
+    get: async () => ({ id: 'job', state: 'READY', result: { subtitles: {} } }),
+    retry: async () => ({ id: 'job', state: 'PREPARING_AUDIO' }), cancel: async () => ({ id: 'job', state: 'CANCELLED' }),
+    artifact: async () => null, ...overrides.jobs };
+  const app = { get: (url, ...handlers) => routes.set(`GET ${url}`, handlers.at(-1)), post: (url, ...handlers) => routes.set(`POST ${url}`, handlers.at(-1)) };
+  installTurkishMediaRoutes(app, { uploads: { start: async value => value, status: async () => null,
+    source: async () => ({ path: '/private/source.bin', hash: 'verified-hash' }), ...overrides.uploads },
+    jobs, rawParser() {}, secrets: ['provider-secret'] });
+  return { calls, async request(method, url, body = {}, params = {}, res = new ResponseStream()) {
+    const req = Object.assign(new EventEmitter(), { body, params });
+    await routes.get(`${method} /api/turkish-media${url}`)(req, res, error => { throw error; });
+    return res;
+  } };
+}
+
+test('job routes use server source bytes, preserve output modes and return the create/retry DTO', async () => {
+  const f = mediaRouteFixture();
+  const created = await f.request('POST', '/jobs', { uploadId: 'upload', source: { path: '/untrusted' }, duration: 9999,
+    outputs: { dub: true, subtitles: true } });
+  assert.equal(created.statusCode, 202); assert.equal(created.jsonBody.jobId, 'job');
+  assert.deepEqual(f.calls[0].source, { path: '/private/source.bin', hash: 'verified-hash' });
+  assert.equal(f.calls[0].source.duration, undefined);
+  await f.request('POST', '/jobs', { uploadId: 'upload', outputs: { transcriptOnly: true } });
+  assert.deepEqual(f.calls[1].outputs, { dub: false, subtitles: false, transcriptOnly: true });
+  const retry = await f.request('POST', '/jobs/:id/retry', {}, { id: 'job' });
+  assert.equal(retry.statusCode, 202); assert.equal(retry.jsonBody.jobId, 'job');
+  const result = await f.request('GET', '/jobs/:id/result', {}, { id: 'job' });
+  assert.deepEqual(result.jsonBody, { subtitles: {} });
+});
+
+test('media route errors and capabilities never expose provider secrets or internal source paths', async () => {
+  const f = mediaRouteFixture({ jobs: { create: async () => { throw new MediaError('PROVIDER_ERROR', 'apiKey=provider-secret failure provider-secret'); } } });
+  const error = await f.request('POST', '/jobs', { uploadId: 'upload' });
+  assert.equal(error.statusCode, 502);
+  assert.doesNotMatch(JSON.stringify(error.jsonBody), /provider-secret|\/private/);
+  const capabilities = await f.request('GET', '/capabilities');
+  assert.doesNotMatch(JSON.stringify(capabilities.jsonBody), /provider-secret|apiKey|authorization/);
+  const broken = mediaRouteFixture({ jobs: { create: async () => { throw new Error('provider-secret /private/source.bin'); } } });
+  assert.doesNotMatch(JSON.stringify((await broken.request('POST', '/jobs', { uploadId: 'upload' })).jsonBody), /provider-secret|\/private/);
+});
+
+test('voice catalog routes return safe backend metadata and normal redacted provider errors', async () => {
+  const f = mediaRouteFixture();
+  const result = await f.request('GET', '/voices');
+  assert.deepEqual(result.jsonBody, { voices: [{ voiceId: 'voice-1', name: 'Türkçe ses', gender: 'female', language: 'tr' }] });
+  assert.equal(result.headers['Cache-Control'], 'no-store');
+  assert.doesNotMatch(JSON.stringify(result.jsonBody), /apiKey|provider-secret|authorization/i);
+  const failed = mediaRouteFixture({ jobs: { voices: async () => { throw new MediaError('VOICE_CATALOG_UNAVAILABLE', 'provider-secret unavailable', { status: 503 }); } } });
+  const error = await failed.request('GET', '/voices');
+  assert.equal(error.statusCode, 503); assert.equal(error.jsonBody.reason, 'VOICE_CATALOG_UNAVAILABLE');
+  assert.doesNotMatch(JSON.stringify(error.jsonBody), /provider-secret/);
+});
+
+test('job routes accept bounded manual voice IDs and refuse malformed mappings before source access', async () => {
+  let sourceCalls = 0;
+  const f = mediaRouteFixture({ uploads: { source: async () => { sourceCalls++; return { path: '/private/source.bin' }; } } });
+  await f.request('POST', '/jobs', { uploadId: 'upload', voiceMapping: { 'speaker-source-001': 'voice-1' }, previousVoiceMapping: { 'speaker-source-002': 'voice-2' } });
+  assert.deepEqual(f.calls[0].voiceMapping, { 'speaker-source-001': 'voice-1' });
+  assert.deepEqual(f.calls[0].previousVoiceMapping, { 'speaker-source-002': 'voice-2' });
+  const tooMany = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`speaker-${index}`, `voice-${index}`]));
+  for (const mapping of [null, [], 'voice-1', { 'speaker-1': 42 }, { 'speaker-1': {} },
+    { 'speaker-1': 'x'.repeat(129) }, { 'speaker-1': '../secret' }, JSON.parse('{"__proto__":"voice-1"}'), tooMany]) {
+    for (const field of ['voiceMapping', 'previousVoiceMapping']) {
+      const result = await f.request('POST', '/jobs', { uploadId: 'upload', [field]: mapping });
+      assert.equal(result.statusCode, 400); assert.equal(result.jsonBody.reason, 'VOICE_MAPPING_INVALID');
+    }
+  }
+  assert.equal(sourceCalls, 1);
+});
+
+test('browser scene context requires valid source intervals and cannot certify source evidence', async () => {
+  const f = mediaRouteFixture();
+  const result = await f.request('POST', '/jobs', { uploadId: 'upload', sceneContext: [
+    { id: 'scene-1', start: 1.25, end: 3, label: 'Kaynak açıklaması', evidence: 'Sahne notu', sourceVerified: true, confidence: 1,
+      apiKey: 'provider-secret', arbitrary: { proof: true } }
+  ] });
+  assert.equal(result.statusCode, 202);
+  assert.deepEqual(f.calls[0].sceneContext, [{ startTime: 1.25, endTime: 3, id: 'scene-1', label: 'Kaynak açıklaması', evidence: 'Sahne notu' }]);
+  for (const context of [null, {}, [{ start: null, end: 2 }], [{ start: 0, end: '2' }], [{ start: -1, end: 2 }],
+    [{ start: 3, end: 2 }], [{ start: 0, end: 2, title: 1 }], [{ start: 0, end: 2, title: 'x'.repeat(2001) }],
+    Array.from({ length: 65 }, () => ({ start: 0, end: 1 }))]) {
+    const invalid = await f.request('POST', '/jobs', { uploadId: 'upload', sceneContext: context });
+    assert.equal(invalid.statusCode, 400); assert.equal(invalid.jsonBody.reason, 'SCENE_CONTEXT_INVALID');
+  }
+  assert.equal(f.calls.length, 1);
+});
+
+test('artifact routes delegate actual bytes/Range to sendFile and release cache leases once', async () => {
+  let releases = 0;
+  const f = mediaRouteFixture({ jobs: { artifact: async () => ({ path: '/safe/cache/mix.wav', release: () => { releases++; } }) } });
+  const res = new ResponseStream();
+  res.type = type => { res.mimeType = type; return res; };
+  res.sendFile = (filename, options) => { res.filePath = filename; res.fileOptions = options; };
+  await f.request('GET', '/jobs/:id/artifacts/:name', {}, { id: 'job', name: 'mix.wav' }, res);
+  assert.equal(res.filePath, '/safe/cache/mix.wav'); assert.equal(res.fileOptions.acceptRanges, true);
+  assert.equal(releases, 0);
+  res.emit('finish'); res.emit('close'); assert.equal(releases, 1);
+  const denied = await f.request('GET', '/jobs/:id/artifacts/:name', {}, { id: 'job', name: '../source.bin' });
+  assert.equal(denied.statusCode, 404);
+});
+
+test('artifact range errors and disconnected responses release the lease without leaking a file path', async () => {
+  let releases = 0;
+  const f = mediaRouteFixture({ jobs: { artifact: async () => ({ path: '/safe/cache/mix.wav', release: () => { releases++; } }) } });
+  const res = new ResponseStream(); res.type = () => res;
+  res.sendFile = (_filename, _options, callback) => callback(Object.assign(new Error('/safe/cache/mix.wav'), { statusCode: 416 }));
+  await f.request('GET', '/jobs/:id/artifacts/:name', {}, { id: 'job', name: 'mix.wav' }, res);
+  assert.equal(res.statusCode, 416); assert.equal(releases, 1);
+  assert.doesNotMatch(JSON.stringify(res.jsonBody), /\/safe/);
 });

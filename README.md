@@ -4,7 +4,7 @@ Yerel dosya veya uzak video kaynağı üzerinde zaman damgalı analiz, etkileşi
 
 ## Çalıştırma ve doğrulama
 
-Node.js 20.3 veya üzeri gerekir. Bu değişiklikler Node.js 24.19.0 üzerinde doğrulandı.
+Node.js 20.3 veya üzeri gerekir. Migration kontrolleri Node.js 24.19.0 ile çalıştırılır; güncel sonuçlar migration raporunda belirtilir.
 
 ```sh
 npm ci
@@ -26,37 +26,78 @@ Başlatmadan önce `APP_PASSWORD` tanımlanmalıdır. Tanımlı değilse uygulam
 | `public/analysis-recovery.js` | Analiz hatalarının sınıflandırılması ve yeniden deneme kuralları |
 | `public/playback-logic.js`, `public/engine-hardening.js`, `public/story-engine.js` | Zaman çizelgesi, analiz doğrulama ve oynatma yardımcıları |
 
-Hareket analizi Gemini storyboard uçlarını kullanır. Diyalog çözümlemesi ve çeviri ayrı Gemini işlemleridir. `/api/external-analyze` ayrıca yapılandırılmış harici servise dosya iletir; harici servisin kullanılabilirliği Gemini'den ayrı değerlendirilmelidir.
+Hareket analizi Gemini storyboard uçlarını kullanır. `/api/external-analyze` ayrıca yapılandırılmış harici servise dosya iletir. Kaynak konuşma bilgisi görsel analize yalnızca özgün metin ve kaynak zamanlarıyla aktarılır; Türkçe ses veya hizalama zamanları etkileşimli seçimlerin kanıtı değildir. Seçim oynatımı kendi doğrulanmış kaynak aralığında biter.
 
-Gemini konuşma çözümleme, Türkçe çeviri ve satır duygusu için; ElevenLabs Eleven v3 ise doğal ve bağlama duyarlı oynatıcı dublaj seslerini üretmek için kullanılır. Dublaj modu bütün zamanlanmış Türkçe konuşma bloklarını oynatma başlamadan önce hazırlar.
+## TURKISH DUBBING PIPELINE
 
-Dublajdan önce tüm konuşmacılara `speakerId` bazında ayrı bir ElevenLabs sesi atanır. Türkçe uygunluğu ve ses profili dikkate alınır; aynı ses iki konuşmacıya verilmez. Atama yeniden denemelerde ve kayıtlı oyunlarda korunur. Hesapta yeterli uygun ses yoksa ya da atanmış ses kaldırılırsa açıklayıcı hata gösterilir; başka sese sessizce geçilmez. Ses listesi sayfalı okunur (en çok 1.000 katalog girdisi); video başına en çok 64 konuşmacı için atama yapılır. Kaynak konuşmacı ayrımındaki model hataları hâlâ doğruluğu etkileyebilir.
+```text
+SOURCE VIDEO → FFmpeg extraction → Scribe v2 + diarization
+→ canonical source transcript → contextual OpenAI Turkish translation
+→ stable speaker/voice mapping → Eleven v4 Text-to-Dialogue
+→ real duration fitting → ElevenLabs Forced Alignment
+→ source_tr + dub_tr (JSON/SRT/WebVTT) → normalized final mix → video player
+```
 
-Kaynakta üst üste gelen farklı konuşmacılar bağımsız ses kanalları ve ayrı altyazı satırları kullanır. Bir karakterin cümlesi diğerinin başlangıcıyla kısaltılmaz; toplam ses seviyesi taşmayı önleyecek biçimde dengelenir. İleri/geri sarma, duraklatma ve eksik ses hazırlığı bütün aktif kanallara uygulanır. Eski kayıtların hazır sesleri korunur; eski iki sesli dublajı kişi bazlı seslere geçirmek için yeniden analiz/dublaj gerekir.
+Her aşama `lib/turkish-media/` altında ayrı modüldür. `segmentId` kaynak konuşmadan çeviri, ses, hizalama ve altyazıya kadar korunur. Scribe cevabındaki bütün kelime ve ses olayı verileri saklanır; gösterim metni özgün transcript'i değiştirmez. Konuşma atlanması, eksik API konuşma haritası veya eksik hizalama kelimesi işi `FAILED` yapar. Başarılı sonuçta QA raporunun `missingDubCount` değeri 0 olmalıdır.
 
-Yeni analizlerde her zamanlanmış cümle ayrı seslendirilir; ilk cümlenin konuşmacı bilgisi birleşik bloğa taşınmaz. Ses ataması özgün satırların tamamından yapılır, bilinen konuşmacılar için katalogdaki belirsiz ses profilleri eşleşme sayılmaz. Aynı konuşmacının aynı zaman ve metindeki yinelenen kayıtları ayıklanır; sonradan tekrarlanan cümleler ve farklı kişilerin eşzamanlı konuşmaları korunur. Ayrı cümleler daha fazla TTS isteği gerektirebilir.
+Çeviri bütün sahne grubunu, önceki/sonraki konuşmaları ve her kaynak süreyi görür. OpenAI sağlayıcısı yapılandırılabilir; Gemini yalnız görsel analizde kalır. Gerçek ses uzun gelirse aynı konuşma için daha kısa çeviri ve yeniden üretim denenir; en fazla 1.08 tempo düzeltmesi uygulanır, ses kesilmez. Uzun diyaloglar API'nin canlı karakter sınırına göre cümle/kelime sınırında bölünüp aynı kaynak segmenti altında birleştirilir. Kaynakta örtüşen konuşmalar kendi aralıklarında korunur.
 
-Altyazı video zamanıyla güncellenir. Sürekli oynatmada dublaj saati izlenir; öne geçen ses bekler, küçük sapmalar hızla düzeltilir, ciddi ses gecikmesinde ileri eşleme yapılır. Bu eşleme geriye sarıp kelime tekrarlamaz; çözümleyici duraklamalarında sesin bir bölümü atlanabilir. Son cümlenin sahne dışına sınırsız taşmasına izin verilmez. Önceden üretilmiş ses dosyaları değiştirilmez; yeni cümle sınırları ve ses planı için yeniden analiz gerekir. Gerçek kaynak ses olmadan modelin konuşmacı tanıma doğruluğu garanti edilemez.
+**Model seçimi:** varsayılan `quality` modu `eleven_v4`, transcription `scribe_v2` kullanır. Canlı ElevenLabs model listesinde model ve Türkçe (`tr`) desteği doğrulanmadan sentez gönderilmez. `fast` için `eleven_v4_turbo` ayrılmıştır; erişilebilir resmî kaynaklar yeni Text-to-Dialogue WebSocket URL/protokolünü açıklamadığı için bu mod şimdilik kapalıdır ve `FAST_MODEL_PROTOCOL_UNVERIFIED` döndürür. Eski model veya sağlayıcıya fallback yoktur. Doğrulanan sözleşmeler: [API contract](docs/turkish-media-api-contract.md).
 
-Panel, kısa girişte sayaç eşiği dolmasa bile mevcut doğrulanmış kaynak aralığına gelindiğinde açılır; açılış videoyu ileri/geri atlatmaz. Komşu girişler yalnızca doğrulanmış, aynı katılımcılara ait kayıtlar üzerinden bağlanır. Normal diyaloglarda kayınbaba/kayın baba ve kaynana/kayınvalide yazımları aynı doğrulanmış rolü kullanır. Eksik karakter haritası tanılama raporunda ayrıca belirtilir; rol uydurulmaz.
+Konuşmacı kimliği video boyunca sabittir; her konuşmacı farklı bir sese eşlenir ve eşleme manifest/kayıt içinde saklanır. Scribe ses cinsiyetini bildirmez: belirsiz kimlikler için otomatik atama aynı sesi korur fakat doğru kadın/erkek eşleşmesini kanıtlamaz. Konuşmacı sesleri arayüzden seçilebilir ve aynı kaynak cache'i kullanılarak yeniden üretilebilir. API anahtarları yalnız sunucudadır; voice ID'leri gizli anahtar değildir ve katalogdan sağlanır.
 
-21 Eylül 2026 oynatma doğrulaması: 491 test geçti. Yeni regresyonlar sahne sınırında panel açılışı, ayrık kaynak aralıkları, yinelenen konuşma kayıtları, konuşmacı ataması, altyazı güncellemesi, ses saatinin beklemesi/ileri eşlenmesi ve normal diyalogdaki rol yazımlarını kapsar. Ücretli sağlayıcı çağrısı veya kullanıcının kaynak sesiyle dinleme testi yapılmadı.
+**Altyazılar:** `source_tr`, Türkçe metni özgün konuşma aralığında gösterir; Türkçe kelimelere tahmini zaman uydurmaz. `dub_tr`, üretilmiş ve süreye uydurulmuş gerçek Türkçe ses üzerindeki Forced Alignment zamanlarını kullanır. Dublaj açıkken varsayılan `dub_tr` olur. İki kanal UTF-8 SRT/WebVTT ve internal JSON olarak üretilir. Seek/pause/replay/fullscreen tek altyazı görünümünü video saatinden günceller. Kaynakta eşzamanlı konuşan kişiler ayrı satırlarda gösterilebilir.
 
-## Yapılandırma
+**Miks:** merkezi FFmpeg servisi kaynak sesini stereo 48 kHz WAV olarak korur, Türkçe sesleri kaynak zamanlarına yerleştirir ve clipping'i sınırlar. Hazır ayrılmış background track verilirse kullanılabilir. Varsayılan `speech-ducking` orijinal konuşma aralıklarında kaynak sesi susturur: çift dil engellenir, fakat o aralıktaki müzik ve efektler de zayıflar. Bu yöntem gerçek konuşma/müzik ayrıştırması değildir; QA raporunda miks yöntemi görünür. PCM isteği, kanal sayısı tahmin edilmeden aynı sample rate'te belgelenmiş headerlı WAV isteğine dönüştürülür. Hesap formatı açıkça reddederse aynı modelde MP3 kullanılır.
 
-| Değişken | Kullanım |
+**Cache ve işler:** 24 saatlik disk cache; video SHA-256, model, metin, voice mapping, çeviri sürümü, format ve ilgili ayarlar ile anahtarlanır. Hazır aşamalar ve segmentler hemen kaydedilir; retry tamamlanan ücretli aşamaları yeniden çağırmaz. Aynı kaynak dosya chunk yüklemesi restart sonrası sürdürülebilir; URL video cache'i aynı videonun yeniden indirilmesini önler. Aktif dosyalar lease ile temizlemeden korunur; işler tek video sırasından, sahneler sınırlı eşzamanlılıkla yürür. Disk farklı sunucular arasında paylaşılmaz; yerel cache process lease'leri dağıtık değildir. Mevcut kaynak URL resolver/deployment değiştirilmedi.
+
+Frontend `PREPARING_AUDIO`, `TRANSCRIBING`, `DIARIZING`, `TRANSLATING`, `GENERATING_DUB`, `ALIGNING`, `BUILDING_SUBTITLES`, `MIXING_AUDIO`, `READY`, `FAILED` durumlarını gösterir; iptal ve retry vardır. 429/5xx/network/timeout kontrollü backoff + jitter ile tekrar edilir. Sağlayıcının doğrulanmış idempotency desteği olmadığı için yanıtı kaybolan bir ücretli HTTP isteğinin yeniden ücretlendirilmesini kesin olarak önleme garantisi yoktur; tamamlanan aşama cache'i ve single-flight gereksiz tekrarları azaltır.
+
+### Yapılandırma
+
+| Değişken | Varsayılan / kullanım |
 |---|---|
-| `APP_PASSWORD` | Uygulamaya giriş parolası |
-| `PORT` | HTTP dinleme portu |
-| `EXTERNAL_ANALYSIS_URL` | Harici analiz servisinin kök adresi; kendi dağıtım adresinizle ayarlanmalıdır |
-| `GEMINI_API_KEY` | Sunucu Gemini anahtarı; tarayıcı oturumundaki anahtar önceliklidir |
-| `GEMINI_MODEL` | Storyboard model adı |
-| `GEMINI_TRANSCRIBE_MODEL` | Diyalog çözümleme model adı |
-| `GEMINI_DIALOGUE_MODEL` | Diyalog çeviri model adı |
-| `GEMINI_TTS_MODEL` | Sunucudaki Gemini ses uçlarının model adı |
-| `KEEP_GEMINI_FILES` | `true` ise yüklenen Gemini dosyalarının işlem sonunda silinmesini engeller |
+| `APP_PASSWORD` | Zorunlu uygulama giriş parolası |
+| `PORT` | `10000` |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Yalnız storyboard/görsel analiz; mevcut tarayıcı Gemini anahtar seçimi korunur |
+| `EXTERNAL_ANALYSIS_URL` | İsteğe bağlı harici analiz servisi |
+| `ELEVENLABS_API_KEY` | Sunucu secret; transcription/dublaj/hizalama/katalog |
+| `OPENAI_API_KEY` | Sunucu secret; Türkçe çeviri |
+| `DUB_QUALITY_MODE` | `quality`; `fast` sözleşme doğrulanana kadar kapalı |
+| `ELEVENLABS_DUB_MODEL` | `eleven_v4` |
+| `ELEVENLABS_FAST_MODEL` | `eleven_v4_turbo` |
+| `ELEVENLABS_STT_MODEL` | `scribe_v2` |
+| `ELEVENLABS_OUTPUT_FORMAT` | `mp3_44100_128`; desteklenen WAV isteğe bağlı |
+| `DUB_DEFAULT_LANGUAGE` | `tr` |
+| `DUB_MAX_CONCURRENCY` | `2` (1–8); sahne/segment işleri |
+| `DUB_CACHE_TTL` | `86400` saniye (60–86400) |
+| `DUB_CACHE_DIRECTORY` | `/tmp/videoquest-turkish-media` |
+| `DUB_REQUEST_TIMEOUT_MS` | `120000` (1000–600000) |
+| `DUB_MAX_RETRIES` | `3` (0–5) |
+| `TRANSLATION_PROVIDER` | `openai` |
+| `TRANSLATION_MODEL` | `gpt-4.1-mini`; structured JSON destekleyen model |
+| `TRANSLATION_VERSION` | `scene-tr-v1`; çeviri davranışı değişince cache sürümünü değiştirin |
+| `ELEVENLABS_PRONUNCIATION_DICTIONARY_ID` | İsteğe bağlı merkezi ElevenLabs dictionary locator |
+| `ELEVENLABS_PRONUNCIATION_DICTIONARY_VERSION_ID` | Dictionary seçilirse zorunlu version locator |
 
-Tarayıcıdan girilen sağlayıcı anahtarları oturum depolamasında tutulur. Depolamayı engelleyen bir tarayıcı uygulamayı açabilir, ancak bu anahtarları saklayamaz.
+Tam container/video süresi için `ffprobe` erişilebilir olmalıdır; `/usr/bin/ffprobe` varsa otomatik kullanılır. Yoksa FFmpeg duration header'ı yalnız 0.01 saniye hassasiyetindedir. `ffmpeg-static` mevcut aktarım bağımlılığı olarak korunur.
+
+### Troubleshooting / ElevenLabs errors
+
+- `ELEVENLABS_NOT_CONFIGURED` / `OPENAI_NOT_CONFIGURED`: secret'ları backend servis ortamında tanımlayın; HTML veya tarayıcı depolamasına koymayın.
+- `ELEVENLABS_MODEL_UNAVAILABLE` / dil desteği hatası: hesabın canlı `/v1/models` cevabını ve model erişimini kontrol edin. Başka modele sessiz geçiş yapılmaz.
+- HTTP 401/403: API anahtarı, izin ve abonelik erişimini kontrol edin. 429: sınırlı retry sonrası kota/rate limit çözülünce UI'den retry kullanın.
+- `DUB_REGENERATE_REQUIRED`: kaynak süreye anlamı koruyarak sığmayan konuşma; metni/sesi inceleyin, aşırı tempo veya kesme uygulanmaz.
+- `DUB_MISSING_SEGMENTS`, `ALIGNMENT_*`, `TRANSLATION_*`: manifestteki segment kimlikleri ve hata satırlarıyla eksik çıktıyı inceleyin; eksik dublaj hazır sayılmaz.
+- Sunucu restart sonrası `JOB_INTERRUPTED`: aynı diskte kalan cache ve upload ile retry yapılabilir. Ephemeral deployment disk'i kaybolduysa yeniden yüklemek gerekir.
+- Final mix/alignment dinleme kalitesi, gerçek kaynakla ve ücretli sağlayıcı erişimiyle ayrıca doğrulanmalıdır; mock/FFmpeg testleri dil doğallığını ölçmez.
+
+### Migration
+
+Eski Gemini konuşma/çeviri/TTS uçları, Eleven v3 generator'ı ve tarayıcı segment scheduler/cache modülleri kaldırıldı. Production'da tek dublaj mimarisi vardır. Backup branch/tag ve bağımlılık envanteri: [Migration notes](docs/turkish-media-migration.md). Eski ses environment ayarları (`GEMINI_TRANSCRIBE_MODEL`, `GEMINI_DIALOGUE_MODEL`, `GEMINI_TTS_MODEL`, `KEEP_GEMINI_FILES`) artık kullanılmaz.
+
+Kayıtlı oyunlar IndexedDB v2 ve `.vqgame` v2 ile kaynak videoyu, canonical manifesti ve gerçek final mix Blob'unu taşır. v1 içe aktarma kaynak videoyu/analizi korur; eski ses cache'i yeni oynatıcıda çalıştırılmaz. Yeni Türkçe ses için yeniden üretim gerekir; yeniden üretim mevcut source/translation cache'ini kullanır.
 
 ## Video URL desteği
 
@@ -77,9 +118,7 @@ Canlı ortam teşhisi için `VIDEO_RESOLUTION_PROBE_URL` ve en fazla 15 dakika i
 ## Aktarım ve yeniden deneme sınırları
 
 - Harici analiz yüklemesi: 250 MiB; geçici disk dosyasından iletilir ve işlem sonunda temizlenir.
-- Diyalog için video yüklemesi: 2 GiB; parça aktarımı kullanılır. Ses yüklemesi: toplam 250 MiB, tek parça en çok 10 MiB. Standart MP4/AAC dosyalarında önce yalnızca ses kanalı `Blob.slice()` ile M4A olarak ayrılır; videonun tamamı belleğe okunmaz veya analiz için sunucuya geri gönderilmez. Ses paketleri, zaman damgaları ve edit listeleri korunur; aynı oturumdaki yeniden denemeler hazırlanan sesi kullanır. En fazla 32 MiB dosya indeksi okunur. Parçalı MP4 (HLS/DASH birleştirmeleri dahil), farklı codec, bozuk tablo veya 250 MiB ses sınırında mevcut yol kullanılır: küçük dosyalarda yerel ses çözme, 128 MiB üzerinde veya 15 dakikadan uzun dosyalarda sunucuya video yükleyip MP3 hazırlama. Ekran yalnızca ses mi yoksa bütün video mu gönderildiğini açıkça gösterir. Oynatılan kaynak video yeniden kodlanmaz.
-- Android parça yüklemesinde 45 saniyelik ilerleme sayacı yalnızca telefondan veri gönderilirken çalışır. Tarayıcının yüklemesi tamamlandığında sayaç durur ve Render'ın yanıtı için 120 saniyelik ayrı süre kullanılır; sunucunun dosyayı yazmasını bekleyen tamamlanmış istek yanlışlıkla iptal edilmez. Geçici hatalar aynı parçayı en fazla beş kez dener. Arayüz çevrimdışı durumu, HTTP hatası, ağ kesintisi ve yanıt zaman aşımını birbirinden ayırarak gerçek nedeni gösterir; kalıcı HTTP hataları gereksiz yere tekrar edilmez.
-- MP4 içinden çıkarılan M4A, kaynak videodaki binlerce küçük ses dilimini doğrudan `File` parçası olarak taşımaz. Yalnızca ses baytları en fazla 1 MiB'lık ardışık bloklara paketlenir; Android XHR yüklemesi parçalanmış Blob ağacını yürümek zorunda kalmaz. MP4 paketleri, zaman damgaları ve edit listeleri değişmez. Yükleme hız göstergesi tüm analiz süresi yerine aktif parça aktarımını ölçer ve düşük pozitif hızları `0.0 MB/sn` olarak yuvarlamaz.
+- Yeni Türkçe medya için kaynak video yüklemesi: en çok 2 GiB, en çok 10 MiB chunk; sunucu kaynak container'ından kayıpsız ses çıkarır. Parça durumları diskten okunur ve tamamlanan parçalar tekrar gönderilmez. Kaynak video oynatımı yeniden kodlanmaz.
 - Storyboard: en çok 20 dosya, her biri en çok 2 MiB.
 - Tarayıcıya tam indirme: OPFS ve Web Locks destekleyen tarayıcılarda 2 GiB. Küçük ağ paketleri yaklaşık 1 MiB'lık sınırlı tamponda birleştirilerek yazılır; ekran ilerlemesi en sık 200 ms arayla güncellenir. Böylece her ağ paketi için ayrı disk yazması ve ekran güncellemesi beklenmez. İçerik uzunluğu bildirilmediğinde de sınır uygulanır. Boş alan ve aktarım bütünlüğü kontrol edilir. Destek yoksa bellekte indirme sınırı 600 MiB olarak korunur. İptal/hata ve kaynak değişiminde geçici dosyalar temizlenir; kapanmış sekmelerin geçici dosyaları sonraki indirmede temizlenir. Aktif sekmelerin videoları ve IndexedDB içindeki kayıtlı oyunlar silinmez. Kalıcı kayıt ek depolama alanı gerektirebilir. OPFS davranışı: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system
 - URL arayüzünde “Bul ve indir” önce medya adresini sunucuda bulur. Dosyayı CORS kurallarına uygun, kimlik bilgisi göndermeyen HTTPS isteğiyle doğrudan indirmeyi dener; başlıklar 4 saniyede gelmezse veya doğrudan erişim/aktarım başarısızsa Render proxy yoluna döner. HLS/DASH doğrudan proxy üzerinden birleştirilir. Tam indirme sırasında ayrıca uzak önizleme veya oynatma kontrolü başlatılmaz. Yerel dosya tamamlanınca oynatıcı açılır ve analiz kullanılabilir olur; ses ve kareler aynı dosyadan hazırlanır. Sonraki analiz/dublaj servis istekleri devam eder.
@@ -88,14 +127,14 @@ Canlı ortam teşhisi için `VIDEO_RESOLUTION_PROBE_URL` ve en fazla 15 dakika i
 21 Eylül 2026 kontrollü karşılaştırma: bağlantı başına sınırlanmış yerel HTTP kaynağındaki aynı 96 MiB dosya eski 4 bağlantılı gruplarla 2112 ms, yeni 6 bağlantılı aktarımda 1280 ms sürdü (1,65 kat aktarım hızı). İstek sayısı 49'dan 25'e indi; SHA-256 aynı kaldı. Bu ölçüm gerçek kaynak sitenin, Render'ın veya telefon bağlantısının hız garantisi değildir.
 - Her iki otomatik yol da başarısız olursa tarayıcıda video/kaynak sayfa açma ve indirilen dosyayı seçme düğmeleri gösterilir. Uygulama tarayıcının İndirilenler klasöründeki dosyayı kendiliğinden okuyamaz; kullanıcı dosyayı seçmelidir. Depolama/boyut sınırları korunur; kalite düşürülmez ve yeniden kodlama yapılmaz. Hız kaynak site ve bağlantıya bağlıdır. [Fetch davranışı](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch).
 - Video proxy yanıt başlığı bekleme süresi: 30 saniye. Aktarım hareketsizliği: 45 saniye. HLS/DASH aktarım üst süresi: 30 dakika.
-- ElevenLabs sunucu istek süresi: 60 saniye. İstemci dublaj isteği: 70 saniye.
+- Yeni provider istek süresi config ile yönetilir (varsayılan 120 saniye); job polling ve upload ayrı iptal/zaman aşımı yolları kullanır.
 
 21 Eylül 2026 aktarım doğrulaması: 471 test geçti. Gerçek yerel HTTP sunucusunda bağlantı başına 64 KiB/8 ms sınırı altında 12 MiB dosya tek bağlantıyla 1.606 ms, paralel aktarımda 530 ms sürdü (yaklaşık 3 kat); SHA-256 özeti iki sonuçta da kaynakla eşleşti. Bu kontrollü ölçüm kullanıcının uzak kaynağının hızını kanıtlamaz. Gerçek telefonda aynı 65,9 MB kaynağın uçtan uca süresi ölçülmedi; kaynak toplam hızı sınırlarsa paralellik aynı kazancı sağlamaz. Testler ayrıca sürüm değişimi, bozuk/eksik parça, Range desteklemeyen kaynak, iptal, Retry-After, OPFS dosya temizliği ve otomatik proxy geçişini kapsar.
 
-Tamamlanan analiz bölümleri aynı sekmede yeniden kullanılabilir. Okunamayan bölümler doğrulanmış içerik olarak gösterilmez. Analiz oturumları, video bağlantı belirteçleri ve yükleme oturumları kalıcı bir veritabanında tutulmaz; sayfa yenileme veya sunucu yeniden başlatma sonrasında devam garantisi yoktur.
+Tamamlanan analiz bölümleri aynı sekmede yeniden kullanılabilir. Okunamayan bölümler doğrulanmış içerik olarak gösterilmez. Görsel analiz oturumları ve uzak video bağlantı belirteçleri kalıcı veritabanında tutulmaz. Yeni Türkçe medya job/upload metadata’sı diskte 24 saat saklanır; aynı disk duruyorsa restart sonrası retry mümkündür.
 
 ## Dağıtım
 
 Render yapılandırması: Node web service, build `npm ci`, start `npm start`; gerekli ortam değişkenlerini servis üzerinde tanımlayın. `/health`, oturum gerektirmeyen temel süreç kontrolüdür; ücretli analiz veya dublaj sağlayıcılarının sağlıklı olduğunu tek başına kanıtlamaz.
 
-Ayrıntılı bulgular, uygulanan düzeltmeler ve doğrulama sınırları: [STABILITY_REPORT.md](STABILITY_REPORT.md).
+Yeni migration envanteri ve doğrulama sınırları: [Migration notes](docs/turkish-media-migration.md). Önceki sürümün tarihsel güvenilirlik raporu: [STABILITY_REPORT.md](STABILITY_REPORT.md).
