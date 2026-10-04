@@ -36,6 +36,7 @@ import {
   movementBelongsToVerifiedPosition,
   normalizeOutcomeUnlockProgress,
   playbackRateForTapTempo,
+  playableAdultPanelFamily,
   pickNearbyRhythmVariant,
   pickNextChronologicalVariant,
   pickNextVariant,
@@ -55,6 +56,25 @@ import {
 test('averageAdultProgress clamps both values and averages them', () => {
   assert.equal(averageAdultProgress(120, -10), 50);
   assert.equal(averageAdultProgress(80, 60), 70);
+});
+
+test('explicit verified activity survives a generic touch action type inside the encounter', () => {
+  assert.equal(playableAdultPanelFamily({
+    sourceVerified: true,
+    adultScene: true,
+    actionType: 'touch',
+    label: 'Oral',
+    positionId: '',
+    positionLabel: ''
+  }), 'oral');
+  assert.equal(playableAdultPanelFamily({
+    sourceVerified: true,
+    adultScene: true,
+    actionType: 'touch',
+    label: 'Omzuna dokun',
+    positionId: '',
+    positionLabel: ''
+  }), '');
 });
 
 test('short source-verified positions remain playable without accepting flashes', () => {
@@ -863,7 +883,7 @@ test('movement cards keep concrete action text and remove sensory metadata', () 
   assert.doesNotMatch(choices[0].label, /nefes|bakış|kesit|sekans|\d+:\d+/i);
 });
 
-test('one sparse card with several verified subclips becomes separate user-selectable cards', () => {
+test('one logical movement card preserves several verified source sequences', () => {
   const original = [{
     id: 'one-card',
     label: 'Observed movement',
@@ -873,9 +893,9 @@ test('one sparse card with several verified subclips becomes separate user-selec
     ]
   }];
   const cards = splitSparseMovementChoiceCards(original, 5);
-  assert.equal(cards.length, 2);
-  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)), [['part-a'], ['part-b']]);
-  assert.deepEqual(cards.map(card => card.label), ['Observed movement · Bölüm 1', 'Observed movement · Bölüm 2']);
+  assert.equal(cards.length, 1);
+  assert.deepEqual(cards[0].variants.map(item => item.id), ['part-a', 'part-b']);
+  assert.equal(cards[0].label, 'Observed movement');
 });
 
 test('position-only evidence stays one honest playable card without generic cut labels', () => {
