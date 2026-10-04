@@ -129,6 +129,66 @@ async function fixture(t, { words = sourceWords(), failAlignmentOnce = false, mi
   return { pipeline, config, cache, limiter, audio, elevenLabs, translationProvider, input, calls, directory, sourcePath };
 }
 
+function useNativeTiming(f) {
+  const synthesize = f.elevenLabs.synthesizeDialogue;
+  f.elevenLabs.synthesizeDialogue = async turns => {
+    const response = await synthesize(turns);
+    const characters = [], starts = [], ends = [];
+    response.voiceSegments = turns.map((turn, index) => {
+      const letters = [...turn.text], start = characters.length;
+      letters.forEach((letter, i) => {
+        characters.push(letter); starts.push(index + i / letters.length); ends.push(index + (i + 1) / letters.length);
+      });
+      return { voice_id: turn.voice_id, dialogue_input_index: index, start_time_seconds: index,
+        end_time_seconds: index + 1, character_start_index: start, character_end_index: characters.length };
+    });
+    response.alignment = { characters, character_start_times_seconds: starts, character_end_times_seconds: ends };
+    return response;
+  };
+}
+
+test('complete v4 native timestamps produce real subtitle words without Forced Alignment permission', async t => {
+  const f = await fixture(t); useNativeTiming(f);
+  f.elevenLabs.align = () => assert.fail('The measured generation timings must be reused.');
+  const result = await f.pipeline(f.input);
+  assert.equal(result.dubSegments.length, 2);
+  assert.equal(result.dubSegments[0].words[0].text, 'Merhaba.');
+  assert.equal(result.dubSegments[0].words[0].start, 1);
+  assert.equal(result.dubSegments[0].words[0].end, 2, 'padding adds no invented spoken time');
+  assert.equal(result.dubSegments[1].words[0].start, 3.2);
+  assert.equal(f.calls.synthesize.length, 1);
+});
+
+test('earlier cached generated turns recover their original timestamps without regenerating audio', async t => {
+  const f = await fixture(t); useNativeTiming(f);
+  const put = f.cache.put;
+  f.cache.put = (key, value, options) => put(key, value?.nativeWords ? { model: value.model } : value, options);
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (...args) => { const value = await fit(...args); delete value.tempo; return value; };
+  let alignmentCalls = 0;
+  f.elevenLabs.align = async () => { alignmentCalls++; throw new MediaError('ELEVENLABS_ALIGNMENT_PERMISSION_MISSING', 'No permission', { status: 401 }); };
+  await assert.rejects(f.pipeline(f.input), { code: 'ELEVENLABS_ALIGNMENT_PERMISSION_MISSING' });
+  const before = alignmentCalls;
+  f.audio.fitDubSegment = fit; f.audio.probeDuration = async () => 1; f.cache.put = put;
+  const result = await f.pipeline(f.input);
+  assert.equal(result.dubSegments.length, 2);
+  assert.equal(f.calls.synthesize.length, 1, 'no repeated paid synthesis');
+  assert.equal(alignmentCalls, before, 'cached native character times satisfy alignment');
+});
+
+test('one account permission failure stops the remaining queued alignment calls', async t => {
+  const words = Array.from({ length: 10 }, (_, i) => ({ text: 'Hello.', type: 'word', start: i, end: i + .8, speaker_id: 'speaker-a' }));
+  const f = await fixture(t, { words });
+  let calls = 0;
+  f.elevenLabs.align = async (_file, _text, { signal }) => {
+    signal.throwIfAborted(); calls++;
+    throw new MediaError('ELEVENLABS_ALIGNMENT_PERMISSION_MISSING', 'Missing forced_alignment', { status: 401 });
+  };
+  await assert.rejects(f.pipeline(f.input), { code: 'ELEVENLABS_ALIGNMENT_PERMISSION_MISSING' });
+  assert.ok(calls <= 2, 'the same permission error must not be sent for every remaining turn');
+  assert.equal(f.limiter.pendingCount, 0); assert.equal(f.limiter.activeCount, 0);
+});
+
 test('pipeline logs every required stage with paired durations and IDs without source or spoken text', async t => {
   const f = await fixture(t);
   await f.pipeline(f.input, { jobId: 'job-stage-test' });

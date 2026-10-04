@@ -14,7 +14,9 @@ npm start
 
 `npm ci`, tarayıcıda çalışan MP3 dönüştürücüsünü otomatik derler. Script çalıştırmadan kurulum yapılıyorsa önce `npm run build:audio` gerekir. Kaynak videonun sesi cihazda ayrılır ve 96 kbps / 32 kHz MP3 olarak gönderilir; ElevenLabs'a video veya kaynak WAV yüklenmez. Tam video süresi aktarım metadata'sında korunur ve aynı dosyanın hazır MP3'ü tekrar kullanılır.
 
-Analiz göstergesi her işlem için gerçek durum ve geçen süreyi gösterir. MP3/görüntü aktarımı gerçek tarayıcı byte olaylarını; kare, çeviri, ses üretimi ve hizalama adımları tamamlanmış birim sayılarını kullanır. Sağlayıcının yüzde bildirmediği aşamalarda yanıt beklenir; tahmini toplam yüzde üretilmez.
+Analiz göstergesi tek kompakt alanda o an yapılan işi, gerçek ilerlemeyi ve süreyi gösterir. MP3/görüntü aktarımı gerçek tarayıcı byte olaylarını; kare, çeviri, ses üretimi ve hizalama adımları tamamlanmış birim sayılarını kullanır. Sağlayıcının yüzde bildirmediği aşamalarda yanıt beklenir; tahmini toplam yüzde üretilmez. Tamamlanan aşamaların süreleri daha sonraki durum sorgularıyla uzamaz.
+
+ElevenLabs ses üretiminden gelen karakter zamanları, kaynak cümle ve gerçek ses aralığıyla eksiksiz eşleşiyorsa yeniden kullanılır. Ses parçalarının birleştirilmesi ve ölçülen tempo değişimi bu zamanlara uygulanır; ek Forced Alignment çağrısı gerekmez. Eski cache'teki seslerin zamanları da orijinal üretim yanıtından geri alınır. Veriler eksik veya uyuşmazsa doğrulanmış Forced Alignment yolu korunur; bu durumda anahtarın `forced_alignment` izni gerekir. Hesap/izin hatası kalan kuyruğu hemen durdurur ve kısa Türkçe mesaj gösterilir. Geçici sorgu bağlantı hatasında mevcut iş tekrar kontrol edilir; yeni iş veya yeniden ses üretimi başlatılmaz.
 
 Yerel MP3 kodlayıcısı [Mediabunny 1.61.1](https://github.com/Vanilagy/mediabunny/tree/v1.61.1) ve `@mediabunny/mp3-encoder` (MPL-2.0) ile [LAME 3.100](https://lame.sourceforge.io/) (LGPL) kullanır. Kaynak ve derleme talimatları Mediabunny deposunun `packages/mp3-encoder` bölümündedir; kodlayıcı değiştirilmeden paketlenir ve lisans bildirimleri derleme çıktısında korunur.
 

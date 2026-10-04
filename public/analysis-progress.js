@@ -22,45 +22,26 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
   now = Date.now, setTimer = globalThis.setInterval, clearTimer = globalThis.clearInterval } = {}) {
   const rows = new Map();
   let timer = null, active = false, focused = null, startedAt = 0;
-  const doc = list?.ownerDocument || globalThis.document;
+  let terminalText = '', finishedAt = null;
   function paint() {
-    if (!list || !doc) return;
-    list.replaceChildren();
-    const running = [];
-    for (const row of rows.values()) {
-      const element = doc.createElement('li'); element.dataset.status = row.status;
-      const name = doc.createElement('strong'); name.textContent = row.label;
-      const state = doc.createElement('span'); state.className = 'analysis-step-state';
-      const age = row.startedAt === undefined ? '' : ' · ' + seconds((row.endedAt ?? now()) - row.startedAt);
-      const labels = { pending: 'Sırada', working: 'Çalışıyor', waiting: 'Yanıt bekleniyor',
-        retrying: 'Yeniden deneniyor', done: 'Tamamlandı', reused: 'Önceki sonuç', failed: 'Hata', cancelled: 'İptal edildi' };
-      state.textContent = (labels[row.status] || row.status) + age;
-      const info = doc.createElement('small'); info.textContent = row.detail || '';
-      if (row.lastServerContactAt && ACTIVE.has(row.status)) info.textContent +=
-        ' · Son sunucu yanıtı ' + seconds(now() - row.lastServerContactAt) + ' önce';
-      if (Number.isFinite(row.loaded) && row.total > 0) {
-        const amount = row.unit === 'bytes' ? MB(row.loaded) + ' / ' + MB(row.total)
-          : row.unit === 'percent' ? '%' + Math.floor(row.loaded / row.total * 100)
-          : row.loaded + ' / ' + row.total + (row.unit ? ' ' + row.unit : '');
-        info.textContent = [amount, info.textContent].filter(Boolean).join(' · ');
-      }
-      element.append(name, state, info);
-      if (row.total > 0 && Number.isFinite(row.loaded)) {
-        const progress = doc.createElement('progress'); progress.max = row.total;
-        progress.value = Math.min(row.total, Math.max(0, row.loaded));
-        progress.setAttribute('aria-label', row.label); element.append(progress);
-      }
-      list.append(element);
-      if (ACTIVE.has(row.status)) running.push(row.label);
-    }
+    const running = [...rows.values()].filter(row => ACTIVE.has(row.status));
+    const focusedRow = rows.get(focused);
+    const focus = active && running.length ? (running.includes(focusedRow) ? focusedRow : running.at(-1)) : focusedRow;
     const complete = [...rows.values()].filter(row => ['done', 'reused'].includes(row.status)).length;
-    if (summary) summary.textContent = complete + ' / ' + rows.size + ' işlem tamamlandı' +
-      (startedAt ? ' · ' + seconds(now() - startedAt) : '');
-    if (message) message.textContent = running.length ? 'Devam eden: ' + running.join(' · ')
-      : active ? 'Bir sonraki işlem hazırlanıyor.' : complete === rows.size ? 'Seçili işlemler tamamlandı.' : 'İşlem durdu.';
-    const focus = rows.get(focused);
-    if (detail) detail.textContent = focus ? (focus.detail || focus.label) +
-      (focus.startedAt === undefined ? '' : ' · ' + seconds((focus.endedAt ?? now()) - focus.startedAt)) : '';
+    if (summary) summary.textContent = complete + ' / ' + rows.size + ' aşama tamamlandı' +
+      (startedAt ? ' · ' + seconds((finishedAt ?? now()) - startedAt) : '');
+    if (message) message.textContent = terminalText || focus?.detail ||
+      (active ? 'İşlem hazırlanıyor.' : 'Seçili işlemler tamamlandı.');
+    const info = [];
+    if (focus && Number.isFinite(focus.loaded) && focus.total > 0) info.push(focus.unit === 'bytes'
+      ? MB(focus.loaded) + ' / ' + MB(focus.total)
+      : focus.unit === 'percent' ? '%' + Math.floor(focus.loaded / focus.total * 100)
+      : focus.loaded + ' / ' + focus.total + (focus.unit ? ' ' + focus.unit : ''));
+    if (active && focus?.startedAt !== undefined) info.push(seconds(now() - focus.startedAt));
+    if (active && running.length > 1) info.push(running.filter(row => row !== focus).map(row => row.label).join(' · '));
+    if (active && focus?.lastServerContactAt && now() - focus.lastServerContactAt > 10000)
+      info.push('Son sunucu yanıtı ' + seconds(now() - focus.lastServerContactAt) + ' önce');
+    if (detail) detail.textContent = info.join(' · ');
     if (bar) {
       if (focus?.total > 0 && Number.isFinite(focus.loaded)) bar.value = Math.min(100, focus.loaded / focus.total * 100);
       else bar.removeAttribute('value');
@@ -72,14 +53,14 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
     if (!row) { row = { id, label: LABELS[id], status: 'pending' }; rows.set(id, row); }
     const status = changes.status || 'working';
     if (ACTIVE.has(status) && !ACTIVE.has(row.status)) { row.startedAt = now(); delete row.endedAt; }
-    if (!ACTIVE.has(status) && status !== 'pending') row.endedAt = now();
+    if (!ACTIVE.has(status) && status !== 'pending' && row.endedAt === undefined) row.endedAt = now();
     Object.assign(row, changes, { status });
     focused = id; container?.classList.remove('hidden'); paint();
   }
   function done(id, text = '') { update(id, { status: 'done', detail: text, ...(rows.get(id)?.total > 0 ? { loaded: rows.get(id).total } : {}) }); }
   function begin({ motion = false, dubbing = true, subtitles = true, remote = false } = {}) {
     if (timer !== null) clearTimer.call(globalThis, timer);
-    rows.clear(); active = true; startedAt = now();
+    rows.clear(); active = true; startedAt = now(); terminalText = ''; finishedAt = null;
     const ids = ['source', 'extract', 'encode', 'hash', 'upload', 'serverAudio', 'transcript', 'speakers',
       ...(motion ? ['frames', 'frameUpload', 'analysis', 'review', 'integrity'] : []),
       ...(dubbing || subtitles ? ['translation'] : []),
@@ -91,7 +72,7 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
     timer = setTimer.call(globalThis, paint, 1000);
   }
   function finish(status = 'done', text = '') {
-    active = false;
+    active = false; finishedAt ??= now(); terminalText = text || terminalText;
     for (const row of rows.values()) if (ACTIVE.has(row.status)) {
       row.status = status === 'done' ? 'done' : status; row.endedAt = now();
       if (text && status !== 'done') row.detail = text;
@@ -103,6 +84,11 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
     if (!rows.size) begin({ motion: false });
     const progress = status.stageProgress || (typeof status.progress === 'object' ? status.progress : null);
     let step;
+    if (status.state === 'RECONNECTING') {
+      const row = rows.get(focused);
+      if (row) update(row.id, { status: 'waiting', detail: status.message });
+      return;
+    }
     if (status.origin === 'device' || status.state === 'ENCODING_MP3') {
       const encoding = ['loading_encoder', 'decoding', 'encoding', 'finalizing_mp3', 'mp3_ready', 'cached'].includes(status.phase);
       step = encoding ? 'encode' : 'extract';

@@ -55,6 +55,18 @@ for (const status of [401, 403]) {
   });
 }
 
+test('Forced Alignment permission errors show a short Turkish instruction and stop retries', async () => {
+  let calls = 0;
+  const request = createMediaRequest({ secrets: [key], maxRetries: 3, fetchImpl: async () => {
+    calls++; return Response.json(denied('forced_alignment'), { status: 401 });
+  } });
+  const error = await request('https://api.elevenlabs.io/v1/forced-alignment').catch(value => value);
+  assert.equal(error.code, 'ELEVENLABS_ALIGNMENT_PERMISSION_MISSING');
+  assert.match(error.message, /Forced Alignment.*iznini aç/u);
+  assert.doesNotMatch(error.message, /authentication_error|request_id/);
+  assert.equal(calls, 1); assert.equal(error.retryable, false);
+});
+
 test('permission guidance never reclassifies other providers, operations, invalid keys or malformed responses', async () => {
   const cases = [
     { url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent', body: denied() },

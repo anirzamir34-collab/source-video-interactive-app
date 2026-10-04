@@ -424,10 +424,12 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       let status;
       try { status = await request(statusUrl, {}, owner); failures = 0; }
       catch (error) {
-        if (!current(owner) || error.name === 'AbortError' || failures >= 2 ||
+        if (!current(owner) || error.name === 'AbortError' ||
             (error.status && error.status < 500 && ![408,429].includes(error.status))) throw error;
+        if (failures >= 5) throw Object.assign(new Error('Sunucu bağlantısı kesildi. Yeniden dene ile mevcut işlemin durumunu kontrol edebilirsin.'),
+          { code: 'MEDIA_CONNECTION_LOST', cause: error });
         failures += 1;
-        notify({ state: 'RECONNECTING', jobId, message: 'Türkçe medya işleminin durumu yeniden kontrol ediliyor.' });
+        notify({ state: 'RECONNECTING', jobId, message: 'Bağlantı yeniden kuruluyor; mevcut iş sunucuda kontrol ediliyor.' });
         await delay(retryDelayMs * failures, owner);
         continue;
       }

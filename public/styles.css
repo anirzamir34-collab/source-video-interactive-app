@@ -4721,20 +4721,9 @@ body { font-size: 13px; }
 .media-job-status p { margin: 0; line-height: 1.5; }
 .media-job-status progress { width: 100%; accent-color: #35ddb0; }
 .analysis-progress-summary { color: #90e7cb; font-size: 12px; }
-.analysis-progress-detail { color: #aebdb8; font-size: 12px; min-height: 1.5em; }
-.analysis-step-list { display: grid; gap: 8px; padding: 0; margin: 8px 0; list-style: none; }
-.analysis-step-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px;
-  padding: 10px; border: 1px solid #27332e; border-radius: 9px; min-width: 0; }
-.analysis-step-list strong { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.analysis-step-state { font-size: 10px; color: #9caea6; text-align: right; max-width: 120px; }
-.analysis-step-list small { grid-column: 1 / -1; font-size: 11px; color: #aabdb3; overflow-wrap: anywhere; }
-.analysis-step-list progress { grid-column: 1 / -1; height: 5px; }
-.analysis-step-list li[data-status="pending"] { opacity: .5; }
-.analysis-step-list li[data-status="working"], .analysis-step-list li[data-status="waiting"],
-.analysis-step-list li[data-status="retrying"] { border-color: #27b993; background: #082019; }
-.analysis-step-list li[data-status="done"], .analysis-step-list li[data-status="reused"] { border-color: #244c3c; }
-.analysis-step-list li[data-status="done"] strong::before { content: '✓ '; color: #35ddb0; }
-.analysis-step-list li[data-status="failed"] { border-color: #c67272; }
+.analysis-progress-detail { color: #aebdb8; font-size: 12px; }
+.analysis-progress-detail:empty { display: none; }
+.analysis-card[data-compact-error="true"] #analysisOutput { display: none; }
 .analysis-card[data-processing="true"] #analysisOutput { display: none; }
 .media-job-actions, .media-exports { display: flex; flex-wrap: wrap; gap: 8px; }
 .media-job-actions button, .media-exports a { min-height: 40px; padding: 10px 12px; }

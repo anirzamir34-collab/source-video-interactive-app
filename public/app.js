@@ -1018,6 +1018,10 @@ function onTurkishMediaStatus(status) {
   if (els.mediaJobMessage) els.mediaJobMessage.textContent = status.message || 'Türkçe medya hazırlanıyor.';
   const terminal = ['FAILED', 'CANCELLED'].includes(status.state) ||
     (status.state === 'READY' && !state.analysisInProgress);
+  if (['FAILED', 'CANCELLED'].includes(status.state)) {
+    els.analysisState.textContent = status.error?.code || status.state;
+    els.analysisTitle.textContent = status.state === 'CANCELLED' ? 'İşlem iptal edildi' : 'İşlem tamamlanamadı';
+  }
   els.mediaJobCancelBtn?.classList.toggle('hidden', terminal);
   els.mediaJobRetryBtn?.classList.toggle('hidden', status.state !== 'FAILED');
   if (status.state === 'FAILED' && status.error?.code) {
@@ -1462,6 +1466,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   analysisProgress.begin({ motion: modes.motion, dubbing: modes.dubbing, subtitles: modes.subtitles,
     remote: Boolean(state.selectedRemoteVideo && !file) });
   els.analysisCard.dataset.processing = 'true';
+  delete els.analysisCard.dataset.compactError;
   els.mediaJobCancelBtn?.classList.remove('hidden');
   els.mediaJobRetryBtn?.classList.add('hidden');
   const sourceKey = analysisSourceKey(file, state.selectedRemoteVideo);
@@ -2130,6 +2135,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   analysisProgress.finish();
   } catch (error) {
     console.error('Analysis failed:', error);
+    els.analysisCard.dataset.compactError = 'true';
     els.analysisState.textContent = error?.name === 'AbortError' ? 'CANCELLED' : 'ANALYSIS_ERROR';
     els.analysisTitle.textContent = 'Analiz tamamlanamadı';
     els.analysisOutput.textContent =
@@ -2138,7 +2144,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     renderDebug({ analysisError: error?.message || String(error) });
   } finally {
     if (!analysisSucceeded) analysisProgress.finish(els.analysisState.textContent === 'CANCELLED' ? 'cancelled' : 'failed',
-      els.analysisTitle.textContent);
+      els.analysisOutput.textContent || els.analysisTitle.textContent);
     els.analysisCard.dataset.processing = 'false';
     els.mediaJobCancelBtn?.classList.add('hidden');
     if (analysisAbortController === analysisOwner) analysisAbortController = null;

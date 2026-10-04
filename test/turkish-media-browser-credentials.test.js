@@ -100,12 +100,14 @@ async function fixture(t, { geminiKey = serverGeminiKey, failAlignmentOnce = fal
         assert.deepEqual(body.inputs.map(row => row.text), ['Merhaba.', 'Evet.']);
         const audio = wave(body.inputs.length);
         generated.set(sha256(audio), body.inputs);
-        const text = body.inputs.map(row => row.text).join('');
+        const characters = body.inputs.flatMap(row => [...row.text]);
+        const starts = body.inputs.flatMap((row, index) => [...row.text].map((_, i) => index + .125 + i * .75 / row.text.length));
+        const ends = body.inputs.flatMap((row, index) => [...row.text].map((_, i) => index + .125 + (i + 1) * .75 / row.text.length));
         let characterOffset = 0;
         return jsonResponse({ audio_base64: audio.toString('base64'),
-          alignment: { characters: [...text],
-            character_start_times_seconds: [...text].map((_, i) => i * body.inputs.length / text.length),
-            character_end_times_seconds: [...text].map((_, i) => (i + 1) * body.inputs.length / text.length) },
+          // A missing native alignment deliberately exercises the FA retry path.
+          alignment: failAlignmentOnce ? null : { characters,
+            character_start_times_seconds: starts, character_end_times_seconds: ends },
           voice_segments: body.inputs.map((row, index) => {
             const start = characterOffset; characterOffset += row.text.length;
             return { voice_id: row.voice_id, dialogue_input_index: index,
@@ -227,7 +229,7 @@ async function assertNoSecrets(f, value) {
   assert.equal(f.calls.some(call => new URL(call.url).hostname === 'api.openai.com'), false);
 }
 
-test('request-only ElevenLabs plus server Gemini completes the real v4/FA pipeline with every canonical segment', async t => {
+test('request-only ElevenLabs plus server Gemini completes the real v4 timestamp pipeline with every canonical segment', async t => {
   const f = await fixture(t);
   const created = await f.jobs.create(f.input, credentials());
   const ready = await settled(f.jobs, created.id);
@@ -236,11 +238,14 @@ test('request-only ElevenLabs plus server Gemini completes the real v4/FA pipeli
   assert.equal(f.jobs.capabilities(credentials()).openAIRequired, false);
   assert.equal(f.jobs.capabilities(credentials()).serverMediaConfigured, false);
   assert.equal((await f.jobs.voices(credentials())).length, 2);
-  for (const pathname of ['/v1/speech-to-text', '/v1/text-to-dialogue/with-timestamps', '/v1/forced-alignment']) {
+  for (const pathname of ['/v1/speech-to-text', '/v1/text-to-dialogue/with-timestamps']) {
     const requests = f.calls.filter(call => new URL(call.url).pathname === pathname);
     assert.ok(requests.length > 0, pathname);
     assert.ok(requests.every(call => call.elevenKey === browserKey));
   }
+  assert.equal(f.calls.some(call => new URL(call.url).pathname === '/v1/forced-alignment'), false);
+  assert.deepEqual(ready.result.dubSegments.map(row => row.words[0].end), [1.875, 4.375],
+    'native spoken times exclude padding in the fitted two-second audio');
   assert.ok(f.calls.filter(call => new URL(call.url).hostname === 'generativelanguage.googleapis.com')
     .every(call => call.geminiKey === serverGeminiKey));
   await assertNoSecrets(f, ready);

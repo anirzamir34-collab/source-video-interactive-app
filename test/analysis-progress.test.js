@@ -7,6 +7,21 @@ function progress() {
 }
 const row = (view, id) => view.snapshot().find(item => item.id === id);
 
+test('completed stage times stop changing and the compact view works without a card list', () => {
+  let time = 1000;
+  const message = {}, detail = {}, summary = {}, bar = { removeAttribute() { delete this.value; } };
+  const view = createAnalysisProgress({ message, detail, summary, bar, now: () => time,
+    setTimer: () => 1, clearTimer() {} });
+  view.begin(); view.update('extract'); time = 3000; view.done('extract');
+  time = 11000; view.observe({ origin: 'device', state: 'ENCODING_MP3', phase: 'encoding',
+    progress: { loaded: .5, total: 1, unit: 'percent' }, message: 'MP3 hazırlanıyor.' });
+  assert.equal(row(view, 'extract').endedAt, 3000);
+  assert.equal(message.textContent, 'MP3 hazırlanıyor.'); assert.equal(bar.value, 50);
+  assert.match(detail.textContent, /%50/);
+  view.finish('failed', 'Bağlantı kesildi.');
+  assert.equal(message.textContent, 'Bağlantı kesildi.');
+});
+
 test('source transcript readiness does not mark future dubbing or visual analysis complete', () => {
   const view = progress();
   view.begin({ motion: true, dubbing: true, subtitles: false });
