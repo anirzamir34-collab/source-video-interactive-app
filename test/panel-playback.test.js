@@ -895,6 +895,20 @@ test('paused source boundary reveals the actual verified chapter before playback
   assert.equal(f.els.video.currentTime, 65);
 });
 
+test('same-scene rendering preserves a collapsed panel and a new scene opens its controls', () => {
+  const f = runtimeFixture();
+  const scene = f.state.adultScene;
+  f.renderAdultPanel(scene);
+  f.setAdultPanelExpanded(false);
+  f.renderAdultPanel(scene);
+  assert.equal(f.els.adultInteractionPanel.classes.has('compact-collapsed'), true);
+  assert.equal(f.els.adultInteractionPanel.classes.has('compact-expanded'), false);
+  f.renderAdultPanel({ id: 'new-panel-scene', startTime: 0, endTime: 30,
+    positions: [chapter('new-panel', 0)], foreplay: [] });
+  assert.equal(f.els.adultInteractionPanel.classes.has('compact-expanded'), true);
+  assert.equal(f.els.adultInteractionPanel.classes.has('compact-collapsed'), false);
+});
+
 test('unchanged UI signature repairs panel visibility after seek or pause', () => {
   const f = runtimeFixture();
   f.state.adultUnlockedPositionIds.add('one');

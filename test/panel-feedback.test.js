@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forwardVerifiedClips, clipPlaybackFeedback, sourceChoiceDisplayLabel, retainControlDismissal } from '../public/panel-feedback.js';
+import { attachPanelFeedback, forwardVerifiedClips, clipPlaybackFeedback, sourceChoiceDisplayLabel, retainControlDismissal } from '../public/panel-feedback.js';
 
 const clip = (id, start, end, verified = true) => ({
   id, loopStartTime: start, loopEndTime: end, sourceVerified: verified
@@ -79,4 +79,41 @@ test('real playback controls progress and completion with bounded values', () =>
   assert.equal(clipPlaybackFeedback(item, { currentTime: 25, paused: true }).state, 'complete');
   assert.equal(clipPlaybackFeedback(item, { currentTime: 5 }).progress, 0);
   assert.equal(clipPlaybackFeedback(null).state, 'idle');
+});
+
+test('a completed paused seek clears old buffering only when source media is ready', t => {
+  const frames = [];
+  const label = { textContent: '' };
+  const win = {
+    requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
+    cancelAnimationFrame() {},
+    MutationObserver: class { observe() {} disconnect() {} }
+  };
+  const doc = { defaultView: win,
+    getElementById: id => id === 'panelPlaybackStatus' ? label : null,
+    createTreeWalker: () => ({ nextNode: () => null }) };
+  const stage = { ownerDocument: doc, classList: { toggle() {} } };
+  const panel = { ownerDocument: doc, querySelectorAll: () => [] };
+  const video = new EventTarget();
+  Object.assign(video, { currentTime: 12, paused: false, seeking: false, readyState: 4 });
+  const cleanup = attachPanelFeedback({ stage, panel, video,
+    getSnapshot: () => ({ scope: 'walk', controlScope: 'walk', clip: clip('trail', 10, 20) }) });
+  t.after(cleanup);
+  const flush = () => { while (frames.length) frames.shift()(); };
+  const fire = name => { video.dispatchEvent(new Event(name)); flush(); };
+  flush();
+  assert.equal(label.textContent, 'Oynuyor');
+  fire('waiting');
+  assert.equal(label.textContent, 'Hazırlanıyor');
+  video.paused = true; video.seeking = true;
+  fire('seeking');
+  video.seeking = false; video.readyState = 2;
+  fire('seeked');
+  assert.equal(label.textContent, 'Hazırlanıyor', 'a seek cannot clear genuine buffering');
+  video.readyState = 4;
+  fire('seeked');
+  assert.equal(label.textContent, 'Duraklatıldı', 'ready paused media must not retain an old wait');
+  video.paused = false;
+  fire('playing');
+  assert.equal(label.textContent, 'Oynuyor');
 });

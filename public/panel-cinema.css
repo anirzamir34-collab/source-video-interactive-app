@@ -126,7 +126,7 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui #adultDockPhase { display: none !important; }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #adultDockMoreBtn {
-  min-width: 36px !important; min-height: 36px !important; padding: 4px !important;
+  min-width: 44px !important; min-height: 44px !important; padding: 4px !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-bars {
   grid-template-columns: repeat(2, 1fr) !important;
@@ -144,7 +144,7 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .position-tab {
   flex: 0 0 auto !important; width: auto !important; max-width: 92% !important;
-  min-height: 36px !important; padding: 6px 8px !important; border-radius: 8px !important;
+  min-height: 44px !important; padding: 6px 8px !important; border-radius: 8px !important;
   font-size: 11px !important; line-height: 1.3 !important; scroll-snap-align: start;
   background: rgba(6, 15, 17, .44) !important; color: #e4f7ef !important;
 }
@@ -160,7 +160,7 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.movement-choice-card, .discovery-choice-card),
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #choices :is(.choice, .choice-btn) {
-  width: 100% !important; min-height: 36px !important; margin: 0 !important; padding: 6px 8px !important;
+  width: 100% !important; min-height: 44px !important; margin: 0 !important; padding: 6px 8px !important;
   border-radius: 8px !important; font-size: 11px !important; line-height: 1.3 !important;
   white-space: normal !important; overflow: hidden !important;
 }
@@ -177,7 +177,7 @@
   text-shadow: 0 1px 3px rgba(0, 0, 0, .8) !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui #choices :is(.choice, .choice-btn) {
-  width: 100% !important; min-height: 34px !important; margin: 0 !important;
+  width: 100% !important; min-height: 44px !important; margin: 0 !important;
   padding: 5px 8px !important; font-size: 11px !important; line-height: 1.3 !important;
   border-radius: 8px !important; box-shadow: none !important;
 }
@@ -211,7 +211,7 @@
 #playerSection .video-stage.scene-player.cinematic-ui #rhythmTapLabel { font-size: 11px !important; }
 #playerSection .video-stage.scene-player.cinematic-ui #rhythmTapStatus { display: block !important; font-size: 10px !important; }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel #finishAdultSceneBtn {
-  position: static !important; min-height: 36px !important; margin-top: 4px !important;
+  position: static !important; min-height: 44px !important; margin-top: 4px !important;
   font-size: 11px !important; background: rgba(4, 10, 12, .4) !important;
 }
 #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) .subtitle-overlay {

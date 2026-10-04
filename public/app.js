@@ -4370,7 +4370,8 @@ function renderAdultPanel(scene) {
     }
   }
   els.adultInteractionPanel.classList.remove('hidden');
-  setAdultPanelExpanded(true);
+  setAdultPanelExpanded(previousSceneId !== scene.id ||
+    !els.adultInteractionPanel.classList.contains('compact-collapsed'));
   els.adultPanelToggleBtn?.classList.remove('hidden');
   document.querySelector('.choice-navigation')?.classList.add('hidden');
 

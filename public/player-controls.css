@@ -144,7 +144,7 @@
   min-width: 0 !important;
   max-width: 100% !important;
   height: auto !important;
-  min-height: 32px !important;
+  min-height: 44px !important;
   margin: 0 !important;
   padding: 6px 7px !important;
   border-radius: 7px !important;
@@ -209,7 +209,7 @@
   z-index: 30 !important;
   width: 100% !important;
   height: auto !important;
-  min-height: 32px !important;
+  min-height: 44px !important;
   margin: 5px 0 0 !important;
   padding: 6px !important;
   font-size: 11px !important;

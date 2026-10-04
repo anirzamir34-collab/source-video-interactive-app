@@ -120,6 +120,9 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   const onMedia = event => {
     if (event.type === 'waiting' || event.type === 'stalled') waiting = true;
     if (['playing', 'canplay', 'loadeddata', 'emptied'].includes(event.type)) waiting = false;
+    // A paused seek can finish without another playing/canplay event. Keep a
+    // real buffer wait, but do not let the previous clip's wait survive it.
+    if (event.type === 'seeked') waiting = Number(video.readyState) < 3;
     if (event.type === 'emptied') { lastClip = null; lastScope = null; controlDismissed = false; }
     schedule();
   };
