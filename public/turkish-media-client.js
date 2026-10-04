@@ -1,3 +1,6 @@
+import { createSourceAudioPreparer } from './source-audio.js';
+import { MAX_AUDIO_BYTES } from './media-limits.js';
+
 // The server produces one finished soundtrack. The source video owns every
 // playback boundary; this client only follows its clock and renders captions.
 const API = '/api/turkish-media';
@@ -39,7 +42,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   fetchImpl = globalThis.fetch, AudioClass = globalThis.Audio, clock = {},
   getElevenLabsApiKey = () => '', getGeminiApiKey = () => '',
   pollIntervalMs = 1200, requestTimeoutMs = 30000, uploadRequestTimeoutMs = 120000, assetTimeoutMs = 5 * 60 * 1000,
-  chunkSize = 5 * 1024 * 1024,
+  chunkSize = 5 * 1024 * 1024, prepareSourceAudio = createSourceAudioPreparer(),
   retryDelayMs = 1000, maxJobWaitMs = 6 * 60 * 60 * 1000,
   urlImpl = globalThis.URL, baseUrl = globalThis.location?.href || 'http://localhost/'
 } = {}) {
@@ -311,11 +314,18 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     return applyManifest(value, settings);
   }
 
-  async function uploadSource(source, owner) {
-    if (!(source instanceof Blob) || !source.size) throw new Error('Yüklenecek kaynak video eksik.');
+  async function uploadSource(source, owner, timelineDuration) {
+    if (!(source instanceof Blob) || !source.size || !/^audio\//i.test(source.type)) {
+      throw Object.assign(new Error('Türkçe medya için yalnız ayrılmış ses yüklenebilir.'), { code: 'SOURCE_AUDIO_REQUIRED' });
+    }
+    if (source.size > MAX_AUDIO_BYTES) throw Object.assign(new Error('Ayrılan ses dosyası 250 MiB sınırını aşıyor.'), { code: 'SOURCE_AUDIO_TOO_LARGE' });
     const requestedChunkSize = Math.max(1, Math.min(MAX_CHUNK, Math.floor(Number(chunkSize) || 5 * 1024 * 1024)));
-    const fileName = String(source.name || 'source-video.mp4').slice(0, 240);
-    let clientUploadKey = sourceUploadKeys.get(source);
+    const fileName = String(source.name || 'source-audio.wav').slice(0, 240);
+    const timeline = Number.isFinite(timelineDuration) && timelineDuration > 0 ? timelineDuration : undefined;
+    const uploadIdentity = String(timeline ?? 'container');
+    let sourceKeys = sourceUploadKeys.get(source);
+    if (!sourceKeys) { sourceKeys = new Map(); sourceUploadKeys.set(source, sourceKeys); }
+    let clientUploadKey = sourceKeys.get(uploadIdentity);
     if (!clientUploadKey) {
       // Hash bounded chunks, then their digests. Never decode or hold the whole
       // video in memory, and never identify a source by only its first frames.
@@ -329,18 +339,18 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         }
         const digestBytes = await new Blob(digests).arrayBuffer();
         const hash = new Uint8Array(await cryptoRef.subtle.digest('SHA-256', digestBytes));
-        clientUploadKey = `source:${source.size}:${Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+        clientUploadKey = `source-audio:${source.size}:${uploadIdentity}:${Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('')}`;
       } else {
         // An insecure browser can resume this Blob during this page session;
         // it must not reuse another source's upload through a weak fingerprint.
-        clientUploadKey = `source:${source.size}:${cryptoRef?.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
+        clientUploadKey = `source-audio:${source.size}:${uploadIdentity}:${cryptoRef?.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
       }
-      assertCurrent(owner); sourceUploadKeys.set(source, clientUploadKey);
+      assertCurrent(owner); sourceKeys.set(uploadIdentity, clientUploadKey);
     }
     const created = await request(`${API}/uploads/start`, { method: 'POST', timeoutMs: uploadRequestTimeoutMs,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileName, mimeType: source.type || 'video/mp4', totalSize: source.size,
-        chunkSize: requestedChunkSize, clientUploadKey }) }, owner);
+      body: JSON.stringify({ fileName, mimeType: source.type, totalSize: source.size,
+        chunkSize: requestedChunkSize, clientUploadKey, ...(timeline ? { timelineDuration: timeline } : {}) }) }, owner);
     const uploadId = created.uploadId || created.id;
     if (!uploadId) throw new Error('Video yükleme kimliği alınamadı.');
     const size = Math.max(1, Math.min(MAX_CHUNK, Number(created.chunkSize) || requestedChunkSize));
@@ -372,7 +382,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       }
       done.add(index);
       notify({ state: 'UPLOADING', progress: { percent: Math.round(done.size / total * 100),
-        loaded: Math.min(source.size, done.size * size), total: source.size }, message: 'Kaynak video yükleniyor.' });
+          loaded: Math.min(source.size, done.size * size), total: source.size }, message: 'Ayrılan ses yükleniyor.' });
     }
     return uploadId;
   }
@@ -432,9 +442,20 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       ...(options.speakerHints && Object.keys(options.speakerHints).length
         ? { speakerHints: jsonCopy(options.speakerHints) } : {}) } };
     const selected = lastStart;
-    notify({ state: 'UPLOADING', progress: { percent: 0 }, message: 'Kaynak video hazırlanıyor.' });
     try {
-      const uploadId = await uploadSource(source, owner);
+      if (!/^audio\//i.test(source?.type || '')) {
+        notify({ state: 'PREPARING_AUDIO', progress: { percent: 0 }, message: 'Videodan ses cihazda ayrılıyor.' });
+      }
+      const audioSource = await prepareSourceAudio(source, { signal: owner.signal, duration: video.duration,
+        onProgress: ({ phase, loaded = 0, total = 0 }) => {
+          if (!current(owner)) return;
+          notify({ state: 'PREPARING_AUDIO', progress: { percent: total ? Math.round(loaded / total * 100) : 0 },
+            message: phase === 'cached' ? 'Önceden ayrılmış ses kullanılıyor.' : phase === 'decoding'
+              ? 'Ses kanalı cihazda çözülüyor.' : phase === 'index' ? 'Videonun ses kanalı bulunuyor.' : 'Ses kanalı cihazda hazırlanıyor.' });
+        } });
+      assertCurrent(owner);
+      notify({ state: 'UPLOADING', progress: { percent: 0 }, message: 'Ayrılan ses gönderiliyor.' });
+      const uploadId = await uploadSource(audioSource, owner, Number(video.duration));
       const created = await request(`${API}/jobs`, { method: 'POST',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uploadId, ...selected.options }) }, owner);
       return await pollJob(created, selected, owner);

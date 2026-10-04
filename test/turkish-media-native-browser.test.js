@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
+import { createSourceAudioPreparer } from '../public/source-audio.js';
+import { MAX_AUDIO_BYTES } from '../public/media-limits.js';
 
 // A separate browser realm checks native receivers without replacing Node's
 // test-runner globals. Samsung/Android Window methods may reject a plain object.
@@ -157,11 +159,11 @@ function fixture(t, { strict = nativeNames, customClock = false, explicitNativeF
     digest: (...args) => webcrypto.subtle.digest(...args),
     randomUUID: () => webcrypto.randomUUID(),
   };
-  const realm = vm.createContext({ bridge, Blob, Response, Headers, AbortController, AbortSignal,
+  const realm = vm.createContext({ bridge, Blob, Response, Headers, AbortController, AbortSignal, createSourceAudioPreparer, MAX_AUDIO_BYTES,
     DOMException, Uint8Array, console });
   vm.runInContext('(' + installBrowserNatives.toString() + ')()', realm, { filename: 'test/native-browser-receivers.js' });
   if (noFrames) vm.runInContext('delete globalThis.requestAnimationFrame; delete globalThis.cancelAnimationFrame;', realm);
-  vm.runInContext('"use strict";\n' + clientSource.replace('export function createTurkishMediaClient', 'function createTurkishMediaClient')
+  vm.runInContext('"use strict";\n' + clientSource.replace(/^import .*;\n/gm, '').replace('export function createTurkishMediaClient', 'function createTurkishMediaClient')
     + '\nglobalThis.createClient = createTurkishMediaClient;', realm, { filename: 'public/turkish-media-client.js' });
   const video = new Media(), overlay = caption(), speaker = caption(), text = caption();
   class Audio extends Media { constructor() { super(); audios.push(this); } }
@@ -183,8 +185,8 @@ function fixture(t, { strict = nativeNames, customClock = false, explicitNativeF
 }
 
 function sourceFile() {
-  const file = new Blob(['123456789'], { type: 'video/mp4' });
-  file.name = 'source.mp4';
+  const file = new Blob(['123456789'], { type: 'audio/wav' });
+  file.name = 'source.wav';
   return file;
 }
 

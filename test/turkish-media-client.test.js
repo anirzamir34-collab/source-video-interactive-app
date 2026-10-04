@@ -137,8 +137,8 @@ function fixture(fetchHandler = () => new Response('final mix', { headers: { 'co
 function statusState(value) { return String(value?.state ?? value?.status ?? '').toUpperCase(); }
 
 function sourceFile() {
-  const file = new Blob(['123456789'], { type: 'video/mp4' });
-  file.name = 'source.mp4';
+  const file = new Blob(['123456789'], { type: 'audio/wav' });
+  file.name = 'source.wav';
   return file;
 }
 
@@ -499,9 +499,9 @@ test('source upload keys hash middle bytes and remain stable for repeated identi
   const bytes = new Uint8Array(256 * 1024).fill(7);
   const changedBytes = bytes.slice();
   changedBytes[128 * 1024] = 8;
-  const sources = [new Blob([bytes], { type: 'video/mp4' }),
-    new Blob([changedBytes], { type: 'video/mp4' }),
-    new Blob([bytes], { type: 'video/mp4' })];
+  const sources = [new Blob([bytes], { type: 'audio/wav' }),
+    new Blob([changedBytes], { type: 'audio/wav' }),
+    new Blob([bytes], { type: 'audio/wav' })];
   for (const source of sources) {
     source.name = 'same-name.mp4';
     await f.client.start(source, { outputs: { dub: true, subtitles: true } });
@@ -636,7 +636,7 @@ test('request timeout aborts a stalled upload request and reports failure', asyn
   const f = fixture(({ url }) => {
     assert.equal(url, '/api/turkish-media/uploads/start');
     return neverResponds.promise;
-  }, { requestTimeoutMs: 15 });
+  }, { requestTimeoutMs: 15, uploadRequestTimeoutMs: 15 });
   t.after(() => f.client.destroy());
   await assert.rejects(f.client.start(sourceFile()), /zaman aşımı|timed? ?out|timeout/i);
   assert.equal(f.requests.length, 1);
