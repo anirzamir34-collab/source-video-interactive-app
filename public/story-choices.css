@@ -1,0 +1,70 @@
+/* One final layout for ordinary story controls, marked by their own buttons. */
+#playerSection .video-stage.scene-player.cinematic-ui #choices:has(> .story-choice) {
+  box-sizing: border-box !important;
+  position: absolute !important;
+  top: auto !important;
+  right: auto !important;
+  left: 50% !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  transform: translateX(-50%) !important;
+  width: min(480px, calc(100% - 24px)) !important;
+  max-width: calc(100% - 24px) !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: min(60%, 360px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+  gap: 6px !important;
+  margin: 0 !important;
+  padding: 8px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  background: rgba(5, 10, 12, .78) !important;
+  border: 1px solid rgba(255, 255, 255, .12) !important;
+  border-radius: 12px !important;
+  pointer-events: auto;
+  overscroll-behavior: contain;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices:has(> .story-choice).hidden {
+  display: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .story-choice {
+  box-sizing: border-box !important;
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  min-height: 44px !important;
+  margin: 0 !important;
+  padding: 9px 12px !important;
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  overflow: visible !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .story-choice .choice-title {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .story-choice::before,
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .story-choice::after {
+  content: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui .fullscreen-status {
+  position: absolute;
+  z-index: 120;
+  top: 56px;
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .88);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+#playerSection .video-stage.scene-player.cinematic-ui .fullscreen-status[hidden] {
+  display: none !important;
+}

@@ -1,3 +1,4 @@
+import { toggleFullscreen } from './fullscreen.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
@@ -5693,11 +5694,11 @@ function renderChoices() {
       message.className = 'meta';
       message.textContent = 'Bu bölümde baş karakter doğrulanamadı.';
       const watch = document.createElement('button');
-      watch.className = 'choice';
+      watch.className = 'choice story-choice';
       watch.textContent = 'Bölümü izle';
       watch.addEventListener('click', () => void resumeAnalysisGap(end));
       const skip = document.createElement('button');
-      skip.className = 'choice';
+      skip.className = 'choice story-choice';
       skip.textContent = 'Sahneyi geç';
       skip.addEventListener('click', () => void navigateTimelineTo(end, { resumeUntilNextRoute: true }));
       els.choices.append(message, watch, skip);
@@ -5749,7 +5750,7 @@ function renderChoices() {
 
   candidates.forEach((action) => {
     const button = document.createElement('button');
-    button.className = 'choice';
+    button.className = 'choice story-choice';
     const storyLabel = storyChoiceLabelForAction(action);
     button.innerHTML = `
       <div class="choice-title">${escapeHtml(storyLabel)}</div>
@@ -5768,7 +5769,7 @@ function showPlaybackRecovery(message, retry, label = 'Geçişi tekrar dene') {
   copy.textContent = message;
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'choice';
+  button.className = 'choice story-choice';
   button.dataset.playbackRecovery = label === 'Videoya devam et' ? 'continue' : 'retry';
   button.textContent = label;
   button.addEventListener('click', retry);
@@ -6247,17 +6248,9 @@ attachPanelFeedback({
   }
 });
 
-fullscreenBtn?.addEventListener('click', async () => {
-  try {
-    if (!document.fullscreenElement) {
-      await fullscreenStage.requestFullscreen();
-      try { await screen.orientation?.lock?.('landscape'); } catch {}
-    } else {
-      await document.exitFullscreen();
-    }
-  } catch (error) {
-    console.error('Tam ekran açılamadı:', error);
-  }
+fullscreenBtn?.addEventListener('click', () => {
+  void toggleFullscreen({ document, stage: fullscreenStage, screen,
+    status: document.getElementById('fullscreenStatus') });
 });
 
 function keepGameVideoControlsHidden() {
