@@ -596,8 +596,10 @@ Rules:
 - Use prone-bone only when the receiving partner is visibly lying face-down/flat with hips low while penetration is from behind. Do not collapse prone-bone into rear/doggy, missionary, spoon or a generic lying position.
 - positionId, positionLabel and the visible body configuration described by label must agree. If they conflict, omit the position instead of guessing.
 - Use missionary only when the receiving partner is visibly below/on their back and MAIN_MALE is visibly above/front-facing in that configuration.
-- Use cowgirl only when the partner is visibly on top/straddling MAIN_MALE. Never reuse missionary for a cowgirl segment or cowgirl for a missionary segment.
-- Use reverse-cowgirl only when the partner is visibly on top/straddling MAIN_MALE while facing away from him. Never collapse reverse-cowgirl into cowgirl.
+- Distinguish cowgirl from reverse-cowgirl by the partner's orientation RELATIVE TO MAIN_MALE, never by which side faces the camera. Camera angle, a rear close-up, cropping, or a cut cannot by itself make cowgirl become reverse-cowgirl.
+- Use cowgirl only when the partner is visibly on top/straddling MAIN_MALE and the same source frames verify that the partner is facing toward him.
+- Use reverse-cowgirl only when the partner is visibly on top/straddling MAIN_MALE and the same source frames verify that the partner's torso/head remain facing away from him at the start, midpoint and end of the interval.
+- If the partner is clearly on top but facing direction relative to MAIN_MALE cannot be verified from the supplied frames, do not guess between cowgirl and reverse-cowgirl; omit the canonical position classification and add a warning.
 - Use seated-facing only when partners are visibly seated/lap-positioned and facing each other. Use seated only for other clearly seated sexual configurations.
 - Use legs-up only when legs are visibly raised in a sustained stable configuration. Do not use it for a brief transition.
 - Use reverse-spoon only when side-lying orientation is visibly the reverse/back-facing spoon configuration. Do not collapse it into spoon.
