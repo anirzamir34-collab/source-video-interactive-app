@@ -220,6 +220,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
 
   function setSubtitleTrack(value) {
     if (!['off', 'source_tr', 'dub_tr'].includes(value)) throw new Error('Altyazı kanalı geçersiz.');
+    if (value !== 'off' && !tracks[value].length) value = 'off';
     subtitleTrack = value;
     renderCaptions();
     return subtitleTrack;

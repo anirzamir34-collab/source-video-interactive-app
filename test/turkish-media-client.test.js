@@ -384,6 +384,8 @@ test('dub switching preserves explicit caption choice and dub-only manifests hid
   f.client.setDubEnabled(false); f.client.setDubEnabled(true);
   assert.equal(f.client.capture().subtitleTrack, 'off');
   assert.deepEqual(f.client.capture().manifest.subtitles, { source_tr: [], dub_tr: [] });
+  f.client.setSubtitleTrack('dub_tr');
+  assert.equal(f.client.capture().subtitleTrack, 'off', 'unrequested legacy tracks cannot become active');
   await f.client.loadResult(manifest(), { subtitleTrack: 'source_tr' });
   f.client.setDubEnabled(false); f.client.setDubEnabled(true);
   assert.equal(f.client.capture().subtitleTrack, 'source_tr');

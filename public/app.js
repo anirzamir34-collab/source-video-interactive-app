@@ -6600,7 +6600,7 @@ async function openSavedGame(game) {
   els.fileMeta.textContent = `${game.title} · kayıtlı video · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
   if (turkishMedia) mediaClient.loadResult(turkishMedia.manifest, {
     audioBlob: game.dubAudio, dubEnabled: turkishMedia.dubEnabled,
-    subtitlesEnabled: turkishMedia.manifest.outputs?.subtitles ?? turkishMedia.subtitleTrack !== 'off',
+    subtitlesEnabled: turkishMedia.manifest.outputs?.subtitles ?? Boolean(els.subtitleMode.checked),
     subtitleTrack: turkishMedia.subtitleTrack, syncOffset: 0
   });
   renderMediaControls();
