@@ -2924,38 +2924,11 @@ function prepareAdultScenes() {
       return;
     }
 
-    // Oral/manual are verified warm-up activities, not sex-position tabs.
-    // Keep each source interval as a normal approach choice so they can build
-    // Lust and disappear from the core position list entirely.
-    if (['oral', 'manual'].includes(String(canonical.id || '').toLowerCase())) {
-      const startTime = Number(action.loopStartTime ?? action.startTime);
-      const endTime = Number(action.loopEndTime ?? action.endTime);
-      if (action.sourceVerified === true && action.label && sourceInterval(startTime, endTime) &&
-          startTime >= observedSource.startTime && endTime <= observedSource.endTime &&
-          endTime - startTime >= 2) {
-        traceRow.route = 'FOREPLAY';
-        traceRow.routeReason = 'ORAL_MANUAL_WARMUP';
-        traceRow.canonicalFamily = canonical.id;
-        traceRow.canonicalLabel = canonical.label;
-        scene.foreplay.push({
-          id: action.actionId || `${sceneId}:warmup-${index}`,
-          label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
-            { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
-          sourceVerified: true,
-          sourceActionId: String(action.sourceActionId || action.actionId || '').trim(),
-          actionType: String(action.actionType || '').trim(),
-          routeNamespace: activityOccurrenceNamespace(action),
-          nonIntimate: false,
-          subjectTrackId: String(action.subjectTrackId || '').trim(),
-          partnerTrackId: String(action.partnerTrackId || '').trim(),
-          startTime,
-          endTime,
-          maleProgressRate: Number(action.maleProgressRate || 1),
-          femaleProgressRate: Number(action.femaleProgressRate || 1)
-        });
-      }
-      return;
-    }
+    // Canonical oral/manual intervals now enter the same verified position
+    // graph as every other source-backed activity. Their progressionRole is
+    // assigned after occurrences are built: opening occurrences stay in the
+    // approach phase, while later occurrences remain available in the core
+    // panel instead of being dropped into FOREPLAY unconditionally.
 
     const correctedStart = canonical.correctedFromAction
       ? Number(action.startTime)
@@ -3162,14 +3135,26 @@ function prepareAdultScenes() {
     scene.positions = consolidateVerifiedPositions(scene.positions, {
       mergeDistantReturns: false
     });
+    // Only oral/manual occurrences that happen before the first verified
+    // non-warmup position belong to the opening approach. Returns later in the
+    // same encounter are core panel activities and must not disappear.
+    const firstPrimaryCoreStart = scene.positions
+      .filter(position => {
+        const family = String(position?.familyId || '').toLowerCase();
+        const category = String(position?.categoryId || '').toLowerCase();
+        return !['oral', 'manual'].includes(family) && !['oral', 'manual'].includes(category);
+      })
+      .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
     scene.positions = scene.positions.map(position => {
       const family = String(position?.familyId || '').toLowerCase();
       const category = String(position?.categoryId || '').toLowerCase();
-      const warmupActivity = ['oral', 'manual'].includes(family) ||
+      const activityOpening = ['oral', 'manual'].includes(family) ||
         ['oral', 'manual'].includes(category);
+      const beforeFirstCore = Number.isFinite(firstPrimaryCoreStart) &&
+        Number(position.startTime) < firstPrimaryCoreStart - 0.05;
       return {
         ...position,
-        progressionRole: warmupActivity ? 'foreplay' : 'core'
+        progressionRole: activityOpening && beforeFirstCore ? 'foreplay' : 'core'
       };
     });
     const firstCoreStart = scene.positions
@@ -4047,10 +4032,19 @@ function renderAdultApproachChoices(scene, later = false) {
   );
   // Existing source-role metadata chooses the surface. Dialogue choices stay
   // separate from progress-bearing opening choices, without changing labels.
-  const foreground = approachPool.filter(item => item.sourceVerified === true &&
+  const forwardApproach = approachPool.filter(item => item.sourceVerified === true &&
     Number(item.endTime) > projectedFloor + 0.05)
-    .sort((left, right) => Number(left.startTime) - Number(right.startTime))[0];
-  const dialogueOnly = foreground?.nonIntimate === true;
+    .sort((left, right) => Number(left.startTime) - Number(right.startTime));
+  const firstDialogue = forwardApproach.find(item => item.nonIntimate === true);
+  const firstIntimate = forwardApproach.find(item => item.nonIntimate !== true);
+  // Dialogue may lead into the encounter, but once a verified intimacy clip is
+  // reached it owns the surface immediately. Do not keep rendering the generic
+  // dialogue overlay over a source-backed approach action.
+  const dialogueOnly = Boolean(firstDialogue && (
+    !firstIntimate ||
+    (Number(firstDialogue.startTime) < Number(firstIntimate.startTime) - 0.05 &&
+      projectedFloor < Number(firstIntimate.startTime) - 0.05)
+  ));
   const candidates = selectVerifiedChoiceQueue(approachPool.filter(item =>
     Boolean(item.nonIntimate) === dialogueOnly), {
     timelineFloor: projectedFloor,
@@ -4085,7 +4079,12 @@ function renderAdultApproachChoices(scene, later = false) {
       button.dataset.movementChoiceId = choice.choiceId;
       button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     }
-    button.innerHTML = `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>`;
+    const sourceSequenceCount = Array.isArray(choice.variants) ? choice.variants.length : 1;
+    button.innerHTML = `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>${
+      sourceSequenceCount > 1
+        ? `<small class="choice-meta">${sourceSequenceCount} doğrulanmış sekans · sırayla oynatılır</small>`
+        : ''
+    }`;
     button.addEventListener('click', () => {
       if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
       else {
