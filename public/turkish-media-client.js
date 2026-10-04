@@ -38,7 +38,7 @@ function cueRows(track) {
 export function createTurkishMediaClient({ video, captionElements = {}, onStatus = () => {},
   fetchImpl = globalThis.fetch, AudioClass = globalThis.Audio, clock = {},
   getElevenLabsApiKey = () => '', getGeminiApiKey = () => '',
-  pollIntervalMs = 1200, requestTimeoutMs = 30000, assetTimeoutMs = 5 * 60 * 1000,
+  pollIntervalMs = 1200, requestTimeoutMs = 30000, uploadRequestTimeoutMs = 120000, assetTimeoutMs = 5 * 60 * 1000,
   chunkSize = 5 * 1024 * 1024,
   retryDelayMs = 1000, maxJobWaitMs = 6 * 60 * 60 * 1000,
   urlImpl = globalThis.URL, baseUrl = globalThis.location?.href || 'http://localhost/'
@@ -91,11 +91,14 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const stopped = new Promise((_, reject) => { rejectAbort = reject; });
     const cancel = () => { abandoned = true; requestController.abort(); rejectAbort(abortError()); };
     owner.signal.addEventListener('abort', cancel, { once: true });
+    const timeoutMs = Number.isFinite(Number(options.timeoutMs)) && Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : (asBlob ? assetTimeoutMs : requestTimeoutMs);
     const deadline = timers.set(() => {
       abandoned = true;
       requestController.abort();
       rejectAbort(Object.assign(new Error('Türkçe medya isteği zaman aşımına uğradı.'), { code: 'REQUEST_TIMEOUT' }));
-    }, asBlob ? assetTimeoutMs : requestTimeoutMs);
+    }, timeoutMs);
     try {
       const operation = (async () => {
         const response = await requestFetch(internalUrl(path, baseUrl), { ...options,
@@ -334,7 +337,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       }
       assertCurrent(owner); sourceUploadKeys.set(source, clientUploadKey);
     }
-    const created = await request(`${API}/uploads/start`, { method: 'POST',
+    const created = await request(`${API}/uploads/start`, { method: 'POST', timeoutMs: uploadRequestTimeoutMs,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileName, mimeType: source.type || 'video/mp4', totalSize: source.size,
         chunkSize: requestedChunkSize, clientUploadKey }) }, owner);
@@ -342,7 +345,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     if (!uploadId) throw new Error('Video yükleme kimliği alınamadı.');
     const size = Math.max(1, Math.min(MAX_CHUNK, Number(created.chunkSize) || requestedChunkSize));
     const total = Math.ceil(source.size / size);
-    let status = await request(`${API}/uploads/${encodeURIComponent(uploadId)}/status`, {}, owner);
+    let status = await request(`${API}/uploads/${encodeURIComponent(uploadId)}/status`, { timeoutMs: uploadRequestTimeoutMs }, owner);
     const completed = body => new Set((body.completedChunks || body.receivedChunks || body.chunks || [])
       .filter(entry => typeof entry === 'number' || entry?.complete || entry?.completed)
       .map(entry => typeof entry === 'number' ? entry : Number(entry.index ?? entry.chunkIndex)));
@@ -354,13 +357,14 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         for (let attempt = 0; ; attempt++) {
           try {
             await request(`${API}/uploads/${encodeURIComponent(uploadId)}/chunk/${index}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: chunk }, owner);
+              method: 'POST', timeoutMs: uploadRequestTimeoutMs,
+              headers: { 'Content-Type': 'application/octet-stream' }, body: chunk }, owner);
             break;
           } catch (error) {
             if (!current(owner) || error.name === 'AbortError' || attempt >= 2 ||
                 (error.status && error.status < 500 && ![408,429].includes(error.status))) throw error;
             await delay(retryDelayMs * (attempt + 1), owner);
-            status = await request(`${API}/uploads/${encodeURIComponent(uploadId)}/status`, {}, owner);
+            status = await request(`${API}/uploads/${encodeURIComponent(uploadId)}/status`, { timeoutMs: uploadRequestTimeoutMs }, owner);
             done = completed(status);
             if (done.has(index)) break;
           }
