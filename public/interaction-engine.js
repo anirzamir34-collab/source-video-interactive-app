@@ -540,7 +540,11 @@ export function selectVerifiedChoiceQueue(candidates = [], {
   const fresh = reachable.filter(item => plays(item) === 0);
   const repeated = reachable.filter(item => plays(item) > 0)
     .sort((a, b) => plays(a) - plays(b) || a.range.startTime - b.range.startTime);
-  return [...fresh, ...repeated].slice(0, count).map(item => item.row);
+  // Do not keep a completed clip on screen while a new verified chronological
+  // choice is available. Repeats are a fallback only after the reachable fresh
+  // queue is exhausted, preventing one early clip from appearing to loop forever.
+  const pool = fresh.length ? fresh : repeated;
+  return pool.slice(0, count).map(item => item.row);
 }
 
 const blockedSelection = (state, reason) => ({
