@@ -201,11 +201,15 @@ test('queue discovers five successive verified choices beyond a short fixed wind
   assert.equal(queue[0], rows[0]);
 });
 
-test('queue ranks fresh choices ahead of repeats without exposing a cast or chain discontinuity', () => {
+test('queue with fresh choices suppresses repeats and keeps cast/chain continuity', () => {
   const rows = [queueRow('repeat', 0, 5, { playCount: 10 }), queueRow('fresh-a', 6, 10),
     queueRow('fresh-b', 11, 15), queueRow('other-cast', 16, 20, { castIds: ['actor-c'] }),
     queueRow('too-far-after-gap', 25, 30), queueRow('other-chain', 16, 20, { chainId: 'chain-b' })];
-  assert.deepEqual(selectVerifiedChoiceQueue(rows).map(item => item.id), ['fresh-a', 'fresh-b', 'repeat']);
+  assert.deepEqual(selectVerifiedChoiceQueue(rows).map(item => item.id), ['fresh-a', 'fresh-b']);
+  assert.deepEqual(selectVerifiedChoiceQueue([
+    queueRow('repeat-a', 0, 5, { playCount: 2 }),
+    queueRow('repeat-b', 6, 10, { playCount: 1 })
+  ]).map(item => item.id), ['repeat-b', 'repeat-a']);
 });
 
 test('queue respects first core, verified continuity, unique source ranges and maximum forward safety', () => {
