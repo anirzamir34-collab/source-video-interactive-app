@@ -13,4 +13,8 @@ test('native character times remain scoped to their speaker input and transform 
   assert.ok(Math.abs(fitted[0].end - .8 / 1.08) < 1e-8);
   assert.equal(nativeDialogueWords(alignment, segments, 1, 'Merhaba.', .5), null);
   assert.equal(fitNativeDialogueWords([{ nativeWords: words, nativeDuration: .8 }], 'Eksik kelime', { tempo: 1, duration: 1 }), null);
+  const trimmed = fitNativeDialogueWords([{ nativeWords: [{ text: 'Evet.', start: .25, end: .65 }], nativeDuration: 1 }],
+    'Evet.', { tempo: 1.2, duration: .5, sourceOffset: .22 });
+  assert.ok(Math.abs(trimmed[0].start - .03 / 1.2) < 1e-8);
+  assert.ok(Math.abs(trimmed[0].end - .43 / 1.2) < 1e-8);
 });

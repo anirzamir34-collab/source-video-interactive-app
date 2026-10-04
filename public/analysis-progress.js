@@ -28,12 +28,11 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
     const focusedRow = rows.get(focused);
     const focus = active && running.length ? (running.includes(focusedRow) ? focusedRow : running.at(-1)) : focusedRow;
     const complete = [...rows.values()].filter(row => ['done', 'reused'].includes(row.status)).length;
-    if (summary) summary.textContent = complete + ' / ' + rows.size + ' aşama tamamlandı' +
-      (startedAt ? ' · ' + seconds((finishedAt ?? now()) - startedAt) : '');
+    if (summary) summary.textContent = startedAt ? 'Toplam süre: ' + seconds((finishedAt ?? now()) - startedAt) : '';
     if (message) message.textContent = terminalText || focus?.detail ||
       (active ? 'İşlem hazırlanıyor.' : 'Seçili işlemler tamamlandı.');
     const info = [];
-    if (focus && Number.isFinite(focus.loaded) && focus.total > 0) info.push(focus.unit === 'bytes'
+    if (active && focus && Number.isFinite(focus.loaded) && focus.total > 0) info.push(focus.unit === 'bytes'
       ? MB(focus.loaded) + ' / ' + MB(focus.total)
       : focus.unit === 'percent' ? '%' + Math.floor(focus.loaded / focus.total * 100)
       : focus.loaded + ' / ' + focus.total + (focus.unit ? ' ' + focus.unit : ''));
@@ -43,7 +42,8 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
       info.push('Son sunucu yanıtı ' + seconds(now() - focus.lastServerContactAt) + ' önce');
     if (detail) detail.textContent = info.join(' · ');
     if (bar) {
-      if (focus?.total > 0 && Number.isFinite(focus.loaded)) bar.value = Math.min(100, focus.loaded / focus.total * 100);
+      if (!active && terminalText) bar.removeAttribute('value');
+      else if (focus?.total > 0 && Number.isFinite(focus.loaded)) bar.value = Math.min(100, focus.loaded / focus.total * 100);
       else bar.removeAttribute('value');
     }
   }

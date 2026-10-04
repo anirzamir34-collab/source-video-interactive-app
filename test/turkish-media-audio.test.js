@@ -214,7 +214,7 @@ test('overlong dubbing requests regeneration before any shortening or truncation
   });
   assert.deepEqual(await readdir(directory), []);
   assert.equal(mocked.calls.length, 1);
-  await assert.rejects(service.fitDubSegment('/tmp/long.wav', { targetDuration: 1, maxTempo: 1.2 }), { code: 'DUB_TEMPO_INVALID' });
+  await assert.rejects(service.fitDubSegment('/tmp/long.wav', { targetDuration: 1, maxTempo: 1.3 }), { code: 'DUB_TEMPO_INVALID' });
 });
 
 test('fit measures converted duration and pads only silence, without -t or atrim', async t => {
@@ -365,6 +365,33 @@ test('real generated dialogue ranges split each turn without carrying another vo
   assert.ok(frequencyAmplitude(first, 1320) < .0001);
   assert.ok(frequencyAmplitude(second, 1320) > .19);
   assert.ok(frequencyAmplitude(second, 880) < .0001);
+});
+
+test('PCM splitting, duration checks and padding need no media process', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const input = await media.fixture('native-pcm.wav', '.2*sin(2*PI*880*t)', 2); if (!input) return;
+  const service = createAudioService({ ffmpegPath: FFMPEG, ffprobePath: FFPROBE, directory: media.directory,
+    spawn: () => assert.fail('valid PCM must not be decoded or probed again') });
+  const rows = await service.splitDialogueTurns(input, { inputCount: 2, voiceSegments: [
+    { dialogue_input_index: 0, start_time_seconds: .25, end_time_seconds: .75 },
+    { dialogue_input_index: 1, start_time_seconds: 1, end_time_seconds: 1.5 }
+  ] });
+  const fitted = await service.fitDubSegment(rows[0].audioPath, { targetDuration: 1 });
+  assert.equal(await service.probeDuration(fitted.path), 1);
+  const audio = await samples(fitted.path);
+  assert.ok(frequencyAmplitude(audio.slice(0, .5 * SAMPLE_RATE), 880) > .19);
+  assert.ok(audio.slice(.5 * SAMPLE_RATE).every(value => Math.abs(value) < .00001));
+});
+
+test('verified native speech boundaries remove only outside padding and report the real clock offset', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const input = await media.fixture('native-gaps.wav', 'if(between(t\\,0.25\\,0.65)\\,.2*sin(2*PI*880*t)\\,0)', 1); if (!input) return;
+  const fitted = await media.service.fitDubSegment(input, { targetDuration: .5,
+    speechRange: { start: .25, end: .65 }, directory: media.directory });
+  assert.ok(Math.abs(fitted.sourceOffset - .22) < 2 / SAMPLE_RATE);
+  assert.equal(fitted.tempo, 1); assert.equal(fitted.duration, .5);
+  const audio = await samples(fitted.path);
+  assert.ok(frequencyAmplitude(audio.slice(.04 * SAMPLE_RATE, .4 * SAMPLE_RATE), 880, .04 * SAMPLE_RATE) > .19);
 });
 
 test('real dialogue parts concatenate in order without truncating or inventing a pause', async t => {

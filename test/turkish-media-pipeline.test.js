@@ -386,6 +386,50 @@ test('duration excess regenerates only the affected source turn and aligns actua
   assert.ok(f.calls.align.some(row => row.text === 'Selam.' && row.bytes.segmentId === result.dubSegments[0].segmentId));
 });
 
+test('many duration failures use one measured repair request and one dialogue batch', async t => {
+  const words = Array.from({ length: 12 }, (_, i) => ({ text: 'Hello.', type: 'word', start: i * 2,
+    end: i * 2 + 1, speaker_id: i % 2 ? 'speaker_1' : 'speaker_0' }));
+  const f = await fixture(t, { words, regeneration: true });
+  f.audio.extractSource = async (_source, { directory }) => {
+    const originalPath = path.join(directory, 'original.wav'), sttPath = path.join(directory, 'speech.flac');
+    await writeFile(originalPath, 'original-source-audio'); await writeFile(sttPath, 'full-source-speech');
+    return { duration: 30, originalPath, sttPath };
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(result.dubSegments.length, 12);
+  assert.equal(f.calls.translate.length, 2, 'one initial translation plus one collective repair');
+  assert.equal(f.calls.translate[1].scene.utterances.length, 12);
+  assert.equal(Object.keys(f.calls.translate[1].options.measuredDurations).length, 12);
+  assert.equal(f.calls.synthesize.length, 2, 'failed turns remain together in the repair dialogue');
+  assert.equal(f.calls.synthesize[1].length, 12);
+});
+
+test('a short answer borrows only verified silence without retranslation or resynthesis', async t => {
+  const f = await fixture(t);
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (file, options) => {
+    if (JSON.parse(await readFile(file, 'utf8')).text === 'Merhaba.' && options.targetDuration < 2.1)
+      throw Object.assign(new Error('measured excess'), { code: 'DUB_REGENERATE_REQUIRED', actualDuration: 2.1 });
+    return fit(file, options);
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(f.calls.translate.length, 1); assert.equal(f.calls.synthesize.length, 1);
+  assert.equal(result.sourceTranscript.utterances[0].sourceEnd, 3, 'source word clock stays intact');
+  assert.equal(result.dubSegments[0].end, 3.1);
+  assert.equal(result.subtitles.source_tr[0].end, 3);
+  assert.ok(result.subtitles.dub_tr[0].end <= 3.1);
+  assert.equal(result.dubSegments[1].start, 3.2);
+});
+
+test('unchanged overlong repair is bounded and gives a Turkish duration error', async t => {
+  const f = await fixture(t);
+  f.audio.fitDubSegment = async () => { throw Object.assign(new Error('long'), { code: 'DUB_REGENERATE_REQUIRED', actualDuration: 8 }); };
+  await assert.rejects(f.pipeline(f.input), error => error.code === 'DUB_DURATION_UNRESOLVED' && /iki toplu düzeltme/.test(error.message));
+  assert.equal(f.calls.translate.length, 3, 'only two bounded repair rounds');
+  assert.equal(f.calls.synthesize.length, 2, 'identical repair audio is reused in the second round');
+  assert.equal(f.limiter.activeCount, 0); assert.equal(f.limiter.pendingCount, 0);
+});
+
 test('alignment retry retains the already completed duration retranslation and audio generation', async t => {
   const f = await fixture(t, { regeneration: true, failAlignmentOnce: true });
   await assert.rejects(f.pipeline(f.input), { code: 'PROVIDER_HTTP_503' });

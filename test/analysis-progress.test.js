@@ -20,6 +20,9 @@ test('completed stage times stop changing and the compact view works without a c
   assert.match(detail.textContent, /%50/);
   view.finish('failed', 'Bağlantı kesildi.');
   assert.equal(message.textContent, 'Bağlantı kesildi.');
+  assert.equal(detail.textContent, '', 'a failure cannot display the previous completed upload');
+  assert.equal(bar.value, undefined);
+  assert.match(summary.textContent, /^Toplam süre:/); assert.doesNotMatch(summary.textContent, /aşama/);
 });
 
 test('source transcript readiness does not mark future dubbing or visual analysis complete', () => {
