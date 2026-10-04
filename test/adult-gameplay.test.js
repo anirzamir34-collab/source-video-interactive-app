@@ -1023,3 +1023,25 @@ test('splits each verified movement into repeatable real subclips', () => {
     [[100, 107], [107, 114], [114, 121]]
   );
 });
+
+
+test('verified same-family body changes remain playable inside their position occurrence', () => {
+  const sameCowgirl = {
+    sourceVerified: true,
+    actionType: 'body_transition',
+    positionId: 'cowgirl',
+    positionLabel: 'Kovboy Pozisyonu',
+    receiverBodyOrientation: 'on_top_facing',
+    receiverSupport: 'straddling',
+    positionConfigurationConfidence: 0.93,
+    positionEvidence: 'Partner üstte ve straddling konumunu koruyor.',
+    label: 'Partnerini göğsüne yasla ve sarıl',
+    movementType: 'okşama'
+  };
+  assert.equal(movementBelongsToVerifiedPosition(sameCowgirl, 'cowgirl'), true);
+  assert.equal(movementBelongsToVerifiedPosition({
+    ...sameCowgirl,
+    label: 'Öperek pozisyon değiştir',
+    movementType: 'pozisyon geçişi'
+  }, 'cowgirl'), false);
+});
