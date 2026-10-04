@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { conversationEnd } from '../public/conversation-timing.js';
 import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const names = ['isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback'];
+const names = ['genericConversationEnd', 'isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} is present`);
@@ -64,6 +65,7 @@ function fixture() {
   const els = new Proxy({ video: new Media() }, { get(target, key) { return target[key] ||= new Element(); } });
   const scope = vm.createContext({ state, els, AbortController, DOMException,
     analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo,
+    mediaClient: { conversationEndAt: (time, rows, duration) => conversationEnd(time, rows, [], { duration }) },
     setTimeout, clearTimeout,
     guardPlayable: () => ({ allowed: true }),
     finishAction: (action, boundary) => { state.finishedAction = action; state.finishedBoundary = boundary; els.video.pause(); },
@@ -356,4 +358,61 @@ test('a chosen clip stops at its exact source end even while speech continues', 
   assert.equal(f.state.finishedBoundary, 30);
   assert.equal(f.els.video.currentTime, 30);
   assert.equal(f.els.video.paused, true);
+});
+
+
+test('a general gap boundary keeps playing through speech and records the actual played time', async () => {
+  const f = fixture();
+  f.state.sourceContext = { segments: [{ startTime: 9, endTime: 12 }] };
+  f.state.analysis.actions = [{ actionId: 'next', label: 'Kapıyı aç', startTime: 15, endTime: 18, sourceVerified: true }];
+  await f.resumeAnalysisGap(10);
+  f.els.video.time = 10;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.els.choices.classes.has('hidden'), true);
+  f.els.video.time = 12.2;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.gameCursorTime, 12.2);
+  assert.equal(f.els.choices.children.length, 1);
+});
+
+test('a replaced gap callback cannot pause a newer general playback', async () => {
+  const f = fixture();
+  await f.resumeAnalysisGap(10);
+  const old = f.state.stopListener;
+  await f.resumeAnalysisGap(20);
+  f.els.video.time = 15;
+  old();
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.gameCursorTime, 0);
+  assert.notEqual(f.state.stopListener, old);
+});
+
+test('manual seeking during a general choice removes its old boundary and preserves the real cursor', () => {
+  const f = fixture();
+  const begin = source.indexOf("els.video.addEventListener('seeking',");
+  const end = source.indexOf("els.video.addEventListener('play',", begin);
+  vm.runInContext(source.slice(begin, end), f);
+  f.state.activeAction = { actionId: 'old' };
+  f.state.stopListener = () => { throw Error('stale callback'); };
+  f.els.video.addEventListener('timeupdate', f.state.stopListener);
+  f.state.analysis.actions = [
+    { actionId: 'first', startTime: 1, endTime: 5, sourceVerified: true },
+    { actionId: 'next', label: 'Kapıyı aç', startTime: 20, endTime: 25, sourceVerified: true }
+  ];
+  f.els.video.time = 10;
+  f.els.video.dispatchEvent(new Event('seeking'));
+  assert.equal(f.state.activeAction, null);
+  assert.equal(f.state.stopListener, null);
+  f.els.video.dispatchEvent(new Event('seeked'));
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameCursorTime, 10);
+  assert.equal(f.state.consumedActionIds.has('first'), true);
+  assert.equal(f.state.consumedActionIds.has('next'), false);
+  assert.equal(f.els.choices.children.length, 1);
+  f.els.video.time = 100;
+  f.els.video.dispatchEvent(new Event('seeking'));
+  f.els.video.dispatchEvent(new Event('seeked'));
+  assert.equal(f.state.gameState, 'ENDED');
 });

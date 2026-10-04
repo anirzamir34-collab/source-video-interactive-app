@@ -834,3 +834,12 @@ test('a job descriptor arriving after reset is cancelled remotely without pollin
   assert.equal(f.audios.length, 0);
   assert.equal(f.statuses.slice(statusCount).some(value => statusState(value) === 'READY'), false);
 });
+
+
+test('decision timing follows source speech without a media manifest or network request', t => {
+  const f = fixture();
+  t.after(() => f.client.destroy());
+  assert.equal(f.client.conversationEndAt(2, [{ startTime: 1, endTime: 4 }], 10), 4.12);
+  assert.equal(f.client.capture(), null);
+  assert.equal(f.requests.length, 0);
+});

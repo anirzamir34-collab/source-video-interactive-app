@@ -1,6 +1,7 @@
 import { createSourceAudioPreparer } from './source-audio.js';
 import { MAX_AUDIO_BYTES } from './media-limits.js';
 import { requestWithUploadProgress } from './progress-request.js';
+import { conversationEnd } from './conversation-timing.js';
 
 // The server produces one finished soundtrack. The source video owns every
 // playback boundary; this client only follows its clock and renders captions.
@@ -575,6 +576,10 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     return audioBlobRequest;
   }
 
+  function conversationEndAt(time, source = [], duration = Infinity) {
+    return conversationEnd(time, source, manifest?.dubSegments || [], { dubEnabled, offset: syncOffset, duration });
+  }
+
   function capture() {
     return manifest ? jsonCopy({ manifest, dubEnabled, subtitleTrack, syncOffset }) : null;
   }
@@ -600,7 +605,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     'canplay', 'loadeddata', 'loadedmetadata', 'ratechange', 'volumechange', 'ended', 'emptied', 'error'];
   events.forEach(event => video.addEventListener(event, onMedia));
   clearCaptions();
-  return { start, loadResult, setDubEnabled, setSubtitleTrack, setSyncOffset, sync, reset, capture, materializeAudio,
+  return { start, loadResult, setDubEnabled, setSubtitleTrack, setSyncOffset, sync, reset, capture, conversationEndAt, materializeAudio,
     getCapabilities: () => request(`${API}/capabilities`),
     async getVoices() {
       const body = await request(`${API}/voices`);

@@ -22,7 +22,7 @@ test('nearby speech continues without a premature choice, but a later unrelated 
 
 test('real generic action completion leaves video playing until the sentence ends, then updates the actual cursor', () => {
   const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  const from = source.indexOf('function finishAction('), to = source.indexOf('\nfunction resetGameAtAction', from);
+  const from = source.indexOf('function genericConversationEnd('), to = source.indexOf('\nfunction resetGameAtAction', from);
   const action = { actionId: 'chapter', endTime: 2 };
   const state = { sourceContext: { segments: [{ startTime: 1, endTime: 3 }] },
     analysis: { actions: [action], videoDuration: 10 }, consumedActionIds: new Set(),
@@ -30,7 +30,7 @@ test('real generic action completion leaves video playing until the sentence end
   let pauses = 0, choices = 0;
   const video = { currentTime: 2, duration: 10, ended: false, pause: () => pauses++, removeEventListener() {} };
   const scope = { state, els: { video, choices: { classList: { add() {} } } },
-    mediaClient: { capture: () => ({ dubEnabled: true, manifest: { dubSegments: [{ start: 1, end: 4 }] } }) },
+    mediaClient: { conversationEndAt: (time, rows, duration) => conversationEnd(time, rows, [{ start: 1, end: 4 }], { dubEnabled: true, duration }) },
     conversationEnd, setGameState() {}, persistRuntimeSnapshot() {}, renderChoices: () => choices++ };
   vm.runInNewContext(source.slice(from, to) + '\nglobalThis.finish = finishAction;', scope);
   scope.finish(action);

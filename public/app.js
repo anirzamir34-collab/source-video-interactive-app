@@ -1,7 +1,6 @@
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
-import { conversationEnd } from './conversation-timing.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import {
   adultPositionFamily,
@@ -5611,24 +5610,27 @@ async function resumeAnalysisGap(target) {
     to: bridgeTarget
   });
   state.stopListener = () => {
-    if (generation !== state.playbackGeneration || Number(els.video.currentTime) < bridgeTarget - 0.04) return;
+    if (generation !== state.playbackGeneration || state.stopListener !== stop || Number(els.video.currentTime) < bridgeTarget - 0.04) return;
+    const now = Number(els.video.currentTime) || 0;
+    if (!els.video.ended && genericConversationEnd(now) > now + .03) return;
     els.video.pause();
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
     state.gameCursorTime = Math.min(
-      bridgeTarget,
+      Math.max(bridgeTarget, now),
       Number(els.video.duration) || Number(state.analysis?.videoDuration) || bridgeTarget
     );
     logEngineEvent('ANALYSIS_GAP_PLAYBACK_COMPLETED', { at: state.gameCursorTime });
     setGameState('DECISION_PENDING');
     renderChoices();
   };
-  els.video.addEventListener('timeupdate', state.stopListener);
+  const stop = state.stopListener;
+  els.video.addEventListener('timeupdate', stop);
   try {
     await els.video.play();
   } catch {
-    if (generation !== state.playbackGeneration) return;
-    els.video.removeEventListener('timeupdate', state.stopListener);
+    if (generation !== state.playbackGeneration || state.stopListener !== stop) return;
+    els.video.removeEventListener('timeupdate', stop);
     state.stopListener = null;
     setGameState('DECISION_PENDING');
     showPlaybackRecovery(
@@ -5705,6 +5707,7 @@ function renderChoices() {
 
   els.choices.classList.remove('hidden');
   els.choices.innerHTML = '';
+  document.querySelector('.choice-navigation')?.classList.remove('hidden');
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
   let candidates = futureActions();
 
@@ -5938,13 +5941,15 @@ async function resumeActionPlayback(action) {
   }
 }
 
+function genericConversationEnd(now) {
+  return mediaClient.conversationEndAt(now, state.sourceContext?.segments || [],
+    Number(els.video.duration) || Number(state.analysis?.videoDuration) || Infinity);
+}
+
 function finishAction(action, decisionEndTime = action.endTime) {
+  if (state.activeAction !== action) return;
   const now = Number(els.video.currentTime) || 0;
-  const media = mediaClient.capture();
-  const safeEnd = conversationEnd(now, state.sourceContext?.segments || [], media?.manifest.dubSegments || [], {
-    dubEnabled: media?.dubEnabled === true, offset: media?.syncOffset || 0,
-    duration: Number(els.video.duration) || Number(state.analysis?.videoDuration) || Infinity
-  });
+  const safeEnd = genericConversationEnd(now);
   if (safeEnd > now + .03 && !els.video.ended) {
     els.choices.classList.add('hidden');
     return; // The same timeupdate listener waits for speech; no seek or request.
@@ -6093,9 +6098,14 @@ els.video.addEventListener('seeking', () => {
     return;
   }
 
-  if (!state.activeAction && !state.navigationSeeking) {
-    state.manualSeeking = true;
+  cancelTimelineNavigation();
+  if (state.stopListener) {
+    els.video.removeEventListener('timeupdate', state.stopListener);
+    state.stopListener = null;
   }
+  state.activeAction = null;
+  els.choices.classList.add('hidden');
+  state.manualSeeking = true;
 });
 
 els.video.addEventListener('seeked', () => {
@@ -6116,16 +6126,14 @@ els.video.addEventListener('seeked', () => {
   state.manualSeeking = false;
 
   const actions = state.analysis?.actions || [];
-  if (!actions.length) return;
-
   const now = Number(els.video.currentTime) || 0;
-  let index = actions.findIndex(action => Number(action.startTime) >= now - 0.1);
-  if (index < 0) index = actions.length - 1;
+  let index = actions.findIndex(action => Number(action.endTime) > now + .03);
+  if (index < 0) index = actions.length;
 
   state.currentActionIndex = index - 1;
-  state.gameCursorTime = Number(actions[index].startTime) || now;
+  state.gameCursorTime = now;
   state.consumedActionIds = new Set(
-    actions.slice(0, index).map(action => action.actionId)
+    actions.filter(action => Number(action.endTime) <= now + .03).map(action => action.actionId)
   );
 
   els.video.pause();
