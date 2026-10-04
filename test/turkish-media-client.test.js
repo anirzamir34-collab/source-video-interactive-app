@@ -396,6 +396,23 @@ test('dub switching preserves explicit caption choice and dub-only manifests hid
   assert.equal(audio.seekWrites.length, writes, 'minor clock jitter does not repeatedly seek the audio');
 });
 
+test('old saved muted mixes restore quiet original speech locally without reducing dub volume or new requests', async t => {
+  const f = fixture(); t.after(() => f.client.destroy());
+  const old = manifest(); old.qualityReport = { mix: { originalSpeechMuted: true } };
+  old.dubSegments = [{ start: 1, end: 3, originalSpeechStart: 1, originalSpeechEnd: 3 }];
+  await f.client.loadResult(old);
+  f.video.sourceTime(1.5); f.video.paused = false; f.video.fire('playing'); await settle();
+  const audio = f.audios.findLast(value => value.src);
+  assert.equal(f.video.muted, false);
+  assert.ok(Math.abs(f.video.volume - .65 * .18) < .00001);
+  f.client.sync(); assert.equal(audio.volume, .65);
+  f.video.sourceTime(4); f.client.sync();
+  assert.equal(f.video.muted, true, 'the existing mix owns normal source audio outside speech');
+  f.client.setDubEnabled(false);
+  assert.equal(f.video.volume, .65); assert.equal(f.video.muted, false);
+  assert.equal(f.requests.length, 0);
+});
+
 test('source and dub subtitle tracks render overlapping cues while retaining cached caption nodes', async t => {
   const f = fixture();
   t.after(() => f.client.destroy());

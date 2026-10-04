@@ -1,6 +1,7 @@
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
+import { conversationEnd } from './conversation-timing.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import {
   adultPositionFamily,
@@ -5938,12 +5939,22 @@ async function resumeActionPlayback(action) {
 }
 
 function finishAction(action, decisionEndTime = action.endTime) {
+  const now = Number(els.video.currentTime) || 0;
+  const media = mediaClient.capture();
+  const safeEnd = conversationEnd(now, state.sourceContext?.segments || [], media?.manifest.dubSegments || [], {
+    dubEnabled: media?.dubEnabled === true, offset: media?.syncOffset || 0,
+    duration: Number(els.video.duration) || Number(state.analysis?.videoDuration) || Infinity
+  });
+  if (safeEnd > now + .03 && !els.video.ended) {
+    els.choices.classList.add('hidden');
+    return; // The same timeupdate listener waits for speech; no seek or request.
+  }
   els.video.pause();
   if (state.stopListener) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
   }
-  const reachedTime = Math.max(Number(action.endTime) || 0, Number(decisionEndTime) || 0);
+  const reachedTime = Math.max(now, Number(action.endTime) || 0, Number(decisionEndTime) || 0);
   let reachedIndex = state.analysis.actions.findIndex(a => a.actionId === action.actionId);
   state.analysis.actions.forEach((candidate, index) => {
     if (Number(candidate.endTime) <= reachedTime + 0.03) {

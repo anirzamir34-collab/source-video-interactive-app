@@ -64,6 +64,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   let manifest = null, audio = null, audioBlob = null, audioBlobRequest = null, objectUrl = null;
   let dubEnabled = false, subtitleTrack = 'off', syncOffset = 0;
   let originalMuted = null, waiting = false, sourceEmptied = false, playbackFailed = false, playAttempt = null, playVersion = 0, needsSeek = true;
+  let legacySourceVolume = null, legacyAppliedVolume = null, audioOwnsPlayback = false;
   let frame = null;
   const sourceUploadKeys = new WeakMap();
   const tracks = { source_tr: [], dub_tr: [] };
@@ -161,13 +162,31 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   }
 
   function stopAudio() {
+    audioOwnsPlayback = false;
     playVersion += 1;
     playAttempt = null;
     audio?.pause();
   }
 
   function restoreSourceAudio() {
+    audioOwnsPlayback = false;
+    if (legacySourceVolume !== null) { video.volume = legacySourceVolume; legacyAppliedVolume = legacySourceVolume; }
     if (originalMuted !== null) video.muted = originalMuted;
+  }
+
+  function applySourceAudio() {
+    if (legacySourceVolume === null) { video.muted = true; return; }
+    // Older saved mixes contain silence during source speech. Restore that
+    // speech from the saved video locally, without retranslation or synthesis.
+    const now = Number(video.currentTime) || 0;
+    let gain = 0;
+    for (const row of manifest?.dubSegments || []) {
+      const start = row.originalSpeechStart ?? row.start, end = row.originalSpeechEnd ?? row.end;
+      if (now >= start && now < end) gain = Math.max(gain, .18 * Math.min(1, (now - start) / .04, (end - now) / .08));
+    }
+    legacyAppliedVolume = legacySourceVolume * gain;
+    if (video.volume !== legacyAppliedVolume) video.volume = legacyAppliedVolume;
+    video.muted = originalMuted || gain === 0;
   }
 
   function canPlayAudio() {
@@ -184,7 +203,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     if (destroyed) return;
     renderCaptions();
     if (!audio || !dubEnabled) return;
-    audio.volume = Math.max(0, Math.min(1, Number(video.volume) || 0));
+    if (legacySourceVolume !== null && video.volume !== legacyAppliedVolume) legacySourceVolume = Number(video.volume) || 0;
+    audio.volume = Math.max(0, Math.min(1, legacySourceVolume ?? (Number(video.volume) || 0)));
     audio.playbackRate = Math.max(0.01, Number(video.playbackRate) || 1);
     const target = Math.max(0, (Number(video.currentTime) || 0) + syncOffset);
     const duration = Number(audio.duration || manifest?.assets?.mix?.duration);
@@ -196,6 +216,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       }
     } catch { /* Metadata may not be available yet; loadedmetadata resynchronizes. */ }
     if (!canPlayAudio() || atEnd) { stopAudio(); return; }
+    if (audioOwnsPlayback) applySourceAudio();
     if (audio.paused !== false && !playAttempt) {
       const selectedAudio = audio, owner = scope(), version = ++playVersion;
       const attempt = { owner, version };
@@ -205,7 +226,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       catch (error) { playing = Promise.reject(error); }
       Promise.resolve(playing).then(() => {
         if (!current(owner) || selectedAudio !== audio || !canPlayAudio()) selectedAudio.pause();
-        else if (version === playVersion) { video.muted = true; notify({ state: 'PLAYBACK_READY', jobId }); }
+        else if (version === playVersion) { audioOwnsPlayback = true; applySourceAudio(); notify({ state: 'PLAYBACK_READY', jobId }); }
       }).catch(error => {
         if (!current(owner) || selectedAudio !== audio || version !== playVersion) return;
         playbackFailed = true;
@@ -229,8 +250,13 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   function setDubEnabled(value) {
     const enabled = Boolean(value);
     if (enabled && !audio) throw new Error('Türkçe ses henüz hazır değil.');
-    if (enabled && !dubEnabled) { originalMuted = Boolean(video.muted); needsSeek = true; }
-    if (!enabled && dubEnabled && originalMuted !== null) { video.muted = originalMuted; originalMuted = null; }
+    if (enabled && !dubEnabled) {
+      originalMuted = Boolean(video.muted); needsSeek = true;
+      if (manifest?.qualityReport?.mix?.originalSpeechMuted === true) legacySourceVolume = legacyAppliedVolume = Number(video.volume) || 0;
+    }
+    if (!enabled && dubEnabled && originalMuted !== null) {
+      restoreSourceAudio(); originalMuted = null; legacySourceVolume = legacyAppliedVolume = null;
+    }
     dubEnabled = enabled;
     playbackFailed = false;
     if (!enabled) stopAudio();

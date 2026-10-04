@@ -240,7 +240,7 @@ test('fit measures converted duration and pads only silence, without -t or atrim
   assert.match(mocked.calls.find(row => row.args.at(-1) === result.path && row.binary === 'media').args.join(' '), /apad=whole_len=48000/);
 });
 
-test('mix uses sourceStart sample offsets, mutes the original language and supports verified source overlap', async t => {
+test('mix uses sourceStart sample offsets, ducks the original language and supports verified source overlap', async t => {
   const directory = await workspace(t);
   let graph;
   const mocked = fakeSpawn(async (binary, args, child) => {
@@ -255,17 +255,18 @@ test('mix uses sourceStart sample offsets, mutes the original language and suppo
     { segmentId: 'a', speakerId: 'male', start: 20, end: 21, sourceStart: .125, sourceEnd: 1, audioPath: '/tmp/a.wav', duration: 50 },
     { segmentId: 'b', speakerId: 'female', start: .375, end: 1.25, audioPath: '/tmp/b.wav' }
   ] });
-  assert.match(graph, /between\(t,0.125,1.25\)/);
-  assert.match(graph, /val\(0\)\*if\(.*?,0,1\)/);
+  assert.match(graph, /1-0.82\*min/);
+  assert.match(graph, /val\(0\)\*/);
   assert.match(graph, /adelay=6000S:all=1/);
   assert.match(graph, /adelay=18000S:all=1/);
   assert.match(graph, /acompressor=threshold=0.125/);
   assert.doesNotMatch(graph, /loudnorm/);
   assert.match(graph, /alimiter=limit=0.95:level=0:latency=1/);
   assert.equal(result.qa.mixMode, 'speech-ducking');
-  assert.equal(result.qa.originalSpeechMuted, true);
-  assert.equal(result.qa.preservesMusicDuringSpeech, false);
-  assert.match(result.qa.limitation, /music and ambience are muted/);
+  assert.equal(result.qa.originalSpeechMuted, false);
+  assert.equal(result.qa.originalSpeechLevel, .18);
+  assert.equal(result.qa.preservesMusicDuringSpeech, true);
+  assert.match(result.qa.limitation, /music and ambience are reduced/);
   assert.equal(await stat(result.path).then(row => row.size), 5);
 });
 
@@ -311,6 +312,20 @@ async function samples(file) {
 
 function rms(values) { return Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / values.length); }
 
+test('compressed source fallback also retains quiet source speech and normal sound outside dialogue', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const raw = await media.fixture('fallback-bed.wav', '.1*sin(2*PI*440*t)', 3);
+  const bed = path.join(media.directory, 'fallback-bed.mp3');
+  await execute(FFMPEG, ['-nostdin', '-v', 'error', '-i', raw, '-c:a', 'libmp3lame', '-b:a', '128k', bed]);
+  const dub = await media.fixture('fallback-dub.wav', '.2*sin(2*PI*880*t)', 1);
+  const output = await media.service.mixAudio({ sourceAudio: bed, duration: 3,
+    dubSegments: [{ segmentId: 'one', speakerId: 'speaker', start: 1, end: 2, audioPath: dub }] });
+  const decoded = await samples(output.path);
+  assert.ok(frequencyAmplitude(decoded.slice(.2 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440) > .08);
+  assert.ok(Math.abs(frequencyAmplitude(decoded.slice(1.2 * SAMPLE_RATE, 1.8 * SAMPLE_RATE), 440) - .018) < .003);
+  assert.ok(frequencyAmplitude(decoded.slice(1.2 * SAMPLE_RATE, 1.8 * SAMPLE_RATE), 880) > .15);
+});
+
 test('real mix softens discontinuous source/dub boundaries without a click or shifted speech clock', async t => {
   const media = await realMedia(t); if (!media) return;
   const bed = await media.fixture('constant-bed.wav', '.1', 3);
@@ -352,7 +367,7 @@ test('final MP3 retains the complete timeline, audible dub and original non-spee
   assert.equal(decoded.length, 8 * SAMPLE_RATE, 'Xing gapless decoding preserves the video clock');
   assert.ok(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 880) > .15);
   assert.ok(frequencyAmplitude(decoded.slice(.2 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440) > .08);
-  assert.ok(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 440) < .005);
+  assert.ok(Math.abs(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 440) - .018) < .003);
   assert.ok((await stat(output.path)).size < (await stat(source)).size / 10);
   assert.ok(!(await readdir(path.dirname(output.path))).includes('turkish-mix.wav'));
 });
@@ -540,7 +555,7 @@ test('real PCM, native words, subtitles and final mix agree at a fractional vide
   assert.ok(rms((await samples(mixed.path)).slice(Math.round(start * 48000), Math.round(end * 48000))) > .01);
 });
 
-test('a redistributed dub mutes the original speech clock and preserves the bed outside it', async t => {
+test('a redistributed dub ducks the original speech clock and preserves the bed outside it', async t => {
   const media = await realMedia(t); if (!media) return;
   const bed = await media.fixture('shifted-bed.wav', '.12*sin(2*PI*440*t)', 2); if (!bed) return;
   const voice = await media.fixture('shifted-voice.wav', '.2*sin(2*PI*880*t)', .5);
@@ -548,10 +563,11 @@ test('a redistributed dub mutes the original speech clock and preserves the bed 
     { segmentId: 'shifted', speakerId: 'a', start: .5, end: 1, originalSpeechStart: 1, originalSpeechEnd: 1.5, audioPath: voice }
   ] });
   const audio = await samples(mixed.path);
-  assert.ok(frequencyAmplitude(audio.slice(.6 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440, .6 * SAMPLE_RATE) > .1,
-    'moving the dub never moves the original speech mute into a source gap');
-  assert.ok(rms(audio.slice(1.1 * SAMPLE_RATE, 1.4 * SAMPLE_RATE)) < .00001,
-    'the original foreign-language speech stays muted even when the dub ends earlier');
+  assert.ok(Math.abs(frequencyAmplitude(audio.slice(.6 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440, .6 * SAMPLE_RATE) - .12 * .18) < .002,
+    'source is quiet whenever the redistributed dub is speaking');
+  assert.ok(Math.abs(rms(audio.slice(1.1 * SAMPLE_RATE, 1.4 * SAMPLE_RATE)) - .12 * .18 / Math.sqrt(2)) < .002,
+    'original speech is retained at a low level');
+  assert.ok(frequencyAmplitude(audio.slice(1.7 * SAMPLE_RATE, 1.9 * SAMPLE_RATE), 440) > .1, 'other scenes return to normal');
 });
 
 test('real short dub padding and gentle atempo never exceed the verified source slot', async t => {
@@ -569,7 +585,7 @@ test('real short dub padding and gentle atempo never exceed the verified source 
   assert.ok(Math.abs(fitted.duration - 1) < 2 / SAMPLE_RATE);
 });
 
-test('real mix preserves non-speech bed, fully mutes original speech, aligns offsets and avoids clipping', async t => {
+test('real mix preserves non-speech bed, retains quiet original speech, aligns offsets and avoids clipping', async t => {
   const media = await realMedia(t); if (!media) return;
   const source = await media.fixture('bed.wav', '.12*sin(2*PI*440*t)', 3); if (!source) return;
   const male = await media.fixture('male.wav', '.7*sin(2*PI*880*t)', .75);
@@ -582,7 +598,7 @@ test('real mix preserves non-speech bed, fully mutes original speech, aligns off
   const early = audio.slice(.2 * SAMPLE_RATE, .4 * SAMPLE_RATE);
   const overlap = audio.slice(1.35 * SAMPLE_RATE, 1.6 * SAMPLE_RATE);
   assert.ok(Math.abs(frequencyAmplitude(early, 440, .2 * SAMPLE_RATE) - .12) < .002);
-  assert.ok(frequencyAmplitude(overlap, 440, 1.35 * SAMPLE_RATE) < .002, 'original language is completely muted during source speech');
+  assert.ok(Math.abs(frequencyAmplitude(overlap, 440, 1.35 * SAMPLE_RATE) - .12 * .18) < .002, 'original language stays quiet during source speech');
   assert.ok(frequencyAmplitude(overlap, 880, 1.35 * SAMPLE_RATE) > .01);
   assert.ok(frequencyAmplitude(overlap, 1320, 1.35 * SAMPLE_RATE) > .01);
   assert.ok(audio.reduce((peak, sample) => Math.max(peak, Math.abs(sample)), 0) <= .951);
