@@ -3086,7 +3086,30 @@ function prepareAdultScenes() {
           .filter(position => position.movements.length &&
             isPlayableVerifiedPositionDuration(position.startTime, position.endTime))
           .sort((a, b) => a.startTime - b.startTime);
-      if (!positions.length) return { ...scene, foreplay: [], outcomes, positions: [] };
+      if (!positions.length) {
+        const verifiedForeplay = foreplay.filter(item =>
+          item.sourceVerified === true && sourceInterval(item.startTime, item.endTime));
+        if (!verifiedForeplay.length) return { ...scene, foreplay: [], outcomes, positions: [] };
+        const interactionStart = Math.min(...verifiedForeplay.map(item => Number(item.startTime)));
+        const interactionEnd = Math.max(
+          ...verifiedForeplay.map(item => Number(item.endTime)),
+          ...outcomes.map(item => Number(item.endTime)),
+          Number(scene.aftermath?.endTime) || 0
+        );
+        return {
+          ...scene,
+          startTime: interactionStart,
+          endTime: interactionEnd,
+          postSceneTime: Math.max(Number(scene.postSceneTime) || 0, interactionEnd),
+          foreplay: verifiedForeplay,
+          partnerTransitions: (scene.partnerTransitions || [])
+            .filter(item => Number(item.startTime) >= interactionStart - 0.05 &&
+              Number(item.endTime) <= interactionEnd + 0.05)
+            .sort((a, b) => Number(a.startTime) - Number(b.startTime)),
+          outcomes: outcomes.filter(item => Number(item.startTime) >= interactionStart - 0.05),
+          positions: []
+        };
+      }
       const positionStart = Math.min(...positions.map(position => Number(position.startTime)));
       const interactionEnd = Math.max(...positions.map(position => Number(position.endTime)));
       // The Lust warm-up panel is only for source actions that occur before
@@ -3118,7 +3141,7 @@ function prepareAdultScenes() {
         positions
       };
     })
-    .filter(scene => scene.positions.length)
+    .filter(scene => scene.positions.length || scene.foreplay.length)
     .sort((a, b) => a.startTime - b.startTime);
 
   // Providers frequently split one continuous encounter into several scene
@@ -3129,7 +3152,7 @@ function prepareAdultScenes() {
     state.adultScenes,
     actions,
     state.analysis?.unownedSourceIntervals || []
-  );
+  ).filter(scene => scene.positions?.length);
 
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions, {
@@ -4059,22 +4082,37 @@ function renderAdultApproachChoices(scene, later = false) {
   state.adultApproachChoices = candidates;
   els.choices.dataset.interactionPhase = dialogueOnly ? 'DIALOGUE' : 'APPROACH';
   els.choices.innerHTML = '';
-  els.choices.classList.remove('hidden');
-  const heading = document.createElement('div');
-  heading.className = 'approach-status';
-  heading.innerHTML = dialogueOnly ? '<strong>DİYALOG</strong>' : later ? '<strong>SAHNE SEÇENEKLERİ</strong>' :
-    `<strong>YAKINLAŞMA · Lust ${Math.round(flow)}/100</strong><small>Lust 100 olduğunda sıradaki doğrulanmış pozisyon hemen açılır.</small>`;
-  els.choices.appendChild(heading);
+  els.foreplayChoices.innerHTML = '';
+
+  const target = dialogueOnly ? els.choices : els.foreplayChoices;
+  if (dialogueOnly) {
+    els.choices.classList.remove('hidden');
+    els.foreplaySection?.classList.add('hidden');
+    const heading = document.createElement('div');
+    heading.className = 'approach-status';
+    heading.innerHTML = '<strong>DİYALOG</strong>';
+    els.choices.appendChild(heading);
+  } else {
+    els.choices.classList.add('hidden');
+    els.foreplaySection?.classList.remove('hidden');
+    if (els.foreplayCount) els.foreplayCount.textContent = `${candidates.length} seçenek`;
+  }
+
   const compactChoiceLabel = value => String(value || '')
     .replace(/\s+sekansını oynat/giu, '')
     .replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/giu, '')
     .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
     .trim();
+
   candidates.forEach(choice => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'choice-btn';
+    button.className = dialogueOnly ? 'choice-btn' : 'discovery-choice-card';
     button.dataset.clipId = choice.movementId || choice.id;
+    if (!dialogueOnly) {
+      button.dataset.discoveryId = choice.id;
+      button.dataset.discoveryKind = choice.kind;
+    }
     if (choice.choiceId) {
       button.dataset.movementChoiceId = choice.choiceId;
       button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
@@ -4094,12 +4132,9 @@ function renderAdultApproachChoices(scene, later = false) {
         if (next) selectAdultMovement(next.id, true);
       }
     });
-    els.choices.appendChild(button);
+    target.appendChild(button);
   });
 
-  // A choice screen must never be an empty pause trap. At full Lust the next
-  // core position is revealed; otherwise natural playback continues until a
-  // verified forward action becomes reachable.
   if (!candidates.length) {
     const unlocked = flow >= 99.9 ? unlockNextAdultPositionFromLust() : null;
     if (unlocked) {
@@ -4108,12 +4143,15 @@ function renderAdultApproachChoices(scene, later = false) {
     } else if (els.video?.paused && !state.activeAdultPreludeId && !state.activeMovementId) {
       const continueButton = document.createElement('button');
       continueButton.type = 'button';
-      continueButton.className = 'choice-btn';
+      continueButton.className = dialogueOnly ? 'choice-btn' : 'discovery-choice-card';
       continueButton.textContent = 'Videoya devam et';
       continueButton.addEventListener('click', () => void resumePanelPlayback());
-      els.choices.appendChild(continueButton);
+      target.appendChild(continueButton);
+      if (!dialogueOnly && els.foreplayCount) els.foreplayCount.textContent = 'Devam';
     }
   }
+
+  refreshAdultCompactDock();
 }
 
 function renderInteractionInterludeChoices(scene) {
@@ -4250,11 +4288,39 @@ function renderAdultProgressiveUI(force = false) {
   els.adultInteractionPanel.dataset.phase = phase;
   els.outcomeSection?.classList.add('hidden');
 
+  // Dialogue remains on the ordinary story overlay. Intimate approach choices
+  // use the adult panel's own foreplay surface so the two interaction modes
+  // never share one visual container.
+  const approachCursor = Math.max(videoTime, Number(state.adultTimelineFloor) || 0);
+  const nextApproachSurface = (phase === 'foreplay' || laterOverlay)
+    ? [
+        ...(scene.foreplay || []).map(item => ({
+          startTime: Number(item.startTime),
+          endTime: Number(item.endTime),
+          nonIntimate: item.nonIntimate === true
+        })),
+        ...(!laterOverlay ? (scene.positions || []).filter(isWarmupPosition).map(position => ({
+          startTime: Number(position.startTime),
+          endTime: Number(position.endTime),
+          nonIntimate: false
+        })) : [])
+      ]
+        .filter(item => Number.isFinite(item.startTime) && Number.isFinite(item.endTime) &&
+          item.endTime > approachCursor + 0.05)
+        .sort((a, b) => a.startTime - b.startTime)[0]
+    : null;
+  const approachUsesDialogueOverlay = Boolean(nextApproachSurface?.nonIntimate === true);
+  const progressivePanelVisible =
+    (phase !== 'foreplay' && !laterOverlay) ||
+    ((phase === 'foreplay' || laterOverlay) && !approachUsesDialogueOverlay);
+  const progressiveOverlayVisible =
+    (phase === 'foreplay' || laterOverlay) && approachUsesDialogueOverlay;
+
   // Visibility is repaired even when the cached UI signature is unchanged.
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-    panelVisible: phase !== 'foreplay' && !laterOverlay,
-    overlayVisible: phase === 'foreplay' || laterOverlay });
-  state.interactionRuntime = { ...state.interactionRuntime, panelVisible: phase !== 'foreplay' && !laterOverlay };
+    panelVisible: progressivePanelVisible,
+    overlayVisible: progressiveOverlayVisible });
+  state.interactionRuntime = { ...state.interactionRuntime, panelVisible: progressivePanelVisible };
 
   if (!force && signature === state.adultUiSignature) return;
   state.adultUiSignature = signature;
@@ -4263,9 +4329,8 @@ function renderAdultProgressiveUI(force = false) {
   if (phase === 'foreplay' || laterOverlay) {
     if (els.discoveryGateText) els.discoveryGateText.textContent = `İlk seks pozisyonu için Lust ${Math.round(currentAdultFlow())}/100`;
     if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = 'Yakınlaşma, oral ve manuel seçenekleri Lust kazandırır; Lust 100 olunca yeni pozisyon beklemeden açılır.';
-    els.discoveryGate?.classList.remove('hidden');
-    els.adultInteractionPanel.classList.add('hidden');
-    els.adultPanelToggleBtn?.classList.add('hidden');
+    els.discoveryGate?.classList.toggle('hidden', approachUsesDialogueOverlay);
+    els.adultPanelToggleBtn?.classList.toggle('hidden', approachUsesDialogueOverlay);
     renderAdultApproachChoices(scene, laterOverlay);
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
