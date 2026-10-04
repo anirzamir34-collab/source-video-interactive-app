@@ -421,13 +421,57 @@ test('a short answer borrows only verified silence without retranslation or resy
   assert.equal(result.dubSegments[1].start, 3.2);
 });
 
-test('unchanged overlong repair is bounded and gives a Turkish duration error', async t => {
+test('unchanged overlong text is fitted adaptively after one repair without failing the video', async t => {
   const f = await fixture(t);
-  f.audio.fitDubSegment = async () => { throw Object.assign(new Error('long'), { code: 'DUB_REGENERATE_REQUIRED', actualDuration: 8 }); };
-  await assert.rejects(f.pipeline(f.input), error => error.code === 'DUB_DURATION_UNRESOLVED' && /iki toplu düzeltme/.test(error.message));
-  assert.equal(f.calls.translate.length, 3, 'only two bounded repair rounds');
-  assert.equal(f.calls.synthesize.length, 2, 'identical repair audio is reused in the second round');
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (file, options) => {
+    if (!options.adaptiveTempo) throw Object.assign(new Error('long'), { code: 'DUB_REGENERATE_REQUIRED', actualDuration: 8 });
+    const result = await fit(file, options);
+    return { ...result, tempo: 8 / options.targetDuration };
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(result.dubSegments.length, 2);
+  assert.equal(result.qualityReport.missingDubCount, 0);
+  assert.equal(result.qualityReport.adaptiveTempoCount, 2);
+  assert.equal(f.calls.translate.length, 2, 'one bounded collective shortening pass');
+  assert.equal(f.calls.synthesize.length, 2, 'no repeated regeneration loop');
   assert.equal(f.limiter.activeCount, 0); assert.equal(f.limiter.pendingCount, 0);
+});
+
+test('adjacent sentences by one speaker share time without changing source words or generating again', async t => {
+  const f = await fixture(t, { words: [{ text: 'Hello.', type: 'word', start: 1, end: 1.4, speaker_id: 'speaker_0' },
+    { text: 'Yes.', type: 'word', start: 1.45, end: 4, speaker_id: 'speaker_0' }] });
+  useNativeTiming(f);
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (file, options) => {
+    if (options.targetDuration < .84) throw Object.assign(new Error('long'), { code: 'DUB_REGENERATE_REQUIRED', actualDuration: 1 });
+    const result = await fit(file, options);
+    return { ...result, tempo: Math.max(1, 1 / options.targetDuration) };
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(f.calls.translate.length, 1); assert.equal(f.calls.synthesize.length, 1);
+  assert.equal(f.calls.align.length, 0, 'native clocks follow the phrase timing');
+  assert.equal(result.sourceTranscript.utterances[0].sourceEnd, 1.4);
+  assert.equal(result.subtitles.source_tr[0].end, 1.4);
+  assert.ok(result.dubSegments[0].end > 1.4);
+  assert.ok(result.dubSegments[1].start >= result.dubSegments[0].end);
+  assert.ok(result.dubSegments[1].end <= 5);
+  assert.deepEqual(result.dubSegments.map(row => row.originalSpeechStart), [1, 1.45]);
+  assert.deepEqual(result.dubSegments.map(row => row.originalSpeechEnd), [1.4, 4]);
+});
+
+test('a partially completed phrase restores all its generated audio and recomputes shared windows together', async t => {
+  const f = await fixture(t, { failAlignmentOnce: true, words: [
+    { text: 'Hello.', type: 'word', start: 1, end: 1.4, speaker_id: 'speaker_0' },
+    { text: 'Yes.', type: 'word', start: 1.45, end: 4, speaker_id: 'speaker_0' }
+  ] });
+  await assert.rejects(f.pipeline(f.input), { code: 'PROVIDER_HTTP_503' });
+  const result = await f.pipeline(f.input);
+  assert.equal(f.calls.synthesize.length, 1); assert.equal(f.calls.transcribe, 1);
+  assert.equal(result.dubSegments.length, 2);
+  assert.ok(result.dubSegments[0].end > 1.4);
+  assert.ok(result.dubSegments[0].end <= result.dubSegments[1].start);
+  assert.equal(result.subtitles.source_tr[1].start, 1.45);
 });
 
 test('alignment retry retains the already completed duration retranslation and audio generation', async t => {

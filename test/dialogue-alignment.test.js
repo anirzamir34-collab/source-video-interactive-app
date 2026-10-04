@@ -18,3 +18,14 @@ test('native character times remain scoped to their speaker input and transform 
   assert.ok(Math.abs(trimmed[0].start - .03 / 1.2) < 1e-8);
   assert.ok(Math.abs(trimmed[0].end - .43 / 1.2) < 1e-8);
 });
+
+test('native clocks subtract only removed pauses before tempo adjustment and retain every word', () => {
+  const parts = [{ nativeDuration: 3, nativeWords: [{ text: 'Merhaba.', start: .1, end: .5 },
+    { text: 'Evet.', start: 2, end: 2.5 }] }];
+  const words = fitNativeDialogueWords(parts, 'Merhaba. Evet.', { duration: 1.5, tempo: 1.2, sourceOffset: .07,
+    removedPauses: [{ start: .55, end: 1.86 }] });
+  assert.equal(words.length, 2);
+  assert.ok(Math.abs(words[0].start - .03 / 1.2) < 1e-8);
+  assert.ok(Math.abs(words[1].start - .62 / 1.2) < 1e-8);
+  assert.ok(Math.abs(words[1].end - 1.12 / 1.2) < 1e-8);
+});

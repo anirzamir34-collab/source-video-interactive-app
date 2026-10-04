@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createAudioService } from '../lib/turkish-media/audio.js';
+import { fitNativeDialogueWords } from '../lib/turkish-media/dialogue-alignment.js';
 
 const execute = promisify(execFile);
 const FFMPEG = process.env.VIDEOQUEST_TEST_FFMPEG || '/usr/bin/ffmpeg';
@@ -404,6 +405,55 @@ test('real dialogue parts concatenate in order without truncating or inventing a
   assert.ok(frequencyAmplitude(audio.slice(0, .25 * SAMPLE_RATE), 880) > .19);
   assert.ok(frequencyAmplitude(audio.slice(.25 * SAMPLE_RATE), 1320) > .19);
   assert.ok(frequencyAmplitude(audio.slice(0, .25 * SAMPLE_RATE), 1320) < .0001);
+});
+
+test('measured internal pauses are compacted while both words and their transformed clocks survive', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const file = await media.fixture('long-pause.wav',
+    'if(between(t\\,0.2\\,0.6)\\,.2*sin(2*PI*880*t)\\,if(between(t\\,2\\,2.4)\\,.2*sin(2*PI*1320*t)\\,0))', 3);
+  if (!file) return;
+  const nativeWords = [{ text: 'Merhaba.', start: .2, end: .6 }, { text: 'Evet.', start: 2, end: 2.4 }];
+  const fitted = await media.service.fitDubSegment(file, { targetDuration: 1, maxTempo: 1.2,
+    speechRange: { start: .2, end: 2.4 }, speechWords: nativeWords });
+  const words = fitNativeDialogueWords([{ nativeWords, nativeDuration: 3 }], 'Merhaba. Evet.', fitted);
+  assert.equal(words.length, 2); assert.equal(fitted.removedPauses.length, 1);
+  assert.ok(fitted.removedPauses[0].start > nativeWords[0].end);
+  assert.ok(fitted.removedPauses[0].end < nativeWords[1].start);
+  assert.ok(fitted.tempo <= 1.2); assert.equal(fitted.duration, 1);
+  const audio = await samples(fitted.path);
+  for (const [i, frequency] of [880, 1320].entries()) {
+    const start = Math.round((words[i].start + .05) * SAMPLE_RATE), end = Math.round((words[i].end - .05) * SAMPLE_RATE);
+    assert.ok(frequencyAmplitude(audio.slice(start, end), frequency, start) > .12);
+  }
+});
+
+test('adaptive fitting chains tempo stages, keeps pitch and both audio sections instead of rejecting duration', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const file = await media.fixture('adaptive.wav', 'if(lt(t\\,1.5)\\,.2*sin(2*PI*880*t)\\,.2*sin(2*PI*1320*t))', 3);
+  if (!file) return;
+  const fitted = await media.service.fitDubSegment(file, { targetDuration: 1, maxTempo: 1.2, adaptiveTempo: true });
+  assert.ok(fitted.tempo >= 3); assert.equal(fitted.duration, 1); assert.equal(fitted.adaptiveTempo, true);
+  const audio = await samples(fitted.path);
+  assert.ok(frequencyAmplitude(audio.slice(.1 * SAMPLE_RATE, .3 * SAMPLE_RATE), 880, .1 * SAMPLE_RATE) > .1);
+  assert.ok(frequencyAmplitude(audio.slice(.6 * SAMPLE_RATE, .85 * SAMPLE_RATE), 1320, .6 * SAMPLE_RATE) > .1);
+  const words = fitNativeDialogueWords([{ nativeDuration: 3, nativeWords: [
+    { text: 'Merhaba.', start: .03, end: 1.4 }, { text: 'Evet.', start: 1.55, end: 2.94 }
+  ] }], 'Merhaba. Evet.', fitted);
+  assert.equal(words.length, 2); assert.ok(words[1].end <= 1);
+});
+
+test('a redistributed dub mutes the original speech clock and preserves the bed outside it', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const bed = await media.fixture('shifted-bed.wav', '.12*sin(2*PI*440*t)', 2); if (!bed) return;
+  const voice = await media.fixture('shifted-voice.wav', '.2*sin(2*PI*880*t)', .5);
+  const mixed = await media.service.mixAudio({ sourceAudio: bed, duration: 2, dubSegments: [
+    { segmentId: 'shifted', speakerId: 'a', start: .5, end: 1, originalSpeechStart: 1, originalSpeechEnd: 1.5, audioPath: voice }
+  ] });
+  const audio = await samples(mixed.path);
+  assert.ok(frequencyAmplitude(audio.slice(.6 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440, .6 * SAMPLE_RATE) > .1,
+    'moving the dub never moves the original speech mute into a source gap');
+  assert.ok(rms(audio.slice(1.1 * SAMPLE_RATE, 1.4 * SAMPLE_RATE)) < .00001,
+    'the original foreign-language speech stays muted even when the dub ends earlier');
 });
 
 test('real short dub padding and gentle atempo never exceed the verified source slot', async t => {
