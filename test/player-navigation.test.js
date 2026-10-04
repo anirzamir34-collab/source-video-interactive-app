@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { selectDiverseStoryActions } from '../public/story-engine.js';
 import { conversationEnd } from '../public/conversation-timing.js';
 import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const names = ['genericConversationEnd', 'isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback'];
+const names = ['futureActions', 'genericConversationEnd', 'isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} is present`);
@@ -73,7 +74,7 @@ function fixture() {
     setGameState: value => { state.gameState = value; },
     setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, clearInteractionSelection() {}, persistRuntimeSnapshot() {}, renderDebug() {},
     orderedLockedAdultPositions: () => [], findAdultSceneAt: () => null,
-    futureActions: () => [], selectDiverseStoryActions: list => list, findAdultSceneForTimeline: () => null,
+    selectDiverseStoryActions, findAdultSceneForTimeline: () => null,
     verifiedAdultPositionFamily: () => null, storyChoiceLabelForAction: action => action.label,
     playableAdultPanelFamily: () => '',
     escapeHtml: value => String(value)
@@ -342,7 +343,7 @@ test('a stale source stop callback cannot finish a choice after navigation', asy
   assert.equal(f.state.stopListener, null);
 });
 
-test('a chosen clip stops at its exact source end even while speech continues', async () => {
+test('the general clip listener delegates its source boundary to the speech-aware completion handler', async () => {
   const f = fixture();
   const action = { actionId: 'talk', startTime: 20, endTime: 30 };
   f.state.dubbingEnabled = true;
@@ -415,4 +416,71 @@ test('manual seeking during a general choice removes its old boundary and preser
   f.els.video.dispatchEvent(new Event('seeking'));
   f.els.video.dispatchEvent(new Event('seeked'));
   assert.equal(f.state.gameState, 'ENDED');
+});
+
+function useRealCompletion(f) {
+  const start = source.indexOf('function finishAction(');
+  const end = source.indexOf('\nfunction resetGameAtAction', start);
+  vm.runInContext(source.slice(start, end), f);
+}
+
+test('waiting for speech retains a still-running general choice and plays it without rewinding', async () => {
+  const f = fixture(); useRealCompletion(f);
+  const selected = { actionId: 'door', label: 'Kapıyı aç', startTime: 1, endTime: 2, sourceVerified: true };
+  const next = { actionId: 'walk', label: 'Masaya yürü', startTime: 3, endTime: 5, sourceVerified: true };
+  f.state.analysis.actions = [selected, next];
+  f.state.sourceContext = { segments: [{ startTime: 1, endTime: 4 }] };
+  await f.playAction(selected);
+  f.els.video.time = 2;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.els.video.paused, false);
+  f.els.video.time = 4.2;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.activeAction, null);
+  assert.equal(f.state.gameCursorTime, 4.2);
+  assert.equal(f.state.consumedActionIds.has('walk'), false);
+  assert.equal(f.els.choices.children.length, 1);
+  assert.equal(f.futureActions()[0].actionId, 'walk');
+  await f.playAction(next);
+  assert.equal(f.els.video.currentTime, 4.2);
+  assert.equal(f.els.video.paused, false);
+});
+
+test('a distant general choice is reached by playing intervening footage, including stale button protection', async () => {
+  const f = fixture();
+  const later = { actionId: 'book', label: 'Kitabı al', startTime: 90, endTime: 95, sourceVerified: true };
+  f.state.analysis.actions = [later];
+  f.renderChoices();
+  assert.equal(f.futureActions().length, 0);
+  assert.equal(f.els.choices.children[1].dataset.playbackRecovery, 'continue');
+  await f.playAction(later);
+  assert.equal(f.els.video.currentTime, 0, 'a stale distant choice never seeks');
+  f.els.choices.children[1].dispatchEvent(new Event('click'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.els.video.currentTime, 0);
+  assert.equal(f.els.video.paused, false);
+  f.els.video.time = 90;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameCursorTime, 90);
+  assert.equal(f.els.choices.children.length, 1);
+  assert.equal(f.futureActions()[0].actionId, 'book');
+});
+
+test('source ended completes an active general choice without needing one last timeupdate', async () => {
+  const f = fixture(); useRealCompletion(f);
+  const start = source.indexOf('function handleSourceEnded('), end = source.indexOf('\nfunction skipCurrentScene', start);
+  vm.runInContext(source.slice(start, end), f);
+  f.els.video.duration = 10;
+  f.state.analysis.videoDuration = 10;
+  const last = { actionId: 'last', label: 'Kitabı kapat', startTime: 5, endTime: 10.2, sourceVerified: true };
+  f.state.analysis.actions = [last];
+  await f.playAction(last);
+  f.els.video.time = 10;
+  f.els.video.ended = true;
+  f.handleSourceEnded();
+  assert.equal(f.state.activeAction, null);
+  assert.equal(f.state.stopListener, null);
+  assert.equal(f.state.gameCursorTime, 10);
+  assert.equal(f.state.gameState, 'ENDED');
+  assert.equal(f.state.consumedActionIds.has('last'), true);
 });

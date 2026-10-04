@@ -38,3 +38,11 @@ test('real generic action completion leaves video playing until the sentence end
   video.currentTime = 4.15; scope.finish(action);
   assert.equal(pauses, 1); assert.equal(choices, 1); assert.equal(state.gameCursorTime, 4.15);
 });
+
+
+test('invalid saved word timestamps fall back to the verified dub interval', () => {
+  for (const words of [[{ end: undefined }], [null], [{ end: NaN }], []]) {
+    assert.equal(conversationEnd(2, [], [{ start: 1, end: 5, words }], { dubEnabled: true }), 5.12);
+  }
+  assert.equal(conversationEnd(2, [], [{ start: 1, end: 5, words: [null, { end: 4 }] }], { dubEnabled: true }), 4.12);
+});

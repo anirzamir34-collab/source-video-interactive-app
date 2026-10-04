@@ -5052,7 +5052,10 @@ function handleSourceEnded() {
     finishAdultScene({ force: true, resumeAtCurrentTime: true });
     return;
   }
-  if (state.activeAction) return;
+  if (state.activeAction) {
+    finishAction(state.activeAction);
+    return;
+  }
   state.gameCursorTime = Number(els.video.duration) || Number(els.video.currentTime) || 0;
   renderChoices();
 }
@@ -5551,9 +5554,8 @@ function futureActions() {
     state.analysis.videoDuration || Number.POSITIVE_INFINITY
   );
 
-  const pool = state.analysis.actions.filter((a, idx) =>
-    idx > state.currentActionIndex &&
-    a.startTime >= state.gameCursorTime - 0.001 &&
+  const pool = state.analysis.actions.filter(a =>
+    Number(a.endTime) > state.gameCursorTime + .03 &&
     a.startTime <= windowEnd &&
     !state.consumedActionIds.has(a.actionId) &&
     isUnownedTimelineChoice(a)
@@ -5578,8 +5580,7 @@ function futureActions() {
 function nextVerifiedRouteTime() {
   const cursor = Number(state.gameCursorTime) || 0;
   const actionTimes = (state.analysis?.actions || [])
-    .filter((action, index) =>
-      index > state.currentActionIndex &&
+    .filter(action =>
       action?.sourceVerified === true &&
       !state.consumedActionIds.has(action.actionId) &&
       Number(action.startTime) > cursor + 0.05
@@ -5711,16 +5712,6 @@ function renderChoices() {
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
   let candidates = futureActions();
 
-  if (!candidates.length && state.analysis?.actions?.length) {
-    candidates = selectDiverseStoryActions(state.analysis.actions
-      .filter((action, index) =>
-        index > state.currentActionIndex &&
-        Number(action.startTime) >= state.gameCursorTime - 0.001 &&
-        !state.consumedActionIds.has(action.actionId) &&
-        isUnownedTimelineChoice(action)
-      ), 3);
-  }
-
   const firstCandidate = candidates[0];
   const candidateScene = findAdultSceneForTimeline(state.adultScenes, {
     action: firstCandidate,
@@ -5741,25 +5732,14 @@ function renderChoices() {
   );
 
   if (!candidates.length) {
-    candidates = selectDiverseStoryActions(state.analysis.actions
-      .filter((action, index) =>
-        index > state.currentActionIndex &&
-        Number(action.startTime) >= state.gameCursorTime - 0.001 &&
-        !state.consumedActionIds.has(action.actionId) &&
-        isUnownedTimelineChoice(action) &&
-        !findAdultSceneForTimeline(state.adultScenes, {
-          action,
-          completedSceneIds: state.completedAdultSceneIds
-        })
-      ), 3);
-  }
-
-  if (!candidates.length) {
     const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration);
     const cursor = Math.max(state.gameCursorTime, Number(els.video.currentTime) || 0);
     if (hasRemainingVideo(cursor, duration)) {
       setGameState('DECISION_PENDING');
-      showPlaybackRecovery('Bu noktadan sonra seçim yok; video devam ediyor.', resumeSourceVideo, 'Videoya devam et');
+      const next = Number.isFinite(routeTime) && routeTime > cursor + .05
+        ? () => void resumeAnalysisGap(routeTime) : resumeSourceVideo;
+      showPlaybackRecovery(next === resumeSourceVideo ? 'Bu noktadan sonra seçim yok; videoya devam et.'
+        : 'Sonraki seçime kadar videoya devam et.', next, 'Videoya devam et');
     } else {
       setGameState('ENDED');
       els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
@@ -5880,7 +5860,10 @@ async function playAction(action) {
 
   const guard = guardPlayable('timeline', action, { unlocked: true });
   const actionStart = Number(action?.startTime);
-  if (!guard.allowed || !Number.isFinite(actionStart) || actionStart < state.gameCursorTime - 0.03) {
+  const actionEnd = Number(action?.endTime);
+  if (!guard.allowed || !Number.isFinite(actionStart) || !Number.isFinite(actionEnd) ||
+      actionEnd <= state.gameCursorTime + .03 || actionStart > state.gameCursorTime + 45 ||
+      state.consumedActionIds.has(action.actionId)) {
     logEngineEvent('TIMELINE_BACKWARD_SEEK_BLOCKED', {
       actionId: action?.actionId || null,
       actionStart,
@@ -5959,7 +5942,9 @@ function finishAction(action, decisionEndTime = action.endTime) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
   }
-  const reachedTime = Math.max(now, Number(action.endTime) || 0, Number(decisionEndTime) || 0);
+  const reachedTime = Math.min(Number(els.video.duration) || Number(state.analysis?.videoDuration) || Infinity,
+    Math.max(now, Number(action.endTime) || 0, Number(decisionEndTime) || 0));
+  state.consumedActionIds.add(action.actionId);
   let reachedIndex = state.analysis.actions.findIndex(a => a.actionId === action.actionId);
   state.analysis.actions.forEach((candidate, index) => {
     if (Number(candidate.endTime) <= reachedTime + 0.03) {
