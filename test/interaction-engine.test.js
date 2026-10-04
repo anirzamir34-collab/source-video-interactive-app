@@ -4,7 +4,7 @@ import {
   createInteractionState, normalizeInteractionScene, interactionProgressPacing,
   progressionPacing, progressForSelection, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, selectInteractionChoice, visibleApproachChoices,
-  switchInteractionScene, interactionTrace
+  selectVerifiedChoiceQueue, switchInteractionScene, interactionTrace
 } from '../public/interaction-engine.js';
 
 const range = (id, startTime, endTime, occurrenceId = id) => ({
@@ -85,6 +85,21 @@ test('configured playback and selection rates normalize expected opening progres
   assert.ok(pacing.scale < 0.12);
   assert.ok(Math.abs((1000 * parameters.playbackPointsPerSecond + 20 * parameters.selectionPoints) * pacing.scale - 100) < 1e-8);
   assert.equal(progressionPacing({ ...parameters, firstCoreTime: 35, verifiedChoiceCount: 3 }).scale, 1);
+});
+
+test('approach queue hides completed repeats while fresh verified choices remain', () => {
+  const candidates = [
+    { ...choice('first', 0, 8), playCount: 2 },
+    { ...choice('second', 8, 16), playCount: 0 },
+    { ...choice('third', 16, 24), playCount: 0 }
+  ];
+  const visible = selectVerifiedChoiceQueue(candidates, {
+    timelineFloor: 0,
+    activeEndTime: 8,
+    limit: 5,
+    adjacencyGapSeconds: 2
+  });
+  assert.deepEqual(visible.map(item => item.id), ['second', 'third']);
 });
 
 test('progress stays bounded and repeat choices contribute less than a new verified choice', () => {
