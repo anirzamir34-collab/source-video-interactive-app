@@ -645,6 +645,34 @@ test('request timeout aborts a stalled upload request and reports failure', asyn
   assert.equal(f.client.capture(), null);
 });
 
+test('upload requests can outlive the normal browser request timeout', async t => {
+  let stalled = true;
+  let polls = 0;
+  const f = fixture(({ url }) => {
+    if (stalled && url.endsWith('/uploads/start')) {
+      return new Promise(resolve => setTimeout(() => {
+        stalled = false;
+        resolve(json({ uploadId: 'slow-upload', chunkSize: 3, totalChunks: 3 }));
+      }, 30));
+    }
+    if (url.endsWith('/uploads/slow-upload/status')) {
+      polls += 1;
+      return json({ completedChunks: [0, 1, 2] });
+    }
+    if (url.endsWith('/jobs') ) return json({ jobId: 'slow-job' });
+    if (url.endsWith('/jobs/slow-job')) return json({ state: 'READY', result: manifest('slow-job') });
+    throw new Error(`Unexpected request ${url}`);
+  }, { requestTimeoutMs: 15, uploadRequestTimeoutMs: 80 });
+  t.after(() => f.client.destroy());
+  await assert.doesNotReject(
+    f.client.start(sourceFile(), { outputs: { dub: false, subtitles: true } })
+  );
+  assert.equal(polls, 1);
+  assert.equal(f.statuses.at(0)?.state, 'UPLOADING');
+  assert.equal(f.client.capture().manifest.jobId, 'slow-job');
+});
+
+
 test('explicit cancel aborts polling and sends one backend cancellation even if a READY response arrives late', async t => {
   const pendingJob = deferred();
   const jobRequested = deferred();
