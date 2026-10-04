@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createAnalysisProgress } from '../public/analysis-progress.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
 
 const appSource = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -29,6 +30,7 @@ function deferred() {
 }
 
 class Element {
+  dataset = {};
   textContent = '';
   checked = false;
   value = '';
@@ -70,6 +72,9 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
   els.dubMode.checked = dubbing;
   const calls = { prepare: [], extract: [], start: [], load: [], save: [], events: [], visual: [], renders: 0 };
   const scope = vm.createContext({
+    analysisProgress: createAnalysisProgress({ setTimer: () => 1, clearTimer() {} }),
+    analysisOwner: new AbortController(), analysisAbortController: null, analysisSucceeded: false,
+    framesProgress() {}, onTurkishMediaStatus() {},
     state, els, sourceContextAdapter, Blob, FormData, AbortSignal,
     console: { error() {} }, videoUrlInput: new Element(), resolveUrlBtn: new Element(),
     renderDebug() {}, updateAnalyzeAvailability() {},
@@ -85,7 +90,7 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     },
     extractStoryboard: (...args) => {
       calls.extract.push(args);
-      return extract ? extract(...args) : Promise.resolve({ frames: ['source frame'], duration: 30 });
+      return extract ? extract(...args) : Promise.resolve({ frames: ['source frame'], timestamps: [0], duration: 30 });
     },
     mediaClient: {
       start: async (file, options) => {
@@ -105,6 +110,8 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     renderMediaControls: () => { calls.renders += 1; },
     logEngineEvent: (type, data) => calls.events.push({ type, data: copy(data) })
   });
+  scope.analysisAbortController = scope.analysisOwner;
+  scope.postAnalysisForm = (url, body, options) => scope.fetch(url, { method: 'POST', body, headers: options.headers });
   // The optional continuation executes the real storyboard request setup,
   // then returns at the first fetch before unrelated response handling starts.
   const continuation = visual ? `${visualRequest}\nreturn { file, fastStoryboardPreparation, response };\n}\n} finally {}\n}\n}` : '';
@@ -135,14 +142,15 @@ test('the complete cached source is prepared before frame extraction and upload,
   assert.equal(f.calls.start.length, 1);
   assert.equal(f.calls.start[0].file, f.completeFile);
   assert.equal(f.session.audioContextStatus, 'pending');
-  frames.resolve({ frames: ['already prepared frame'] });
+  const preparedFrames = { frames: ['already prepared frame'], timestamps: [0] };
+  frames.resolve(preparedFrames);
   await tick();
   assert.equal(finished, false, 'source speech is still pending while independent frame preparation finishes');
   assert.equal(f.state.sourceContext, null);
   mediaReady.resolve(sourceManifest());
   const result = await running;
   assert.equal(result.file, f.completeFile);
-  assert.equal(result.fastStoryboardPreparation, frames.promise);
+  assert.equal(await result.fastStoryboardPreparation, preparedFrames);
   assert.equal(f.session.audioContextStatus, 'ready');
 });
 
@@ -208,7 +216,7 @@ test('subtitle-only analysis skips frame extraction and awaits the saved-game wr
 
 test('requested subtitles fail explicitly when source transcription fails and cannot manufacture speech or a ready game', async () => {
   const failedJob = new Error('Backend source transcription failed');
-  const preparedFrames = { frames: ['retained visual source frame'] };
+  const preparedFrames = { frames: ['retained visual source frame'], timestamps: [0] };
   const f = fixture({ subtitles: true, start: async () => { throw failedJob; }, extract: () => Promise.resolve(preparedFrames) });
   await assert.rejects(f.run(), error => error === failedJob);
   assert.equal(f.session.mediaManifest, null);

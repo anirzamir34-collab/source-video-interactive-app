@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createAnalysisProgress } from '../public/analysis-progress.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
@@ -40,6 +41,8 @@ class Element {
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   removeAttribute(name) { this.attributes.delete(name); delete this[name]; }
   querySelectorAll() { return this.children; }
+  replaceChildren(...children) { this.children = children; }
+  append(...children) { this.children.push(...children); }
 }
 
 function finishedMedia() {
@@ -71,8 +74,11 @@ function fixture(initialCapture = null) {
   const state = { analysisInProgress: true, dubbingEnabled: false, subtitlesEnabled: false, languageSyncOffset: 0 };
   const events = [];
   const transcripts = [];
+  els.analysisStepList.ownerDocument = { createElement: () => new Element() };
+  const analysisProgress = createAnalysisProgress({ list: els.analysisStepList,
+    bar: els.mediaJobProgress, container: els.mediaJobStatus, setTimer: () => 1, clearTimer() {} });
   const scope = vm.createContext({
-    state, els,
+    state, els, analysisProgress,
     mediaClient: { capture: () => captured },
     updateSourceTranscript: value => transcripts.push(value),
     renderVoiceMappingPanel() {},
@@ -90,7 +96,7 @@ test('pending jobs show progress and cancellation while finished mix controls st
     message: 'Kaynak konuşma hazır; Türkçe ses hazırlanıyor.', sourceTranscript: transcript });
   assert.equal(f.els.mediaJobStatus.classes.has('hidden'), false);
   assert.equal(f.els.mediaJobMessage.textContent, 'Kaynak konuşma hazır; Türkçe ses hazırlanıyor.');
-  assert.equal(f.els.mediaJobProgress.value, 37);
+  assert.equal(Object.hasOwn(f.els.mediaJobProgress, 'value'), false);
   assert.equal(f.els.mediaJobCancelBtn.classes.has('hidden'), false);
   assert.equal(f.els.mediaJobRetryBtn.classes.has('hidden'), true);
   assert.equal(f.els.analysisState.textContent, 'TRANSCRIBED');
@@ -110,7 +116,7 @@ test('failed jobs display the actual failure and retry action without exposing p
     message: 'Türkçe ses üretimi tamamlanamadı.', error: { code: 'SOURCE_AUDIO_FAILED', message: 'Source audio failed' } });
   assert.equal(f.els.mediaJobStatus.classes.has('hidden'), false);
   assert.equal(f.els.mediaJobMessage.textContent, 'Türkçe ses üretimi tamamlanamadı.');
-  assert.equal(f.els.mediaJobProgress.value, 43);
+  assert.equal(Object.hasOwn(f.els.mediaJobProgress, 'value'), false);
   assert.equal(f.els.mediaJobCancelBtn.classes.has('hidden'), true);
   assert.equal(f.els.mediaJobRetryBtn.classes.has('hidden'), false);
   assert.equal(f.els.dubToggleBtn.classes.has('hidden'), true);
@@ -120,6 +126,7 @@ test('failed jobs display the actual failure and retry action without exposing p
 
 test('finished media enables both caption tracks, the final mix toggle, sync offset, and available export links', () => {
   const f = fixture(finishedMedia());
+  f.state.analysisInProgress = false;
   f.scope.renderMediaControls();
   f.scope.onTurkishMediaStatus({ state: 'READY', jobId: 'ready-job', progress: 100, message: 'Türkçe medya hazır.' });
   assert.equal(f.state.dubbingEnabled, true);
@@ -163,13 +170,14 @@ test('subtitle-only results enable source captions and exports without showing f
 test('audio playback failures use a separate recovery overlay and preserve the completed job status', () => {
   for (const state of ['PLAYBACK_BLOCKED', 'PLAYBACK_FAILED']) {
     const f = fixture(finishedMedia());
+    f.state.analysisInProgress = false;
     f.scope.renderMediaControls();
     f.scope.onTurkishMediaStatus({ state: 'READY', progress: 100, message: 'Türkçe medya hazır.' });
     f.scope.onTurkishMediaStatus({ state, message: 'Türkçe sesi yeniden dene veya kaynak sese geç.' });
     assert.equal(f.els.dubBufferStatus.classes.has('hidden'), false);
     assert.equal(f.els.dubBufferMessage.textContent, 'Türkçe sesi yeniden dene veya kaynak sese geç.');
     assert.equal(f.els.mediaJobMessage.textContent, 'Türkçe medya hazır.');
-    assert.equal(f.els.mediaJobProgress.value, 100);
+    assert.equal(Object.hasOwn(f.els.mediaJobProgress, 'value'), false);
     assert.equal(f.els.mediaJobCancelBtn.classes.has('hidden'), true);
     assert.equal(f.els.mediaJobRetryBtn.classes.has('hidden'), true);
     assert.equal(f.state.dubbingEnabled, true, 'playback recovery does not silently switch output mode');

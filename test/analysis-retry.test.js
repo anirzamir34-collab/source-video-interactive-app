@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createAnalysisProgress } from '../public/analysis-progress.js';
 import { canContinuePastChunkFailure, chunkGapResult } from '../public/analysis-recovery.js';
 import { isCompleteChunkAnalysis } from '../public/playback-logic.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
@@ -21,6 +22,8 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
   const requests = [];
   const windows = [];
   const scope = vm.createContext({
+    analysisOwner: new AbortController(),
+    analysisProgress: createAnalysisProgress({ setTimer: () => 1, clearTimer() {} }),
     FormData, AbortSignal, console,
     chunkResults, chunkCount: total, framesPerSheet: 12,
     analysisPlan: { chunks: Array.from({ length: total }, (_, firstSheet) => ({ firstSheet, sheetCount: 1 })) },
@@ -50,6 +53,7 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
       return { ok: body.available, json: async () => body };
     }
   });
+  scope.postAnalysisForm = (url, body, options) => scope.fetch(url, { method: 'POST', body, headers: options.headers });
   return vm.runInContext(`(async () => { ${loop}; return { chunkResults, failureBody, body }; })()`, scope)
     .then(result => ({ ...result, delays, requests, windows, session }));
 }

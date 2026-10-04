@@ -4,3 +4,5 @@ node_modules/
 npm-debug.log*
 __pycache__/
 *.pyc
+public/source-audio-codec.bundle.js
+public/source-audio-codec.bundle.js.LEGAL.txt

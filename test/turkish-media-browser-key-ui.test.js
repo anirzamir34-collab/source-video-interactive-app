@@ -37,7 +37,7 @@ class Video extends Element {
 function fixture({ capability, geminiStatus } = {}) {
   const els = new Proxy({}, { get(target, id) { return target[id] ||= new Element(); } });
   els.video = new Video(); els.motionMode.checked = true; els.dubMode.checked = true;
-  const file = new Blob(['complete source video'], { type: 'audio/wav' });
+  const file = new Blob(['complete source video'], { type: 'audio/mpeg' });
   const storyboard = { frames: ['verified original frame'] };
   const transcript = { version: 1, speakers: [], utterances: [], audioEvents: [] };
   const state = { selectedFile: file, analysisInProgress: false, savedGameBusy: false,

@@ -58,7 +58,7 @@ function manifest(jobId = 'job-1', voiceMapping = {}) {
 }
 
 const sourceFile = () => {
-  const file = new Blob(['123456789'], { type: 'audio/wav' });
+  const file = new Blob(['123456789'], { type: 'audio/mpeg' });
   file.name = 'same-source.mp4';
   return file;
 };

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createAnalysisProgress } from '../public/analysis-progress.js';
 import { createVideoDownloader } from '../public/video-download.js';
 import { resetInteractionSelection } from '../public/interaction-panel.js';
 
@@ -33,6 +34,8 @@ function elements() { return new Proxy({}, { get(target, name) { return target[n
 function fixture(code, overrides = {}) {
   const errors = [];
   const scope = vm.createContext({
+    analysisProgress: createAnalysisProgress({ setTimer: () => 1, clearTimer() {} }),
+    analysisAbortController: null,
     AbortController, AbortSignal, URL, Blob, File, FormData, performance, setTimeout, clearTimeout,
     console: { error: (...args) => errors.push(args), warn() {} },
     els: elements(), state: {}, savedGames: null, voiceMappingGeneration: 0,

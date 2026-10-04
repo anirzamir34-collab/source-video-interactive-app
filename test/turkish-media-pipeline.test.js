@@ -191,7 +191,8 @@ test('failed alignment logs the full redacted provider error and useful stack wi
 test('pipeline retains all source identities and actual Forced Alignment offsets in both exported tracks', async t => {
   const f = await fixture(t);
   const stages = [];
-  const result = await f.pipeline(f.input, { onStage: async row => stages.push(row.state) });
+  const telemetry = [];
+  const result = await f.pipeline(f.input, { onStage: async row => { stages.push(row.state); telemetry.push(row); } });
   assert.equal(result.sourceTranscript.utterances.length, 2);
   assert.equal(result.translatedUtterances.length, 2);
   assert.equal(result.dubSegments.length, 2);
@@ -207,6 +208,14 @@ test('pipeline retains all source identities and actual Forced Alignment offsets
   assert.equal(result.qualityReport.missingDubCount, 0);
   assert.equal(result.qualityReport.alignmentSuccessRate, 1);
   assert.ok(stages.includes('ALIGNING'));
+  const aligned = telemetry.filter(row => row.state === 'ALIGNING' && row.stageProgress);
+  assert.equal(aligned[0].stageProgress.loaded, 0);
+  assert.equal(aligned.at(-1).stageProgress.loaded, f.calls.align.length);
+  assert.equal(aligned.at(-1).stageProgress.total, result.dubSegments.length);
+  assert.ok(aligned[0].completedStages.includes('GENERATING_DUB'));
+  assert.equal(telemetry.find(row => row.state === 'TRANSCRIBING').stageProgress, null);
+  assert.equal(telemetry.at(-1).stageProgress.loaded, 1);
+  assert.ok(telemetry.at(-1).completedStages.includes('MIXING_AUDIO'));
   const sourceSrt = await f.cache.getArtifact(result.artifactKey, 'source_tr.srt');
   const dubVtt = await f.cache.getArtifact(result.artifactKey, 'dub_tr.vtt');
   assert.match(sourceSrt.toString(), /00:00:01,000 --> 00:00:03,000/);

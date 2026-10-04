@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { createSourceAudioPreparer, decodedAudioWav } from '../public/source-audio.js';
+import { createSourceAudioPreparer } from '../public/source-audio.js';
 import { extractMp4Audio } from '../public/mp4-audio.js';
 import { createTurkishMediaClient } from '../public/turkish-media-client.js';
 import { createMediaUploads } from '../lib/turkish-media/uploads.js';
@@ -24,7 +24,7 @@ async function directory(t) {
   return value;
 }
 
-test('real MP4 stays on the device while only its AAC reaches uploads, preserving the full video clock and reuse', async t => {
+test('real MP4 stays on the device while only MP3 reaches uploads, preserving the full video clock and reuse', async t => {
   const root = await directory(t), original = path.join(root, 'source.mp4');
   execFileSync('/usr/bin/ffmpeg', ['-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'testsrc=size=160x90:rate=10:duration=4',
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-c:v', 'libx264', '-threads', '1', '-pix_fmt', 'yuv420p', '-c:a', 'aac', original]);
@@ -32,9 +32,16 @@ test('real MP4 stays on the device while only its AAC reaches uploads, preservin
   const uploads = createMediaUploads({ directory: path.join(root, 'uploads') });
   const audio = createAudioService({ ffmpegPath: '/usr/bin/ffmpeg', ffprobePath: '/usr/bin/ffprobe' });
   const video = new Video(), statuses = [], starts = [], chunks = [];
-  let extractionCount = 0, measuredSource, jobs = 0;
+  let extractionCount = 0, encodingCount = 0, measuredSource, jobs = 0;
   const prepareSourceAudio = createSourceAudioPreparer({ extract: (...args) => {
     extractionCount++; return extractMp4Audio(...args);
+  }, encode: async file => {
+    encodingCount++;
+    assert.equal(file.type, 'audio/mp4');
+    const bytes = execFileSync('/usr/bin/ffmpeg', ['-v', 'error', '-i', 'pipe:0',
+      '-c:a', 'libmp3lame', '-b:a', '96k', '-ar', '32000', '-f', 'mp3', 'pipe:1'],
+    { input: Buffer.from(await file.arrayBuffer()) });
+    return new File([bytes], 'source-audio.mp3', { type: 'audio/mpeg' });
   } });
   const manifest = { version: 1, jobId: 'audio-job', sourceTranscript: {
     source: { duration: 4 }, language: 'en', speakers: [], utterances: [], audioEvents: [] },
@@ -44,7 +51,8 @@ test('real MP4 stays on the device while only its AAC reaches uploads, preservin
       const url = String(address);
       if (url.endsWith('/uploads/start')) {
         const body = JSON.parse(init.body); starts.push(body);
-        assert.equal(body.mimeType, 'audio/mp4'); assert.equal(body.timelineDuration, 4);
+        assert.equal(body.mimeType, 'audio/mpeg'); assert.equal(body.timelineDuration, 4);
+        assert.equal(body.fileName, 'source-audio.mp3');
         assert.ok(body.totalSize < source.size);
         return Response.json(await uploads.start(body));
       }
@@ -61,6 +69,7 @@ test('real MP4 stays on the device while only its AAC reaches uploads, preservin
         if (!jobs++) {
           const probe = JSON.parse(execFileSync('/usr/bin/ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', measuredSource.path]));
           assert.deepEqual(probe.streams.map(stream => stream.codec_type), ['audio']);
+          assert.equal(probe.streams[0].codec_name, 'mp3');
           const prepared = await audio.extractSource(measuredSource, { directory: path.join(root, 'prepared') });
           assert.ok(Math.abs(prepared.duration - 4) < 1 / 48000);
           // A shorter clock hint can never trim two seconds of real speech.
@@ -80,6 +89,7 @@ test('real MP4 stays on the device while only its AAC reaches uploads, preservin
   assert.ok(uploadedBytes < source.size);
   await client.start(source, options);
   assert.equal(extractionCount, 1, 'the transcript and final media pass reuse the extracted audio');
+  assert.equal(encodingCount, 1, 'the final media pass reuses the completed MP3');
   assert.equal(chunks.reduce((sum, item) => sum + item.size, 0), uploadedBytes, 'completed audio chunks are not uploaded again');
   assert.equal(starts[0].clientUploadKey, starts[1].clientUploadKey);
   assert.equal(video.src, 'blob:original-video'); assert.equal(video.currentTime, 0);
@@ -90,7 +100,9 @@ test('real MP4 stays on the device while only its AAC reaches uploads, preservin
 test('unsupported source extraction never falls back to uploading the original video', async t => {
   const requests = [];
   const client = createTurkishMediaClient({ video: new Video(),
-    prepareSourceAudio: createSourceAudioPreparer({ extract: async () => null, AudioContextClass: null }),
+    prepareSourceAudio: createSourceAudioPreparer({ extract: async () => null, encode: async () => {
+      throw Object.assign(new Error('No local decoder'), { code: 'LOCAL_AUDIO_UNSUPPORTED' });
+    } }),
     fetchImpl: async url => { requests.push(url); throw new Error('Video must remain local'); } });
   t.after(() => client.destroy());
   await assert.rejects(client.start(new File(['unsupported video'], 'source.webm', { type: 'video/webm' })), { code: 'LOCAL_AUDIO_UNSUPPORTED' });
@@ -107,22 +119,18 @@ test('a preparer returning a video cannot bypass the audio-only upload boundary'
   assert.deepEqual(requests, []);
 });
 
-test('Web Audio fallback keeps stereo amplitude and pads the video tail without invented samples', async () => {
-  let closed = 0;
-  const left = new Float32Array(6000).fill(.25), right = new Float32Array(6000).fill(-.25);
-  class Decoder {
-    async decodeAudioData() { return { sampleRate: 24000, numberOfChannels: 2, duration: .25,
-      getChannelData: index => index ? right : left }; }
-    async close() { closed++; }
-  }
-  const prepare = createSourceAudioPreparer({ extract: async () => null, AudioContextClass: Decoder });
-  const result = await prepare(new File(['local webm'], 'source.webm', { type: 'video/webm' }), { duration: 1 });
-  const bytes = await result.arrayBuffer(), wav = new DataView(bytes);
-  assert.equal(result.type, 'audio/wav'); assert.equal(wav.getUint16(22, true), 2);
-  assert.equal(wav.getUint32(24, true), 24000); assert.equal(bytes.byteLength, 44 + 24000 * 4);
-  assert.ok(Math.abs(wav.getInt16(44, true) / 32767 - .25) < .001);
-  assert.ok(Math.abs(wav.getInt16(46, true) / 32768 + .25) < .001);
-  assert.equal(wav.getInt16(44 + 12000 * 4, true), 0); assert.equal(closed, 1);
+test('unsupported containers use the local MP3 encoder and reject an uncompressed fallback', async () => {
+  const source = new File(['local webm'], 'source.webm', { type: 'video/webm' });
+  const phases = [];
+  const prepare = createSourceAudioPreparer({ extract: async () => null, encode: async input => {
+    assert.equal(input, source);
+    return new File(['compressed sound'], 'source.mp3', { type: 'audio/mpeg' });
+  } });
+  assert.equal((await prepare(source, { onProgress: row => phases.push(row.phase) })).type, 'audio/mpeg');
+  assert.ok(phases.includes('audio_extracted'));
+  const invalid = createSourceAudioPreparer({ extract: async () => null,
+    encode: async () => new File(['large PCM'], 'source.wav', { type: 'audio/wav' }) });
+  await assert.rejects(invalid(source), { code: 'SOURCE_MP3_REQUIRED' });
 });
 
 test('cancelling local preparation discards the result and permits a clean audio retry', async () => {
@@ -131,11 +139,11 @@ test('cancelling local preparation discards the result and permits a clean audio
   const prepare = createSourceAudioPreparer({ extract: async (_file, { signal }) => {
     if (++attempts > 1) return new File(['audio'], 'source.m4a', { type: 'audio/mp4' });
     return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
-  } });
+  }, encode: async () => new File(['compressed sound'], 'source.mp3', { type: 'audio/mpeg' }) });
   const controller = new AbortController(), pending = prepare(source, { signal: controller.signal });
   controller.abort(new DOMException('Cancelled source', 'AbortError'));
   await assert.rejects(pending, { name: 'AbortError' });
-  assert.equal((await prepare(source)).type, 'audio/mp4'); assert.equal(attempts, 2);
+  assert.equal((await prepare(source)).type, 'audio/mpeg'); assert.equal(attempts, 2);
 });
 
 test('audio upload clocks reject invalid values and cannot reuse an incompatible timeline', async t => {
@@ -148,9 +156,10 @@ test('audio upload clocks reject invalid values and cannot reuse an incompatible
   await assert.rejects(uploads.start({ ...input, timelineDuration: 5 }), { code: 'UPLOAD_KEY_CONFLICT' });
 });
 
-test('WAV encoding obeys cancellation before consuming channel samples', async () => {
+test('MP3 preparation obeys cancellation before reading or encoding the source', async () => {
   const controller = new AbortController(); controller.abort(new DOMException('Stop encoding', 'AbortError'));
-  const decoded = { sampleRate: 24000, numberOfChannels: 1, duration: 1,
-    getChannelData: () => new Float32Array(24000) };
-  await assert.rejects(decodedAudioWav(decoded, { signal: controller.signal }), { name: 'AbortError' });
+  const prepare = createSourceAudioPreparer({ extract: () => assert.fail('must not read'),
+    encode: () => assert.fail('must not encode') });
+  await assert.rejects(prepare(new File(['video'], 'source.mp4', { type: 'video/mp4' }),
+    { signal: controller.signal }), { name: 'AbortError' });
 });

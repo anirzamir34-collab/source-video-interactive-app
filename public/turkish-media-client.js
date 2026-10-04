@@ -1,5 +1,6 @@
 import { createSourceAudioPreparer } from './source-audio.js';
 import { MAX_AUDIO_BYTES } from './media-limits.js';
+import { requestWithUploadProgress } from './progress-request.js';
 
 // The server produces one finished soundtrack. The source video owns every
 // playback boundary; this client only follows its clock and renders captions.
@@ -43,6 +44,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   getElevenLabsApiKey = () => '', getGeminiApiKey = () => '',
   pollIntervalMs = 1200, requestTimeoutMs = 30000, uploadRequestTimeoutMs = 120000, assetTimeoutMs = 5 * 60 * 1000,
   chunkSize = 5 * 1024 * 1024, prepareSourceAudio = createSourceAudioPreparer(),
+  XMLHttpRequestClass = globalThis.XMLHttpRequest,
   retryDelayMs = 1000, maxJobWaitMs = 6 * 60 * 60 * 1000,
   urlImpl = globalThis.URL, baseUrl = globalThis.location?.href || 'http://localhost/'
 } = {}) {
@@ -104,8 +106,12 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     }, timeoutMs);
     try {
       const operation = (async () => {
-        const response = await requestFetch(internalUrl(path, baseUrl), { ...options,
-          headers: requestHeaders(path, options), credentials: 'same-origin', signal: requestController.signal });
+        const address = internalUrl(path, baseUrl);
+        const headers = requestHeaders(path, options);
+        const response = options.onUploadProgress && typeof XMLHttpRequestClass === 'function'
+          ? await requestWithUploadProgress(address, { ...options, headers, signal: requestController.signal,
+            onProgress: options.onUploadProgress, XMLHttpRequestClass })
+          : await requestFetch(address, { ...options, headers, credentials: 'same-origin', signal: requestController.signal });
         const body = asBlob && response.ok ? await response.blob() : await response.json().catch(() => ({}));
         if (!response.ok) throw Object.assign(new Error(errorMessage(body?.error || body?.message,
           `Türkçe medya isteği başarısız (HTTP ${response.status}).`)), { status: response.status });
@@ -320,7 +326,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     }
     if (source.size > MAX_AUDIO_BYTES) throw Object.assign(new Error('Ayrılan ses dosyası 250 MiB sınırını aşıyor.'), { code: 'SOURCE_AUDIO_TOO_LARGE' });
     const requestedChunkSize = Math.max(1, Math.min(MAX_CHUNK, Math.floor(Number(chunkSize) || 5 * 1024 * 1024)));
-    const fileName = String(source.name || 'source-audio.wav').slice(0, 240);
+    const fileName = String(source.name || 'source-audio.mp3').slice(0, 240);
     const timeline = Number.isFinite(timelineDuration) && timelineDuration > 0 ? timelineDuration : undefined;
     const uploadIdentity = String(timeline ?? 'container');
     let sourceKeys = sourceUploadKeys.get(source);
@@ -336,6 +342,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
           const bytes = await source.slice(offset, offset + MAX_CHUNK).arrayBuffer();
           assertCurrent(owner);
           digests.push(await cryptoRef.subtle.digest('SHA-256', bytes));
+          notify({ state: 'HASHING_AUDIO', progress: { loaded: Math.min(source.size, offset + MAX_CHUNK),
+            total: source.size, unit: 'bytes' }, message: 'MP3 dosyası yeniden kullanım için kontrol ediliyor.' });
         }
         const digestBytes = await new Blob(digests).arrayBuffer();
         const hash = new Uint8Array(await cryptoRef.subtle.digest('SHA-256', digestBytes));
@@ -360,6 +368,10 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       .filter(entry => typeof entry === 'number' || entry?.complete || entry?.completed)
       .map(entry => typeof entry === 'number' ? entry : Number(entry.index ?? entry.chunkIndex)));
     let done = completed(status);
+    const acknowledgedBytes = () => [...done].reduce((sum, index) =>
+      sum + Math.min(size, source.size - index * size), 0);
+    notify({ state: 'UPLOADING', progress: { loaded: acknowledgedBytes(), total: source.size, unit: 'bytes' },
+      message: created.reused ? 'Önceden gönderilmiş MP3 kontrol ediliyor.' : 'MP3 gönderiliyor.' });
     for (let index = 0; index < total; index++) {
       assertCurrent(owner);
       if (!done.has(index)) {
@@ -368,11 +380,20 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
           try {
             await request(`${API}/uploads/${encodeURIComponent(uploadId)}/chunk/${index}`, {
               method: 'POST', timeoutMs: uploadRequestTimeoutMs,
+              onUploadProgress: transfer => {
+                if (!current(owner)) return;
+                notify({ state: 'UPLOADING', waiting: transfer.phase === 'waiting',
+                  progress: { loaded: Math.min(source.size, acknowledgedBytes() + Math.min(chunk.size, transfer.loaded)),
+                    total: source.size, unit: 'bytes' },
+                  message: transfer.phase === 'waiting' ? 'MP3 gönderildi; sunucunun kaydetmesi bekleniyor.' : 'MP3 gönderiliyor.' });
+              },
               headers: { 'Content-Type': 'application/octet-stream' }, body: chunk }, owner);
             break;
           } catch (error) {
             if (!current(owner) || error.name === 'AbortError' || attempt >= 2 ||
                 (error.status && error.status < 500 && ![408,429].includes(error.status))) throw error;
+            notify({ state: 'UPLOADING', waiting: true, progress: { loaded: acknowledgedBytes(), total: source.size, unit: 'bytes' },
+              message: 'Bağlantı yeniden kuruluyor; MP3’ün yalnız eksik parçası tekrar gönderilecek.' });
             await delay(retryDelayMs * (attempt + 1), owner);
             status = await request(`${API}/uploads/${encodeURIComponent(uploadId)}/status`, { timeoutMs: uploadRequestTimeoutMs }, owner);
             done = completed(status);
@@ -381,8 +402,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         }
       }
       done.add(index);
-      notify({ state: 'UPLOADING', progress: { percent: Math.round(done.size / total * 100),
-          loaded: Math.min(source.size, done.size * size), total: source.size }, message: 'Ayrılan ses yükleniyor.' });
+      notify({ state: 'UPLOADING', progress: { percent: Math.floor(acknowledgedBytes() / source.size * 100),
+          loaded: acknowledgedBytes(), total: source.size, unit: 'bytes' }, message: 'MP3 parçası sunucu tarafından alındı.' });
     }
     return uploadId;
   }
@@ -412,7 +433,10 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       }
       jobState = String(status.state || status.status || '').toUpperCase();
       const result = status.result || status.manifest;
-      notify({ jobId, state: jobState, progress: status.progress, message: status.message,
+      notify({ jobId, origin: 'server', state: jobState, progress: status.progress,
+        stageProgress: status.stageProgress, completedStages: status.completedStages,
+        updatedAt: status.updatedAt, lastServerContactAt: timers.now(), waiting: !status.stageProgress,
+        transcriptOnly: selected.options.outputs.transcriptOnly === true, message: status.message,
         error: status.error, sourceTranscript: status.sourceTranscript || result?.sourceTranscript });
       if (jobState === 'READY') {
         assertCurrent(owner);
@@ -447,14 +471,20 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         notify({ state: 'PREPARING_AUDIO', progress: { percent: 0 }, message: 'Videodan ses cihazda ayrılıyor.' });
       }
       const audioSource = await prepareSourceAudio(source, { signal: owner.signal, duration: video.duration,
-        onProgress: ({ phase, loaded = 0, total = 0 }) => {
+        onProgress: ({ phase, loaded = 0, total = 0, bytes }) => {
           if (!current(owner)) return;
-          notify({ state: 'PREPARING_AUDIO', progress: { percent: total ? Math.round(loaded / total * 100) : 0 },
-            message: phase === 'cached' ? 'Önceden ayrılmış ses kullanılıyor.' : phase === 'decoding'
-              ? 'Ses kanalı cihazda çözülüyor.' : phase === 'index' ? 'Videonun ses kanalı bulunuyor.' : 'Ses kanalı cihazda hazırlanıyor.' });
+          const mp3 = ['loading_encoder', 'decoding', 'encoding', 'finalizing_mp3', 'mp3_ready', 'cached'].includes(phase);
+          notify({ origin: 'device', phase, state: mp3 ? 'ENCODING_MP3' : 'PREPARING_AUDIO',
+            progress: { loaded, total, ...(total ? { percent: Math.floor(loaded / total * 100) } : {}),
+              unit: mp3 ? 'percent' : 'bytes', bytes },
+            message: phase === 'cached' ? 'Önceden hazırlanan MP3 kullanılıyor.' : phase === 'loading_encoder'
+              ? 'Telefonda MP3 dönüştürücüsü hazırlanıyor.' : phase === 'decoding' ? 'Ses kanalı MP3 için çözülüyor.'
+              : phase === 'index' ? 'Videonun ses kanalı bulunuyor.' : phase === 'encoding'
+              ? 'Ses MP3’e dönüştürülüyor.' : phase === 'finalizing_mp3' ? 'MP3 dosyası tamamlanıyor.'
+              : phase === 'mp3_ready' ? 'MP3 dosyası hazır.' : 'Ses kanalı cihazda ayrılıyor.' });
         } });
       assertCurrent(owner);
-      notify({ state: 'UPLOADING', progress: { percent: 0 }, message: 'Ayrılan ses gönderiliyor.' });
+      notify({ state: 'HASHING_AUDIO', progress: { loaded: 0, total: audioSource.size, unit: 'bytes' }, message: 'MP3 dosyası ve önceki aktarım kontrol ediliyor.' });
       const uploadId = await uploadSource(audioSource, owner, Number(video.duration));
       const created = await request(`${API}/jobs`, { method: 'POST',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uploadId, ...selected.options }) }, owner);

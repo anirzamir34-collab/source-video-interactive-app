@@ -185,7 +185,7 @@ function fixture(t, { strict = nativeNames, customClock = false, explicitNativeF
 }
 
 function sourceFile() {
-  const file = new Blob(['123456789'], { type: 'audio/wav' });
+  const file = new Blob(['123456789'], { type: 'audio/mpeg' });
   file.name = 'source.wav';
   return file;
 }

@@ -12,6 +12,12 @@ npm test
 npm start
 ```
 
+`npm ci`, tarayıcıda çalışan MP3 dönüştürücüsünü otomatik derler. Script çalıştırmadan kurulum yapılıyorsa önce `npm run build:audio` gerekir. Kaynak videonun sesi cihazda ayrılır ve 96 kbps / 32 kHz MP3 olarak gönderilir; ElevenLabs'a video veya kaynak WAV yüklenmez. Tam video süresi aktarım metadata'sında korunur ve aynı dosyanın hazır MP3'ü tekrar kullanılır.
+
+Analiz göstergesi her işlem için gerçek durum ve geçen süreyi gösterir. MP3/görüntü aktarımı gerçek tarayıcı byte olaylarını; kare, çeviri, ses üretimi ve hizalama adımları tamamlanmış birim sayılarını kullanır. Sağlayıcının yüzde bildirmediği aşamalarda yanıt beklenir; tahmini toplam yüzde üretilmez.
+
+Yerel MP3 kodlayıcısı [Mediabunny 1.61.1](https://github.com/Vanilagy/mediabunny/tree/v1.61.1) ve `@mediabunny/mp3-encoder` (MPL-2.0) ile [LAME 3.100](https://lame.sourceforge.io/) (LGPL) kullanır. Kaynak ve derleme talimatları Mediabunny deposunun `packages/mp3-encoder` bölümündedir; kodlayıcı değiştirilmeden paketlenir ve lisans bildirimleri derleme çıktısında korunur.
+
 Başlatmadan önce `APP_PASSWORD` tanımlanmalıdır. Tanımlı değilse uygulama erişime açılmaz. `PORT` varsayılanı 10000'dir. Canlı ortamda HTTPS kullanılmalıdır; oturum çerezi `Secure` ve `HttpOnly` olarak oluşturulur.
 
 `npm test`, sözdizimi denetimlerini, mevcut oynatıcı/analiz regresyonlarını, hata senaryolarını ve gerçek Express HTTP entegrasyonunu çalıştırır. HTTP testleri geçici bir yerel sunucu ve test parolası kullanır; ücretli model veya ses servislerine çağrı yapmaz. İlk migration commit'i `a3e2e95` için tam CI doğrulaması **744 pass, 0 fail, 0 skip** idi. Tarayıcı anahtarı/Gemini düzeltmesinin gerçek pipeline regresyonları **4 pass, 0 fail, 0 skip** verdi; sağlayıcı ağı ve ses işlemleri test doubles ile sınanır. Dosya/test/build/deploy raporu: [Implementation report](docs/turkish-media-implementation-report.md).

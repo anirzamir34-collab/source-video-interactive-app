@@ -137,7 +137,7 @@ function fixture(fetchHandler = () => new Response('final mix', { headers: { 'co
 function statusState(value) { return String(value?.state ?? value?.status ?? '').toUpperCase(); }
 
 function sourceFile() {
-  const file = new Blob(['123456789'], { type: 'audio/wav' });
+  const file = new Blob(['123456789'], { type: 'audio/mpeg' });
   file.name = 'source.wav';
   return file;
 }
@@ -499,9 +499,9 @@ test('source upload keys hash middle bytes and remain stable for repeated identi
   const bytes = new Uint8Array(256 * 1024).fill(7);
   const changedBytes = bytes.slice();
   changedBytes[128 * 1024] = 8;
-  const sources = [new Blob([bytes], { type: 'audio/wav' }),
-    new Blob([changedBytes], { type: 'audio/wav' }),
-    new Blob([bytes], { type: 'audio/wav' })];
+  const sources = [new Blob([bytes], { type: 'audio/mpeg' }),
+    new Blob([changedBytes], { type: 'audio/mpeg' }),
+    new Blob([bytes], { type: 'audio/mpeg' })];
   for (const source of sources) {
     source.name = 'same-name.mp4';
     await f.client.start(source, { outputs: { dub: true, subtitles: true } });
@@ -668,7 +668,7 @@ test('upload requests can outlive the normal browser request timeout', async t =
     f.client.start(sourceFile(), { outputs: { dub: false, subtitles: true } })
   );
   assert.equal(polls, 1);
-  assert.equal(f.statuses.at(0)?.state, 'UPLOADING');
+  assert.ok(f.statuses.some(status => status.state === 'UPLOADING'));
   assert.equal(f.client.capture().manifest.jobId, 'slow-job');
 });
 

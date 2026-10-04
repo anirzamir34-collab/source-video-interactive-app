@@ -1,4 +1,6 @@
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
+import { createAnalysisProgress } from './analysis-progress.js';
+import { requestWithUploadProgress } from './progress-request.js';
 import {
   adultPositionFamily,
   assignAdultSceneOccurrenceIds,
@@ -237,6 +239,9 @@ const els = {
   mediaJobStatus: $('mediaJobStatus'),
   mediaJobMessage: $('mediaJobMessage'),
   mediaJobProgress: $('mediaJobProgress'),
+  mediaJobSummary: $('mediaJobSummary'),
+  mediaJobDetail: $('mediaJobDetail'),
+  analysisStepList: $('analysisStepList'),
   mediaJobCancelBtn: $('mediaJobCancelBtn'),
   mediaJobRetryBtn: $('mediaJobRetryBtn'),
   mediaExports: $('mediaExports'),
@@ -953,6 +958,33 @@ function recordAiUsage(usage) {
   logEngineEvent('AI_USAGE', { ...state.aiUsage });
 }
 
+const analysisProgress = createAnalysisProgress({ list: els.analysisStepList, summary: els.mediaJobSummary,
+  detail: els.mediaJobDetail, message: els.mediaJobMessage, bar: els.mediaJobProgress, container: els.mediaJobStatus });
+let analysisAbortController = null;
+
+function storyboardProgress(progress, detail) {
+  analysisProgress.update('frames', { loaded: detail?.captured, total: detail?.total, unit: 'kare',
+    detail: detail?.retrying ? 'Okunamayan kare yeniden deneniyor.' : 'Kareler cihazdan okunuyor.' });
+}
+
+async function postAnalysisForm(path, form, { stage = 'analysis', timeoutMs = 240000, headers = {}, label = '' } = {}) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = analysisAbortController ? AbortSignal.any([timeout, analysisAbortController.signal]) : timeout;
+  analysisProgress.update(stage, { status: 'working', detail: label + ' · Görüntüler gönderiliyor.' });
+  if (typeof globalThis.XMLHttpRequest !== 'function') {
+    analysisProgress.update(stage, { status: 'waiting', detail: label + ' · Sunucu yanıtı bekleniyor.' });
+    return fetch(path, { method: 'POST', headers, body: form, signal });
+  }
+  return requestWithUploadProgress(path, { headers, body: form, signal, timeoutMs,
+    onProgress: transfer => {
+      analysisProgress.update('frameUpload', { status: transfer.phase === 'waiting' ? 'done' : 'working',
+        loaded: transfer.loaded, total: transfer.total, unit: 'bytes', detail: label +
+          (transfer.phase === 'waiting' ? ' · Görüntüler gönderildi.' : ' · Görüntüler gönderiliyor.') });
+      if (transfer.phase === 'waiting') analysisProgress.update(stage, {
+        status: 'waiting', detail: label + ' · Gemini analiz yanıtı bekleniyor.' });
+    } });
+}
+
 const mediaClient = createTurkishMediaClient({
   video: els.video,
   getElevenLabsApiKey: activeElevenLabsApiKey,
@@ -982,13 +1014,10 @@ function onTurkishMediaStatus(status) {
     return;
   }
   els.mediaJobStatus?.classList.remove('hidden');
+  analysisProgress.observe(status);
   if (els.mediaJobMessage) els.mediaJobMessage.textContent = status.message || 'Türkçe medya hazırlanıyor.';
-  const percent = Number(status.progress?.percent ?? status.progress);
-  if (els.mediaJobProgress) {
-    if (Number.isFinite(percent)) els.mediaJobProgress.value = Math.max(0, Math.min(100, percent));
-    else els.mediaJobProgress.removeAttribute('value');
-  }
-  const terminal = ['READY', 'FAILED', 'CANCELLED'].includes(status.state);
+  const terminal = ['FAILED', 'CANCELLED'].includes(status.state) ||
+    (status.state === 'READY' && !state.analysisInProgress);
   els.mediaJobCancelBtn?.classList.toggle('hidden', terminal);
   els.mediaJobRetryBtn?.classList.toggle('hidden', status.state !== 'FAILED');
   if (status.state === 'FAILED' && status.error?.code) {
@@ -1099,6 +1128,8 @@ els.dubContinueOriginalBtn?.addEventListener('click', () => {
 els.languageEarlierBtn?.addEventListener('click', () => adjustLanguageSync(0.25));
 els.languageLaterBtn?.addEventListener('click', () => adjustLanguageSync(-0.25));
 els.mediaJobCancelBtn?.addEventListener('click', () => {
+  analysisAbortController?.abort(new DOMException('Analiz iptal edildi.', 'AbortError'));
+  if (analysisAbortController) state.remoteFileDownload?.controller.abort();
   const revoice = state.mediaRevoice;
   if (revoice) revoice.cancelled = true;
   void mediaClient.cancel();
@@ -1367,6 +1398,7 @@ async function prepareStoryboardSource(session, file) {
     try {
       localFile = await ensureSelectedRemoteFile({ onProgress: ({ loaded, total, transport, connections }) => {
         const knownTotal = total || remote.size || 0;
+        analysisProgress.update('source', { loaded, total: knownTotal, unit: 'bytes', detail: 'Video telefona indiriliyor.' });
         const elapsed = Math.max(0.1, (performance.now() - startedAt) / 1000);
         const percent = knownTotal ? ` · %${Math.min(100, Math.round(loaded / knownTotal * 100))}` : '';
         els.analysisTitle.textContent = `Video telefona alınıyor${percent}`;
@@ -1389,6 +1421,7 @@ async function prepareStoryboardSource(session, file) {
   }
   if (!(localFile instanceof Blob) || !localFile.size) throw new Error('Analiz için video dosyası hazırlanamadı.');
   session.file = localFile;
+  analysisProgress.done('source', 'Video dosyası cihazda hazır.');
   // Playback uses the same bytes too; later seeks need no remote range requests.
   if (remote && !state.videoObjectUrl) {
     state.videoObjectUrl = URL.createObjectURL(localFile);
@@ -1404,6 +1437,13 @@ els.analyzeBtn.addEventListener('click', async () => {
   state.analysisInProgress = true;
   state.savedGameReady = false;
   state.savedPlaybackOnly = false;
+  analysisAbortController = new AbortController();
+  const analysisOwner = analysisAbortController;
+  let analysisSucceeded = false;
+  const framesProgress = (progress, detail) => {
+    if (analysisOwner.signal.aborted || analysisAbortController !== analysisOwner) return;
+    storyboardProgress(progress, detail);
+  };
   try {
   updateAnalyzeAvailability();
   els.analyzeBtn.disabled = true;
@@ -1419,6 +1459,11 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   let file = state.selectedFile;
   const modes = selectedAnalysisModes();
+  analysisProgress.begin({ motion: modes.motion, dubbing: modes.dubbing, subtitles: modes.subtitles,
+    remote: Boolean(state.selectedRemoteVideo && !file) });
+  els.analysisCard.dataset.processing = 'true';
+  els.mediaJobCancelBtn?.classList.remove('hidden');
+  els.mediaJobRetryBtn?.classList.add('hidden');
   const sourceKey = analysisSourceKey(file, state.selectedRemoteVideo);
   const requestedProtagonist = String(els.protagonistInput?.value || '').trim();
   let analysisModeKey = '';
@@ -1448,7 +1493,12 @@ els.analyzeBtn.addEventListener('click', async () => {
   // pipelines. Frame preparation runs while the server processes source audio.
   file = await prepareStoryboardSource(session, file);
   const fastStoryboardPreparation = modes.motion && !session.storyboard
-    ? extractStoryboard(file, () => {}, undefined, { remoteSampling: Boolean(state.selectedRemoteVideo) })
+    ? extractStoryboard(file, framesProgress, analysisOwner.signal, { remoteSampling: Boolean(state.selectedRemoteVideo) })
+      .then(value => {
+        if (!analysisOwner.signal.aborted && analysisAbortController === analysisOwner)
+          analysisProgress.done('frames', value.timestamps.length + ' kare hazır.');
+        return value;
+      })
     : null;
   // Attach a handler immediately; await below still surfaces the frame error.
   fastStoryboardPreparation?.catch(() => {});
@@ -1460,6 +1510,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   let result;
   try {
     if (contextualMedia) {
+      if (session.sourceTranscript) {
+        for (const id of ['extract', 'encode', 'hash', 'upload', 'serverAudio', 'transcript', 'speakers'])
+          analysisProgress.update(id, { status: 'reused', detail: 'Önceki konuşma çözümlemesi kullanılıyor.' });
+      }
       // First pass is source-only: Scribe establishes real words/timestamps.
       // Final translation/voice selection waits for the visual analysis so
       // verified speaker↔character matches can collapse diarization fragments
@@ -1478,6 +1532,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       session.mediaManifest = result;
     }
     updateSourceTranscript(result.sourceTranscript);
+    if (reusableMedia) onTurkishMediaStatus({ state: 'READY', sourceTranscript: result.sourceTranscript });
     renderMediaControls();
   } catch (error) {
     if (!contextualMedia) session.mediaManifest = null;
@@ -1505,7 +1560,10 @@ els.analyzeBtn.addEventListener('click', async () => {
     ].join('\n');
     setGameState('DIALOGUE_READY');
     state.savedGameReady = true;
+    analysisProgress.update('save', { detail: 'Hazır medya kaydediliyor.' });
     await savedGames?.saveCurrent(true);
+    analysisProgress.done('save', 'Hazır medya kaydedildi.'); analysisSucceeded = true;
+    analysisProgress.finish();
     return;
   }
   const remoteStoryboardSource = state.selectedRemoteVideo;
@@ -1513,6 +1571,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisTitle.textContent = 'Video cihazdan işleniyor';
   els.analysisState.textContent = 'LOCAL_PROCESSING';
   const storyboard = session.storyboard || await (fastStoryboardPreparation || extractStoryboard(storyboardSource, (progress, detail) => {
+    framesProgress(progress, detail);
     const count = detail ? `${detail.captured}/${detail.total} kare · ` : '';
     els.analysisTitle.textContent = `Cihazdan kareler hazırlanıyor: ${count}%${Math.round(progress)}`;
     if (!detail) return;
@@ -1520,12 +1579,13 @@ els.analyzeBtn.addEventListener('click', async () => {
       Number.isFinite(detail.time) ? `Videodaki konum: ${detail.time.toFixed(1)} sn${detail.retrying ? ' · yeniden deneniyor' : ''}` : 'Kareler analiz için birleştiriliyor…',
       `${Math.round(detail.elapsedSeconds)} sn geçti`
     ].join('\n');
-  }, undefined, {
+  }, analysisOwner.signal, {
     // Preserve every original sample, including focused motion probes, even
     // though the URL video's bytes are now local.
     remoteSampling: Boolean(remoteStoryboardSource)
   }));
   session.storyboard = storyboard;
+  analysisProgress.done('frames', storyboard.timestamps.length + ' kare hazır.');
   if (storyboard.performance) logEngineEvent('STORYBOARD_PREPARED', {
     ...storyboard.performance, downloadMs: session.sourceDownloadMs || 0
   });
@@ -1583,6 +1643,9 @@ els.analyzeBtn.addEventListener('click', async () => {
     let storyContextMemory = session.storyContextMemory || normalizeStoryContext({});
 
   for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      analysisOwner.signal.throwIfAborted();
+      analysisProgress.update('analysis', { loaded: chunkResults.filter(result => result?.available).length,
+        total: chunkCount, unit: 'bölüm', detail: 'Bölüm ' + (chunkIndex + 1) + '/' + chunkCount + ' hazırlanıyor.' });
       // Resume by index: completed later chapters survive a failure in the middle.
       if (chunkResults[chunkIndex]?.available || chunkResults[chunkIndex]?.retryable === false) continue;
       // A retry in the middle only receives context from earlier chapters.
@@ -1691,11 +1754,9 @@ els.analyzeBtn.addEventListener('click', async () => {
             body = firstPassBody;
             response = { ok: true };
           } else {
-            response = await fetch('/api/gemini-storyboard-analyze', {
-              method: 'POST',
+            response = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
               headers: geminiRequestHeaders(),
-              body: freshChunkForm(),
-              signal: AbortSignal.timeout(240000)
+              stage: 'analysis', label: 'Bölüm ' + (chunkIndex + 1) + '/' + chunkCount
             });
 
             body = await response.json();
@@ -1735,11 +1796,9 @@ els.analyzeBtn.addEventListener('click', async () => {
               form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
               els.analysisOutput.textContent =
                 `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} bulgu ikinci kez doğrulanıyor...\nHazır kareler yeniden kullanılıyor; videodan tekrar kare çıkarılmıyor.`;
-              const reviewResponse = await fetch('/api/gemini-storyboard-analyze', {
-                method: 'POST',
+              const reviewResponse = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
                 headers: geminiRequestHeaders(),
-                body: freshChunkForm(),
-                signal: AbortSignal.timeout(240000)
+                stage: 'review', label: 'Bölüm ' + (chunkIndex + 1) + ' · ' + criticalReviewCandidates.length + ' bulgu'
               });
               let reviewBody = await reviewResponse.json();
               recordAiUsage(reviewBody?.aiUsage);
@@ -1784,10 +1843,13 @@ els.analyzeBtn.addEventListener('click', async () => {
             session.storyContextMemory = storyContextMemory;
             session.protagonistProfile = protagonistProfile;
             chunkSucceeded = true;
+            analysisProgress.update('analysis', { loaded: chunkResults.filter(result => result?.available).length,
+              total: chunkCount, unit: 'bölüm', detail: 'Bölüm ' + (chunkIndex + 1) + ' analiz edildi ve doğrulandı.' });
             failureBody = null;
             break;
           }
         } catch (error) {
+          if (analysisOwner.signal.aborted || error?.name === 'AbortError') throw error;
           failureBody = error?.analysisFailure || {
             available: false,
             reason: 'NETWORK_ERROR',
@@ -1801,6 +1863,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         }
 
         if (attempt < maxChunkAttempts) {
+          analysisProgress.update('analysis', { status: 'retrying', detail: 'Bölüm ' + (chunkIndex + 1) +
+            ' geçici hata verdi; tamamlanan bölümler korunarak yeniden denenecek.' });
           const retryDelay = Math.min(12000, 1800 * (2 ** (attempt - 1)));
           els.analysisOutput.textContent =
             `Bölüm ${chunkIndex + 1}/${chunkCount} geçici olarak başarısız oldu.\n` +
@@ -1922,10 +1986,8 @@ els.analyzeBtn.addEventListener('click', async () => {
       const fallbackFile = state.selectedFile || await ensureSelectedRemoteFile();
       const fallbackForm = new FormData();
       fallbackForm.append('video', fallbackFile, fallbackFile.name);
-      const fallbackResponse = await fetch('/api/external-analyze', {
-        method: 'POST',
-        body: fallbackForm,
-        signal: AbortSignal.timeout(900000)
+      const fallbackResponse = await postAnalysisForm('/api/external-analyze', fallbackForm, {
+        timeoutMs: 900000, stage: 'analysis', label: 'Ek hareket analizi'
       });
       const fallbackBody = await fallbackResponse.json();
       if (fallbackResponse.ok && fallbackBody?.available) {
@@ -1971,6 +2033,10 @@ els.analyzeBtn.addEventListener('click', async () => {
     return;
   }
 
+  analysisProgress.done('frameUpload', 'Analiz görüntüleri sunucu tarafından alındı.');
+  analysisProgress.done('analysis', (body.completedChunkCount || body.chunkCount || chunkCount) + ' bölüm analiz edildi.');
+  analysisProgress.done('review', (body.secondPassChunkCount || 0) + ' bölüm ikinci kontrolden geçti.');
+  analysisProgress.update('integrity', { detail: 'Seçimler, sahneler ve kaynak zamanları kontrol ediliyor.' });
   let normalized = normalizeAnalysis(body);
   const hardened = reviewAndHardenAnalysis({
     ...body,
@@ -1989,6 +2055,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   });
 
   if (hardened.integrity.fatal) {
+    analysisProgress.update('integrity', { status: 'failed', detail: 'Analiz bütünlük kontrolünden geçemedi.' });
     els.analysisState.textContent = 'INTEGRITY_FAILED';
     els.analysisTitle.textContent = 'Analiz bütünlük kontrolünden geçemedi';
     els.analysisOutput.textContent = 'Eksik veya tutarsız analiz oyun olarak açılmadı. Videoyu yeniden analiz et.';
@@ -2009,6 +2076,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   }
 
   state.analysis = normalized;
+  analysisProgress.done('integrity', normalized.actions.length + ' doğrulanmış aksiyon hazır.');
   try {
     // Analysis persistence intentionally disabled: refresh must start clean.
     localStorage.removeItem("videoquest:last-analysis");
@@ -2016,6 +2084,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     console.warn("Analysis could not be saved locally:", error);
   }
   if (modes.motion && (modes.dubbing || modes.subtitles)) {
+    analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
     els.analysisState.textContent = 'PREPARING_TURKISH_MEDIA';
     els.analysisTitle.textContent = 'Konuşmacılar eşleştiriliyor ve Türkçe medya hazırlanıyor';
@@ -2055,7 +2124,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   ].join('\n');
   initializeInteractive(normalized);
   state.savedGameReady = true;
+  analysisProgress.update('save', { detail: 'Analiz, seçimler ve Türkçe medya kaydediliyor.' });
   await savedGames?.saveCurrent(true);
+  analysisProgress.done('save', 'Oyun kaydedildi.'); analysisSucceeded = true;
+  analysisProgress.finish();
   } catch (error) {
     console.error('Analysis failed:', error);
     els.analysisState.textContent = error?.name === 'AbortError' ? 'CANCELLED' : 'ANALYSIS_ERROR';
@@ -2065,6 +2137,11 @@ els.analyzeBtn.addEventListener('click', async () => {
     setGameState(error?.name === 'AbortError' ? 'IDLE' : 'ERROR');
     renderDebug({ analysisError: error?.message || String(error) });
   } finally {
+    if (!analysisSucceeded) analysisProgress.finish(els.analysisState.textContent === 'CANCELLED' ? 'cancelled' : 'failed',
+      els.analysisTitle.textContent);
+    els.analysisCard.dataset.processing = 'false';
+    els.mediaJobCancelBtn?.classList.add('hidden');
+    if (analysisAbortController === analysisOwner) analysisAbortController = null;
     state.analysisInProgress = false;
     els.videoInput.disabled = false;
     if (videoUrlInput) videoUrlInput.disabled = false;

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "postinstall": "node scripts/build-source-audio-codec.js",
+    "build:audio": "node scripts/build-source-audio-codec.js",
     "check": "node scripts/check-syntax.js",
     "test": "npm run check && node --test test/*.test.js"
   },
@@ -13,8 +15,11 @@
   },
   "dependencies": {
     "@google/genai": "^2.21.0",
+    "@mediabunny/mp3-encoder": "1.61.1",
+    "esbuild": "0.28.2",
     "express": "^5.1.0",
     "ffmpeg-static": "^5.2.0",
+    "mediabunny": "1.61.1",
     "multer": "^2.0.2",
     "youtube-dl-exec": "^3.1.15"
   },

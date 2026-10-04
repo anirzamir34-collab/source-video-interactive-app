@@ -197,7 +197,10 @@
       <pre id="analysisOutput" class="terminal"></pre>
       <div id="mediaJobStatus" class="media-job-status hidden" role="status" aria-live="polite">
         <p id="mediaJobMessage">Türkçe medya hazırlanıyor.</p>
+        <p id="mediaJobSummary" class="analysis-progress-summary"></p>
+        <p id="mediaJobDetail" class="analysis-progress-detail"></p>
         <progress id="mediaJobProgress" max="100" aria-label="Türkçe medya hazırlama ilerlemesi"></progress>
+        <ol id="analysisStepList" class="analysis-step-list" aria-label="Gerçek işlem ilerlemesi"></ol>
         <div class="media-job-actions">
           <button id="mediaJobCancelBtn" type="button">İşlemi iptal et</button>
           <button id="mediaJobRetryBtn" class="hidden" type="button">Yeniden dene</button>
