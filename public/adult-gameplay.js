@@ -228,15 +228,39 @@ export function verifiedAdultPositionFamily(action = {}) {
 }
 
 export function playableAdultPanelFamily(action = {}) {
-  // A standing posture or a sofa mentioned in dialogue is not an adult act.
-  // Both the encounter and the action must identify a playable interval.
+  // A generic posture, touch or dialogue line is not enough. However, when a
+  // source-verified interval inside the encounter explicitly identifies a
+  // canonical oral/manual activity, preserve it instead of demoting it merely
+  // because the provider used a generic actionType such as "touch".
   if (action.sourceVerified !== true || action.adultScene !== true) return '';
   const type = String(action.actionType || '').toLowerCase();
-  if (['other', 'body_transition', 'camera_transition', 'partner_transition',
-    'kiss', 'clothing', 'outcome', 'aftermath'].includes(type)) return '';
+  const family = verifiedAdultPositionFamily(action);
+  if (!family) return '';
+
+  const declaredLabelFamily = adultPositionFamily(action.positionLabel);
+  const declaredIdFamily = adultPositionFamily(action.positionId);
+  const sourceLabelFamily = adultPositionFamily(action.label);
+  const activityFamily = ['oral', 'manual'].includes(String(action.activityType || '').toLowerCase())
+    ? String(action.activityType).toLowerCase()
+    : '';
+  const verifiedActivityMetadata = Boolean(
+    activityFamily === family &&
+    Number(action.activityTypeConfidence || 0) >= 0.72 &&
+    String(action.activityEvidence || '').trim()
+  );
+  const explicitActivity = ['oral', 'manual'].includes(family) && (
+    declaredLabelFamily === family ||
+    declaredIdFamily === family ||
+    sourceLabelFamily === family ||
+    verifiedActivityMetadata
+  );
+
+  if (['camera_transition', 'partner_transition', 'clothing', 'outcome', 'aftermath'].includes(type)) return '';
+  if (['other', 'body_transition', 'kiss'].includes(type) && !explicitActivity) return '';
   if (!action.positionId && !action.positionLabel &&
-      !['position', 'tempo_change', 'movement', 'rhythm'].includes(type)) return '';
-  return verifiedAdultPositionFamily(action);
+      !['position', 'tempo_change', 'movement', 'rhythm'].includes(type) &&
+      !explicitActivity) return '';
+  return family;
 }
 
 export function adultPositionFamilyFromBodyConfiguration(action = {}) {
@@ -990,14 +1014,13 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
 
 export function splitSparseMovementChoiceCards(choices = [], maxChoices = 5) {
   const cards = Array.isArray(choices) ? choices : [];
-  if (cards.length !== 1 || !Array.isArray(cards[0]?.variants) || cards[0].variants.length <= 1) return cards;
-  const base = cards[0];
-  const variants = base.variants.slice(0, Math.max(1, Math.min(5, Number(maxChoices) || 5)));
-  return variants.map((variant, index) => ({
-    ...base,
-    id: `${base.id}:source-part-${index + 1}`,
-    label: `${sourceActionLabel(variant?.label || base.label)} · Bölüm ${index + 1}`,
-    variants: [variant],
+  const limit = Math.max(1, Math.min(8, Math.floor(Number(maxChoices) || 5)));
+  // A logical choice may legitimately own several verified source variants.
+  // Keep those variants together so repeated taps rotate through real source
+  // clips instead of manufacturing several duplicate-looking one-clip cards.
+  return cards.slice(0, limit).map((card, index) => ({
+    ...card,
+    variants: Array.isArray(card?.variants) ? card.variants : [],
     displayIndex: index + 1
   }));
 }
