@@ -76,7 +76,7 @@ Medya aşamaları `media_stage_start` / `media_stage_end` JSON logları üretir.
 | `DUB_MAX_CONCURRENCY` | `2` (1–8); sahne/segment işleri |
 | `DUB_CACHE_TTL` | `86400` saniye (60–86400) |
 | `DUB_CACHE_DIRECTORY` | `/tmp/videoquest-turkish-media` |
-| `DUB_REQUEST_TIMEOUT_MS` | `120000` (1000–600000) |
+| `DUB_REQUEST_TIMEOUT_MS` | `300000` (1000–600000) |
 | `DUB_MAX_RETRIES` | `3` (0–5) |
 | `TRANSLATION_PROVIDER` | `gemini`; bu sürüm yalnız Gemini kabul eder |
 | `TRANSLATION_MODEL` | Öncelik: bu değer → `GEMINI_MODEL` → `gemini-3.8-flash`; JSON schema destekleyen erişilebilir model |
