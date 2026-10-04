@@ -175,7 +175,7 @@ async function fixture(t, { geminiKey = serverGeminiKey, failAlignmentOnce = fal
       assert.ok((await readFile(sourceAudio)).length);
       for (const row of dubSegments) {
         assert.ok((await readFile(row.audioPath)).length);
-        assert.ok(row.words.length > 0 && row.words.every(word => word.start >= row.start && word.end <= row.end));
+        assert.ok(row.words.every(word => word.start >= row.start && word.end <= row.end));
       }
       const file = path.join(work, 'final-mix.mp3'); await writeFile(file, wave(duration));
       return { path: file, duration, mimeType: 'audio/mpeg', qa: { mixMode: 'speech-ducking', clipping: false, playbackFormat: 'mp3' } };
@@ -257,7 +257,9 @@ test('dubbing-only jobs publish one MP3 asset without four unselected subtitle l
   f.input.outputs.subtitles = false;
   const created = await f.jobs.create(f.input, credentials());
   const ready = await settled(f.jobs, created.id);
-  assertComplete(ready);
+  assert.equal(ready.state, 'READY', JSON.stringify(ready.error));
+  assert.deepEqual(ready.result.subtitles, { source_tr: [], dub_tr: [] });
+  assert.ok(ready.result.dubSegments.every(row => row.words.length === 0));
   assert.deepEqual(Object.keys(ready.result.assets), ['mix']);
   assert.match(ready.result.assets.mix.url, /mix\.mp3$/);
   assert.equal(ready.result.assets.mix.mimeType, 'audio/mpeg');

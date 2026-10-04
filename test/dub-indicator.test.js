@@ -15,8 +15,7 @@ function section(start, end) {
 
 const controllers = [
   section('function onTurkishMediaStatus(', '\nfunction renderMediaControls('),
-  section('function renderMediaControls(', '\nfunction updateLanguageSyncControls('),
-  section('function updateLanguageSyncControls(', '\nlet languageSyncSave')
+  section('function renderMediaControls(', '\n// Gameplay hooks')
 ].join('\n');
 
 class Element {
@@ -137,8 +136,8 @@ test('finished media enables both caption tracks, the final mix toggle, sync off
   assert.equal(f.els.dubToggleBtn.classes.has('hidden'), false);
   assert.equal(f.els.dubToggleBtn.textContent, 'TR DUBLAJ: AÇIK');
   assert.equal(f.els.dubToggleBtn.getAttribute('aria-pressed'), 'true');
-  assert.equal(f.els.languageSyncControls.classes.has('hidden'), false);
-  assert.equal(f.els.languageSyncValue.textContent, 'Ses/yazı +0,50 sn');
+  assert.equal(f.els.languageSyncControls.classes.has('hidden'), true);
+  assert.doesNotMatch(fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8'), /id="languageSyncControls"/);
   assert.equal(f.els.mediaJobCancelBtn.classes.has('hidden'), true);
   assert.equal(f.els.mediaJobRetryBtn.classes.has('hidden'), true);
   assert.equal(f.els.mediaExports.classes.has('hidden'), false);

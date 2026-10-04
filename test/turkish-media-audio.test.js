@@ -311,6 +311,22 @@ async function samples(file) {
 
 function rms(values) { return Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / values.length); }
 
+test('real mix softens discontinuous source/dub boundaries without a click or shifted speech clock', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const bed = await media.fixture('constant-bed.wav', '.1', 3);
+  const dub = await media.fixture('constant-dub.wav', '.2', 1);
+  const output = await media.service.mixAudio({ sourceAudio: bed, duration: 3,
+    dubSegments: [{ segmentId: 'one', speakerId: 'speaker', start: 1, end: 2, audioPath: dub }] });
+  const decoded = await samples(output.path);
+  assert.equal(decoded.length, 3 * SAMPLE_RATE);
+  for (const edge of [1, 2]) {
+    const at = edge * SAMPLE_RATE;
+    const around = decoded.slice(at - 400, at + 400);
+    assert.ok(Math.max(...around.slice(1).map((value, i) => Math.abs(value - around[i]))) < .02);
+  }
+  assert.ok(rms(decoded.slice(1.1 * SAMPLE_RATE, 1.9 * SAMPLE_RATE)) > .1);
+});
+
 test('real old float WAV repairs to PCM16 with the same duration and audible signal', async t => {
   const media = await realMedia(t); if (!media) return;
   const input = await media.fixture('old-saved.wav', '.2*sin(2*PI*880*t)', 3);

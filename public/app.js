@@ -277,10 +277,6 @@ const els = {
   subtitleSpeaker: $('subtitleSpeaker'),
   subtitleText: $('subtitleText'),
   dubToggleBtn: $('dubToggleBtn'),
-  languageSyncControls: $('languageSyncControls'),
-  languageEarlierBtn: $('languageEarlierBtn'),
-  languageLaterBtn: $('languageLaterBtn'),
-  languageSyncValue: $('languageSyncValue'),
   dubBufferStatus: $('dubBufferStatus'),
   dubBufferMessage: $('dubBufferMessage'),
   dubRetryBtn: $('dubRetryBtn'),
@@ -1063,12 +1059,12 @@ function renderMediaControls() {
     els.subtitleTrack.value = captured?.subtitleTrack || 'off';
     for (const option of els.subtitleTrack.options) {
       option.disabled = option.value !== 'off' && !hasCues(subtitles?.[option.value]);
+      option.hidden = option.disabled || (option.value === 'source_tr' && hasCues(subtitles?.dub_tr));
     }
   }
   els.dubToggleBtn.classList.toggle('hidden', !captured?.manifest.assets?.mix);
   els.dubToggleBtn.textContent = `TR DUBLAJ: ${state.dubbingEnabled ? 'AÇIK' : 'KAPALI'}`;
   els.dubToggleBtn.setAttribute('aria-pressed', String(state.dubbingEnabled));
-  updateLanguageSyncControls();
   if (els.mediaExports) {
     let available = false;
     for (const link of els.mediaExports.querySelectorAll('[data-media-asset]')) {
@@ -1083,25 +1079,6 @@ function renderMediaControls() {
     els.mediaExports.classList.toggle('hidden', !available);
   }
   renderVoiceMappingPanel();
-}
-
-function updateLanguageSyncControls() {
-  els.languageSyncControls?.classList.toggle('hidden', !mediaClient.capture()?.manifest.assets?.mix);
-  if (els.languageSyncValue) {
-    const offset = Number(state.languageSyncOffset) || 0;
-    els.languageSyncValue.textContent = `Ses/yazı ${offset > 0 ? '+' : ''}${offset.toFixed(2).replace('.', ',')} sn`;
-  }
-}
-
-let languageSyncSave = Promise.resolve();
-function adjustLanguageSync(delta) {
-  state.languageSyncOffset = mediaClient.setSyncOffset((Number(state.languageSyncOffset) || 0) + delta);
-  updateLanguageSyncControls();
-  if (state.activeSavedGameId) {
-    const id = state.activeSavedGameId, offset = state.languageSyncOffset;
-    languageSyncSave = languageSyncSave.then(() => savedGames?.setSyncOffset(id, offset))
-      .catch(error => console.warn('Eşitleme kaydedilemedi:', error));
-  }
 }
 
 // Gameplay hooks follow the finished mix. They create no requests and never
@@ -1134,8 +1111,6 @@ els.dubContinueOriginalBtn?.addEventListener('click', () => {
   els.dubBufferStatus.classList.add('hidden');
   renderMediaControls();
 });
-els.languageEarlierBtn?.addEventListener('click', () => adjustLanguageSync(0.25));
-els.languageLaterBtn?.addEventListener('click', () => adjustLanguageSync(-0.25));
 els.mediaJobCancelBtn?.addEventListener('click', () => {
   analysisAbortController?.abort(new DOMException('Analiz iptal edildi.', 'AbortError'));
   if (analysisAbortController) state.remoteFileDownload?.controller.abort();
@@ -6224,7 +6199,6 @@ function clearPreviousGameResidue() {
   els.analysisCard?.classList.add('hidden');
   els.subtitleOverlay?.classList.add('hidden');
   els.dubBufferStatus?.classList.add('hidden');
-  updateLanguageSyncControls();
   els.dubToggleBtn?.classList.add('hidden');
   if (els.video) {
     releaseVideoObjectUrl();
@@ -6549,12 +6523,18 @@ async function captureSavedGame() {
 async function openSavedGame(game) {
   validateGame(game);
   if (game.dubAudio) {
+    const needsEdges = game.turkishMedia?.manifest.qualityReport?.mix?.edgeFadeVersion !== 1;
+    const boundaries = needsEdges ? (game.turkishMedia?.manifest.dubSegments || []).flatMap(row =>
+      [row.start, row.end, row.originalSpeechStart, row.originalSpeechEnd]) : [];
     const repaired = await repairSavedAudio(game.dubAudio, progress => {
       els.fileMeta.textContent = `Kayıtlı ses onarılıyor… %${Math.round(progress * 100)}`;
-    });
+    }, boundaries);
     if (repaired !== game.dubAudio) {
-      await savedGames.updateDubAudio(game.id, repaired);
-      game = { ...game, dubAudio: repaired };
+      const manifest = structuredClone(game.turkishMedia.manifest);
+      manifest.qualityReport ||= {};
+      manifest.qualityReport.mix = { ...manifest.qualityReport.mix, edgeFadeVersion: 1 };
+      await savedGames.updateDubAudio(game.id, repaired, manifest);
+      game = { ...game, dubAudio: repaired, turkishMedia: { ...game.turkishMedia, manifest } };
     }
   }
   if (game.payload.analysis?.schemaVersion > ANALYSIS_SCHEMA_VERSION) {
@@ -6620,7 +6600,8 @@ async function openSavedGame(game) {
   els.fileMeta.textContent = `${game.title} · kayıtlı video · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
   if (turkishMedia) mediaClient.loadResult(turkishMedia.manifest, {
     audioBlob: game.dubAudio, dubEnabled: turkishMedia.dubEnabled,
-    subtitleTrack: turkishMedia.subtitleTrack, syncOffset: turkishMedia.syncOffset
+    subtitlesEnabled: turkishMedia.manifest.outputs?.subtitles ?? turkishMedia.subtitleTrack !== 'off',
+    subtitleTrack: turkishMedia.subtitleTrack, syncOffset: 0
   });
   renderMediaControls();
   if (state.analysis) initializeInteractive(state.analysis);

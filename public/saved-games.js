@@ -275,7 +275,7 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
     remove(id) {
       return transaction(STORES, 'readwrite', tx => { for (const store of STORES) tx.objectStore(store).delete(id); });
     },
-    updateDubAudio(id, audio) {
+    updateDubAudio(id, audio, manifest) {
       return transaction(['games', 'payloads', 'mixes'], 'readwrite', (tx, done, fail) => {
         const meta = tx.objectStore('games').get(id);
         meta.onsuccess = () => {
@@ -284,7 +284,9 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
           payload.onsuccess = () => {
             try {
               if (!payload.result?.turkishMedia) throw new Error('Kayıtlı Türkçe medya bulunamadı.');
-              validateTurkishMedia(payload.result.turkishMedia, audio, meta.result.duration);
+              const media = manifest ? { ...payload.result.turkishMedia, manifest } : payload.result.turkishMedia;
+              validateTurkishMedia(media, audio, meta.result.duration);
+              if (manifest) tx.objectStore('payloads').put({ ...payload.result, turkishMedia: media });
               tx.objectStore('mixes').put({ id, dubAudio: audio });
               const old = meta.result;
               tx.objectStore('games').put({ ...old, mixBytes: audio.size,

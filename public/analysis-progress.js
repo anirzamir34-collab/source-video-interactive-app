@@ -6,7 +6,7 @@ const LABELS = {
   frames: 'Video karelerinin hazırlanması', frameUpload: 'Analiz görüntülerinin gönderilmesi', analysis: 'Sahne ve seçim analizi',
   review: 'Görsel bulguların doğrulanması', integrity: 'Analiz bütünlüğü kontrolü',
   translation: 'Konuşmaların Türkçeye çevrilmesi', voices: 'Konuşmacı seslerinin eşleştirilmesi',
-  dub: 'ElevenLabs v4 Türkçe dublaj', align: 'Ses ve kelime zamanlarının hizalanması',
+  dub: 'ElevenLabs v4 Türkçe dublaj', align: 'Konuşma sürelerinin eşleştirilmesi',
   subtitles: 'Altyazı zamanlarının hazırlanması', mix: 'Türkçe seslerin birleştirilmesi',
   package: 'Sonuç dosyalarının hazırlanması', save: 'Oyunun kaydedilmesi'
 };
@@ -65,7 +65,7 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
       ...(motion ? ['frames', 'frameUpload', 'analysis', 'review', 'integrity'] : []),
       ...(dubbing || subtitles ? ['translation'] : []),
       ...(dubbing ? ['voices', 'dub', 'align'] : []),
-      ...(dubbing || subtitles ? ['subtitles'] : []), ...(dubbing ? ['mix'] : []), 'package', 'save'];
+      ...(subtitles ? ['subtitles'] : []), ...(dubbing ? ['mix'] : []), 'package', 'save'];
     for (const id of ids) rows.set(id, { id, label: LABELS[id], status: 'pending' });
     container?.classList.remove('hidden');
     update('source', { status: 'working', detail: remote ? 'Video telefona indiriliyor.' : 'Seçilen cihaz dosyası hazırlanıyor.' });

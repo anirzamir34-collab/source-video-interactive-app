@@ -377,6 +377,23 @@ test('dub rejection and decode failure restore source sound and a successful ret
   assert.equal(f.video.muted, false);
 });
 
+test('dub switching preserves explicit caption choice and dub-only manifests hide old caption tracks', async t => {
+  const f = fixture(); t.after(() => f.client.destroy());
+  const dubOnly = manifest(); dubOnly.outputs = { dub: true, subtitles: false };
+  await f.client.loadResult(dubOnly, { subtitleTrack: 'off' });
+  f.client.setDubEnabled(false); f.client.setDubEnabled(true);
+  assert.equal(f.client.capture().subtitleTrack, 'off');
+  assert.deepEqual(f.client.capture().manifest.subtitles, { source_tr: [], dub_tr: [] });
+  await f.client.loadResult(manifest(), { subtitleTrack: 'source_tr' });
+  f.client.setDubEnabled(false); f.client.setDubEnabled(true);
+  assert.equal(f.client.capture().subtitleTrack, 'source_tr');
+  const audio = f.audios.findLast(value => value.src);
+  f.video.sourceTime(1); audio.sourceTime(.9);
+  const writes = audio.seekWrites.length;
+  f.client.sync();
+  assert.equal(audio.seekWrites.length, writes, 'minor clock jitter does not repeatedly seek the audio');
+});
+
 test('source and dub subtitle tracks render overlapping cues while retaining cached caption nodes', async t => {
   const f = fixture();
   t.after(() => f.client.destroy());

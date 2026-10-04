@@ -183,7 +183,7 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
   return {
     saveCurrent, refreshControls,
     setSyncOffset(id, offset) { return store.updateLanguageSync(id, offset); },
-    updateDubAudio(id, audio) { return store.updateDubAudio(id, audio); },
+    updateDubAudio(id, audio, manifest) { return store.updateDubAudio(id, audio, manifest); },
     resetCurrent() { title.value = ''; refreshControls(); }
   };
 }

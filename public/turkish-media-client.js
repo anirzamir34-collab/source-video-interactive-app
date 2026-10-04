@@ -62,7 +62,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   let generation = 0, controller = new AbortController(), destroyed = false;
   let jobId = null, jobState = null, lastStart = null;
   let manifest = null, audio = null, audioBlob = null, audioBlobRequest = null, objectUrl = null;
-  let dubEnabled = false, subtitleTrack = 'off', trackSelected = false, syncOffset = 0;
+  let dubEnabled = false, subtitleTrack = 'off', syncOffset = 0;
   let originalMuted = null, waiting = false, sourceEmptied = false, playbackFailed = false, playAttempt = null, playVersion = 0, needsSeek = true;
   let frame = null;
   const sourceUploadKeys = new WeakMap();
@@ -190,7 +190,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const duration = Number(audio.duration || manifest?.assets?.mix?.duration);
     const atEnd = Number.isFinite(duration) && duration > 0 && target >= duration - 0.015;
     try {
-      if (needsSeek || Math.abs((Number(audio.currentTime) || 0) - target) > 0.08) {
+      if (needsSeek || Math.abs((Number(audio.currentTime) || 0) - target) > 0.25) {
         audio.currentTime = Number.isFinite(duration) && duration > 0 ? Math.min(target, duration) : target;
         needsSeek = false;
       }
@@ -220,7 +220,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
 
   function setSubtitleTrack(value) {
     if (!['off', 'source_tr', 'dub_tr'].includes(value)) throw new Error('Altyazı kanalı geçersiz.');
-    subtitleTrack = value; trackSelected = true;
+    subtitleTrack = value;
     renderCaptions();
     return subtitleTrack;
   }
@@ -232,7 +232,6 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     if (!enabled && dubEnabled && originalMuted !== null) { video.muted = originalMuted; originalMuted = null; }
     dubEnabled = enabled;
     playbackFailed = false;
-    if (!trackSelected) subtitleTrack = enabled ? 'dub_tr' : (tracks.source_tr.length ? 'source_tr' : 'off');
     if (!enabled) stopAudio();
     sync();
     return dubEnabled;
@@ -274,7 +273,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     releaseAudio();
     manifest = null; jobId = null; jobState = null; lastStart = null;
     tracks.source_tr = []; tracks.dub_tr = [];
-    subtitleTrack = 'off'; trackSelected = false; syncOffset = 0;
+    subtitleTrack = 'off'; syncOffset = 0;
     waiting = false; sourceEmptied = false; playbackFailed = false;
     needsSeek = true;
     clearCaptions();
@@ -288,11 +287,12 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     for (const asset of Object.values(safe.assets || {})) {
       if (asset?.url) asset.url = internalUrl(asset.url, baseUrl);
     }
+    if (safe.outputs?.subtitles === false || settings.subtitlesEnabled === false) safe.subtitles = { source_tr: [], dub_tr: [] };
     manifest = safe;
     tracks.source_tr = cueRows(safe.subtitles?.source_tr);
     tracks.dub_tr = cueRows(safe.subtitles?.dub_tr);
     syncOffset = Math.max(-10, Math.min(10, Number(settings.syncOffset) || 0));
-    subtitleTrack = 'off'; trackSelected = false;
+    subtitleTrack = 'off';
     if (safe.assets?.mix?.url || settings.audioBlob instanceof Blob) {
       if (typeof AudioClass !== 'function') throw new Error('Bu tarayıcı Türkçe sesi oynatamıyor.');
       const selectedAudio = new AudioClass();

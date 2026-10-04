@@ -31,6 +31,16 @@ for (const extended of [false, true]) test(`legacy ${extended ? 'extensible' : '
   assert.equal(await repairSavedAudio(output), output, 'repair runs only once');
 });
 
+test('saved PCM audio gets soft boundaries without dropping frames or changing speech away from the edge', async () => {
+  const original = floatWave(Array.from({ length: 4800 }, () => .5));
+  const pcm = await repairSavedAudio(original);
+  const repaired = await repairSavedAudio(pcm, () => {}, [.025]);
+  const view = new DataView(await repaired.arrayBuffer());
+  assert.equal(repaired.size, pcm.size);
+  assert.equal(view.getInt16(44 + 1200 * 4, true), 0, 'boundary no longer has a hard waveform jump');
+  assert.ok(view.getInt16(44 + 500 * 4, true) > 16000, 'speech beyond the 5ms edge is retained');
+});
+
 test('MP3 stays unchanged and broken legacy audio never produces a silent replacement', async () => {
   const mp3 = new Blob(['mp3'], { type: 'audio/mpeg' });
   assert.equal(await repairSavedAudio(mp3), mp3);

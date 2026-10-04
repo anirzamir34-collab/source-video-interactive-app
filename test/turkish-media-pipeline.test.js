@@ -64,10 +64,10 @@ async function fixture(t, { words = sourceWords(), failAlignmentOnce = false, mi
       calls.join.push({ files, parts });
       return { path: joinedPath, duration: files.length };
     },
-    async fitDubSegment(file, { targetDuration, maxTempo }) {
+    async fitDubSegment(file, { targetDuration, maxTempo, adaptiveTempo }) {
       calls.fit.push({ file, targetDuration, maxTempo });
       const turn = JSON.parse(await readFile(file, 'utf8'));
-      if (regeneration && turn.text === 'Merhaba.') {
+      if (regeneration && turn.text === 'Merhaba.' && !adaptiveTempo) {
         throw new MediaError('DUB_REGENERATE_REQUIRED', 'too long', { status: 422 });
       }
       const fittedPath = `${file}.fitted.wav`;
@@ -406,21 +406,17 @@ test('missing translation, native turn or Forced Alignment word fails instead of
   }
 });
 
-test('duration excess regenerates only the affected source turn and aligns actual shortened audio', async t => {
+test('duration excess uses existing translated audio without another paid generation', async t => {
   const f = await fixture(t, { regeneration: true });
   const result = await f.pipeline(f.input);
-  assert.equal(f.calls.synthesize.length, 2);
-  assert.equal(f.calls.synthesize[1].length, 1);
-  assert.equal(f.calls.synthesize[1][0].text, 'Selam.');
-  assert.equal(f.calls.translate[1].options.shorten, true);
-  assert.equal(Object.values(f.calls.translate[1].options.measuredDurations)[0], 3.5);
-  assert.equal(result.translatedUtterances[0].translatedText, 'Selam.');
-  assert.equal(result.dubSegments[0].start, 1);
-  assert.equal(result.dubSegments[0].end, 3);
-  assert.ok(f.calls.align.some(row => row.text === 'Selam.' && row.bytes.segmentId === result.dubSegments[0].segmentId));
+  assert.equal(f.calls.synthesize.length, 1);
+  assert.equal(f.calls.translate.length, 1);
+  assert.equal(result.translatedUtterances[0].translatedText, 'Merhaba.');
+  assert.equal(result.dubSegments.length, 2);
+  assert.ok(f.calls.align.some(row => row.text === 'Merhaba.'));
 });
 
-test('many duration failures use one measured repair request and one dialogue batch', async t => {
+test('many duration failures add no translation or synthesis requests', async t => {
   const words = Array.from({ length: 12 }, (_, i) => ({ text: 'Hello.', type: 'word', start: i * 2,
     end: i * 2 + 1, speaker_id: i % 2 ? 'speaker_1' : 'speaker_0' }));
   const f = await fixture(t, { words, regeneration: true });
@@ -431,11 +427,8 @@ test('many duration failures use one measured repair request and one dialogue ba
   };
   const result = await f.pipeline(f.input);
   assert.equal(result.dubSegments.length, 12);
-  assert.equal(f.calls.translate.length, 2, 'one initial translation plus one collective repair');
-  assert.equal(f.calls.translate[1].scene.utterances.length, 12);
-  assert.equal(Object.keys(f.calls.translate[1].options.measuredDurations).length, 12);
-  assert.equal(f.calls.synthesize.length, 2, 'failed turns remain together in the repair dialogue');
-  assert.equal(f.calls.synthesize[1].length, 12);
+  assert.equal(f.calls.translate.length, 1);
+  assert.equal(f.calls.synthesize.length, 1);
 });
 
 test('a short answer borrows only verified silence without retranslation or resynthesis', async t => {
@@ -455,7 +448,7 @@ test('a short answer borrows only verified silence without retranslation or resy
   assert.equal(result.dubSegments[1].start, 3.2);
 });
 
-test('unchanged overlong text is fitted adaptively after one repair without failing the video', async t => {
+test('unchanged overlong text is fitted adaptively without regeneration without failing the video', async t => {
   const f = await fixture(t);
   const fit = f.audio.fitDubSegment;
   f.audio.fitDubSegment = async (file, options) => {
@@ -467,8 +460,8 @@ test('unchanged overlong text is fitted adaptively after one repair without fail
   assert.equal(result.dubSegments.length, 2);
   assert.equal(result.qualityReport.missingDubCount, 0);
   assert.equal(result.qualityReport.adaptiveTempoCount, 2);
-  assert.equal(f.calls.translate.length, 2, 'one bounded collective shortening pass');
-  assert.equal(f.calls.synthesize.length, 2, 'no repeated regeneration loop');
+  assert.equal(f.calls.translate.length, 1, 'no second translation');
+  assert.equal(f.calls.synthesize.length, 1, 'no repeated regeneration');
   assert.equal(f.limiter.activeCount, 0); assert.equal(f.limiter.pendingCount, 0);
 });
 
@@ -508,15 +501,15 @@ test('a partially completed phrase restores all its generated audio and recomput
   assert.equal(result.subtitles.source_tr[1].start, 1.45);
 });
 
-test('alignment retry retains the already completed duration retranslation and audio generation', async t => {
+test('alignment retry retains the already completed translation and generated audio', async t => {
   const f = await fixture(t, { regeneration: true, failAlignmentOnce: true });
   await assert.rejects(f.pipeline(f.input), { code: 'PROVIDER_HTTP_503' });
-  assert.equal(f.calls.translate.length, 2);
-  assert.equal(f.calls.synthesize.length, 2);
+  assert.equal(f.calls.translate.length, 1);
+  assert.equal(f.calls.synthesize.length, 1);
   const result = await f.pipeline(f.input);
-  assert.equal(result.translatedUtterances[0].translatedText, 'Selam.');
-  assert.equal(f.calls.translate.length, 2);
-  assert.equal(f.calls.synthesize.length, 2);
+  assert.equal(result.translatedUtterances[0].translatedText, 'Merhaba.');
+  assert.equal(f.calls.translate.length, 1);
+  assert.equal(f.calls.synthesize.length, 1);
 });
 
 test('transcript-only mode keeps ASR words and avoids translation, synthesis and mix', async t => {
@@ -528,6 +521,21 @@ test('transcript-only mode keeps ASR words and avoids translation, synthesis and
   assert.equal(f.calls.synthesize.length, 0);
   assert.equal(f.calls.align.length, 0);
   assert.equal(f.calls.mix.length, 0);
+});
+
+test('dub-only output skips all word alignment and caption files while retaining complete speech', async t => {
+  const f = await fixture(t);
+  const result = await f.pipeline({ ...f.input, outputs: { dub: true, subtitles: false } });
+  assert.equal(f.calls.align.length, 0);
+  assert.equal(f.calls.translate.length, 1);
+  assert.equal(f.calls.synthesize.length, 1);
+  assert.equal(f.calls.mix.length, 1);
+  assert.deepEqual(result.subtitles, { source_tr: [], dub_tr: [] });
+  assert.deepEqual(result.outputs, { dub: true, subtitles: false });
+  assert.equal(result.dubSegments.length, result.sourceTranscript.utterances.length);
+  assert.equal(await f.cache.getArtifact(result.artifactKey, 'source_tr.srt'), null);
+  assert.equal(await f.cache.getArtifact(result.artifactKey, 'dub_tr.vtt'), null);
+  assert.ok(await f.cache.getArtifact(result.artifactKey, 'mix.mp3'));
 });
 
 test('subtitle-only mode translates source intervals without synthesizing voices or creating dub cues', async t => {
