@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { execFile } from 'node:child_process';
+import { spawn as realSpawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
@@ -440,6 +441,27 @@ test('adaptive fitting chains tempo stages, keeps pitch and both audio sections 
     { text: 'Merhaba.', start: .03, end: 1.4 }, { text: 'Evet.', start: 1.55, end: 2.94 }
   ] }], 'Merhaba. Evet.', fitted);
   assert.equal(words.length, 2); assert.ok(words[1].end <= 1);
+});
+
+test('production short slots converge by sample count instead of repeating the same tempo plateau', async t => {
+  const media = await realMedia(t); if (!media) return;
+  for (const duration of [.72, .88]) for (const [name, expression] of [
+    ['chirp', '.2*sin(2*PI*(200*t+300*t*t))'],
+    ['pulse', 'if(lt(mod(n\\,800)\\,150)\\,.2*sin(2*PI*380*t)\\,0)']
+  ]) {
+    const file = await media.fixture(`${name}-${duration}.wav`, expression, duration); if (!file) return;
+    let attempts = 0;
+    const service = createAudioService({ ffmpegPath: FFMPEG, ffprobePath: FFPROBE, directory: media.directory,
+      spawn: (binary, args, options) => { if (args.includes('-af')) attempts++; return realSpawn(binary, args, options); } });
+    const result = await service.fitDubSegment(file, { targetDuration: .639999999999997, maxTempo: 1.2, adaptiveTempo: true });
+    const values = await samples(result.path);
+    assert.equal(values.length, 30720, 'the 640ms source slot has exactly 30,720 samples');
+    assert.equal(result.duration, .64); assert.ok(attempts <= 3, `${name} should leave the analysis-window plateau promptly`);
+    assert.ok(rms(values) > .01, 'fitting retains the actual sound');
+    const words = fitNativeDialogueWords([{ nativeDuration: duration, nativeWords: [{ text: 'Evet.', start: .02, end: duration - .02 }] }],
+      'Evet.', result);
+    assert.equal(words.length, 1); assert.ok(words[0].end <= .64);
+  }
 });
 
 test('a redistributed dub mutes the original speech clock and preserves the bed outside it', async t => {
