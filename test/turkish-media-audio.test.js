@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createAudioService } from '../lib/turkish-media/audio.js';
+import { repairSavedAudio } from '../public/saved-audio.js';
 import { fitNativeDialogueWords } from '../lib/turkish-media/dialogue-alignment.js';
 import { normalizeScribeTranscript } from '../lib/turkish-media/model.js';
 import { buildSubtitleTracks, normalizeDubWords } from '../lib/turkish-media/subtitles.js';
@@ -309,6 +310,19 @@ async function samples(file) {
 }
 
 function rms(values) { return Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / values.length); }
+
+test('real old float WAV repairs to PCM16 with the same duration and audible signal', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const input = await media.fixture('old-saved.wav', '.2*sin(2*PI*880*t)', 3);
+  const original = new Blob([await readFile(input)], { type: 'audio/wav' });
+  const repaired = await repairSavedAudio(original);
+  assert.notEqual(repaired, original);
+  const file = path.join(media.directory, 'repaired.wav');
+  await writeFile(file, Buffer.from(await repaired.arrayBuffer()));
+  const decoded = await samples(file);
+  assert.equal(decoded.length, 3 * SAMPLE_RATE);
+  assert.ok(frequencyAmplitude(decoded, 880) > .19);
+});
 
 test('final MP3 retains the complete timeline, audible dub and original non-speech with a small single output', async t => {
   const media = await realMedia(t); if (!media) return;

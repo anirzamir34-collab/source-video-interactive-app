@@ -275,6 +275,27 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
     remove(id) {
       return transaction(STORES, 'readwrite', tx => { for (const store of STORES) tx.objectStore(store).delete(id); });
     },
+    updateDubAudio(id, audio) {
+      return transaction(['games', 'payloads', 'mixes'], 'readwrite', (tx, done, fail) => {
+        const meta = tx.objectStore('games').get(id);
+        meta.onsuccess = () => {
+          if (!meta.result) { fail(new Error('Kayıt bulunamadı.')); return; }
+          const payload = tx.objectStore('payloads').get(id);
+          payload.onsuccess = () => {
+            try {
+              if (!payload.result?.turkishMedia) throw new Error('Kayıtlı Türkçe medya bulunamadı.');
+              validateTurkishMedia(payload.result.turkishMedia, audio, meta.result.duration);
+              tx.objectStore('mixes').put({ id, dubAudio: audio });
+              const old = meta.result;
+              tx.objectStore('games').put({ ...old, mixBytes: audio.size,
+                totalBytes: old.totalBytes - (old.mixBytes || 0) + audio.size,
+                updatedAt: new Date().toISOString() });
+              done(true);
+            } catch (error) { fail(error); }
+          };
+        };
+      });
+    },
     updateLanguageSync(id, offset) {
       if (!Number.isFinite(offset) || Math.abs(offset) > 10) throw new Error('Ses eşitleme değeri geçersiz.');
       return transaction(['games', 'payloads'], 'readwrite', (tx, done, fail) => {

@@ -39,6 +39,22 @@ const fixture = (overrides = {}) => ({
 });
 const bytes = async blob => [...new Uint8Array(await blob.arrayBuffer())];
 
+databaseTest('legacy audio repair updates only the mix while preserving saved video, analysis and language settings', async t => {
+  const store = createGameStore({ indexedDB: new IDBFactory(), database: 'saved-audio-repair' });
+  t.after(() => store.close());
+  const input = fixture(), saved = await store.save(input);
+  const repaired = new Blob(['repaired PCM'], { type: 'audio/wav' });
+  await store.updateDubAudio(saved.id, repaired);
+  const loaded = await store.load(saved.id);
+  assert.deepEqual(await bytes(loaded.video), await bytes(input.video));
+  assert.deepEqual(loaded.turkishMedia, input.turkishMedia);
+  assert.equal(await loaded.dubAudio.text(), 'repaired PCM');
+  const meta = (await store.list())[0];
+  assert.equal(meta.mixBytes, repaired.size);
+  await assert.rejects(store.updateDubAudio(saved.id, new Blob(['wrong'], { type: 'audio/mpeg' })));
+  assert.equal(await (await store.load(saved.id)).dubAudio.text(), 'repaired PCM');
+});
+
 function legacyFixture() {
   const input = fixture({ dubAudio: null, turkishMedia: null });
   Object.assign(input.payload, {

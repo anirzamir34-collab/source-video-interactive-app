@@ -1,5 +1,6 @@
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
+import { repairSavedAudio } from './saved-audio.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import {
   adultPositionFamily,
@@ -6547,6 +6548,15 @@ async function captureSavedGame() {
 
 async function openSavedGame(game) {
   validateGame(game);
+  if (game.dubAudio) {
+    const repaired = await repairSavedAudio(game.dubAudio, progress => {
+      els.fileMeta.textContent = `Kayıtlı ses onarılıyor… %${Math.round(progress * 100)}`;
+    });
+    if (repaired !== game.dubAudio) {
+      await savedGames.updateDubAudio(game.id, repaired);
+      game = { ...game, dubAudio: repaired };
+    }
+  }
   if (game.payload.analysis?.schemaVersion > ANALYSIS_SCHEMA_VERSION) {
     throw new Error('Bu kayıt daha yeni bir uygulama sürümüyle oluşturulmuş. Sayfayı yenile.');
   }
