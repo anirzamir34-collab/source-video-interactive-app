@@ -332,7 +332,15 @@ export function resolveVerifiedAdultPosition(action = {}) {
 }
 
 export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '') {
-  if (['body_transition', 'partner_transition', 'camera_transition'].includes(String(action.actionType || '').toLowerCase())) return false;
+  const actionType = String(action.actionType || '').toLowerCase();
+  if (['partner_transition', 'camera_transition'].includes(actionType)) return false;
+  const resolvedFamily = resolveVerifiedAdultPosition(action).family;
+  const verifiedSameFamilyBodyChange = actionType === 'body_transition' &&
+    action?.sourceVerified === true &&
+    resolvedFamily === canonicalId &&
+    Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
+    String(action.positionEvidence || '').trim();
+  if (actionType === 'body_transition' && !verifiedSameFamilyBodyChange) return false;
   const structuralFamily = adultPositionFamilyFromBodyConfiguration(action);
   const activityClass = action.sourceVerified === true && ['oral', 'manual'].includes(canonicalId) &&
     resolveVerifiedAdultPosition(action).family === canonicalId;
