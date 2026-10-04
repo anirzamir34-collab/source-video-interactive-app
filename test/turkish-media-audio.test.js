@@ -326,10 +326,15 @@ test('compressed source fallback also retains quiet source speech and normal sou
   assert.ok(frequencyAmplitude(decoded.slice(1.2 * SAMPLE_RATE, 1.8 * SAMPLE_RATE), 880) > .15);
 });
 
-test('real mix softens discontinuous source/dub boundaries without a click or shifted speech clock', async t => {
+for (const fallback of [false, true]) test(`real ${fallback ? 'decoded fallback' : 'PCM'} mix softens discontinuous source/dub boundaries without a click or shifted speech clock`, async t => {
   const media = await realMedia(t); if (!media) return;
   const bed = await media.fixture('constant-bed.wav', '.1', 3);
-  const dub = await media.fixture('constant-dub.wav', '.2', 1);
+  let dub = await media.fixture('constant-dub.wav', '.2', 1);
+  if (fallback) {
+    const decoded = path.join(media.directory, 'constant-dub-pcm16.wav');
+    await execute(FFMPEG, ['-nostdin', '-v', 'error', '-i', dub, '-c:a', 'pcm_s16le', decoded]);
+    dub = decoded;
+  }
   const output = await media.service.mixAudio({ sourceAudio: bed, duration: 3,
     dubSegments: [{ segmentId: 'one', speakerId: 'speaker', start: 1, end: 2, audioPath: dub }] });
   const decoded = await samples(output.path);
