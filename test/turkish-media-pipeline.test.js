@@ -75,13 +75,14 @@ async function fixture(t, { words = sourceWords(), failAlignmentOnce = false, mi
       return { path: fittedPath, duration: targetDuration, tempo: 1 };
     },
     async probeDuration() { return 3.5; },
-    async mixAudio({ sourceAudio, dubSegments, duration, directory: work }) {
+    async mixAudio({ sourceAudio, dubSegments, duration, directory: work, format }) {
+      assert.equal(format, 'mp3');
       assert.equal(await readFile(sourceAudio, 'utf8'), 'original-source-audio');
       for (const segment of dubSegments) assert.ok((await readFile(segment.audioPath)).length);
       calls.mix.push(dubSegments.map(row => ({ ...row })));
-      const mixedPath = path.join(work, 'mixed.wav');
+      const mixedPath = path.join(work, 'mixed.mp3');
       await writeFile(mixedPath, 'mock-full-timeline-mix');
-      return { path: mixedPath, duration, qa: { mixMode: 'speech-ducking', clipping: false } };
+      return { path: mixedPath, duration, mimeType: 'audio/mpeg', qa: { mixMode: 'speech-ducking', clipping: false, playbackFormat: 'mp3' } };
     },
   };
   const elevenLabs = {
@@ -314,7 +315,7 @@ test('pipeline retains all source identities and actual Forced Alignment offsets
   assert.match(sourceSrt.toString(), /00:00:01,000 --> 00:00:03,000/);
   assert.match(sourceSrt.toString(), /Merhaba\./);
   assert.match(dubVtt.toString(), /00:00:03\.200 --> 00:00:04\.980/);
-  assert.equal((await f.cache.getArtifact(result.artifactKey, 'mix.wav')).toString(), 'mock-full-timeline-mix');
+  assert.equal((await f.cache.getArtifact(result.artifactKey, 'mix.mp3')).toString(), 'mock-full-timeline-mix');
 });
 
 test('overlapping source speakers keep independent turns and source intervals in mix/subtitles', async t => {

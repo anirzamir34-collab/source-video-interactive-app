@@ -340,6 +340,10 @@ test('dub disable and reset restore the video original mute state', async t => {
   t.after(() => f.client.destroy());
   await f.client.loadResult(manifest());
   f.client.setDubEnabled(true);
+  assert.equal(f.video.muted, false, 'enabling while paused does not silence the source');
+  f.video.paused = false;
+  f.video.fire('playing');
+  await settle();
   assert.equal(f.video.muted, true);
   f.client.setDubEnabled(false);
   assert.equal(f.video.muted, false);
@@ -350,6 +354,26 @@ test('dub disable and reset restore the video original mute state', async t => {
   f.video.muted = false;
   f.client.setDubEnabled(true);
   f.client.reset();
+  assert.equal(f.video.muted, false);
+});
+
+test('dub rejection and decode failure restore source sound and a successful retry mutes it', async t => {
+  const f = fixture();
+  t.after(() => f.client.destroy());
+  await f.client.loadResult(manifest());
+  const audio = f.audios.findLast(value => value.src);
+  audio.playResult = Promise.reject(Object.assign(new Error('blocked'), { name: 'NotAllowedError' }));
+  f.client.setDubEnabled(true);
+  f.video.paused = false;
+  f.video.fire('playing');
+  await settle();
+  assert.equal(f.video.muted, false);
+  audio.playResult = null;
+  f.client.setDubEnabled(false);
+  f.client.setDubEnabled(true);
+  await settle();
+  assert.equal(f.video.muted, true);
+  audio.fire('error');
   assert.equal(f.video.muted, false);
 });
 
@@ -427,6 +451,7 @@ test('capture is synchronous stable metadata and materializeAudio fetches final 
   assert.equal(await concurrent.text(), 'complete final mix');
   assert.equal(await cached.text(), 'complete final mix');
   assert.equal(f.requests.filter(request => request.url.endsWith('/assets/mix')).length, 1);
+  assert.ok(f.audios.findLast(value => value.src).src.startsWith('blob:'), 'saved audio plays locally instead of repeatedly requesting the server');
 });
 
 test('subtitle-only results require no audio element or mix download', async t => {

@@ -258,7 +258,8 @@ test('mix uses sourceStart sample offsets, mutes the original language and suppo
   assert.match(graph, /val\(0\)\*if\(.*?,0,1\)/);
   assert.match(graph, /adelay=6000S:all=1/);
   assert.match(graph, /adelay=18000S:all=1/);
-  assert.match(graph, /loudnorm=I=-18:TP=-2/);
+  assert.match(graph, /acompressor=threshold=0.125/);
+  assert.doesNotMatch(graph, /loudnorm/);
   assert.match(graph, /alimiter=limit=0.95:level=0:latency=1/);
   assert.equal(result.qa.mixMode, 'speech-ducking');
   assert.equal(result.qa.originalSpeechMuted, true);
@@ -308,6 +309,23 @@ async function samples(file) {
 }
 
 function rms(values) { return Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / values.length); }
+
+test('final MP3 retains the complete timeline, audible dub and original non-speech with a small single output', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const source = await media.fixture('bed.wav', '.1*sin(2*PI*440*t)', 8);
+  const dub = await media.fixture('dub.wav', '.2*sin(2*PI*880*t)', 1);
+  const output = await media.service.mixAudio({ sourceAudio: source, duration: 8, format: 'mp3',
+    dubSegments: [{ segmentId: 'one', speakerId: 'speaker-1', sourceStart: 2, sourceEnd: 3, audioPath: dub }] });
+  assert.equal(output.mimeType, 'audio/mpeg');
+  assert.equal(output.qa.playbackFormat, 'mp3');
+  const decoded = await samples(output.path);
+  assert.equal(decoded.length, 8 * SAMPLE_RATE, 'Xing gapless decoding preserves the video clock');
+  assert.ok(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 880) > .15);
+  assert.ok(frequencyAmplitude(decoded.slice(.2 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440) > .08);
+  assert.ok(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 440) < .005);
+  assert.ok((await stat(output.path)).size < (await stat(source)).size / 10);
+  assert.ok(!(await readdir(path.dirname(output.path))).includes('turkish-mix.wav'));
+});
 
 function frequencyAmplitude(values, frequency, offset = 0) {
   let sine = 0, cosine = 0;

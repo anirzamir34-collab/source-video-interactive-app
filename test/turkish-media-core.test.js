@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, open } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { normalizeScribeTranscript, applySpeakerHints, assertSegmentCoverage, sourceContextAdapter } from '../lib/turkish-media/model.js';
@@ -290,6 +290,26 @@ test('cache corruption never becomes a hit and active leases prevent TTL deletio
   assert.equal(await f.cache.removeExpired(), 0);
   release(); release();
   assert.equal(await f.cache.removeExpired(), 1);
+});
+
+test('concurrent asset reads share verification and stat changes invalidate even same-sized bytes', async t => {
+  const f = await cacheFixture(t), key = hashKey('repeated-range');
+  await f.cache.put(key, { ready: true }, { artifacts: { 'mix.mp3': Buffer.from('original audio') } });
+  const handle = await open(path.join(f.directory, `${key}.json`));
+  const prototype = Object.getPrototypeOf(handle);
+  const original = prototype.createReadStream;
+  await handle.close();
+  let scans = 0;
+  prototype.createReadStream = function (...args) { scans++; return original.apply(this, args); };
+  t.after(() => { prototype.createReadStream = original; });
+  const paths = await Promise.all(Array.from({ length: 4 }, () => f.cache.getArtifactPath(key, 'mix.mp3')));
+  assert.ok(paths.every(value => value === paths[0] && value));
+  assert.equal(scans, 1);
+  assert.equal(await f.cache.getArtifactPath(key, 'mix.mp3'), paths[0]);
+  assert.equal(scans, 1, 'unchanged range reads do not rescan the complete audio');
+  await writeFile(paths[0], 'modified audio');
+  assert.equal(await f.cache.getArtifactPath(key, 'mix.mp3'), null);
+  assert.equal(scans, 2, 'changed bytes must be checksum verified again');
 });
 
 test('cache accepts disk-backed artifacts and publishes an independent checksum-verified file', async t => {

@@ -169,15 +169,16 @@ async function fixture(t, { geminiKey = serverGeminiKey, failAlignmentOnce = fal
       await writeFile(fitted, JSON.stringify({ ...row, duration: targetDuration, fitted: true }));
       return { path: fitted, duration: targetDuration, tempo: 1, mimeType: 'audio/wav' };
     },
-    async mixAudio({ sourceAudio, dubSegments, duration, directory: work }) {
+    async mixAudio({ sourceAudio, dubSegments, duration, directory: work, format }) {
+      assert.equal(format, 'mp3');
       assert.equal(duration, 8); assert.equal(dubSegments.length, 2);
       assert.ok((await readFile(sourceAudio)).length);
       for (const row of dubSegments) {
         assert.ok((await readFile(row.audioPath)).length);
         assert.ok(row.words.length > 0 && row.words.every(word => word.start >= row.start && word.end <= row.end));
       }
-      const file = path.join(work, 'final-mix.wav'); await writeFile(file, wave(duration));
-      return { path: file, duration, qa: { mixMode: 'speech-ducking', clipping: false } };
+      const file = path.join(work, 'final-mix.mp3'); await writeFile(file, wave(duration));
+      return { path: file, duration, mimeType: 'audio/mpeg', qa: { mixMode: 'speech-ducking', clipping: false, playbackFormat: 'mp3' } };
     }
   };
   const makeJobs = () => createMediaJobs({ config, cache, limiter, audio, fetchImpl });
@@ -249,6 +250,22 @@ test('request-only ElevenLabs plus server Gemini completes the real v4 timestamp
   assert.ok(f.calls.filter(call => new URL(call.url).hostname === 'generativelanguage.googleapis.com')
     .every(call => call.geminiKey === serverGeminiKey));
   await assertNoSecrets(f, ready);
+});
+
+test('dubbing-only jobs publish one MP3 asset without four unselected subtitle links', async t => {
+  const f = await fixture(t);
+  f.input.outputs.subtitles = false;
+  const created = await f.jobs.create(f.input, credentials());
+  const ready = await settled(f.jobs, created.id);
+  assertComplete(ready);
+  assert.deepEqual(Object.keys(ready.result.assets), ['mix']);
+  assert.match(ready.result.assets.mix.url, /mix\.mp3$/);
+  assert.equal(ready.result.assets.mix.mimeType, 'audio/mpeg');
+  assert.ok(await f.jobs.artifact(created.id, 'mix.mp3').then(async value => {
+    if (!value) return false;
+    try { return (await readFile(value.path)).length > 0; }
+    finally { value.release(); }
+  }));
 });
 
 test('request Gemini key takes priority over server Gemini without requiring OpenAI', async t => {

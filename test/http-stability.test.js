@@ -194,7 +194,7 @@ test('HTTP artifacts send exact Range bytes and retain the cache lease until res
   const express = (await import('express')).default;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'vq-http-artifact-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
-  const file = path.join(directory, 'mix.wav'); await fs.writeFile(file, '0123456789');
+  const file = path.join(directory, 'mix.mp3'); await fs.writeFile(file, '0123456789');
   let acquired = 0, released = 0;
   const app = express();
   app.use((req, res, next) => req.get('cookie') === 'owner=yes' ? next() : res.status(401).json({ reason: 'AUTH_REQUIRED' }));
@@ -205,10 +205,11 @@ test('HTTP artifacts send exact Range bytes and retain the cache lease until res
   try { server = await new Promise((resolve, reject) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); instance.once('error', reject); }); }
   catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) { t.skip(`Local HTTP listener blocked: ${error.code}.`); return; } throw error; }
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const url = `http://127.0.0.1:${server.address().port}/api/turkish-media/jobs/id/artifacts/mix.wav`;
+  const url = `http://127.0.0.1:${server.address().port}/api/turkish-media/jobs/id/artifacts/mix.mp3`;
   assert.equal((await fetch(url)).status, 401); assert.equal(acquired, 0);
   const response = await fetch(url, { headers: { Cookie: 'owner=yes', Range: 'bytes=2-4' } });
-  assert.equal(response.status, 206); assert.equal(response.headers.get('content-range'), 'bytes 2-4/10');
+  assert.equal(response.status, 206); assert.match(response.headers.get('content-type'), /audio\/mpeg/);
+  assert.equal(response.headers.get('content-range'), 'bytes 2-4/10');
   assert.equal(response.headers.get('content-length'), '3'); assert.equal(await response.text(), '234');
   await new Promise(resolve => setImmediate(resolve)); assert.equal(acquired, released);
   const invalid = await fetch(url, { headers: { Cookie: 'owner=yes', Range: 'bytes=20-30' } });

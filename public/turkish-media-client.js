@@ -166,6 +166,10 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     audio?.pause();
   }
 
+  function restoreSourceAudio() {
+    if (originalMuted !== null) video.muted = originalMuted;
+  }
+
   function canPlayAudio() {
     return dubEnabled && audio && !video.paused && !video.seeking && !video.ended &&
       !waiting && (video.readyState === undefined || video.readyState >= 3) && !playbackFailed;
@@ -201,10 +205,12 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       catch (error) { playing = Promise.reject(error); }
       Promise.resolve(playing).then(() => {
         if (!current(owner) || selectedAudio !== audio || !canPlayAudio()) selectedAudio.pause();
+        else if (version === playVersion) { video.muted = true; notify({ state: 'PLAYBACK_READY', jobId }); }
       }).catch(error => {
         if (!current(owner) || selectedAudio !== audio || version !== playVersion) return;
         playbackFailed = true;
         selectedAudio.pause();
+        restoreSourceAudio();
         notify({ state: error?.name === 'NotAllowedError' ? 'PLAYBACK_BLOCKED' : 'PLAYBACK_FAILED',
           jobId, message: 'Türkçe ses oynatılamadı. Yeniden dene veya kaynak sese geç.', error: errorMessage(error, 'Ses açılamadı.') });
       }).finally(() => { if (playAttempt === attempt) playAttempt = null; });
@@ -222,7 +228,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   function setDubEnabled(value) {
     const enabled = Boolean(value);
     if (enabled && !audio) throw new Error('Türkçe ses henüz hazır değil.');
-    if (enabled && !dubEnabled) { originalMuted = Boolean(video.muted); video.muted = true; needsSeek = true; }
+    if (enabled && !dubEnabled) { originalMuted = Boolean(video.muted); needsSeek = true; }
     if (!enabled && dubEnabled && originalMuted !== null) { video.muted = originalMuted; originalMuted = null; }
     dubEnabled = enabled;
     playbackFailed = false;
@@ -302,6 +308,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       selectedAudio.addEventListener?.('error', () => {
         if (!current(owner) || selectedAudio !== audio) return;
         playbackFailed = true; stopAudio();
+        restoreSourceAudio();
         notify({ state: 'PLAYBACK_FAILED', jobId, message: 'Türkçe ses dosyası yüklenemedi.' });
       });
       selectedAudio.load?.();
@@ -524,6 +531,16 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
           throw new Error('Kaydedilecek Türkçe ses dosyası geçersiz.');
         }
         assertCurrent(owner); audioBlob = blob;
+        // The saved bytes also own playback. Do not keep seeking a remote asset
+        // after it has been downloaded once, or after the server goes to sleep.
+        if (audio) {
+          stopAudio(); restoreSourceAudio();
+          const previousUrl = objectUrl;
+          objectUrl = urlImpl.createObjectURL(blob);
+          audio.src = objectUrl; audio.load?.(); needsSeek = true; playbackFailed = false;
+          if (previousUrl) urlImpl.revokeObjectURL(previousUrl);
+          sync();
+        }
         return blob;
       }).finally(() => { if (audioBlobRequest === pending) audioBlobRequest = null; });
       audioBlobRequest = pending;

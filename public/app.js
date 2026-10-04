@@ -1008,6 +1008,7 @@ function onTurkishMediaStatus(status) {
   state.turkishMediaStatus = status;
   if (status.sourceTranscript) { updateSourceTranscript(status.sourceTranscript); renderVoiceMappingPanel(); }
   logEngineEvent('TURKISH_MEDIA_STATUS', { state: status.state, jobId: status.jobId || null });
+  if (status.state === 'PLAYBACK_READY') { els.dubBufferStatus.classList.add('hidden'); return; }
   if (['PLAYBACK_BLOCKED', 'PLAYBACK_FAILED'].includes(status.state)) {
     els.dubBufferMessage.textContent = status.message || 'Türkçe ses oynatılamadı.';
     els.dubBufferStatus.classList.remove('hidden');
@@ -1072,7 +1073,10 @@ function renderMediaControls() {
     for (const link of els.mediaExports.querySelectorAll('[data-media-asset]')) {
       const url = captured?.manifest.assets?.[link.dataset.mediaAsset]?.url;
       link.classList.toggle('hidden', !url);
-      if (url) { link.href = url; available = true; }
+      if (url) {
+        link.href = url; available = true;
+        if (link.dataset.mediaAsset === 'mix') link.download = captured.manifest.assets.mix.mimeType === 'audio/mpeg' ? 'dublaj-tr.mp3' : 'dublaj-tr.wav';
+      }
       else link.removeAttribute('href');
     }
     els.mediaExports.classList.toggle('hidden', !available);
