@@ -11,6 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAudioService } from '../lib/turkish-media/audio.js';
 import { fitNativeDialogueWords } from '../lib/turkish-media/dialogue-alignment.js';
+import { normalizeScribeTranscript } from '../lib/turkish-media/model.js';
+import { buildSubtitleTracks, normalizeDubWords } from '../lib/turkish-media/subtitles.js';
 
 const execute = promisify(execFile);
 const FFMPEG = process.env.VIDEOQUEST_TEST_FFMPEG || '/usr/bin/ffmpeg';
@@ -462,6 +464,32 @@ test('production short slots converge by sample count instead of repeating the s
       'Evet.', result);
     assert.equal(words.length, 1); assert.ok(words[0].end <= .64);
   }
+});
+
+test('real PCM, native words, subtitles and final mix agree at a fractional video boundary', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const input = await media.fixture('boundary-turn.wav', '.2*sin(2*PI*380*t)', .64);
+  const bed = await media.fixture('boundary-bed.wav', '.04*sin(2*PI*230*t)', 3);
+  if (!input || !bed) return;
+  const start = 1.731215, end = start + .6399999;
+  const transcript = normalizeScribeTranscript({ words: [{ text: 'Hello.', type: 'word',
+    start, end, speaker_id: 'speaker_0' }] }, { sourceHash: 'fractional-clock-fixture', duration: 3 });
+  const turn = transcript.utterances[0];
+  const fitted = await media.service.fitDubSegment(input, { targetDuration: end - start, maxTempo: 1.2 });
+  assert.equal(fitted.duration, .64);
+  const native = fitNativeDialogueWords([{ nativeDuration: .64,
+    nativeWords: [{ text: 'Merhaba.', start: 0, end: .64 }] }], 'Merhaba.', fitted);
+  const measured = native.map(word => ({ ...word, start: start + word.start, end: start + word.end }));
+  assert.ok(measured[0].end > end, 'the actual PCM clock recreates the previous strict-boundary failure');
+  const words = normalizeDubWords(measured, { start, end, segmentId: turn.segmentId });
+  const dub = { segmentId: turn.segmentId, speakerId: turn.speakerId, start, end,
+    words, audioPath: fitted.path, duration: fitted.duration };
+  const tracks = buildSubtitleTracks(transcript, [{ segmentId: turn.segmentId, speakerId: turn.speakerId,
+    translatedText: 'Merhaba.' }], [dub]);
+  assert.equal(tracks.dub_tr[0].end, end); assert.equal(tracks.source_tr[0].end, end);
+  const mixed = await media.service.mixAudio({ sourceAudio: bed, dubSegments: [dub], duration: 3 });
+  assert.equal(mixed.duration, 3); assert.equal((await samples(mixed.path)).length, 144000);
+  assert.ok(rms((await samples(mixed.path)).slice(Math.round(start * 48000), Math.round(end * 48000))) > .01);
 });
 
 test('a redistributed dub mutes the original speech clock and preserves the bed outside it', async t => {

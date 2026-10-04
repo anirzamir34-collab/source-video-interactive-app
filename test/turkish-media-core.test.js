@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { normalizeScribeTranscript, applySpeakerHints, assertSegmentCoverage, sourceContextAdapter } from '../lib/turkish-media/model.js';
-import { buildSubtitleTracks, toSrt, toWebVtt } from '../lib/turkish-media/subtitles.js';
+import { buildSubtitleTracks, normalizeDubWords, toSrt, toWebVtt } from '../lib/turkish-media/subtitles.js';
 import { createMediaCache, hashKey } from '../lib/turkish-media/cache.js';
 import { createLimiter } from '../lib/turkish-media/limiter.js';
 import { mapSpeakerVoices } from '../lib/turkish-media/voice-mapping.js';
@@ -192,6 +192,25 @@ test('source captions use whole source intervals without invented Turkish word t
   assert.ok(tracks.dub_tr[1].end > tracks.dub_tr[2].start, 'independent speakers retain real overlap');
   dubs[0].words[0].start = 0;
   assert.throws(() => buildSubtitleTracks(source, translated, dubs), /INVALID_DUB_WORD_ALIGNMENT/);
+});
+
+test('word clocks snap only sample-sized drift and diagnose genuine invalid timing without changing words', () => {
+  const options = { start: 2, end: 3, segmentId: 'segment-boundary' };
+  const words = [{ text: 'Merhaba', start: 2 - 1e-10, end: 2.5 },
+    { text: 'dostum.', start: 2.5, end: 3 + 1 / 96000 }];
+  const normalized = normalizeDubWords(words, options);
+  assert.deepEqual(normalized.map(word => word.text), words.map(word => word.text));
+  assert.equal(normalized[0].start, 2); assert.equal(normalized[1].end, 3);
+  assert.ok(words[0].start < 2 && words[1].end > 3, 'provider evidence is not mutated');
+  for (const [invalid, reason] of [
+    [[{ text: 'Merhaba', start: 2, end: 3.001 }], 'word_outside_dub_window'],
+    [[{ text: 'Merhaba', start: 1.999, end: 2.5 }], 'word_outside_dub_window'],
+    [[{ text: 'Merhaba', start: 2.5, end: 2.7 }, { text: 'dostum.', start: 2.4, end: 2.8 }], 'word_clock_runs_backwards'],
+    [[{ text: 'Merhaba', start: 2.5, end: 2.5 }], 'invalid_word_interval'],
+    [[{ text: 'Merhaba', start: NaN, end: 2.5 }], 'invalid_word_interval']
+  ]) assert.throws(() => normalizeDubWords(invalid, options), error =>
+    error.code === 'INVALID_DUB_WORD_ALIGNMENT' && error.reason === reason &&
+    error.segmentIds[0] === options.segmentId && Number.isInteger(error.wordIndex));
 });
 
 test('mobile captions preserve long text with two lines and warnings; dub grouping uses only real word boundaries', () => {

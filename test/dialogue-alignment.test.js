@@ -29,3 +29,12 @@ test('native clocks subtract only removed pauses before tempo adjustment and ret
   assert.ok(Math.abs(words[1].start - .62 / 1.2) < 1e-8);
   assert.ok(Math.abs(words[1].end - 1.12 / 1.2) < 1e-8);
 });
+
+test('unusable native word intervals are rejected before caching complete dubs', () => {
+  for (const nativeWords of [
+    [{ text: 'Evet.', start: .65, end: .67 }],
+    [{ text: 'Evet.', start: NaN, end: .3 }],
+    [{ text: 'Evet.', start: .4, end: .5 }, { text: 'Tamam.', start: .2, end: .3 }]
+  ]) assert.equal(fitNativeDialogueWords([{ nativeDuration: .72, nativeWords }],
+    nativeWords.map(word => word.text).join(' '), { duration: .64, tempo: 1 }), null);
+});

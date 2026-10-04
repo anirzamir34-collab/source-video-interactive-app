@@ -159,6 +159,39 @@ test('complete v4 native timestamps produce real subtitle words without Forced A
   assert.equal(f.calls.synthesize.length, 1);
 });
 
+test('79 sample-rounded native dubs finish subtitles and mixing with the same video windows, including cached retry', async t => {
+  const words = Array.from({ length: 79 }, (_, index) => {
+    const start = 1.031215 + index * 4.1730152;
+    return { text: 'Hello.', type: 'word', start, end: start + .84114, speaker_id: `speaker_${index % 2}` };
+  });
+  const f = await fixture(t, { words }); useNativeTiming(f);
+  const extract = f.audio.extractSource, fit = f.audio.fitDubSegment;
+  f.audio.extractSource = async (...args) => ({ ...await extract(...args), duration: 420 });
+  f.audio.fitDubSegment = async (file, options) => {
+    const fitted = await fit(file, options);
+    const duration = Math.round(options.targetDuration * 48000) / 48000;
+    return { ...fitted, duration, tempo: 1 / duration };
+  };
+  const put = f.cache.put;
+  f.cache.put = (key, value, options) => put(key, value?.dub ? { ...value, dub: { ...value.dub,
+    words: value.dub.words.map(word => ({ ...word, end: word.end + 1 / 96000 })) } } : value, options);
+  f.elevenLabs.align = () => assert.fail('Valid native timestamps do not need another provider request.');
+  const result = await f.pipeline(f.input);
+  assert.equal(result.dubSegments.length, 79); assert.equal(f.calls.mix.length, 1);
+  assert.equal(result.subtitles.dub_tr.length, 79);
+  for (const [index, dub] of result.dubSegments.entries()) {
+    assert.ok(dub.duration > dub.end - dub.start, 'PCM rounds this window upward by less than one sample');
+    assert.equal(dub.words[0].start, dub.start); assert.equal(dub.words[0].end, dub.end);
+    assert.equal(result.subtitles.source_tr[index].end, words[index].end, 'source timestamps stay unchanged');
+    assert.equal(result.subtitles.dub_tr[index].end, dub.end);
+  }
+  const before = { synthesize: f.calls.synthesize.length, fit: f.calls.fit.length, align: f.calls.align.length };
+  const again = await f.pipeline({ ...f.input, outputs: { dub: true, subtitles: true } });
+  assert.equal(again.dubSegments.length, 79); assert.equal(f.calls.mix.length, 2);
+  assert.ok(again.dubSegments.every(dub => dub.words[0].end === dub.end), 'older cached boundary drift is normalized too');
+  assert.deepEqual({ synthesize: f.calls.synthesize.length, fit: f.calls.fit.length, align: f.calls.align.length }, before);
+});
+
 test('earlier cached generated turns recover their original timestamps without regenerating audio', async t => {
   const f = await fixture(t); useNativeTiming(f);
   const put = f.cache.put;
