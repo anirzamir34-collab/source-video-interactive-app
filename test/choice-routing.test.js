@@ -1,0 +1,79 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneOwnsStoryChoice } from '../public/choice-routing.js';
+import { groupSourceChoiceCards } from '../public/choice-groups.js';
+import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
+
+const action = extra => ({ actionId: 'source-a', sourceVerified: true, confidence: 0.95,
+  label: 'Observed source action', startTime: 10, endTime: 15, actionType: 'other', ...extra });
+
+test('scene envelopes and generic motion cannot turn a story action into an opening choice', () => {
+  for (const actionType of ['other', 'dialogue', 'story', 'body_transition', 'movement', 'tempo_change', 'camera_transition']) {
+    assert.equal(choiceSurfaceForAction(action({ actionType, adultScene: true, adultSceneId: 'same-scene' })), 'story');
+  }
+});
+
+test('existing verified action kinds have one surface even when their source contains speech', () => {
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'kiss', transcript: 'An existing line' })), 'approach');
+  assert.equal(choiceSurfaceForAction(action({ positionId: 'opaque-class', classificationReview: 'verified' })), 'panel');
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'dialogue' })), 'story');
+  assert.equal(choiceSurfaceForAction(action({ sourceVerified: false, actionType: 'kiss' })), 'unverified');
+});
+
+test('ordinary hand gestures and dialogue wording do not promote a story action', () => {
+  assert.equal(choiceSurfaceForAction(action({ label: 'Elini şakağına götürüp konuş', adultScene: true })), 'story');
+  assert.equal(choiceSurfaceForAction(action({ label: 'Kollarını bağlayıp izle', adultScene: true })), 'story');
+});
+
+test('a declared category requires interval evidence and confidence and cannot create a panel', () => {
+  const opening = action({ actionType: 'body_transition', choiceSurface: 'approach' });
+  assert.equal(choiceSurfaceForAction(opening), 'story');
+  assert.equal(choiceSurfaceForAction({ ...opening, choiceSurfaceEvidence: 'Source interval evidence', choiceSurfaceConfidence: 0.59 }), 'story');
+  assert.equal(choiceSurfaceForAction({ ...opening, choiceSurfaceEvidence: 'Source interval evidence', choiceSurfaceConfidence: 0.95 }), 'approach');
+  assert.equal(choiceSurfaceForAction(action({ choiceSurface: 'panel', choiceSurfaceConfidence: 1, choiceSurfaceEvidence: 'A scene label' })), 'story');
+});
+
+test('an explicitly evidenced ordinary contact keeps its story category', () => {
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'touch', choiceSurface: 'story',
+    choiceSurfaceConfidence: 0.95, choiceSurfaceEvidence: 'An ordinary greeting' })), 'story');
+});
+
+test('choice windows stop at the next category boundary instead of offering later source clips', () => {
+  const rows = [
+    action({ id: 'opening-a', choiceSurface: 'approach', startTime: 109.5, endTime: 117 }),
+    action({ id: 'talk-a', choiceSurface: 'story', startTime: 117, endTime: 126.5 }),
+    action({ id: 'talk-b', choiceSurface: 'story', startTime: 126.5, endTime: 136.5 }),
+    action({ id: 'talk-c', choiceSurface: 'story', startTime: 136.5, endTime: 149.5 }),
+    action({ id: 'opening-b', choiceSurface: 'approach', startTime: 149.5, endTime: 153.8 })
+  ];
+  assert.deepEqual(choiceSurfaceWindow(rows, 'approach', 109.5).map(row => row.id), ['opening-a']);
+  assert.deepEqual(choiceSurfaceWindow(rows, 'story', 117).map(row => row.id), ['talk-a', 'talk-b', 'talk-c']);
+  assert.deepEqual(choiceSurfaceWindow(rows, 'approach', 117), []);
+  assert.deepEqual(choiceSurfaceWindow(rows, 'approach', 149.5).map(row => row.id), ['opening-b']);
+});
+
+test('identical labels and origins never combine different category clips into one card', () => {
+  const clips = ['story', 'approach', 'panel'].map((choiceSurface, i) => action({
+    id: `clip-${i}`, sourceActionId: 'shared-origin', actionType: 'other', movementType: 'same-kind',
+    choiceSurface, startTime: i * 5, endTime: i * 5 + 4,
+    loopStartTime: i * 5, loopEndTime: i * 5 + 4
+  }));
+  const cards = groupSourceChoiceCards(clips, { contextFor: () => 'same-context', mergeWithinContext: true, preferredCount: 1 });
+  assert.equal(cards.length, 3);
+  assert.ok(cards.every(card => new Set(card.variants.map(clip => clip.choiceSurface)).size === 1));
+});
+
+test('only an exact verified source ID owns a story choice, not a scene-wide time envelope', () => {
+  const scene = { startTime: 0, endTime: 200, dialogue: [{ id: 'entry', sourceActionId: 'source-a', sourceVerified: true }] };
+  assert.equal(sceneOwnsStoryChoice(scene, action()), true);
+  assert.equal(sceneOwnsStoryChoice(scene, action({ actionId: 'different-source' })), false);
+});
+
+test('hardening preserves source times and assigns separate source categories without provider calls', () => {
+  const input = action({ actionType: 'kiss' });
+  const original = structuredClone(input);
+  const result = reviewAndHardenAnalysis({ videoDuration: 30, actions: [input, action({ actionId: 'line', startTime: 16, endTime: 21, actionType: 'dialogue' })] });
+  assert.deepEqual(result.analysis.actions.map(row => row.choiceSurface), ['approach', 'story']);
+  assert.deepEqual(input, original);
+  assert.deepEqual([withChoiceSurface(input).startTime, withChoiceSurface(input).endTime], [10, 15]);
+});

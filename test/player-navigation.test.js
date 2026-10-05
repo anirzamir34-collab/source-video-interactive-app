@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import * as choiceRouting from '../public/choice-routing.js';
 import { selectDiverseStoryActions } from '../public/story-engine.js';
 import { conversationEnd } from '../public/conversation-timing.js';
 import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
@@ -64,7 +65,7 @@ function fixture() {
     gameCursorTime: 0, adultSelectionToken: 0, gameState: 'DECISION_PENDING', stopListener: null
   };
   const els = new Proxy({ video: new Media() }, { get(target, key) { return target[key] ||= new Element(); } });
-  const scope = vm.createContext({ state, els, AbortController, DOMException,
+  const scope = vm.createContext({ ...choiceRouting, state, els, AbortController, DOMException,
     analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo,
     mediaClient: { conversationEndAt: (time, rows, duration) => conversationEnd(time, rows, [], { duration }) },
     setTimeout, clearTimeout,
@@ -95,6 +96,20 @@ test('scene exit resumes adjacent source footage when no choices remain', async 
   assert.equal(f.els.video.paused, false);
   assert.equal(f.state.gameState, 'SEGMENT_PLAYING');
   assert.equal(f.state.navigationSeeking, false);
+});
+
+test('an unowned story action inside a wide scene envelope retains its ordinary choice surface', () => {
+  const f = fixture();
+  const scene = { id: 'wide-envelope', startTime: 0, endTime: 90, dialogue: [], positions: [] };
+  f.state.adultScenes = [scene];
+  f.state.gameCursorTime = 10;
+  f.state.analysis.actions = [{ actionId: 'ordinary-line', sourceVerified: true, actionType: 'dialogue',
+    label: 'Existing source line', startTime: 10, endTime: 20 }];
+  f.findAdultSceneAt = () => scene;
+  f.enterAdultScene = () => { throw Error('A scene envelope must not consume this source action'); };
+  f.renderChoices();
+  assert.equal(f.els.choices.children.length, 1);
+  assert.match(f.els.choices.children[0].html, /Existing source line/);
 });
 
 test('leaving a chapter plays an unanalyzed gap before the next chapter', async () => {

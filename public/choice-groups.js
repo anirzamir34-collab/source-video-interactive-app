@@ -1,4 +1,5 @@
 import { clipRange } from './sequence-integrity.js';
+import { choiceSurfaceKey } from './choice-routing.js';
 
 const text = value => String(value || '').trim();
 export const sourceActionLabel = value => text(value)
@@ -77,6 +78,7 @@ export function groupSourceChoiceCards(clips, {
       clip.actionOriginId || clip.derivedFromVerifiedSegment);
     const stableContext = mergeWithinContext && occurrence;
     const key = JSON.stringify([
+      choiceSurfaceKey(clip),
       occurrence || declaredScope,
       stableContext ? '' : text(clip.partnerTrackId),
       stableContext ? '' : text(clip.subjectTrackId),

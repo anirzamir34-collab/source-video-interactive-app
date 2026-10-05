@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import * as choiceRouting from '../public/choice-routing.js';
 import { sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 import * as gameplay from '../public/adult-gameplay.js';
 import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
@@ -99,7 +100,7 @@ function fixture() {
   const els = new Proxy({ video, panelPlaybackRecovery: null }, {
     get(target, key) { return Object.hasOwn(target, key) ? target[key] : (target[key] = new Element()); }
   });
-  const scope = vm.createContext({ state, els, AbortController, DOMException,
+  const scope = vm.createContext({ ...choiceRouting, state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
@@ -1076,8 +1077,10 @@ test('an inactive scene trace excludes retained group unlocks and source ranges'
 
 test('verified normal dialogue has its own choices and earns no progress before the opening choices appear', async () => {
   const f = runtimeFixture();
+  f.state.adultScene.dialogue = [
+    { id: 'source-dialogue', label: 'Existing line', sourceVerified: true, nonIntimate: true, choiceSurface: 'story', startTime: 0, endTime: 10 }
+  ];
   f.state.adultScene.foreplay = [
-    { id: 'source-dialogue', label: 'Existing line', sourceVerified: true, nonIntimate: true, startTime: 0, endTime: 10 },
     { id: 'source-opening', label: 'Existing opening', sourceVerified: true, startTime: 10, endTime: 20 }
   ];
   f.els.video.time = 0;
@@ -1105,6 +1108,35 @@ test('verified normal dialogue has its own choices and earns no progress before 
   assert.equal(f.state.femaleSceneProgress, 0);
   assert.equal(f.els.video.currentTime, 10);
   assert.equal(f.els.video.playCalls, 1);
+});
+
+test('a later source dialogue and opening interval retain exclusive surfaces between unlocked chapters', () => {
+  const f = runtimeFixture();
+  f.state.adultScene.positions = [chapter('first', 0), chapter('next', 60)];
+  f.state.adultScene.dialogue = [{ id: 'later-line', label: 'Existing line', sourceVerified: true,
+    choiceSurface: 'story', nonIntimate: true, startTime: 35, endTime: 45 }];
+  f.state.adultScene.foreplay = [{ id: 'later-opening', label: 'Existing opening', sourceVerified: true,
+    choiceSurface: 'approach', startTime: 45, endTime: 50 }];
+  f.state.adultUnlockedPositionIds = new Set(['first', 'next']);
+  f.state.adultRevealedPositionIds = new Set(['first', 'next']);
+  f.state.adultSexUnlocked = true;
+  f.els.video.time = 35;
+  f.state.adultTimelineFloor = 35;
+  f.renderAdultPanel(f.state.adultScene);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['later-line']);
+  f.els.video.time = 45;
+  f.state.adultTimelineFloor = 45;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
+  assert.equal(f.els.choices.classes.has('hidden'), true);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['later-opening']);
+  f.els.video.time = 60;
+  f.state.adultTimelineFloor = 60;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.els.foreplaySection.classes.has('hidden'), true);
+  assert.equal(f.els.foreplayChoices.children.length, 0);
 });
 
 test('unique opening clips fill the budget and open the core panel without repeat farming', async () => {

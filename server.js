@@ -24,6 +24,7 @@ import { runtimeReady } from './lib/turkish-media/readiness.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
+import { withChoiceSurface } from './public/choice-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -474,7 +475,10 @@ Return ONLY valid JSON with this exact shape:
       "actionId": "tl-001",
       "sceneId": "scene-001",
       "actionLevel": "main|bonus",
-      "actionType": "position|tempo_change|kiss|touch|clothing|body_transition|partner_transition|camera_transition|outcome|aftermath|other",
+      "actionType": "dialogue|story|scene_transition|position|tempo_change|kiss|touch|clothing|body_transition|partner_transition|camera_transition|outcome|aftermath|other",
+      "choiceSurface": "story|approach|panel",
+      "choiceSurfaceEvidence": "brief direct source evidence for this category",
+      "choiceSurfaceConfidence": 0.0,
       "adultScene": false,
       "adultSceneId": "",
       "adultSceneStartTime": 0,
@@ -542,6 +546,9 @@ Return ONLY valid JSON with this exact shape:
 }
 
 Rules:
+- Assign exactly one choiceSurface to each source action: story for dialogue and ordinary narrative actions, approach for directly verified opening interactions, or panel for an already verified panel control. Supply choiceSurfaceEvidence and choiceSurfaceConfidence for that specific interval.
+- Speech occurring during an action does not change its surface. Walking, sitting, watching, listening and camera changes stay story unless the supplied visual evidence independently proves another category.
+- Never combine separate source actions from different surfaces into one option or extend their timestamps across a category boundary. A conversation mentioning an action is not visual evidence that it happened.
 - timestamps must be within 0 and ${duration}
 - startTime must be smaller than endTime
 - no duplicate or invented actions; return separate chronological atomic segments
@@ -554,7 +561,7 @@ Rules:
 - Every UI-facing string must be natural Turkish: label, narrativeChoiceLabel, sceneTitle, sceneGoal, positionLabel, movementType and outcomeLabel. Preserve proper names. Translate only what the supplied source evidence supports; never add meaning while translating.
 - Detect every verified adult scene boundary and mark adultScene true only inside that real scene.
 - Set one stable adultSceneId for every action belonging to the same adult scene.
-- Every action whose time interval falls inside a verified adult scene must keep adultScene true and the same adultSceneId, including conversation, pauses, transitions and camera changes. Never emit a generic non-adult timeline choice from inside that interval.
+- Scene IDs and scene envelopes describe chronology only. Conversation, pauses and camera changes inside an envelope keep their independently verified choiceSurface; do not turn them into opening interactions or panel controls.
 - Treat one continuous consensual intimate encounter as one adultScene across foreplay, oral/manual activity, position changes, climax and aftermath. Do not create a new adultSceneId merely because the interaction changes from touching/undressing to a sexual position or from one position to another.
 - Start a new adultSceneId only after a clear narrative, location, participant or substantial time break.
 - A verified partner switch inside one continuous group encounter is not a new adultSceneId; keep the encounter together and separate it with partnerTrackId plus a new positionOccurrenceId.
@@ -865,6 +872,9 @@ Rules:
         sceneId: String(action.sceneId || `scene-${String(index + 1).padStart(3, '0')}`),
         actionLevel: action.actionLevel === 'bonus' ? 'bonus' : 'main',
         actionType: String(action.actionType || 'other'),
+        choiceSurface: ['story', 'approach', 'panel'].includes(action.choiceSurface) ? action.choiceSurface : '',
+        choiceSurfaceEvidence: String(action.choiceSurfaceEvidence || '').trim().slice(0, 500),
+        choiceSurfaceConfidence: Math.max(0, Math.min(1, Number(action.choiceSurfaceConfidence) || 0)),
           adultScene: Boolean(action.adultScene),
           adultSceneId: String(action.adultSceneId || ''),
           adultSceneStartTime: Number(action.adultSceneStartTime ?? action.startTime),
@@ -947,6 +957,7 @@ Rules:
         sourceEnd: Number(action.sourceEnd ?? action.endTime),
         confidence: Number(action.confidence || 0)
       }))
+      .map(action => withChoiceSurface(action))
       .filter((action) =>
         action.label &&
         action.startTime + 0.05 >= introEndTime &&

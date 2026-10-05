@@ -4,6 +4,7 @@ import { webcrypto } from 'node:crypto';
 import { IDBFactory } from 'fake-indexeddb';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import * as choiceRouting from '../public/choice-routing.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
 import { createAnalysisResponseCache, analysisRequestKey } from '../public/analysis-response-cache.js';
 import { geminiQuotaFailure } from '../public/gemini-quota.js';
@@ -135,7 +136,7 @@ function serverHandler(generateContent) {
   const start = source.indexOf('async (req, res) => {', route);
   const end = source.indexOf("\napp.post('/api/external-analyze'", start);
   return vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
-    GoogleGenAI: class { models = { generateContent }; },
+    ...choiceRouting, GoogleGenAI: class { models = { generateContent }; },
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
     storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey,

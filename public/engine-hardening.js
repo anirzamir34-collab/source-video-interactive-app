@@ -2,6 +2,7 @@ import { hasDeclaredPartialCoverage } from './analysis-recovery.js';
 import { clipRange, sourceRangeForClip } from './sequence-integrity.js';
 import { mergeStoryContexts } from './story-engine.js';
 import { isClassificationCandidate, isVerifiedReviewWithinSource, knownPositionId } from './classification-integrity.js';
+import { withChoiceSurface } from './choice-routing.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 
@@ -480,7 +481,7 @@ export function reviewAndHardenAnalysis(input = {}) {
         claimedActivityType: route
       });
     }
-    accepted.push({ ...clean, confidence });
+    accepted.push(withChoiceSurface({ ...clean, confidence }));
   }
 
   // Resolve conflicting overlapping canonical position labels conservatively.

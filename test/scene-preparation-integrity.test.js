@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import * as choiceRouting from '../public/choice-routing.js';
 import * as gameplay from '../public/adult-gameplay.js';
 import { sourceRangeForClip } from '../public/sequence-integrity.js';
 import { matchSceneIntroductions } from '../public/scene-entry.js';
 import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
 import { interactionEntryGuard, interactionClipGuard } from '../public/interaction-timeline.js';
+import { sourceSpeechOverlaps } from '../public/source-transcript.js';
 
 test('verified action time repairs zeroed position and loop metadata', () => {
   const repaired = gameplay.normalizeSourceActionTimes({ startTime: 332.653, endTime: 345.5,
@@ -45,10 +47,10 @@ const action = (id, start, end, extra = {}) => ({
   loopStartTime: start, loopEndTime: end, ...extra
 });
 
-function prepare(actions, overrides = {}) {
-  const state = { analysis: { actions }, analysisFingerprint: 'test' };
+function prepare(actions, overrides = {}, sourceContext = null) {
+  const state = { analysis: { actions }, analysisFingerprint: 'test', sourceContext };
   const scope = vm.createContext({
-    ...gameplay, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole,
+    ...gameplay, ...choiceRouting, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole, sourceSpeechOverlaps,
     sourceIdentityLabel, sourceDisplayLabel, interactionEntryGuard,
     bindActionCharacter: item => item,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
@@ -92,9 +94,50 @@ test('ordinary observation and opening dialogue stay outside the panel', () => {
   });
   assert.equal(state.adultScenes.length, 1);
   assert.equal(state.adultScenes[0].startTime, 332);
-  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => item.id), ['talk', 'kiss', 'listen']);
+  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => item.id), ['kiss']);
+  assert.deepEqual(Array.from(state.adultScenes[0].dialogue, item => item.id), ['talk', 'listen']);
   assert.equal(state.adultScenes[0].positions[0].startTime, 390);
   assert.equal(state.adultAnalysisTrace.actions[0].route, 'NOT_ROUTED');
+});
+
+test('the reported 117–149.5 second dialogue is stored separately from its adjacent opening and panel clips', () => {
+  const cast = { subjectTrackId: 'actor-a', partnerTrackId: 'actor-b' };
+  const plain = (id, start, end, type, adultScene = false) => action(id, start, end, {
+    ...cast, actionType: type, adultScene, adultSceneId: adultScene ? 'scene-a' : '',
+    adultSceneStartTime: adultScene ? 149.5 : start, adultSceneEndTime: adultScene ? 207.63 : end,
+    positionId: '', positionLabel: ''
+  });
+  const rows = [
+    plain('ordinary-motion', 93, 102, 'body_transition'),
+    plain('ordinary-line', 102, 109.5, 'other'),
+    plain('tl-009', 109.5, 117, 'touch'),
+    plain('tl-010', 117, 126.5, 'other'),
+    plain('tl-011', 126.5, 136.5, 'other'),
+    plain('tl-012', 136.5, 149.5, 'other'),
+    plain('tl-013', 149.5, 153.8, 'clothing', true),
+    plain('tl-014', 153.8, 166.62, 'kiss', true),
+    plain('tl-015', 166.62, 179.43, 'touch', true),
+    plain('tl-016', 179.43, 196, 'touch', true),
+    action('panel-control', 196, 207.63, { ...cast, actionType: 'position',
+      positionStartTime: 196, positionEndTime: 207.63 })
+  ];
+  rows.find(row => row.actionId === 'tl-010').label = 'Elini şakağına götürüp konuş';
+  const original = structuredClone(rows);
+  const state = prepare(rows, {}, { segments: [
+    { startTime: 117, endTime: 126.5 }, { startTime: 126.5, endTime: 136.5 }, { startTime: 136.5, endTime: 149.5 }
+  ] });
+  const scene = state.adultScenes[0];
+  assert.deepEqual(Array.from(scene.dialogue, item => item.id), ['tl-010', 'tl-011', 'tl-012']);
+  assert.deepEqual(Array.from(scene.foreplay, item => item.id), ['tl-009', 'tl-013', 'tl-014', 'tl-015', 'tl-016']);
+  assert.equal(scene.positions.length, 1);
+  const categories = [...scene.dialogue, ...scene.foreplay, ...scene.positions.flatMap(item => item.movements)];
+  assert.equal(new Set(categories.map(item => item.id)).size, categories.length);
+  for (const row of state.adultAnalysisTrace.actions.filter(row => ['tl-010', 'tl-011', 'tl-012'].includes(row.actionId))) {
+    assert.equal(row.route, 'DIALOGUE');
+    assert.equal(row.choiceSurface, 'story');
+  }
+  assert.equal(state.adultAnalysisTrace.actions[0].choiceSurface, 'story');
+  assert.deepEqual(rows, original);
 });
 
 test('a verified introduction with a different scene ID opens the panel before its first position', () => {
@@ -106,7 +149,8 @@ test('a verified introduction with a different scene ID opens the panel before i
     adultSceneStartTime: 217.5, adultSceneEndTime: 319.3, actionType: 'touch',
     positionId: '', positionLabel: '' }),
   action('transition', 319.3, 328, { ...cast, adultSceneId: 'main',
-    adultSceneStartTime: 319.3, adultSceneEndTime: 400, actionType: 'body_transition',
+    adultSceneStartTime: 319.3, adultSceneEndTime: 400, actionType: 'body_transition', choiceSurface: 'approach',
+    choiceSurfaceEvidence: 'Observed opening transition', choiceSurfaceConfidence: 0.95,
     positionId: '', positionLabel: '' })];
   const core = action('core', 328, 346, { ...cast, adultSceneId: 'main', actionType: 'position',
     adultSceneStartTime: 319.3, adultSceneEndTime: 400,
@@ -246,9 +290,10 @@ test('adjacent same-label dialogue and introduction retain their separate progre
   assert.equal(state.adultScenes.length, 1);
   assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item =>
     [item.id, item.startTime, item.endTime, item.nonIntimate]), [
-    ['dialogue', 80, 90, true],
     ['approach', 90, 100, false]
   ]);
+  assert.deepEqual(Array.from(state.adultScenes[0].dialogue, item =>
+    [item.id, item.startTime, item.endTime, item.nonIntimate]), [['dialogue', 80, 90, true]]);
   assert.deepEqual(actions, original);
 });
 
@@ -305,7 +350,8 @@ test('verified opaque position labels survive scene preparation with the origina
 test('a verified adjacent transition opens a group without becoming core evidence or hiding the entry movement', () => {
   const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
   const transition = action('entry:a', 6, 9.9, { ...cast, adultScene: false, adultSceneId: 'intro:a',
-    actionType: 'body_transition', positionId: '', positionLabel: '' });
+    actionType: 'body_transition', choiceSurface: 'approach',
+    choiceSurfaceEvidence: 'Observed opening transition', choiceSurfaceConfidence: 0.95, positionId: '', positionLabel: '' });
   const core = action('core:a', 10, 20, { ...cast, adultSceneId: 'core:a', actionType: 'position',
     positionLabel: 'Chapter A', positionStartTime: 10, positionEndTime: 20 });
   const original = structuredClone([transition, core]);
@@ -332,7 +378,8 @@ test('a preceding transition cannot become an entry across another cast, a wide 
     positionStartTime: 10, positionEndTime: 20 });
   for (const patch of [{ partnerTrackId: 'partner:b' }, { endTime: 9.5, loopEndTime: 9.5 },
     { sourceVerified: false }, { startTime: null }]) {
-    const transition = action('entry:a', 6, 9.9, { ...cast, actionType: 'body_transition',
+    const transition = action('entry:a', 6, 9.9, { ...cast, actionType: 'body_transition', choiceSurface: 'approach',
+    choiceSurfaceEvidence: 'Observed opening transition', choiceSurfaceConfidence: 0.95,
       positionId: '', positionLabel: '', ...patch });
     const state = prepare([transition, core]);
     const position = state.adultScenes[0].positions[0];
