@@ -746,7 +746,7 @@ async function testGeminiApiKey() {
     const response = await fetch('/api/gemini-key-status', {
       method: 'POST',
       headers: geminiRequestHeaders({ 'Content-Type': 'application/json' }),
-      body: '{}'
+      body: JSON.stringify({ verify: true })
     });
     const body = await response.json().catch(() => ({}));
     state.geminiProviderStatus = { ...body, state: String(body.state || (response.ok ? 'available' : 'unavailable')) };

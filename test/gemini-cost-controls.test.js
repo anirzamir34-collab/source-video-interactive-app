@@ -167,3 +167,24 @@ test('quota exhaustion during recovery stops all not-yet-started sheet calls', a
   assert.ok(calls <= 4); assert.equal(response.statusCode, 429);
   assert.equal(response.body.reason, 'GEMINI_RATE_LIMITED'); assert.equal(response.body.retryable, false);
 });
+
+test('old tabs polling key status spend zero inference calls; an explicit test calls once', async () => {
+  const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const route = source.indexOf("app.post('/api/gemini-key-status'");
+  const start = source.indexOf('async (req, res) => {', route);
+  const end = source.indexOf("\napp.get('/health'", start);
+  let calls = 0;
+  const handler = vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
+    clientGeminiApiKey: () => 'test-account', GEMINI_DEFAULT_MODEL: 'test-model',
+    GoogleGenAI: class { models = { generateContent: async () => { calls++; return { usageMetadata: {} }; } }; },
+    addGeminiUsage: usage => { usage.requests++; return usage; }, emptyGeminiUsage: () => ({ requests: 0 }),
+    process: { env: {} }, console: { info() {} }, quotaRetrySeconds: () => 0
+  });
+  for (let i = 0; i < 60; i++) {
+    const response = serverResponse(); await handler({ body: {} }, response);
+    assert.equal(response.body.providerAccessVerified, false);
+  }
+  assert.equal(calls, 0);
+  const response = serverResponse(); await handler({ body: { verify: true } }, response);
+  assert.equal(calls, 1); assert.equal(response.body.state, 'available');
+});

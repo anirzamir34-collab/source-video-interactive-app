@@ -1470,6 +1470,11 @@ app.post('/api/gemini-key-status', async (req, res) => {
   }
 
   const model = process.env.TRANSLATION_MODEL || process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
+  // Older open tabs poll this route every minute. Configuration queries must
+  // remain inference-free too; a real provider probe needs explicit intent.
+  if (req.body?.verify !== true) return res.json({ ok: true, state: 'configured', source, model,
+    providerAccessVerified: false,
+    message: 'Gemini anahtarı yapılandırılmış. Bağlantıyı Test et düğmesiyle doğrulayabilirsin.' });
   try {
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
