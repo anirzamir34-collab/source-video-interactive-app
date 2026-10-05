@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toggleFullscreen } from '../public/fullscreen.js';
+import { toggleFullscreen, revealFullscreenChoices } from '../public/fullscreen.js';
 
 const statusNode = () => ({ hidden: true, textContent: '', classList: { remove() {} } });
 
@@ -67,4 +67,18 @@ test('webkit fullscreen uses matching enter and exit APIs with the original rece
   document.webkitFullscreenElement = stage;
   assert.equal(await toggleFullscreen({ document, stage, status: statusNode() }), true);
   assert.equal(entered, 1); assert.equal(exited, 1);
+});
+
+test('entering fullscreen reveals all choices, while dialogue and exit keep their current surface', () => {
+  const stage = {};
+  const panel = { classList: { contains: value => value === 'hidden' ? false : value === 'compact-collapsed' } };
+  let expansions = 0;
+  const options = { stage, panel, expand: () => { expansions++; } };
+  assert.equal(revealFullscreenChoices({ ...options, document: { fullscreenElement: stage } }), true);
+  assert.equal(revealFullscreenChoices({ ...options, document: { webkitFullscreenElement: stage } }), true);
+  assert.equal(expansions, 2);
+  assert.equal(revealFullscreenChoices({ ...options, document: { fullscreenElement: null } }), false);
+  assert.equal(revealFullscreenChoices({ ...options, document: { fullscreenElement: stage },
+    panel: { classList: { contains: () => true } } }), false);
+  assert.equal(expansions, 2);
 });

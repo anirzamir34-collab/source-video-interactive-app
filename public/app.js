@@ -1,4 +1,4 @@
-import { toggleFullscreen } from './fullscreen.js';
+import { toggleFullscreen, revealFullscreenChoices } from './fullscreen.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
@@ -6322,16 +6322,16 @@ function updateFullscreenButton() {
 
 updateFullscreenButton();
 
-document.addEventListener('fullscreenchange', () => {
+function syncFullscreenInteraction() {
   keepGameVideoControlsHidden();
   syncAdultPanelPlacement(fullscreenStage);
+  if (state.adultMode) revealFullscreenChoices({ document, stage: fullscreenStage,
+    panel: els.adultInteractionPanel, expand: () => setAdultPanelExpanded(true) });
   updateFullscreenButton();
-});
+}
 
-document.addEventListener('webkitfullscreenchange', () => {
-  syncAdultPanelPlacement(fullscreenStage);
-  updateFullscreenButton();
-});
+document.addEventListener('fullscreenchange', syncFullscreenInteraction);
+document.addEventListener('webkitfullscreenchange', syncFullscreenInteraction);
 
 
 // VIDEO URL IMPORT

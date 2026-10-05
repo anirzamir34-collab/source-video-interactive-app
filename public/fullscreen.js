@@ -22,3 +22,12 @@ export async function toggleFullscreen({ document, stage, screen, status }) {
     return false;
   }
 }
+
+// The compact dock can be useful in the embedded player, but entering
+// fullscreen should expose the complete set of source-backed choices.
+export function revealFullscreenChoices({ document, stage, panel, expand }) {
+  const active = document?.fullscreenElement === stage || document?.webkitFullscreenElement === stage;
+  if (!active || !panel || panel.classList.contains('hidden')) return false;
+  expand?.();
+  return true;
+}
