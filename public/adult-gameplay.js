@@ -339,7 +339,8 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
     action?.sourceVerified === true &&
     resolvedFamily === canonicalId &&
     Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
-    String(action.positionEvidence || '').trim();
+    String(action.positionEvidence || '').trim() &&
+    String(action.movementType || '').trim();
   if (actionType === 'body_transition' && !verifiedSameFamilyBodyChange) return false;
   const structuralFamily = adultPositionFamilyFromBodyConfiguration(action);
   const activityClass = action.sourceVerified === true && ['oral', 'manual'].includes(canonicalId) &&
