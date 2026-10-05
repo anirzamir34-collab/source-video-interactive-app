@@ -7,6 +7,7 @@ import { conversationEnd } from './conversation-timing.js';
 // playback boundary; this client only follows its clock and renders captions.
 const API = '/api/turkish-media';
 const MAX_CHUNK = 10 * 1024 * 1024;
+export const AUDIO_UPLOAD_CHUNK_BYTES = 128 * 1024;
 const secretKey = /^(?:.*api[_-]?key|xi-api-key|x-elevenlabs-key|authorization|password|access[_-]?token|refresh[_-]?token|__proto__|constructor|prototype)$/i;
 
 function jsonCopy(value) {
@@ -44,7 +45,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   fetchImpl = globalThis.fetch, AudioClass = globalThis.Audio, clock = {},
   getElevenLabsApiKey = () => '', getGeminiApiKey = () => '',
   pollIntervalMs = 1200, requestTimeoutMs = 30000, uploadRequestTimeoutMs = 120000, assetTimeoutMs = 5 * 60 * 1000,
-  chunkSize = 5 * 1024 * 1024, prepareSourceAudio = createSourceAudioPreparer(),
+  chunkSize = AUDIO_UPLOAD_CHUNK_BYTES, uploadIdleTimeoutMs = 30000, prepareSourceAudio = createSourceAudioPreparer(),
   XMLHttpRequestClass = globalThis.XMLHttpRequest,
   retryDelayMs = 1000, maxJobWaitMs = 6 * 60 * 60 * 1000,
   urlImpl = globalThis.URL, baseUrl = globalThis.location?.href || 'http://localhost/'
@@ -101,18 +102,35 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const timeoutMs = Number.isFinite(Number(options.timeoutMs)) && Number(options.timeoutMs) > 0
       ? Number(options.timeoutMs)
       : (asBlob ? assetTimeoutMs : requestTimeoutMs);
-    const deadline = timers.set(() => {
-      abandoned = true;
-      requestController.abort();
-      rejectAbort(Object.assign(new Error('Türkçe medya isteği zaman aşımına uğradı.'), { code: 'REQUEST_TIMEOUT' }));
-    }, timeoutMs);
+    const progressTransport = options.onUploadProgress && typeof XMLHttpRequestClass === 'function';
+    const idleMs = progressTransport && Number(options.activityTimeoutMs) > 0 ? Number(options.activityTimeoutMs) : 0;
+    let deadline, lastLoaded = 0, uploadFinished = false;
+    const armDeadline = () => {
+      if (deadline !== undefined) timers.clear(deadline);
+      deadline = timers.set(() => {
+        abandoned = true;
+        const error = Object.assign(new Error(idleMs
+          ? 'Ses aktarımında veri akışı durdu. Alınan ses korunarak bağlantı yeniden kontrol edilecek.'
+          : 'Türkçe medya isteği zaman aşımına uğradı.'), { code: idleMs ? 'UPLOAD_STALLED' : 'REQUEST_TIMEOUT' });
+        requestController.abort(error);
+        rejectAbort(error);
+      }, idleMs || timeoutMs);
+    };
+    armDeadline();
+    const uploadProgress = transfer => {
+      if (abandoned || !current(owner)) return;
+      if (idleMs && (transfer.loaded > lastLoaded || (transfer.phase === 'waiting' && !uploadFinished))) armDeadline();
+      lastLoaded = Math.max(lastLoaded, Number(transfer.loaded) || 0);
+      if (transfer.phase === 'waiting') uploadFinished = true;
+      options.onUploadProgress(transfer);
+    };
     try {
       const operation = (async () => {
         const address = internalUrl(path, baseUrl);
         const headers = requestHeaders(path, options);
-        const response = options.onUploadProgress && typeof XMLHttpRequestClass === 'function'
+        const response = progressTransport
           ? await requestWithUploadProgress(address, { ...options, headers, signal: requestController.signal,
-            onProgress: options.onUploadProgress, XMLHttpRequestClass })
+            timeoutMs: idleMs ? 0 : timeoutMs, onProgress: uploadProgress, XMLHttpRequestClass })
           : await requestFetch(address, { ...options, headers, credentials: 'same-origin', signal: requestController.signal });
         const body = asBlob && response.ok ? await response.blob() : await response.json().catch(() => ({}));
         if (!response.ok) throw Object.assign(new Error(errorMessage(body?.error || body?.message,
@@ -360,10 +378,10 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       throw Object.assign(new Error('Türkçe medya için yalnız ayrılmış ses yüklenebilir.'), { code: 'SOURCE_AUDIO_REQUIRED' });
     }
     if (source.size > MAX_AUDIO_BYTES) throw Object.assign(new Error('Ayrılan ses dosyası 250 MiB sınırını aşıyor.'), { code: 'SOURCE_AUDIO_TOO_LARGE' });
-    const requestedChunkSize = Math.max(1, Math.min(MAX_CHUNK, Math.floor(Number(chunkSize) || 5 * 1024 * 1024)));
+    const requestedChunkSize = Math.max(1, Math.min(MAX_CHUNK, Math.floor(Number(chunkSize) || AUDIO_UPLOAD_CHUNK_BYTES)));
     const fileName = String(source.name || 'source-audio.mp3').slice(0, 240);
     const timeline = Number.isFinite(timelineDuration) && timelineDuration > 0 ? timelineDuration : undefined;
-    const uploadIdentity = String(timeline ?? 'container');
+    const uploadIdentity = `${timeline ?? 'container'}:chunks-${requestedChunkSize}`;
     let sourceKeys = sourceUploadKeys.get(source);
     if (!sourceKeys) { sourceKeys = new Map(); sourceUploadKeys.set(source, sourceKeys); }
     let clientUploadKey = sourceKeys.get(uploadIdentity);
@@ -414,13 +432,13 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         for (let attempt = 0; ; attempt++) {
           try {
             await request(`${API}/uploads/${encodeURIComponent(uploadId)}/chunk/${index}`, {
-              method: 'POST', timeoutMs: uploadRequestTimeoutMs,
+              method: 'POST', timeoutMs: uploadRequestTimeoutMs, activityTimeoutMs: uploadIdleTimeoutMs,
               onUploadProgress: transfer => {
                 if (!current(owner)) return;
                 notify({ state: 'UPLOADING', waiting: transfer.phase === 'waiting',
                   progress: { loaded: Math.min(source.size, acknowledgedBytes() + Math.min(chunk.size, transfer.loaded)),
                     total: source.size, unit: 'bytes' },
-                  message: transfer.phase === 'waiting' ? 'MP3 gönderildi; sunucunun kaydetmesi bekleniyor.' : 'MP3 gönderiliyor.' });
+                  message: transfer.phase === 'waiting' ? 'Gönderilen ses bölümü kaydediliyor.' : 'MP3 gönderiliyor.' });
               },
               headers: { 'Content-Type': 'application/octet-stream' }, body: chunk }, owner);
             break;
@@ -428,7 +446,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
             if (!current(owner) || error.name === 'AbortError' || attempt >= 2 ||
                 (error.status && error.status < 500 && ![408,429].includes(error.status))) throw error;
             notify({ state: 'UPLOADING', waiting: true, progress: { loaded: acknowledgedBytes(), total: source.size, unit: 'bytes' },
-              message: 'Bağlantı yeniden kuruluyor; MP3’ün yalnız eksik parçası tekrar gönderilecek.' });
+              message: 'Bağlantı yeniden kontrol ediliyor; alınan ses korunuyor, yalnız eksik bölüm gönderilecek.' });
             await delay(retryDelayMs * (attempt + 1), owner);
             status = await request(`${API}/uploads/${encodeURIComponent(uploadId)}/status`, { timeoutMs: uploadRequestTimeoutMs }, owner);
             done = completed(status);
@@ -438,7 +456,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       }
       done.add(index);
       notify({ state: 'UPLOADING', progress: { percent: Math.floor(acknowledgedBytes() / source.size * 100),
-          loaded: acknowledgedBytes(), total: source.size, unit: 'bytes' }, message: 'MP3 parçası sunucu tarafından alındı.' });
+          loaded: acknowledgedBytes(), total: source.size, unit: 'bytes' }, lastServerContactAt: timers.now(),
+        message: 'Gönderilen ses sunucu tarafından kaydedildi.' });
     }
     return uploadId;
   }
@@ -505,7 +524,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const selected = lastStart;
     try {
       if (!/^audio\//i.test(source?.type || '')) {
-        notify({ state: 'PREPARING_AUDIO', progress: { percent: 0 }, message: 'Videodan ses cihazda ayrılıyor.' });
+        notify({ origin: 'device', phase: 'extracting', state: 'PREPARING_AUDIO', progress: { percent: 0 }, message: 'Videodan ses cihazda ayrılıyor.' });
       }
       const audioSource = await prepareSourceAudio(source, { signal: owner.signal, duration: video.duration,
         onProgress: ({ phase, loaded = 0, total = 0, bytes }) => {

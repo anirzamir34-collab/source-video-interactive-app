@@ -163,7 +163,7 @@ function fixture(t, { strict = nativeNames, customClock = false, explicitNativeF
     DOMException, Uint8Array, console });
   vm.runInContext('(' + installBrowserNatives.toString() + ')()', realm, { filename: 'test/native-browser-receivers.js' });
   if (noFrames) vm.runInContext('delete globalThis.requestAnimationFrame; delete globalThis.cancelAnimationFrame;', realm);
-  vm.runInContext('"use strict";\n' + clientSource.replace(/^import .*;\n/gm, '').replace('export function createTurkishMediaClient', 'function createTurkishMediaClient')
+  vm.runInContext('"use strict";\n' + clientSource.replace(/^import .*;\n/gm, '').replace(/^export /gm, '')
     + '\nglobalThis.createClient = createTurkishMediaClient;', realm, { filename: 'public/turkish-media-client.js' });
   const video = new Media(), overlay = caption(), speaker = caption(), text = caption();
   class Audio extends Media { constructor() { super(); audios.push(this); } }
