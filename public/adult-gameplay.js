@@ -315,15 +315,21 @@ export function resolveVerifiedAdultPosition(action = {}) {
     ['oral', 'manual'].includes(idFamily)
     ? (activityIsVerified ? activityFamily : (labelFamily || idFamily))
     : '';
-  // An explicitly named action is direct evidence for that exact playable
-  // interval. A single contradictory posture field must not relabel it and
-  // send a Cowgirl card into a Missionary range. Structural inference remains
-  // the fallback when the interval itself does not name a position.
+  // An explicitly named action is direct evidence for most position families.
+  // Cowgirl vs reverse-cowgirl is the exception: the verified orientation
+  // relative to MAIN_MALE is the defining distinction, so a stale/inverted
+  // text label must never overrule a high-confidence structural observation.
   const explicitTextualFamily = explicitNamedActionPosition ? textualFamily : '';
+  const topOrientationFamily = (
+    ['cowgirl', 'reverse-cowgirl'].includes(structuralFamily) &&
+    ['cowgirl', 'reverse-cowgirl'].includes(textualFamily)
+  ) ? structuralFamily : '';
   const correctedFromStructure = Boolean(
-    !protectedActivityFamily && !explicitTextualFamily && structuralFamily && structuralFamily !== textualFamily
+    !protectedActivityFamily && structuralFamily && structuralFamily !== textualFamily &&
+    (topOrientationFamily || !explicitTextualFamily)
   );
-  const family = protectedActivityFamily || explicitTextualFamily || structuralFamily || textualFamily;
+  const family = protectedActivityFamily || topOrientationFamily ||
+    explicitTextualFamily || structuralFamily || textualFamily;
   return {
     family,
     correctedFromAction: Boolean(protectedActivityFamily && protectedActivityFamily !== declaredFamily) ||
@@ -1148,9 +1154,9 @@ export function isEnergeticSexMoment(movement = null) {
   return /\b(hizli|sert|derin|guclu|thrust|hard|deep)\b/.test(text);
 }
 
-// Reserve later energetic clips for the contextual control. Keep the first
-// energetic clip of each continuous source occurrence on a normal card, so
-// the player can reach the control without jumping into an unseen section.
+// Mark later energetic clips for the contextual control. These IDs are an
+// auxiliary control index only; the same verified clips remain available as
+// ordinary movement cards inside their own occurrence.
 export function exclusiveControlClipIds(position = {}) {
   const reserved = new Set();
   for (const occurrence of positionOccurrenceGroups(position)) {
