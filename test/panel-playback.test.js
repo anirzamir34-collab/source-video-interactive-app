@@ -1220,3 +1220,16 @@ test('verified interlude choices remain selectable without resetting the core ph
   assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
 });
+
+
+test('context-control clips stay visible as ordinary movement choices', () => {
+  const f = runtimeFixture();
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.selectAdultPosition('one', false);
+  assert.deepEqual(
+    new Set(f.state.adultScene.positions[0].activeMovementChoices.flatMap(card =>
+      card.variants.map(item => item.id))),
+    new Set(['one-0', 'one-1', 'one-2'])
+  );
+});
