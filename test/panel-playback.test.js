@@ -1224,12 +1224,12 @@ test('verified interlude choices remain selectable without resetting the core ph
 
 test('context-control clips stay visible as ordinary movement choices', () => {
   const f = runtimeFixture();
-  f.state.adultUnlockedPositionIds.add('one');
-  f.state.adultSexUnlocked = true;
+  f.addFemaleLust(35);
+  f.renderAdultProgressiveUI(true);
   f.selectAdultPosition('one', false);
+  const activeChoices = f.state.adultScene.positions[0].activeMovementChoices || [];
   assert.deepEqual(
-    new Set(f.state.adultScene.positions[0].activeMovementChoices.flatMap(card =>
-      card.variants.map(item => item.id))),
+    new Set(activeChoices.flatMap(card => card.variants.map(item => item.id))),
     new Set(['one-0', 'one-1', 'one-2'])
   );
 });
