@@ -6,6 +6,7 @@ export async function toggleFullscreen({ document, stage, screen, status }) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
       if (!exit) throw Error('Fullscreen exit is unavailable');
       await exit.call(document);
+      try { await screen?.orientation?.unlock?.(); } catch {}
     } else {
       const enter = stage?.requestFullscreen || stage?.webkitRequestFullscreen;
       if (!enter) throw Error('Fullscreen is unavailable');

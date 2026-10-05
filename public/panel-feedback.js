@@ -58,6 +58,7 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   const win = doc.defaultView;
   let frame = null;
   let waiting = false;
+  let lastMediaTime = Number(video.currentTime);
   let lastClip = null;
   let lastScope = null;
   let controlScope = null;
@@ -78,7 +79,7 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
     const feedback = clipPlaybackFeedback(clip, {
       currentTime: video.currentTime, paused: video.paused,
       waiting: waiting || snapshot.buffering,
-      seeking: video.seeking || snapshot.seeking, failed: snapshot.failed
+      seeking: video.seeking || snapshot.seeking, failed: snapshot.failed || Boolean(video.error)
     });
     controlDismissed = retainControlDismissal(controlDismissed, {
       scopeChanged: controlScope !== snapshot.controlScope, playbackState: feedback.state
@@ -118,8 +119,15 @@ export function attachPanelFeedback({ stage, panel, choices, video, getSnapshot 
   };
   const schedule = () => { if (frame === null) frame = win.requestAnimationFrame(update); };
   const onMedia = event => {
+    const mediaTime = Number(video.currentTime);
     if (event.type === 'waiting' || event.type === 'stalled') waiting = true;
     if (['playing', 'canplay', 'loadeddata', 'emptied'].includes(event.type)) waiting = false;
+    // Some browsers resume decoding without a fresh playing/canplay event.
+    // A ticking clock plus ready frames is recovery; a stationary timestamp,
+    // paused video or an unfinished seek is not.
+    if (event.type === 'timeupdate' && mediaTime > lastMediaTime &&
+        !video.paused && !video.seeking && Number(video.readyState) >= 3) waiting = false;
+    lastMediaTime = mediaTime;
     // A paused seek can finish without another playing/canplay event. Keep a
     // real buffer wait, but do not let the previous clip's wait survive it.
     if (event.type === 'seeked') waiting = Number(video.readyState) < 3;

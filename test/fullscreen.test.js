@@ -36,6 +36,29 @@ test('standard fullscreen exits instead of requesting fullscreen again', async (
   assert.equal(exits, 1);
 });
 
+test('successful fullscreen exit releases the orientation lock, including the webkit path', async () => {
+  for (const webkit of [false, true]) {
+    let unlocks = 0;
+    const document = webkit
+      ? { webkitFullscreenElement: {}, webkitExitFullscreen() {} }
+      : { fullscreenElement: {}, exitFullscreen() {} };
+    assert.equal(await toggleFullscreen({ document, stage: {},
+      screen: { orientation: { unlock() { unlocks++; } } }, status: statusNode() }), true);
+    assert.equal(unlocks, 1);
+  }
+});
+
+test('failed fullscreen exit retains the lock and an unsupported unlock does not fail a successful exit', async () => {
+  let unlocks = 0;
+  const document = { fullscreenElement: {}, exitFullscreen() { throw Error('blocked'); } };
+  assert.equal(await toggleFullscreen({ document, stage: {},
+    screen: { orientation: { unlock() { unlocks++; } } }, status: statusNode() }), false);
+  assert.equal(unlocks, 0);
+  document.exitFullscreen = () => {};
+  assert.equal(await toggleFullscreen({ document, stage: {},
+    screen: { orientation: { unlock() { throw Error('unsupported'); } } }, status: statusNode() }), true);
+});
+
 test('webkit fullscreen uses matching enter and exit APIs with the original receivers', async () => {
   let entered = 0, exited = 0;
   const stage = { webkitRequestFullscreen() { assert.equal(this, stage); entered++; } };

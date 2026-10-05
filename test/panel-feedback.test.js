@@ -117,3 +117,57 @@ test('a completed paused seek clears old buffering only when source media is rea
   fire('playing');
   assert.equal(label.textContent, 'Oynuyor');
 });
+
+function feedbackFixture(t) {
+  const frames = [];
+  const label = { textContent: '' };
+  const win = {
+    requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
+    cancelAnimationFrame() {},
+    MutationObserver: class { observe() {} disconnect() {} }
+  };
+  const doc = { defaultView: win,
+    getElementById: id => id === 'panelPlaybackStatus' ? label : null,
+    createTreeWalker: () => ({ nextNode: () => null }) };
+  const stage = { ownerDocument: doc, classList: { toggle() {} } };
+  const panel = { ownerDocument: doc, querySelectorAll: () => [] };
+  const video = new EventTarget();
+  Object.assign(video, { currentTime: 12, paused: false, seeking: false, readyState: 4, error: null });
+  t.after(attachPanelFeedback({ stage, panel, video,
+    getSnapshot: () => ({ scope: 'walk', controlScope: 'walk', clip: clip('trail', 10, 20) }) }));
+  const flush = () => { while (frames.length) frames.shift()(); };
+  const fire = name => { video.dispatchEvent(new Event(name)); flush(); };
+  flush();
+  return { video, label, fire };
+}
+
+test('native media errors replace playing or buffering feedback and recover with the media', t => {
+  const { video, label, fire } = feedbackFixture(t);
+  fire('waiting');
+  video.error = { code: 3 };
+  fire('error');
+  assert.equal(label.textContent, 'Yeniden dene');
+  video.error = null;
+  fire('canplay');
+  assert.equal(label.textContent, 'Oynuyor');
+});
+
+test('real playback progress clears stale waiting without clearing genuine buffering or a pending seek', t => {
+  const { video, label, fire } = feedbackFixture(t);
+  fire('waiting');
+  fire('timeupdate');
+  assert.equal(label.textContent, 'Hazırlanıyor', 'a repeated timestamp is not recovery');
+  video.readyState = 2;
+  video.currentTime = 12.2;
+  fire('timeupdate');
+  assert.equal(label.textContent, 'Hazırlanıyor');
+  video.readyState = 4;
+  video.seeking = true;
+  video.currentTime = 13;
+  fire('timeupdate');
+  assert.equal(label.textContent, 'Hazırlanıyor');
+  video.seeking = false;
+  video.currentTime = 13.2;
+  fire('timeupdate');
+  assert.equal(label.textContent, 'Oynuyor');
+});
