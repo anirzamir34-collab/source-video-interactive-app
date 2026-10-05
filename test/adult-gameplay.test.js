@@ -1045,3 +1045,29 @@ test('verified same-family body changes remain playable inside their position oc
     movementType: 'pozisyon geçişi'
   }, 'cowgirl'), false);
 });
+
+
+test('cowgirl orientation metadata outranks a stale reverse label', () => {
+  const forwardFacing = {
+    sourceVerified: true,
+    actionType: 'position',
+    classificationReview: 'verified',
+    positionId: 'reverse-cowgirl',
+    positionLabel: 'Ters Kovboy Pozisyonu',
+    label: 'Ters kovboy pozisyonu',
+    receiverBodyOrientation: 'on_top_facing',
+    receiverSupport: 'straddling',
+    positionConfigurationConfidence: 0.96,
+    positionEvidence: 'Verified facing orientation relative to MAIN_MALE.'
+  };
+  assert.equal(resolveVerifiedAdultPosition(forwardFacing).family, 'cowgirl');
+
+  const awayFacing = {
+    ...forwardFacing,
+    positionId: 'cowgirl',
+    positionLabel: 'Kovboy Pozisyonu',
+    label: 'Kovboy pozisyonu',
+    receiverBodyOrientation: 'on_top_away'
+  };
+  assert.equal(resolveVerifiedAdultPosition(awayFacing).family, 'reverse-cowgirl');
+});
