@@ -3225,11 +3225,11 @@ function prepareAdultScenes() {
         ...linkedEntry,
         controlClipIds: [...controlClipIds],
         movementChoices: splitSparseMovementChoiceCards(buildVerifiedMovementChoices(
-          position.movements.filter(item => !controlClipIds.has(item.id)),
+          position.movements,
           position.label,
-          5,
+          8,
           position
-        ), 5)
+        ), 8)
       };
     });
 
@@ -4900,9 +4900,12 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // The main tab owns only the verified position entry. All later returns and
   // movements from the same canonical position live under its subchoices.
   const verifiedMovements = localMovements;
-  const movementPool = verifiedMovements.filter(item => !position.controlClipIds?.includes(item.id));
+  // Context-control clips are still ordinary source-backed choices. The
+  // contextual control is an alternate way to advance among them, not a
+  // reason to hide them from the panel.
+  const movementPool = verifiedMovements;
   const movementChoices = splitSparseMovementChoiceCards(
-    buildVerifiedMovementChoices(movementPool, position.label, 5, position), 5
+    buildVerifiedMovementChoices(movementPool, position.label, 8, position), 8
   );
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
