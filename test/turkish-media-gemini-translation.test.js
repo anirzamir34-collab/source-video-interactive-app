@@ -10,6 +10,20 @@ const scene = { utterances: [{ segmentId: 'source-1', speakerId: 'speaker-0', so
 const response = translations => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ translations }) }] }, finishReason: 'STOP' }] });
 const translated = [{ segmentId: 'source-1', text: 'Yine merhaba.' }];
 
+test('translation reports actual usage including thinking even when a completed response cannot publish', async () => {
+  const usage = { promptTokenCount: 120, candidatesTokenCount: 30, thoughtsTokenCount: 40, totalTokenCount: 190 };
+  const observed = [];
+  const provider = createTranslationProvider({ config: loadMediaConfig({ GEMINI_API_KEY: 'key' }),
+    request: async () => ({ ...response(translated), usageMetadata: usage }), onUsage: value => observed.push(value) });
+  await provider.translateScene(scene);
+  assert.deepEqual(observed, [usage]);
+  const blocked = createTranslationProvider({ config: loadMediaConfig({ GEMINI_API_KEY: 'key' }),
+    request: async () => ({ ...response(translated), usageMetadata: usage, promptFeedback: { blockReason: 'SAFETY' } }),
+    onUsage: value => observed.push(value) });
+  await assert.rejects(blocked.translateScene(scene), { code: 'TRANSLATION_BLOCKED' });
+  assert.deepEqual(observed, [usage, usage]);
+});
+
 test('Gemini is the only translation provider and model precedence follows existing Gemini configuration', () => {
   const config = loadMediaConfig({ GEMINI_API_KEY: ' server-key ', OPENAI_API_KEY: 'ignored-legacy-key' });
   assert.equal(config.translation.provider, 'gemini');

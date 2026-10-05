@@ -22,6 +22,8 @@ import { createMediaJobs } from './lib/turkish-media/jobs.js';
 import { installTurkishMediaRoutes } from './lib/turkish-media/routes.js';
 import { runtimeReady } from './lib/turkish-media/readiness.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
+import { geminiQuotaFailure } from './public/gemini-quota.js';
+import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +32,10 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const ANALYSIS_SCHEMA_VERSION = 6;
 const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
+const storyboardRequestCache = createAnalysisRequestCache();
+const analysisRevision = crypto.createHash('sha256').update(JSON.stringify([
+  fs.readFileSync(__filename, 'utf8'), process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL
+])).digest('hex');
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
 const upload = multer({
@@ -87,7 +93,7 @@ function resolveGeminiApiKey(req) {
 }
 
 function emptyGeminiUsage() {
-  return { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0 };
+  return { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
 }
 
 function addGeminiUsage(total, metadata = {}) {
@@ -655,23 +661,39 @@ Rules:
           }
         }))
       ];
-      return generateStoryboardWithRetry(async () => {
-        const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL,
-          contents: [{ role: "user", parts }],
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-            maxOutputTokens: 16384
-          }
-        });
-        addGeminiUsage(analysisUsage, response?.usageMetadata);
-        return response;
-      }, {
-        onRetry: (reason, attempt) => console.warn(
-          `[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/2: ${reason}`
-        )
-      });
+      const model = process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
+      const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles });
+      const requestUsage = emptyGeminiUsage();
+      let outcome = 'failed';
+      try {
+        const cached = await storyboardRequestCache.run(key, () => generateStoryboardWithRetry(async () => {
+          const response = await ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts }],
+            config: {
+              responseMimeType: "application/json",
+              temperature: 0.1,
+              maxOutputTokens: 16384
+            }
+          });
+          addGeminiUsage(analysisUsage, response?.usageMetadata);
+          addGeminiUsage(requestUsage, response?.usageMetadata);
+          return response;
+        }, {
+          onRetry: (reason, attempt) => console.warn(
+            `[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/2: ${reason}`
+          )
+        }));
+        outcome = cached.outcome;
+        if (outcome !== 'completed') {
+          analysisUsage.cacheHits = (analysisUsage.cacheHits || 0) + 1;
+          requestUsage.cacheHits = 1;
+        }
+        return cached.value;
+      } finally {
+        console.info('[gemini-request-usage]', JSON.stringify({ stage: reviewMode ? 'review' : 'analysis',
+          chunkIndex, outcome, ...requestUsage }));
+      }
     };
 
     let parsed;
@@ -679,15 +701,13 @@ Rules:
       parsed = await generateStoryboardJson(prompt, files);
     } catch (fullChunkError) {
       const fullFailureReason = storyboardFailureReason(fullChunkError);
-      if (fullFailureReason === 'GEMINI_QUOTA_OR_CREDITS') {
+      const quotaFailure = geminiQuotaFailure(fullChunkError);
+      if (quotaFailure) {
         console.warn(
-          `[gemini-storyboard-quota] chunk ${chunkIndex + 1}/${chunkCount} stopped without split recovery`
+          `[gemini-storyboard-quota] chunk ${chunkIndex + 1}/${chunkCount} stopped without split recovery: ${quotaFailure.reason}`
         );
-        return res.status(429).json({
-          available: false,
-          retryable: false,
-          reason: 'GEMINI_CREDITS_DEPLETED',
-          message: 'Gemini API kredisi veya proje kotası kullanılamıyor. Aynı istek otomatik tekrarlanmadı.',
+        return res.status(quotaFailure.reason === 'GEMINI_CREDITS_DEPLETED' ? 402 : 429).json({
+          ...quotaFailure, aiUsage: analysisUsage,
           chunkIndex,
           chunkCount,
           chunkStart,
@@ -703,6 +723,13 @@ Rules:
           analysisGaps: [{ startTime: chunkStart, endTime: chunkEnd, reason: fullFailureReason }],
           aiUsage: analysisUsage
         });
+      }
+      // Splitting the same evidence cannot repair a provider outage. The
+      // server already tried twice; stop instead of multiplying paid work.
+      if (fullFailureReason === 'GEMINI_TEMPORARILY_UNAVAILABLE') {
+        return res.status(503).json({ available: false, retryable: false,
+          reason: fullFailureReason, chunkIndex, chunkCount, chunkStart, chunkEnd, aiUsage: analysisUsage,
+          message: 'Gemini bağlantısı veya hizmeti geçici olarak kullanılamıyor. Biraz sonra yeniden dene; tamamlanan bölümler korunuyor.' });
       }
       const allTimestamps = (() => {
         try {
@@ -729,6 +756,7 @@ Rules:
       console.warn(`[gemini-storyboard-split-recovery] chunk ${chunkIndex + 1}/${chunkCount} split into ${recoverySegments.length} smaller requests`);
 
       let nextRecoveryIndex = 0;
+      let recoveryQuotaFailure = null;
       const recoverNextSegment = async () => {
         while (nextRecoveryIndex < recoverySegments.length) {
           const fileIndex = nextRecoveryIndex;
@@ -738,6 +766,10 @@ Rules:
           const splitStart = Number(splitTimestamps[0] ?? chunkStart);
           const splitLast = Number(splitTimestamps[splitTimestamps.length - 1] ?? splitStart);
           const splitEnd = Math.min(chunkEnd, Math.max(splitStart + 0.1, splitLast + Math.max(0.1, (chunkEnd - chunkStart) / Math.max(1, allTimestamps.length))));
+          if (recoveryQuotaFailure) {
+            recoveredParts[fileIndex] = unverifiedGapResult(splitStart, splitEnd, { code: recoveryQuotaFailure.reason });
+            continue;
+          }
           const splitPrompt = prompt
             .replace(`Timestamp metadata for this chunk: ${timestamps}`, `Timestamp metadata for this recovery segment: ${JSON.stringify(splitTimestamps)}`)
             .replace(`Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.`, `Analyze ONLY the interval ${splitStart} to ${splitEnd} seconds.`)
@@ -749,6 +781,7 @@ Rules:
               `split-${fileIndex + 1}`
             );
           } catch (splitError) {
+            recoveryQuotaFailure ||= geminiQuotaFailure(splitError);
             const splitReasonCode = storyboardFailureReason(splitError);
             console.warn(
               `[gemini-storyboard-gap] split ${fileIndex + 1}/${recoverySegments.length} ` +
@@ -762,6 +795,8 @@ Rules:
       await Promise.all(
         Array.from({ length: recoveryConcurrency }, () => recoverNextSegment())
       );
+      if (recoveryQuotaFailure) return res.status(recoveryQuotaFailure.reason === 'GEMINI_CREDITS_DEPLETED' ? 402 : 429)
+        .json({ ...recoveryQuotaFailure, chunkIndex, chunkCount, chunkStart, chunkEnd, aiUsage: analysisUsage });
 
       parsed = {
         ...recoveredParts[0],
@@ -787,7 +822,7 @@ Rules:
       : [];
     if (unresolvedGaps.length) {
       const quotaBlocked = unresolvedGaps.some(gap =>
-        String(gap?.reason || '') === 'GEMINI_QUOTA_OR_CREDITS'
+        ['GEMINI_QUOTA_OR_CREDITS', 'GEMINI_RATE_LIMITED', 'GEMINI_DAILY_LIMIT', 'GEMINI_CREDITS_DEPLETED'].includes(String(gap?.reason || ''))
       );
       const contentRestricted = unresolvedGaps.some(gap =>
         String(gap?.reason || '') === 'GEMINI_CONTENT_RESTRICTED'
@@ -967,18 +1002,9 @@ Rules:
   } catch (error) {
     console.error('[gemini-storyboard-error]', error);
     const details = String(error?.message || error);
-    const creditsDepleted =
-      details.includes('prepayment credits are depleted') ||
-      (details.includes('RESOURCE_EXHAUSTED') && details.includes('429'));
-
-    if (creditsDepleted) {
-      return res.status(429).json({
-        available: false,
-        reason: 'GEMINI_CREDITS_DEPLETED',
-        message: 'Gemini API kredisi tükendi. Analiz başlatılamadı. AI Studio proje faturalandırmasını veya API anahtarını kontrol et.',
-        retryable: false,
-        error: details
-      });
+    const quotaFailure = geminiQuotaFailure(error);
+    if (quotaFailure) {
+      return res.status(quotaFailure.reason === 'GEMINI_CREDITS_DEPLETED' ? 402 : 429).json(quotaFailure);
     }
 
     return res.status(502).json({
@@ -1446,11 +1472,13 @@ app.post('/api/gemini-key-status', async (req, res) => {
   const model = process.env.TRANSLATION_MODEL || process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
   try {
     const ai = new GoogleGenAI({ apiKey });
-    await ai.models.generateContent({
+    const response = await ai.models.generateContent({
       model,
       contents: 'Reply OK.',
       config: { maxOutputTokens: 1, temperature: 0 }
     });
+    console.info('[gemini-request-usage]', JSON.stringify({ stage: 'explicit-key-test',
+      ...addGeminiUsage(emptyGeminiUsage(), response?.usageMetadata) }));
     return res.json({
       ok: true,
       state: 'available',
@@ -1482,7 +1510,7 @@ app.post('/api/gemini-key-status', async (req, res) => {
         retryAfterSeconds,
         source,
         message: daily
-          ? 'Bu projenin günlük ücretsiz kotası dolmuş.'
+          ? 'Bu projenin günlük kotası dolmuş.'
           : 'Anahtar şu anda hız/kota sınırında; biraz sonra tekrar denenebilir.'
       });
     }
@@ -1501,6 +1529,7 @@ app.post('/api/gemini-key-status', async (req, res) => {
 app.get('/health', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ status: 'ok', service: 'source-video-interactive-app',
+    analysisRevision,
     deploymentCommit: process.env.RENDER_GIT_COMMIT || null,
     turkishMedia: { qualityMode: mediaConfig.qualityMode, pipelineVersion: mediaConfig.version,
       translationProvider: mediaConfig.translation.provider, openAIRequired: false,

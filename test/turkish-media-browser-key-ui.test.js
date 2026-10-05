@@ -158,7 +158,7 @@ test('late unconfigured capability responses cannot overwrite the newly typed ac
   assert.equal(f.els.dubQuotaStatus.textContent, 'Servis hazır');
 });
 
-test('depleted server Gemini credit is detected before analysis and blocks Turkish media until another key is used', async t => {
+test('automatic capability refresh never calls Gemini inference, even with dubbing selected', async t => {
   const f = fixture({ geminiStatus: () => json({
     ok: false, state: 'no_credits', source: 'server',
     message: 'Sunucu Gemini kredisi tükendi. Kendi Gemini API anahtarını gir.'
@@ -170,12 +170,10 @@ test('depleted server Gemini credit is detected before analysis and blocks Turki
   await f.flush();
 
   assert.equal(f.scope.activeElevenLabsApiKey(), 'typed-elevenlabs-secret-123456789');
-  assert.equal(f.state.geminiProviderStatus.state, 'no_credits');
-  assert.equal(f.state.geminiProviderStatus.source, 'server');
-  assert.equal(f.els.dubQuotaStatus.textContent, 'Gemini kredisi yok');
-  assert.match(f.els.dubQuotaStatus.title, /Sunucu Gemini kredisi tükendi/);
-  assert.equal(f.els.apiKeyStatus.textContent, 'Sunucu Gemini kredisi tükendi');
-  assert.equal(f.els.analyzeBtn.disabled, true);
+  for (let minute = 0; minute < 60; minute++) await f.scope.checkTurkishMediaCapabilities();
+  assert.equal(f.requests.filter(request => request.url.endsWith('/api/gemini-key-status')).length, 0);
+  assert.equal(f.els.dubQuotaStatus.textContent, 'Servis hazır');
+  assert.equal(f.els.analyzeBtn.disabled, false);
 });
 
 test('ElevenLabs Kullan and Sil retain a key only in memory and never share Gemini session storage', t => {

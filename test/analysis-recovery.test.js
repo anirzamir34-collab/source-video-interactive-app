@@ -6,6 +6,8 @@ import { parseStoryboardResponse, generateStoryboardWithRetry, storyboardFailure
   hasDeclaredPartialCoverage } from '../public/analysis-recovery.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 import { serializeReviewCandidates } from '../public/classification-integrity.js';
+import { geminiQuotaFailure } from '../public/gemini-quota.js';
+import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
 
 for (const response of [
   { text: 'I cannot fulfill this request.' },
@@ -49,7 +51,7 @@ test('numeric quota errors remain terminal and do not create a retry storm', asy
   await assert.rejects(generateStoryboardWithRetry(async () => {
     requests += 1;
     throw Object.assign(new Error('RESOURCE_EXHAUSTED'), { code: 429 });
-  }), error => storyboardFailureReason(error) === 'GEMINI_QUOTA_OR_CREDITS');
+  }), error => storyboardFailureReason(error) === 'GEMINI_RATE_LIMITED');
   assert.equal(requests, 1);
 });
 
@@ -117,8 +119,9 @@ test('the live server handler reports refused chapters without retrying or split
       resolveGeminiApiKey: () => 'test-only', emptyGeminiUsage: () => ({ requests: 0 }),
       addGeminiUsage: usage => { usage.requests += 1; },
       storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
+      geminiQuotaFailure, storyboardRequestKey, storyboardRequestCache: createAnalysisRequestCache(),
       GEMINI_DEFAULT_MODEL: 'gemini-test-model',
-      process: { env: {} }, console: { warn() {}, error() {} }
+      process: { env: {} }, console: { warn() {}, error() {}, info() {} }
     });
     const req = { body: { chunkIndex, chunkCount: 12, chunkStart: chunkIndex * 12,
       chunkEnd: (chunkIndex + 1) * 12, duration: 144, timestamps: '[108,109,110,111]' },

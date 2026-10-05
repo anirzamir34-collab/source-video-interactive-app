@@ -97,6 +97,7 @@ import { createTurkishMediaClient } from './turkish-media-client.js';
 import { sourceContextAdapter, sourceSpeechOverlaps } from './source-transcript.js';
 import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
+import { analysisRequestKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
@@ -792,32 +793,8 @@ async function checkTurkishMediaCapabilities() {
           ? 'Türkçe medya servisi hazır.'
           : 'Türkçe medya servisi şu an kullanılamıyor.';
 
-    const modes = selectedAnalysisModes();
-    if (available && capabilities.translationConfigured !== false && (modes.dubbing || modes.subtitles)) {
-      try {
-        const response = await fetch('/api/gemini-key-status', {
-          method: 'POST',
-          headers: geminiRequestHeaders({ 'Content-Type': 'application/json' }),
-          body: '{}'
-        });
-        const provider = await response.json().catch(() => ({}));
-        if (generation !== state.mediaCredentialGeneration) return;
-        state.geminiProviderStatus = {
-          ...provider,
-          state: String(provider.state || (response.ok ? 'available' : 'unavailable'))
-        };
-        renderGeminiApiKeyState();
-        if (!response.ok && ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
-          .includes(state.geminiProviderStatus.state)) {
-          available = false;
-          stateName = state.geminiProviderStatus.state;
-          message = state.geminiProviderStatus.message || 'Gemini çeviri servisi kullanılamıyor.';
-        }
-      } catch {
-        // A status probe failure must not masquerade as a provider outage.
-        state.geminiProviderStatus = { state: 'unknown' };
-      }
-    }
+    // Capabilities are configuration checks, not paid inference. Only the
+    // user's explicit key test calls Gemini; periodic refresh stays local.
 
     renderQuotaBadge(els.subtitleQuotaStatus, { state: available ? 'available' : stateName, message });
     renderQuotaBadge(els.dubQuotaStatus, { state: available ? 'available' : stateName, message });
@@ -950,8 +927,8 @@ els.videoInput.addEventListener('change', () => {
 
 function recordAiUsage(usage) {
   if (!usage || typeof usage !== 'object') return;
-  for (const key of ['requests', 'inputTokens', 'outputTokens', 'thinkingTokens', 'totalTokens']) {
-    state.aiUsage[key] += Math.max(0, Number(usage[key]) || 0);
+  for (const key of ['requests', 'inputTokens', 'outputTokens', 'thinkingTokens', 'totalTokens', 'cacheHits']) {
+    state.aiUsage[key] = (state.aiUsage[key] || 0) + Math.max(0, Number(usage[key]) || 0);
   }
   logEngineEvent('AI_USAGE', { ...state.aiUsage });
 }
@@ -965,7 +942,29 @@ function storyboardProgress(progress, detail) {
     detail: detail?.retrying ? 'Okunamayan kare yeniden deneniyor.' : 'Kareler cihazdan okunuyor.' });
 }
 
-async function postAnalysisForm(path, form, { stage = 'analysis', timeoutMs = 240000, headers = {}, label = '' } = {}) {
+const analysisResponseCache = createAnalysisResponseCache();
+
+async function postAnalysisForm(path, form, options = {}) {
+  if (path !== '/api/gemini-storyboard-analyze') return sendAnalysisForm(path, form, options);
+  const signal = analysisAbortController?.signal;
+  signal?.throwIfAborted();
+  let key = null;
+  try {
+    const health = await fetch('/health', { cache: 'no-store', signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000) });
+    const revision = health.ok ? (await health.json()).analysisRevision : null;
+    key = await analysisRequestKey({ revision, path, form, headers: options.headers });
+  } catch { signal?.throwIfAborted(); }
+  const result = await analysisResponseCache.run(key, async () => {
+    const response = await sendAnalysisForm(path, form, options);
+    return { status: response.status, body: await response.json() };
+  }, { signal });
+  if (result.outcome) analysisProgress.update(options.stage || 'analysis', {
+    status: 'done', detail: (options.label || 'Analiz') + ' · Önceki doğrulanmış yanıt kullanıldı; Gemini çağrılmadı.' });
+  return new Response(JSON.stringify(result.body), { status: result.status, headers: { 'Content-Type': 'application/json' } });
+}
+
+async function sendAnalysisForm(path, form, { stage = 'analysis', timeoutMs = 240000, headers = {}, label = '' } = {}) {
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = analysisAbortController ? AbortSignal.any([timeout, analysisAbortController.signal]) : timeout;
   analysisProgress.update(stage, { status: 'working', detail: label + ' · Görüntüler gönderiliyor.' });
@@ -1420,6 +1419,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
   state.analysisInProgress = true;
+  state.aiUsage = { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
   state.savedGameReady = false;
   state.savedPlaybackOnly = false;
   analysisAbortController = new AbortController();
@@ -2086,6 +2086,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       speakerHints
     });
     session.mediaManifest = finalMedia;
+    recordAiUsage(finalMedia?.qualityReport?.geminiUsage);
     session.mediaModeKey = mediaModeKey;
     updateSourceTranscript(finalMedia.sourceTranscript);
     renderMediaControls();
@@ -2105,7 +2106,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       : 'Bütün örnek kareler başarıyla hazırlandı.',
     `Son doğrulanmış aksiyon ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyede bitiyor.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
-    `Gemini kullanımı: ${state.aiUsage.requests} istek · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens} çıkış tokenı.`,
+    `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Yeniden analiz, yalnız geçici hata veren eksik bölümleri dener.' : 'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
