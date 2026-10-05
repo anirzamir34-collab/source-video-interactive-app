@@ -361,7 +361,7 @@ test('a grouped introduction card selects another existing clip on each click an
   f.state.adultScene.positions = [intro, chapter('main', 60)];
   f.els.video.time = 0;
   f.renderAdultApproachChoices(f.state.adultScene);
-  const card = f.els.choices.children[1];
+  const card = f.els.foreplayChoices.children[0];
   assert.equal(card.dataset.variantIds, 'opening-0,opening-1,opening-2');
   assert.equal(f.state.adultApproachChoices[0].startTime, 0);
   assert.equal(f.state.adultApproachChoices[0].endTime, 30);
@@ -381,7 +381,7 @@ test('an empty introduction menu leaves a visible source playback control', () =
   f.els.video.time = 0;
   f.els.video.paused = true;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.equal(f.els.choices.children.at(-1).textContent, 'Videoya devam et');
+  assert.equal(f.els.foreplayChoices.children.at(-1).textContent, 'Videoya devam et');
   assert.equal(f.els.video.paused, true);
 });
 
@@ -804,14 +804,14 @@ test('repeated panel rendering after rewind mounts one panel and replaces introd
   const scene = f.state.adultScene;
   f.els.video.time = 0;
   f.renderAdultPanel(scene);
-  const initialChoices = f.els.choices.children.length;
+  const initialChoices = f.els.foreplayChoices.children.length;
   assert.ok(initialChoices > 0);
   f.els.video.time = 12;
   f.renderAdultPanel(scene);
   f.els.video.time = 0;
   f.renderAdultPanel(scene);
   assert.equal(f.stage.children.filter(node => node === f.els.adultInteractionPanel).length, 1);
-  assert.equal(f.els.choices.children.length, initialChoices);
+  assert.equal(f.els.foreplayChoices.children.length, initialChoices);
   assert.equal(f.state.completedAdultSceneIds.size, 0);
 });
 
@@ -873,7 +873,8 @@ test('paused manual rewind reconciles source approach phase and clears stale sel
   assert.equal(f.state.adultTimelineFloor, 5);
   assert.equal(f.genericInteractionTrace().currentPhase, 'APPROACH');
   assert.equal(f.genericInteractionTrace().overlayCount, 1);
-  assert.equal(f.els.choices.classes.has('hidden'), false);
+  assert.equal(f.els.choices.classes.has('hidden'), true);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
   assert.equal(f.els.video.currentTime, 5);
   assert.equal(f.els.video.playCalls, plays);
   f.renderAdultPanel(f.state.adultScene);
@@ -1098,7 +1099,9 @@ test('verified normal dialogue has its own choices and earns no progress before 
   f.updateAdultPlayback(1500, 10);
   assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-opening']);
-  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  assert.equal(f.els.choices.classes.has('hidden'), true);
+  assert.equal(f.els.foreplayChoices.children.length > 0, true);
   assert.equal(f.state.femaleSceneProgress, 0);
   assert.equal(f.els.video.currentTime, 10);
   assert.equal(f.els.video.playCalls, 1);
