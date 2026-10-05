@@ -483,6 +483,38 @@ test('first unlock reveals a clickable chapter; only explicit selection plays it
   assert.equal(f.els.video.playCalls, 1);
 });
 
+test('first core tab starts its verified clip and shows the next card across a subsecond source gap', async () => {
+  const f = runtimeFixture();
+  const position = chapter('first', 551);
+  position.sourceRanges = [
+    { id: 'source-first', startTime: 551, endTime: 562 },
+    { id: 'source-first', startTime: 562.5, endTime: 573.5 }
+  ];
+  position.movements = [
+    { id: 'first-a', label: 'First source action', sourceVerified: true, sourcePositionId: 'source-first',
+      startTime: 550, endTime: 562, loopStartTime: 551, loopEndTime: 562 },
+    { id: 'first-b', label: 'Second source action', sourceVerified: true, sourcePositionId: 'source-first',
+      startTime: 562, endTime: 574, loopStartTime: 562.5, loopEndTime: 573.5 }
+  ];
+  position.startTime = 551;
+  position.endTime = 573.5;
+  f.state.adultScene = { id: 'opening-and-core', startTime: 551, endTime: 628,
+    positions: [position], foreplay: [], dialogue: [], outcomes: [] };
+  f.state.adultTimelineFloor = 551;
+  f.state.adultPhaseMachine = 'positions';
+  f.state.adultUnlockedPositionIds.add('first');
+  f.state.adultSexUnlocked = true;
+  f.els.video.duration = 1000;
+  f.state.analysis.videoDuration = 1000;
+  f.els.video.time = 551;
+
+  f.selectAdultPosition('first', true);
+  await flush();
+  assert.equal(f.state.activeMovementId, 'first-a');
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.els.movementChoices.children.length, 2);
+});
+
 test('an introduction without warmup-position metadata still keeps the gate closed', () => {
   const f = runtimeFixture();
   f.renderAdultPanel(f.state.adultScene);

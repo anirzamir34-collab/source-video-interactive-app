@@ -135,7 +135,11 @@ export function positionOccurrenceGroups(position = {}) {
   const groups = [];
   for (const range of ranges) {
     const previous = groups[groups.length - 1];
-    if (previous && range.startTime <= previous.endTime + 0.25) {
+    // One provider occurrence can contain a brief sampling gap between two
+    // source-backed actions. Group its cards without filling the gap. A
+    // different occurrence id still needs the strict adjacency tolerance.
+    const sameSource = previous?.sourceRanges.at(-1)?.id === range.id;
+    if (previous && range.startTime <= previous.endTime + (sameSource ? 0.75 : 0.25)) {
       previous.endTime = Math.max(previous.endTime, range.endTime);
       if (!previous.sourcePositionIds.includes(range.id)) previous.sourcePositionIds.push(range.id);
       previous.sourceRanges.push(range);

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { sourceRangeForClip } from '../public/sequence-integrity.js';
 
 import {
   adultPositionFamily,
@@ -405,6 +406,26 @@ test('extra movements remain inside the active continuous occurrence', () => {
     movementsForPositionOccurrence(position, 'later-return').map(item => item.id),
     ['m3']
   );
+});
+
+test('subsecond gap with the same source occurrence exposes both choice cards while preserving exact ranges', () => {
+  const position = {
+    sourceRanges: [
+      { id: 'desk', startTime: 551, endTime: 562 },
+      { id: 'desk', startTime: 562.5, endTime: 573.5 },
+      { id: 'couch', startTime: 616.5, endTime: 628 }
+    ],
+    movements: [
+      { id: 'first', sourceVerified: true, sourcePositionId: 'desk', loopStartTime: 551, loopEndTime: 562 },
+      { id: 'second', sourceVerified: true, sourcePositionId: 'desk', loopStartTime: 562.5, loopEndTime: 573.5 },
+      { id: 'return', sourceVerified: true, sourcePositionId: 'couch', loopStartTime: 616.5, loopEndTime: 628 }
+    ]
+  };
+  const groups = positionOccurrenceGroups(position);
+  assert.deepEqual(groups.map(item => [item.startTime, item.endTime]), [[551, 573.5], [616.5, 628]]);
+  assert.deepEqual(movementsForPositionOccurrence(position, groups[0].id).map(item => item.id), ['first', 'second']);
+  assert.equal(sourceRangeForClip(position, { sourcePositionId: 'desk', loopStartTime: 561.9,
+    loopEndTime: 562.6 }, groups[0].sourceRanges), null);
 });
 
 test('a repeated scene id becomes a new occurrence after another scene intervenes', () => {

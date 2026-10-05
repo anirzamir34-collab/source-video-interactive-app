@@ -646,8 +646,14 @@ export function canPlayAction({
   if (scene) {
     const sceneStart = numberOr(scene.startTime);
     const sceneEnd = numberOr(scene.endTime);
-    const start = kind === 'outcome' ? numberOr(action.outcomeStartTime, action.startTime) : interval.start;
-    const end = kind === 'outcome' ? numberOr(action.outcomeEndTime, action.endTime) : interval.end;
+    // A source action may begin just before a scene boundary while its
+    // verified movement loop begins inside it. The movement checks above
+    // already prove that the loop belongs to the observed action and parent.
+    const playbackRange = kind === 'movement' ? clipRange(action) : null;
+    const start = kind === 'outcome' ? numberOr(action.outcomeStartTime, action.startTime)
+      : playbackRange?.startTime ?? interval.start;
+    const end = kind === 'outcome' ? numberOr(action.outcomeEndTime, action.endTime)
+      : playbackRange?.endTime ?? interval.end;
     if (start < sceneStart - 0.1 || end > sceneEnd + 0.1) {
       return { allowed: false, reason: 'ACTION_OUTSIDE_SCENE' };
     }

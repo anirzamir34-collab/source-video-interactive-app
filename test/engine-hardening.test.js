@@ -260,6 +260,21 @@ test('state machine is monotonic and centralized permission guard blocks invalid
   assert.equal(canPlayAction({ kind: 'outcome', action, phase: 'final', outcomeReady: true, videoDuration: 60 }).allowed, true);
 });
 
+test('a verified movement may start after the scene boundary even when its observed action starts earlier', () => {
+  const scene = { startTime: 551, endTime: 628 };
+  const parentPosition = { startTime: 551, endTime: 573.5,
+    sourceRanges: [{ id: 'source-a', startTime: 551, endTime: 562 }] };
+  const movement = { id: 'clip-a', sourceVerified: true, sourcePositionId: 'source-a',
+    startTime: 550, endTime: 562, loopStartTime: 551, loopEndTime: 562 };
+  const allowed = canPlayAction({ kind: 'movement', action: movement, parentPosition,
+    scene, phase: 'positions', videoDuration: 1000 });
+  assert.equal(allowed.allowed, true);
+  assert.equal(canPlayAction({ kind: 'movement', action: { ...movement, loopStartTime: 550 },
+    parentPosition: { ...parentPosition, startTime: 550, sourceRanges: [
+      { id: 'source-a', startTime: 550, endTime: 562 }
+    ] }, scene, phase: 'positions', videoDuration: 1000 }).reason, 'ACTION_OUTSIDE_SCENE');
+});
+
 test('runtime save only restores into the exact analysis/engine version', () => {
   const sourceState = {
     gameState: 'DECISION_PENDING', gameCursorTime: 44, currentActionIndex: 3,

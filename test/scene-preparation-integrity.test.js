@@ -414,6 +414,64 @@ test('nearby scene fragments with a different opaque cast remain separate', () =
   }
 });
 
+test('a verified same-cast transition joins a 41-second opening-to-core gap without making the gap playable', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
+  const scene = (id, startTime, endTime, familyId) => ({ id, startTime, endTime, postSceneTime: endTime,
+    positions: [{ ...cast, familyId, startTime, endTime, sourceRanges: [
+      { id: `${id}:range`, startTime, endTime, sourceVerified: true }
+    ] }], foreplay: [], dialogue: [], partnerTransitions: [], outcomes: [] });
+  const opening = scene('opening', 382, 510, 'oral');
+  const core = scene('core', 551, 628, 'chapter');
+  const bridge = { ...cast, sourceVerified: true, actionType: 'body_transition',
+    choiceSurface: 'story', startTime: 510, endTime: 521 };
+
+  assert.equal(mergeFragments([opening, core]).length, 2);
+  const joined = mergeFragments([opening, core], [bridge]);
+  assert.equal(joined.length, 1);
+  assert.deepEqual(Array.from(joined[0].positions, position => position.familyId), ['oral', 'chapter']);
+  assert.equal(joined[0].positions.some(position => position.sourceRanges.some(range =>
+    range.startTime <= 535 && range.endTime > 535)), false);
+  assert.equal(mergeFragments([opening, core], [{ ...bridge, actionType: 'scene_transition' }]).length, 2);
+  assert.equal(mergeFragments([opening, { ...core, startTime: 556 }], [bridge]).length, 2);
+});
+
+test('preparation keeps dialogue, opening activity, and first core position in one progressing encounter', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
+  const sceneMeta = { adultSceneStartTime: 241, adultSceneEndTime: 628 };
+  const dialogue = action('dialogue', 241, 382, { ...cast, ...sceneMeta,
+    positionId: '', positionLabel: '', actionType: 'dialogue', choiceSurface: 'story' });
+  const opening = action('opening', 393, 510, { ...cast, ...sceneMeta,
+    positionId: 'oral', positionLabel: 'Opening activity', positionStartTime: 393, positionEndTime: 510 });
+  const transition = action('transition', 510, 521, { ...cast, ...sceneMeta,
+    adultSceneId: 'scene-b', positionId: '', positionLabel: '',
+    actionType: 'body_transition', choiceSurface: 'story' });
+  const core = action('core', 550, 562, { ...cast, ...sceneMeta,
+    positionId: 'chapter', positionLabel: 'First core', positionStartTime: 550,
+    positionEndTime: 562, loopStartTime: 551, loopEndTime: 562 });
+  const state = prepare([dialogue, opening, transition, core], {
+    mergeAdultSceneFragments: mergeFragments,
+    playableAdultPanelFamily: item => item.sourceVerified === true && item.adultScene && item.positionId ? item.positionId : '',
+    canonicalAdultPosition: item => ({ id: item.positionId, label: item.positionLabel }),
+    adultCategoryFor: (_item, id) => ({ id, label: id }),
+    isWarmupPosition: item => item.progressionRole === 'foreplay'
+  });
+
+  assert.equal(state.adultScenes.length, 1);
+  const [scene] = state.adultScenes;
+  assert.deepEqual(Array.from(scene.positions, item => [item.familyId, item.progressionRole]),
+    [['oral', 'foreplay'], ['chapter', 'core']]);
+  assert.equal(scene.dialogue.some(item => item.id === 'dialogue'), true);
+  assert.equal(scene.foreplay.some(item => item.id === 'dialogue'), false);
+  assert.equal(scene.positions.some(item => item.sourceRanges.some(range =>
+    range.startTime <= 535 && range.endTime > 535)), false);
+});
+
 test('a wide provider position envelope cannot merge distant exact source chapters', () => {
   const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
   const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);

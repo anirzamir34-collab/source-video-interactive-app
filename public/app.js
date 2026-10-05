@@ -2556,6 +2556,7 @@ function isBonusPosition(position) {
 // one gameplay graph so progression can reveal them instead of ending early.
 // Only nearby source chapters can share one timeline panel.
 const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 30;
+const ADULT_FRAGMENT_BRIDGED_GAP_SECONDS = 45;
 
 function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
@@ -2606,7 +2607,11 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
         Number.isFinite(start) && Number.isFinite(end) &&
         Math.min(end, Number(scene.startTime)) - Math.max(start, Number(previous.endTime)) >= 0.5;
     });
-    if (gap > ADULT_FRAGMENT_MERGE_GAP_SECONDS || narrativeBarrier || unownedBarrier || castBarrier) {
+    // A verified transition for the same cast may cross the provider's scene
+    // split. Keep its source ranges exact; joining panels never makes the gap
+    // itself a playable clip or a new movement choice.
+    const maxGap = verifiedBridge ? ADULT_FRAGMENT_BRIDGED_GAP_SECONDS : ADULT_FRAGMENT_MERGE_GAP_SECONDS;
+    if (gap > maxGap || narrativeBarrier || unownedBarrier || castBarrier) {
       merged.push({ ...scene });
       continue;
     }
