@@ -2,7 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { groupSourceChoiceCards, sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
 import { buildVerifiedMovementChoices, exclusiveControlClipIds, findAdultSceneForTimeline,
-  forwardLocalMovementClips } from '../public/adult-gameplay.js';
+  forwardLocalMovementClips, splitSparseMovementChoiceCards } from '../public/adult-gameplay.js';
+
+test('a rich source group retains every distinct option after card display preparation', () => {
+  const movements = Array.from({ length: 12 }, (_, index) => ({
+    id: `source-clip-${index}`, sourceActionId: `observed-action-${index}`, sourceVerified: true,
+    sourcePositionId: 'recorded-range', actionType: 'movement', movementType: 'recorded-kind',
+    label: `Recorded choice ${index + 1}`, startTime: index * 6, endTime: index * 6 + 5,
+    loopStartTime: index * 6, loopEndTime: index * 6 + 5
+  }));
+  const position = { id: 'source-group', sourceVerified: true, startTime: 0, endTime: 72,
+    sourceRanges: [{ id: 'recorded-range', startTime: 0, endTime: 72 }], movements };
+  const cards = splitSparseMovementChoiceCards(buildVerifiedMovementChoices(movements, 'Recorded group', 8, position), 8);
+  assert.equal(cards.length, 12);
+  assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)), movements.map(item => item.id));
+});
 
 test('an old position return exposes only nearby forward source clips', () => {
   const movements = [clip(0, { loopStartTime: 443, loopEndTime: 462 }),

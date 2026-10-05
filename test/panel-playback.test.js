@@ -1222,6 +1222,34 @@ test('a separate verified entry plays only its transition and keeps every core m
   assert.equal(f.state.activeAdultOccurrenceId, 'source-one');
 });
 
+test('selecting a later return never replays the separate entry of its first occurrence', async () => {
+  const f = runtimeFixture();
+  const group = f.state.adultScene.positions[0];
+  const later = chapter('later-return', 80);
+  group.subjectTrackId = 'track-b';
+  group.sourceRanges.push(...later.sourceRanges);
+  group.movements.push(...later.movements);
+  group.movements.forEach(item => { item.subjectTrackId = 'track-b'; });
+  group.endTime = 110;
+  group.entryRange = { id: 'source-entry', startTime: 18, endTime: 20, sourceVerified: true,
+    subjectTrackId: 'track-b', partnerTrackId: 'track-a', coreOccurrenceId: 'source-one', entryForGroupId: 'one' };
+  group.entryClip = { id: 'entry-clip', startTime: 18, endTime: 20, loopStartTime: 18, loopEndTime: 20,
+    sourceVerified: true, sourcePositionId: 'source-entry', sourceOccurrenceId: 'source-entry',
+    subjectTrackId: 'track-b', partnerTrackId: 'track-a' };
+  f.addFemaleLust(35);
+  f.els.video.time = 80;
+  f.state.adultTimelineFloor = 80;
+  f.state.interactionRuntime = { ...f.genericInteractionSnapshot(), currentTime: 80,
+    unlockedGroupIds: ['one'], currentPhase: 'CORE' };
+  f.setAdultMachinePhase('positions');
+  f.selectAdultPosition('one', true);
+  await flush();
+  assert.equal(f.els.video.currentTime, 80);
+  assert.equal(f.state.activeAdultEntryClip, null);
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-later-return');
+  assert.equal(f.state.activeMovementId, 'later-return-0');
+});
+
 test('tab text retains the full verified provider display label', () => {
   const f = runtimeFixture();
   const position = f.state.adultScene.positions[0];

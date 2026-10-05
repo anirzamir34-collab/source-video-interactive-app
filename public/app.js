@@ -4970,7 +4970,8 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   state.activeAdultEntryClip = null;
   const separateEntry = position.entryClip;
   const entryGuard = separateEntry && interactionEntryGuard(
-    genericInteractionSnapshot().scene.groups.find(group => group.id === position.id), separateEntry);
+    genericInteractionSnapshot().scene.groups.find(group => group.id === position.id), separateEntry,
+    { occurrenceId: targetOccurrence?.id || state.activeAdultOccurrenceId || '' });
   if (entryGuard?.allowed && entryGuard.coreOccurrenceId) {
     state.activeAdultEntryClip = separateEntry;
     state.activeAdultOccurrenceId = entryGuard.coreOccurrenceId;

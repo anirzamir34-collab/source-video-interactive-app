@@ -1027,13 +1027,14 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   });
 }
 
-export function splitSparseMovementChoiceCards(choices = [], maxChoices = 5) {
+export function splitSparseMovementChoiceCards(choices = []) {
   const cards = Array.isArray(choices) ? choices : [];
-  const limit = Math.max(1, Math.min(8, Math.floor(Number(maxChoices) || 5)));
   // A logical choice may legitimately own several verified source variants.
   // Keep those variants together so repeated taps rotate through real source
   // clips instead of manufacturing several duplicate-looking one-clip cards.
-  return cards.slice(0, limit).map((card, index) => ({
+  // Density preferences are applied while grouping. Display preparation must
+  // retain every independently verified choice, including those after eight.
+  return cards.map((card, index) => ({
     ...card,
     variants: Array.isArray(card?.variants) ? card.variants : [],
     displayIndex: index + 1
