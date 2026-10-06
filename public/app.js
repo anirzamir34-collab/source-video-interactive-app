@@ -368,7 +368,10 @@ function setServiceStatus(kind, label, meta = '') {
   els.serviceMeta.textContent = meta;
 }
 
-const RUNTIME_SAVE_KEY = 'videoquest:runtime-state-v2';
+// Earlier runtime snapshots can contain completed scene IDs and position tabs
+// from the old routing graph. A new analysis still uses its verified source
+// actions, but playback starts with a fresh progression state.
+const RUNTIME_SAVE_KEY = 'videoquest:runtime-state-v3';
 
 function logEngineEvent(type, data = {}) {
   appendEngineEvent(state.engineEvents, type, data);
