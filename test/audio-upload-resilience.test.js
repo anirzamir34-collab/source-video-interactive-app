@@ -14,7 +14,7 @@ class Video extends EventTarget {
 const result = { version: 1, assets: {}, subtitles: {}, sourceTranscript: { utterances: [], speakers: [] } };
 const json = body => Response.json(body);
 
-test('a 5.63 MiB audio transfer checkpoints every 128 KiB and survives a lost response without resending accepted bytes', async t => {
+test('a 5.63 MiB audio transfer checkpoints in three 2 MiB requests and survives a lost response', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'vq-upload-resume-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const uploads = createMediaUploads({ directory });
@@ -47,12 +47,59 @@ test('a 5.63 MiB audio transfer checkpoints every 128 KiB and survives a lost re
   t.after(() => client.destroy());
   await client.start(source, { outputs: { transcriptOnly: true, dub: false, subtitles: false } });
   assert.equal(sent.length, Math.ceil(source.size / AUDIO_UPLOAD_CHUNK_BYTES));
-  assert.ok(sent.every(chunk => chunk.size <= 128 * 1024));
+  assert.ok(sent.every(chunk => chunk.size <= AUDIO_UPLOAD_CHUNK_BYTES));
   assert.equal(sent.filter(chunk => chunk.index === 2).length, 1);
   assert.equal(sent.reduce((sum, chunk) => sum + chunk.size, 0), source.size);
   assert.equal(statusReads, 2);
   assert.deepEqual(await fs.readFile(sourcePath), Buffer.from(await source.arrayBuffer()));
   assert.ok(statuses.some(status => status.message.includes('alınan ses korunuyor')));
+});
+
+test('an upgraded client resumes a partially saved 128 KiB session without starting the audio again', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'vq-upload-upgrade-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const uploads = createMediaUploads({ directory });
+  const source = new File([new Uint8Array(512 * 1024).fill(11)], 'sound.mp3', { type: 'audio/mpeg' });
+  let oldId, selectedId;
+  const sent = [];
+  const client = createTurkishMediaClient({ video: new Video(), retryDelayMs: 1,
+    fetchImpl: async (url, init = {}) => {
+      if (url.endsWith('/uploads/start')) {
+        const body = JSON.parse(init.body);
+        assert.equal(body.chunkSize, AUDIO_UPLOAD_CHUNK_BYTES);
+        assert.ok(body.resumeUploadKey);
+        if (!oldId) {
+          const old = await uploads.start({ ...body, chunkSize: 128 * 1024,
+            clientUploadKey: body.resumeUploadKey, resumeUploadKey: undefined });
+          oldId = old.uploadId;
+          for (let index = 0; index < 2; index++) {
+            const bytes = Buffer.from(await source.slice(index * old.chunkSize, (index + 1) * old.chunkSize).arrayBuffer());
+            await uploads.writeChunk(oldId, index, bytes);
+          }
+        }
+        const resumed = await uploads.start(body);
+        assert.equal(resumed.reused, true);
+        return json(resumed);
+      }
+      const status = url.match(/\/uploads\/([^/]+)\/status$/);
+      if (status) return json(await uploads.status(status[1]));
+      const chunk = url.match(/\/uploads\/([^/]+)\/chunk\/(\d+)$/);
+      if (chunk) {
+        sent.push(Number(chunk[2]));
+        return json(await uploads.writeChunk(chunk[1], Number(chunk[2]), Buffer.from(await init.body.arrayBuffer())));
+      }
+      if (url.endsWith('/jobs') && init.method === 'POST') {
+        selectedId = JSON.parse(init.body).uploadId;
+        return json({ jobId: 'upgrade-job' });
+      }
+      if (url.endsWith('/jobs/upgrade-job')) return json({ state: 'READY', result });
+      throw Error(`Unexpected request ${url}`);
+    } });
+  t.after(() => client.destroy());
+  await client.start(source, { outputs: { transcriptOnly: true } });
+  assert.equal(selectedId, oldId);
+  assert.deepEqual(sent, [2, 3]);
+  assert.deepEqual(await fs.readFile((await uploads.source(oldId)).path), Buffer.from(await source.arrayBuffer()));
 });
 
 function fakeClock() {
@@ -119,6 +166,21 @@ test('a steadily progressing slow upload is not aborted at the old 120-second de
   t.after(() => f.client.destroy());
   await f.client.start(new File(['123456'], 'source.mp3', { type: 'audio/mpeg' }), { outputs: { transcriptOnly: true } });
   assert.equal(f.clock.now(), 150000); assert.equal(f.transfers.length, 1);
+  assert.equal(f.clock.count(), 0);
+});
+
+test('saving an uploaded audio part can take longer than the network idle limit without restarting', async t => {
+  const f = transferFixture((xhr, clock, acknowledge) => {
+    xhr.upload.onprogress({ loaded: 6, total: 6, lengthComputable: true });
+    xhr.upload.onload();
+    clock.advance(45000);
+    assert.notEqual(xhr.aborted, true);
+    acknowledge(); xhr.status = 200; xhr.responseText = '{}'; xhr.onload();
+  });
+  t.after(() => f.client.destroy());
+  await f.client.start(new File(['123456'], 'source.mp3', { type: 'audio/mpeg' }),
+    { outputs: { transcriptOnly: true } });
+  assert.equal(f.transfers.length, 1);
   assert.equal(f.clock.count(), 0);
 });
 

@@ -7,7 +7,8 @@ import { conversationEnd } from './conversation-timing.js';
 // playback boundary; this client only follows its clock and renders captions.
 const API = '/api/turkish-media';
 const MAX_CHUNK = 10 * 1024 * 1024;
-export const AUDIO_UPLOAD_CHUNK_BYTES = 128 * 1024;
+const LEGACY_AUDIO_UPLOAD_CHUNK_BYTES = 128 * 1024;
+export const AUDIO_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
 const secretKey = /^(?:.*api[_-]?key|xi-api-key|x-elevenlabs-key|authorization|password|access[_-]?token|refresh[_-]?token|__proto__|constructor|prototype)$/i;
 
 function jsonCopy(value) {
@@ -45,7 +46,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   fetchImpl = globalThis.fetch, AudioClass = globalThis.Audio, clock = {},
   getElevenLabsApiKey = () => '', getGeminiApiKey = () => '',
   pollIntervalMs = 1200, requestTimeoutMs = 30000, uploadRequestTimeoutMs = 120000, assetTimeoutMs = 5 * 60 * 1000,
-  chunkSize = AUDIO_UPLOAD_CHUNK_BYTES, uploadIdleTimeoutMs = 30000, prepareSourceAudio = createSourceAudioPreparer(),
+  chunkSize = AUDIO_UPLOAD_CHUNK_BYTES, uploadIdleTimeoutMs = 30000, uploadAckTimeoutMs = 90000,
+  prepareSourceAudio = createSourceAudioPreparer(),
   XMLHttpRequestClass = globalThis.XMLHttpRequest,
   retryDelayMs = 1000, maxJobWaitMs = 6 * 60 * 60 * 1000,
   urlImpl = globalThis.URL, baseUrl = globalThis.location?.href || 'http://localhost/'
@@ -104,24 +106,28 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       : (asBlob ? assetTimeoutMs : requestTimeoutMs);
     const progressTransport = options.onUploadProgress && typeof XMLHttpRequestClass === 'function';
     const idleMs = progressTransport && Number(options.activityTimeoutMs) > 0 ? Number(options.activityTimeoutMs) : 0;
+    const ackMs = progressTransport && Number(options.ackTimeoutMs) > 0 ? Number(options.ackTimeoutMs) : idleMs;
     let deadline, lastLoaded = 0, uploadFinished = false;
     const armDeadline = () => {
       if (deadline !== undefined) timers.clear(deadline);
       deadline = timers.set(() => {
         abandoned = true;
         const error = Object.assign(new Error(idleMs
-          ? 'Ses aktarımında veri akışı durdu. Alınan ses korunarak bağlantı yeniden kontrol edilecek.'
+          ? (uploadFinished
+            ? 'Ses bölümü sunucuda kaydedilirken yanıt gecikti. Alınan ses kontrol edilerek devam edilecek.'
+            : 'Ses aktarımında veri akışı durdu. Alınan ses korunarak bağlantı yeniden kontrol edilecek.')
           : 'Türkçe medya isteği zaman aşımına uğradı.'), { code: idleMs ? 'UPLOAD_STALLED' : 'REQUEST_TIMEOUT' });
         requestController.abort(error);
         rejectAbort(error);
-      }, idleMs || timeoutMs);
+      }, idleMs ? (uploadFinished ? ackMs : idleMs) : timeoutMs);
     };
     armDeadline();
     const uploadProgress = transfer => {
       if (abandoned || !current(owner)) return;
-      if (idleMs && (transfer.loaded > lastLoaded || (transfer.phase === 'waiting' && !uploadFinished))) armDeadline();
+      const firstAckWait = transfer.phase === 'waiting' && !uploadFinished;
+      if (firstAckWait) uploadFinished = true;
+      if (idleMs && (transfer.loaded > lastLoaded || firstAckWait)) armDeadline();
       lastLoaded = Math.max(lastLoaded, Number(transfer.loaded) || 0);
-      if (transfer.phase === 'waiting') uploadFinished = true;
       options.onUploadProgress(transfer);
     };
     try {
@@ -382,9 +388,12 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const fileName = String(source.name || 'source-audio.mp3').slice(0, 240);
     const timeline = Number.isFinite(timelineDuration) && timelineDuration > 0 ? timelineDuration : undefined;
     const uploadIdentity = `${timeline ?? 'container'}:chunks-${requestedChunkSize}`;
+    const legacyIdentity = requestedChunkSize === AUDIO_UPLOAD_CHUNK_BYTES
+      ? `${timeline ?? 'container'}:chunks-${LEGACY_AUDIO_UPLOAD_CHUNK_BYTES}` : null;
     let sourceKeys = sourceUploadKeys.get(source);
     if (!sourceKeys) { sourceKeys = new Map(); sourceUploadKeys.set(source, sourceKeys); }
     let clientUploadKey = sourceKeys.get(uploadIdentity);
+    let resumeUploadKey = legacyIdentity ? sourceKeys.get(legacyIdentity) : null;
     if (!clientUploadKey) {
       // Hash bounded chunks, then their digests. Never decode or hold the whole
       // video in memory, and never identify a source by only its first frames.
@@ -400,18 +409,24 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         }
         const digestBytes = await new Blob(digests).arrayBuffer();
         const hash = new Uint8Array(await cryptoRef.subtle.digest('SHA-256', digestBytes));
-        clientUploadKey = `source-audio:${source.size}:${uploadIdentity}:${Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+        const fingerprint = Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('');
+        clientUploadKey = `source-audio:${source.size}:${uploadIdentity}:${fingerprint}`;
+        if (legacyIdentity) resumeUploadKey = `source-audio:${source.size}:${legacyIdentity}:${fingerprint}`;
       } else {
         // An insecure browser can resume this Blob during this page session;
         // it must not reuse another source's upload through a weak fingerprint.
         clientUploadKey = `source-audio:${source.size}:${uploadIdentity}:${cryptoRef?.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
       }
-      assertCurrent(owner); sourceKeys.set(uploadIdentity, clientUploadKey);
+      assertCurrent(owner);
+      sourceKeys.set(uploadIdentity, clientUploadKey);
+      if (resumeUploadKey) sourceKeys.set(legacyIdentity, resumeUploadKey);
     }
     const created = await request(`${API}/uploads/start`, { method: 'POST', timeoutMs: uploadRequestTimeoutMs,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileName, mimeType: source.type, totalSize: source.size,
-        chunkSize: requestedChunkSize, clientUploadKey, ...(timeline ? { timelineDuration: timeline } : {}) }) }, owner);
+        chunkSize: requestedChunkSize, clientUploadKey,
+        ...(resumeUploadKey ? { resumeUploadKey } : {}),
+        ...(timeline ? { timelineDuration: timeline } : {}) }) }, owner);
     const uploadId = created.uploadId || created.id;
     if (!uploadId) throw new Error('Video yükleme kimliği alınamadı.');
     const size = Math.max(1, Math.min(MAX_CHUNK, Number(created.chunkSize) || requestedChunkSize));
@@ -432,7 +447,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         for (let attempt = 0; ; attempt++) {
           try {
             await request(`${API}/uploads/${encodeURIComponent(uploadId)}/chunk/${index}`, {
-              method: 'POST', timeoutMs: uploadRequestTimeoutMs, activityTimeoutMs: uploadIdleTimeoutMs,
+              method: 'POST', timeoutMs: uploadRequestTimeoutMs,
+              activityTimeoutMs: uploadIdleTimeoutMs, ackTimeoutMs: uploadAckTimeoutMs,
               onUploadProgress: transfer => {
                 if (!current(owner)) return;
                 notify({ state: 'UPLOADING', waiting: transfer.phase === 'waiting',
