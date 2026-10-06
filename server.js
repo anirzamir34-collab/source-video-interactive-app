@@ -24,6 +24,7 @@ import { runtimeReady } from './lib/turkish-media/readiness.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
+import { geminiGenerationConfig } from './lib/gemini-generation-config.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -35,7 +36,9 @@ const ANALYSIS_SCHEMA_VERSION = 6;
 const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 const storyboardRequestCache = createAnalysisRequestCache();
 const analysisRevision = crypto.createHash('sha256').update(JSON.stringify([
-  fs.readFileSync(__filename, 'utf8'), process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL
+  fs.readFileSync(__filename, 'utf8'), fs.readFileSync(path.join(__dirname, 'lib/gemini-generation-config.js'), 'utf8'),
+  process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL,
+  geminiGenerationConfig(process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL)
 ])).digest('hex');
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
@@ -669,22 +672,19 @@ Rules:
         }))
       ];
       const model = process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
-      const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles });
+      const generationConfig = geminiGenerationConfig(model);
+      const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
       const requestUsage = emptyGeminiUsage();
+      const startedAt = Date.now();
+      let attempts = 0;
       let outcome = 'failed';
       try {
         const cached = await storyboardRequestCache.run(key, () => generateStoryboardWithRetry(async () => {
+          attempts++;
           const response = await ai.models.generateContent({
             model,
             contents: [{ role: "user", parts }],
-            config: {
-              // Finish within the browser's 240-second request budget even
-              // after our one explicit retry. Disable nested SDK retries.
-              httpOptions: { timeout: 90000, retryOptions: { attempts: 1 } },
-              responseMimeType: "application/json",
-              temperature: 0.1,
-              maxOutputTokens: 16384
-            }
+            config: generationConfig
           });
           addGeminiUsage(analysisUsage, response?.usageMetadata);
           addGeminiUsage(requestUsage, response?.usageMetadata);
@@ -702,7 +702,8 @@ Rules:
         return cached.value;
       } finally {
         console.info('[gemini-request-usage]', JSON.stringify({ stage: reviewMode ? 'review' : 'analysis',
-          chunkIndex, outcome, ...requestUsage }));
+          chunkIndex, outcome, model, thinkingLevel: generationConfig.thinkingConfig?.thinkingLevel || 'default',
+          durationMs: Date.now() - startedAt, attempts, sheetCount: requestFiles.length, ...requestUsage }));
       }
     };
 
@@ -1549,6 +1550,7 @@ app.get('/health', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ status: 'ok', service: 'source-video-interactive-app',
     analysisRevision,
+    analysisGeneration: { thinkingLevel: geminiGenerationConfig(process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL).thinkingConfig?.thinkingLevel || 'default' },
     deploymentCommit: process.env.RENDER_GIT_COMMIT || null,
     turkishMedia: { qualityMode: mediaConfig.qualityMode, pipelineVersion: mediaConfig.version,
       translationProvider: mediaConfig.translation.provider, openAIRequired: false,

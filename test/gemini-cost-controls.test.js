@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
+import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
 import { createServerRevisionReader } from '../public/server-revision.js';
 import { createAnalysisResponseCache, analysisRequestKey } from '../public/analysis-response-cache.js';
 import { geminiQuotaFailure } from '../public/gemini-quota.js';
@@ -49,7 +50,7 @@ test('server never reuses failures and expires or evicts completed results', asy
 test('server request identity changes with account, model, prompt and image evidence', () => {
   const request = { apiKey: 'account', model: 'model', prompt: 'dialogue', files: [{ buffer: Buffer.from('frame'), mimetype: 'image/jpeg' }] };
   const key = storyboardRequestKey(request);
-  for (const patch of [{ apiKey: 'other' }, { model: 'other' }, { prompt: 'review' },
+  for (const patch of [{ apiKey: 'other' }, { model: 'other' }, { prompt: 'review' }, { generationConfig: { thinkingConfig: { thinkingLevel: 'low' } } },
     { files: [{ buffer: Buffer.from('other frame'), mimetype: 'image/jpeg' }] }]) assert.notEqual(storyboardRequestKey({ ...request, ...patch }), key);
   assert.match(key, /^[a-f0-9]{64}$/);
 });
@@ -144,8 +145,8 @@ function serverHandler(generateContent) {
     ...choiceRouting, GoogleGenAI: class { models = { generateContent }; },
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
-    storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey,
-    storyboardRequestCache: createAnalysisRequestCache(), GEMINI_DEFAULT_MODEL: 'test-model',
+    storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,
+    storyboardRequestCache: createAnalysisRequestCache(), GEMINI_DEFAULT_MODEL: 'gemini-3.8-flash',
     generateStoryboardWithRetry: (load, options) => generateStoryboardWithRetry(load, { ...options, wait: async () => {} }),
     process: { env: {} }, console: { warn() {}, error() {}, info() {} }
   });
@@ -161,6 +162,7 @@ test('a timed-out storyboard request stops within the explicit provider budget w
       calls++;
       assert.equal(request.config.httpOptions.timeout, 90000);
       assert.equal(request.config.httpOptions.retryOptions.attempts, 1);
+      assert.equal(request.config.thinkingConfig.thinkingLevel, 'low');
       throw new DOMException('This operation was aborted', name);
     });
     const response = serverResponse(); await handler(serverRequest(), response);

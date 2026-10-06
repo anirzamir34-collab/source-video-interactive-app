@@ -100,6 +100,7 @@ Medya aşamaları `media_stage_start` / `media_stage_end` JSON logları üretir.
 | `DUB_MAX_RETRIES` | `3` (0–5) |
 | `TRANSLATION_PROVIDER` | `gemini`; bu sürüm yalnız Gemini kabul eder |
 | `TRANSLATION_MODEL` | Öncelik: bu değer → `GEMINI_MODEL` → `gemini-3.8-flash`; JSON schema destekleyen erişilebilir model |
+| `GEMINI_ANALYSIS_THINKING_LEVEL` | Gemini 3 görsel çağrıları için `low` (varsayılan), `medium` veya `high`; düşük düzey gecikmeyi hedefler, çıktı bütçesi ve ikinci doğrulama korunur. Eski/özel modeller kendi varsayılanını kullanır. |
 | `TRANSLATION_VERSION` | `scene-tr-gemini-v2`; çeviri davranışı değişince cache sürümünü değiştirin |
 | `ELEVENLABS_PRONUNCIATION_DICTIONARY_ID` | İsteğe bağlı merkezi ElevenLabs dictionary locator |
 | `ELEVENLABS_PRONUNCIATION_DICTIONARY_VERSION_ID` | Dictionary seçilirse zorunlu version locator |
