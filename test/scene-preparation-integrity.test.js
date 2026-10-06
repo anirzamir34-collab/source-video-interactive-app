@@ -162,6 +162,58 @@ test('a verified introduction with a different scene ID opens the panel before i
     ['approach', 'continue', 'transition']);
 });
 
+test('the reported long opening joins the verified core without losing source movements or duplicate tabs', () => {
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A' };
+  const intro = (id, start, end, actionType, choiceSurface = 'story', adultScene = false) =>
+    action(id, start, end, { ...cast, positionId: '', positionLabel: '', actionType,
+      adultScene, adultSceneId: adultScene ? 'intro' : '', choiceSurface,
+      choiceSurfaceEvidence: 'Visible source interval', choiceSurfaceConfidence: .95,
+      adultSceneStartTime: start, adultSceneEndTime: end });
+  const core = (id, start, end, positionId, routeNamespace = 'other') =>
+    action(id, start, end, { ...cast, positionId, positionLabel: positionId === 'rear' ? 'Arkadan' : 'Yan pozisyon',
+      actionType: 'position', classificationReview: 'verified', activityType: routeNamespace,
+      receiverBodyOrientation: 'side_lying', receiverSupport: 'side',
+      positionConfigurationConfidence: .95, positionEvidence: 'Verified source posture',
+      adultSceneId: id.startsWith('rear') ? 'core-a' : 'core-b',
+      adultSceneStartTime: start, adultSceneEndTime: end,
+      positionStartTime: start, positionEndTime: end,
+      label: positionId === 'rear' ? 'Arkadan ritmik devam et' : 'Yan pozisyonda ritmik hareket et' });
+  const rows = [
+    intro('talk', 45, 78.5, 'dialogue'),
+    intro('contact', 78.5, 86.2, 'touch'),
+    intro('kiss', 86.2, 91.5, 'kiss'),
+    intro('line', 91.5, 104, 'dialogue'),
+    intro('posture', 104, 112.5, 'body_transition'),
+    intro('approach', 112.5, 203, 'touch'),
+    intro('last-contact', 203, 209, 'touch', 'approach', true),
+    core('rear-1', 295, 467.5, 'rear'),
+    core('rear-2', 467.5, 479.796, 'rear'),
+    core('side-1', 479.796, 515.337, 'spoon', 'vaginal'),
+    core('side-2', 515.337, 586.418, 'spoon', 'other')
+  ];
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const state = prepare(rows, {
+    playableAdultPanelFamily: item => item.positionId || '',
+    canonicalAdultPosition: item => ({ id: item.positionId, label: item.positionLabel }),
+    adultCategoryFor: item => ({ id: item.activityType || 'other', label: 'Source' }),
+    activityOccurrenceNamespace: item => item.activityType || 'other',
+    movementBelongsToVerifiedPosition: gameplay.movementBelongsToVerifiedPosition,
+    mergeAdultSceneFragments: mergeFragments
+  });
+  assert.equal(state.adultScenes.length, 1);
+  const [scene] = state.adultScenes;
+  assert.equal(scene.startTime, 45);
+  assert.deepEqual(Array.from(scene.foreplay, item => item.id), ['contact', 'kiss', 'approach', 'last-contact']);
+  assert.deepEqual(Array.from(scene.dialogue, item => item.id), ['talk', 'line', 'posture']);
+  assert.deepEqual(scene.positions.map(position => position.familyId), ['rear', 'spoon']);
+  assert.equal(scene.positions.reduce((total, position) => total + position.movements.length, 0) >= 4, true);
+  assert.equal(state.adultAnalysisTrace.actions.find(row => row.actionId === 'last-contact').membershipReason,
+    'VERIFIED_SAME_CAST_INTRODUCTION');
+  assert.equal(state.adultAnalysisTrace.graph.duplicateFamilies.length, 0);
+});
+
 test('preparation routes a verified same-cast introduction into its adjacent scene without changing source times', () => {
   const intro = action('intro', 5, 10, { actionType: 'touch', positionId: '', positionLabel: '',
     adultScene: false, adultSceneId: '', adultSceneStartTime: undefined, adultSceneEndTime: undefined,

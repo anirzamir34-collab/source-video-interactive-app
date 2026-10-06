@@ -357,7 +357,15 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
     resolveVerifiedAdultPosition(action).family === canonicalId;
   // Match the activity dimension against its parent activity. A support/posture
   // classification must not contradict an already verified activity class.
-  if (!activityClass && structuralFamily && structuralFamily !== canonicalId) return false;
+  const verifiedParent = action.sourceVerified === true &&
+    action.classificationReview === 'verified' &&
+    Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
+    String(action.positionEvidence || '').trim() &&
+    (adultPositionFamily(action.positionId) === canonicalId ||
+      adultPositionFamily(action.positionLabel) === canonicalId);
+  // A side-lying support can describe either a rear or spoon occurrence. Its
+  // broad structural tag must not discard a verified, explicitly named parent.
+  if (!activityClass && structuralFamily && structuralFamily !== canonicalId && !verifiedParent) return false;
   const source = [
     action.label,
     action.movementType,
@@ -391,8 +399,8 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
     const broadDirectionOnly = family === 'rear' &&
       /\b(?:arkadan|from[ -]behind|rear)\b/.test(text) &&
       !/doggy|dort|hands[ _-]knees/.test(text);
-    return Boolean(broadDirectionOnly && resolveVerifiedAdultPosition(action).family === canonicalId &&
-      ['standing-rear', 'prone-bone'].includes(canonicalId));
+    return Boolean(broadDirectionOnly && verifiedParent &&
+      ['spoon', 'standing-rear', 'prone-bone'].includes(canonicalId));
   }
   return true;
 }
@@ -844,7 +852,11 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
     const subjectKey = String(position.subjectTrackId || '').trim();
     const role = String(position.progressionRole || '').trim();
     const route = String(position.routeNamespace ?? position.activityType ?? '');
-    const routeSuffix = route && route !== 'unclear' ? `:${route}` : '';
+    // The provider's `other` activity is unspecified, not a different
+    // position. Keep distinct verified activity classes only when both sides
+    // explicitly disagree; exact source ranges still isolate every return.
+    const routeClass = ['other', 'unclear'].includes(route) ? '' : route;
+    const routeSuffix = routeClass ? `:${routeClass}` : '';
     const roleSuffix = (role ? `:${role}` : '') + routeSuffix +
       (subjectKey && subjectKey !== 'MAIN_MALE' ? `:${subjectKey}` : '');
     const positionId = partnerKey === 'partner-unknown'
@@ -881,8 +893,10 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
       .filter(movement => sourceRangeForClip(position, movement, ranges));
     // Keep separate continuous returns separate unless a caller explicitly
     // requests an encounter-wide summary. Exact ranges still govern playback.
+    const baseKey = `${String(position.familyId)}::${subjectKey}::${partnerKey}::${role}`;
     const existing = [...clusters].reverse().find(item =>
-      item.clusterKey === key && (
+      item.baseKey === baseKey &&
+      (!item.routeClass || !routeClass || item.routeClass === routeClass) && (
         mergeDistantReturns || Number(position.startTime) <= Number(item.endTime) + 0.25
       )
     );
@@ -893,6 +907,8 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
         id: occurrenceNumber === 1 ? positionId : `${positionId}:occ-${occurrenceNumber}`,
         occurrenceId: occurrenceNumber === 1 ? occurrenceId : `${occurrenceId}:occ-${occurrenceNumber}`,
         clusterKey: key,
+        baseKey,
+        routeClass,
         partnerTrackId: partnerKey === 'partner-unknown' ? '' : partnerKey,
         startTime: Number(position.startTime),
         endTime: Number(position.endTime),
@@ -906,6 +922,8 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
     existing.endTime = Math.max(existing.endTime, Number(position.endTime));
     existing.sourceRanges.push(...ranges);
     existing.movements.push(...movements);
+    if (existing.routeNamespace !== route) existing.routeNamespace = '';
+    existing.routeClass ||= routeClass;
     if (Number(position.activityTypeConfidence || 0) > Number(existing.activityTypeConfidence || 0)) {
       existing.activityType = position.activityType;
       existing.activityTypeConfidence = position.activityTypeConfidence;
@@ -953,7 +971,9 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
       sourceRanges: ranges,
       movements: position.movements,
       entryMovementId: position.movements[0]?.id || '',
-      clusterKey: undefined
+      clusterKey: undefined,
+      baseKey: undefined,
+      routeClass: undefined
     });
   }
   return consolidated.sort((a, b) => Number(a.startTime) - Number(b.startTime));
@@ -992,6 +1012,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     const explicitHard = /\b(sert|hard|guclu)\b/u.test(text);
     const explicitFast = tempo === 'fast' || /\b(hizli|hizlan\w*|fast|thrust)\b/u.test(text);
     const explicitIntense = /\b(yogun|zirve|intense)\b/u.test(text);
+    const explicitRhythmic = /\b(ritmik|ritim|tempo|rhythmic|rhythm)\b/u.test(text);
     const energyFlavor = explicitDeep ? 'deep'
       : explicitHard ? 'hard'
         : explicitFast ? 'fast'
@@ -1005,13 +1026,15 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     const energyLabel = {
       slow: 'YAVAŞ', steady: 'RİTMİK', fast: 'HIZLI',
       deep: 'DERİN', hard: 'SERT', intense: 'YOĞUN'
-    }[energyFlavor];
+    }[energyFlavor] || '';
     return {
-      key: `${resolvedTempo}:${intensityBand}`,
+      // Deep, hard and fast source clips are not interchangeable even though
+      // all three may share the same coarse tempo band.
+      key: `${resolvedTempo}:${intensityBand}:${energyFlavor}`,
       tempo: resolvedTempo,
       intensityBand,
       energyFlavor,
-      energyLabel
+      energyLabel: energyFlavor === 'steady' && !explicitRhythmic ? '' : energyLabel
     };
   };
   return groupSourceChoiceCards(verified, {

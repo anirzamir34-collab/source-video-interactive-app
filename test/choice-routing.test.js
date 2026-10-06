@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneOwnsStoryChoice } from '../public/choice-routing.js';
+import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneOwnsStoryChoice,
+  sceneOwnsApproachChoice } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 
@@ -38,6 +39,15 @@ test('an explicitly evidenced ordinary contact keeps its story category', () => 
     choiceSurfaceConfidence: 0.95, choiceSurfaceEvidence: 'An ordinary greeting' })), 'story');
 });
 
+test('observed contact and kissing keep their opening surface when a provider calls them story', () => {
+  for (const actionType of ['touch', 'kiss']) {
+    assert.equal(choiceSurfaceForAction(action({ actionType, choiceSurface: 'story',
+      choiceSurfaceEvidence: 'The same pair visibly draw closer and touch.', choiceSurfaceConfidence: 0.94 })), 'approach');
+  }
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'body_transition', choiceSurface: 'story',
+    choiceSurfaceEvidence: 'They change posture.', choiceSurfaceConfidence: 0.94 })), 'story');
+});
+
 test('choice windows stop at the next category boundary instead of offering later source clips', () => {
   const rows = [
     action({ id: 'opening-a', choiceSurface: 'approach', startTime: 109.5, endTime: 117 }),
@@ -67,6 +77,12 @@ test('only an exact verified source ID owns a story choice, not a scene-wide tim
   const scene = { startTime: 0, endTime: 200, dialogue: [{ id: 'entry', sourceActionId: 'source-a', sourceVerified: true }] };
   assert.equal(sceneOwnsStoryChoice(scene, action()), true);
   assert.equal(sceneOwnsStoryChoice(scene, action({ actionId: 'different-source' })), false);
+});
+
+test('a scene owns only its explicitly linked opening contacts', () => {
+  const scene = { foreplay: [{ id: 'contact', sourceActionId: 'source-a', sourceVerified: true }] };
+  assert.equal(sceneOwnsApproachChoice(scene, action()), true);
+  assert.equal(sceneOwnsApproachChoice(scene, action({ actionId: 'later-contact' })), false);
 });
 
 test('hardening preserves source times and assigns separate source categories without provider calls', () => {

@@ -4,6 +4,29 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createTurkishMediaClient } from '../public/turkish-media-client.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
+import { mapSpeakerVoices } from '../lib/turkish-media/voice-mapping.js';
+import { normalizeScribeTranscript } from '../lib/turkish-media/model.js';
+
+test('verified female profile cannot reuse a male or unlabelled catalog voice', () => {
+  const speakers = [{ speakerId: 'person-a', gender: 'female' }];
+  const catalog = [
+    { voice_id: 'male-tr', labels: { gender: 'male', language: 'tr' } },
+    { voice_id: 'unknown-tr', labels: { language: 'tr' } },
+    { voice_id: 'female-tr', labels: { gender: 'female', language: 'tr' } }
+  ];
+  assert.deepEqual(mapSpeakerVoices(speakers, catalog, { 'person-a': 'male-tr' }),
+    { 'person-a': 'female-tr' });
+  assert.throws(() => mapSpeakerVoices(speakers, catalog, {}, { 'person-a': 'male-tr' }),
+    { code: 'VOICE_MAPPING_INVALID' });
+});
+
+test('provider gender labels are normalized before speaker voice mapping', () => {
+  const transcript = normalizeScribeTranscript({ language_code: 'ru',
+    speakers: [{ speaker_id: 'source-1', gender: 'FEMALE' }],
+    words: [{ text: 'Hello.', type: 'word', start: 1, end: 2, speaker_id: 'source-1' }]
+  }, { sourceHash: 'voice-evidence', duration: 5 });
+  assert.equal(transcript.speakers[0].gender, 'female');
+});
 
 const app = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const copy = value => JSON.parse(JSON.stringify(value));
@@ -318,9 +341,13 @@ test('ambiguous raw speaker IDs matched to two visible people are not forced int
   assert.deepEqual(copy(f.scope.verifiedSpeakerVoiceHints()), {});
 });
 
-test('normal VideoQuest flow keeps manual speaker voice selection hidden', () => {
+test('an unverified speaker keeps the voice repair control available after dubbing', () => {
   const f = uiFixture({ manual: false });
   f.els.voiceMappingPanel.open = true;
+  f.scope.renderVoiceMappingPanel();
+  assert.equal(f.els.voiceMappingPanel.open, true);
+  assert.equal(f.els.voiceMappingPanel.classes.has('hidden'), false);
+  f.state.sourceTranscript.speakers[0].gender = 'male';
   f.scope.renderVoiceMappingPanel();
   assert.equal(f.els.voiceMappingPanel.open, false);
   assert.equal(f.els.voiceMappingRows.children.length, 0);

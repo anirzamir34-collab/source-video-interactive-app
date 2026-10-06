@@ -268,6 +268,8 @@ test('mix uses sourceStart sample offsets, ducks the original language and suppo
   assert.equal(result.qa.preservesMusicDuringSpeech, true);
   assert.match(result.qa.limitation, /music and ambience are reduced/);
   assert.equal(await stat(result.path).then(row => row.size), 5);
+  assert.equal(mocked.calls.filter(row => row.binary === 'media').length, 1,
+    'the source bed and all dub turns are mixed in one encoder pass');
 });
 
 test('mix refuses duplicate IDs, fabricated overflow and a source soundtrack masquerading as separation', async () => {

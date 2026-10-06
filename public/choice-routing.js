@@ -11,8 +11,15 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
       ['partner_transition', 'outcome', 'aftermath'].includes(type) ||
       ['climax', 'aftermath'].includes(text(action.outcomeType))) return 'panel';
   const declaredEvidence = String(action.choiceSurfaceEvidence || '').trim() && Number(action.choiceSurfaceConfidence) >= 0.6;
+  // A provider may label a visible kiss/contact as story just because people
+  // are also speaking. Preserve an explicitly ordinary greeting or gesture,
+  // but let the observed action kind determine the intimate choice surface.
+  const ordinaryContact = action.nonIntimate === true ||
+    /\b(?:ordinary greeting|handshake|greeting gesture|selamlasma|tokalasma|konusurken jest)\b/iu.test(
+      String(action.choiceSurfaceEvidence || '').toLocaleLowerCase('tr-TR')
+        .replace(/ş/g, 's').replace(/ı/g, 'i'));
+  if (approachTypes.has(type)) return ordinaryContact && declaredEvidence ? 'story' : 'approach';
   if (storyTypes.has(type) || (text(action.choiceSurface) === 'story' && declaredEvidence)) return 'story';
-  if (approachTypes.has(type)) return 'approach';
   if (text(action.choiceSurface) === 'approach' && declaredEvidence) return 'approach';
   return 'story';
 }
@@ -36,6 +43,12 @@ export function scenePreludeChoices(scene) {
 export function sceneOwnsStoryChoice(scene, action) {
   const id = String(action?.actionId || '');
   return Boolean(id && (scene?.dialogue || []).some(item =>
+    item.sourceVerified === true && [item.id, item.sourceActionId].includes(id)));
+}
+
+export function sceneOwnsApproachChoice(scene, action) {
+  const id = String(action?.actionId || '');
+  return Boolean(id && (scene?.foreplay || []).some(item =>
     item.sourceVerified === true && [item.id, item.sourceActionId].includes(id)));
 }
 

@@ -465,6 +465,31 @@ test('unchanged overlong text is fitted adaptively without regeneration without 
   assert.equal(f.limiter.activeCount, 0); assert.equal(f.limiter.pendingCount, 0);
 });
 
+test('only a measured long utterance is shortened and regenerated before extreme tempo fitting', async t => {
+  const f = await fixture(t);
+  const translate = f.translationProvider.translateScene;
+  f.translationProvider.translateScene = (scene, options) => {
+    if (options?.shorten) return translate(scene, options);
+    return translate(scene, options).then(rows => rows.map(row => row.translatedText === 'Merhaba.'
+      ? { ...row, translatedText: 'Merhaba, bugün burada ne yapıyorsun acaba?',
+        displaySubtitleText: 'Merhaba, bugün burada ne yapıyorsun acaba?' } : row));
+  };
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (file, options) => {
+    const turn = JSON.parse(await readFile(file, 'utf8'));
+    if (turn.text.includes('bugün burada')) throw Object.assign(new Error('long'),
+      { code: 'DUB_REGENERATE_REQUIRED', actualDuration: 5 });
+    return fit(file, options);
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(f.calls.translate.length, 2);
+  assert.equal(f.calls.translate[1].options.shorten, true);
+  assert.equal(f.calls.synthesize.length, 2);
+  assert.equal(result.qualityReport.shortenedDubCount, 1);
+  assert.equal(result.translatedUtterances[0].translatedText, 'Selam.');
+  assert.equal(result.qualityReport.adaptiveTempoCount, 0);
+});
+
 test('adjacent sentences by one speaker share time without changing source words or generating again', async t => {
   const f = await fixture(t, { words: [{ text: 'Hello.', type: 'word', start: 1, end: 1.4, speaker_id: 'speaker_0' },
     { text: 'Yes.', type: 'word', start: 1.45, end: 4, speaker_id: 'speaker_0' }] });

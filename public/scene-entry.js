@@ -16,7 +16,7 @@ const participants = action => {
 // Link only existing, verified adjacent introductions for the same exact pair
 // or group. A dialogue, another cast, or a long gap is a boundary, not evidence
 // for widening a scene. Input records and their source times stay unchanged.
-export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45, onDecision = () => {}) {
+export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45, onDecision = () => {}, allowBridge = () => false) {
   const ordered = [...actions].sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const result = new Map();
   for (const { action: anchor, sceneId } of anchors) {
@@ -29,16 +29,18 @@ export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45,
       const start = range?.startTime, end = range?.endTime;
       const sameRoles = ['subjectTrackId', 'partnerTrackId'].every(field =>
         !String(anchor[field] || '').trim() || String(action[field] || '').trim() === String(anchor[field]).trim());
+      const gap = nextStart - end;
+      const verifiedBridge = gap > 0.25 && allowBridge(action, anchor, gap) === true;
       const reason = !eligible(action) ? 'INELIGIBLE_ACTION'
         : action.sourceVerified !== true ? 'SOURCE_NOT_VERIFIED'
           : !(Number(action.confidence) >= 0.6) ? 'CONFIDENCE_BELOW_0_60'
             : !range ? 'INVALID_SOURCE_INTERVAL'
               : end > nextStart + 0.15 ? 'SOURCE_OVERLAP'
-                : nextStart - end > maxGap ? 'SOURCE_GAP_TOO_LARGE'
+                : gap > maxGap && !verifiedBridge ? 'SOURCE_GAP_TOO_LARGE'
                   : !sameRoles || participants(action).join('|') !== cast.join('|') ? 'SOURCE_CAST_MISMATCH'
                     // The optional scene flag cannot reject otherwise verified,
                     // adjacent source evidence when provider IDs change.
-                    : action.adultSceneId && action.adultSceneId !== sceneId && nextStart - end > 0.25
+                    : action.adultSceneId && action.adultSceneId !== sceneId && gap > 0.25 && !verifiedBridge
                       ? 'SCENE_ID_GAP'
                       : result.has(action) && result.get(action) !== sceneId ? 'SCENE_MEMBERSHIP_CONFLICT' : '';
       if (reason) {

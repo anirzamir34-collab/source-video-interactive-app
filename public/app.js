@@ -100,7 +100,8 @@ import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
-import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice, choiceSurfaceWindow } from './choice-routing.js';
+import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
+  sceneOwnsApproachChoice, choiceSurfaceWindow } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -1155,8 +1156,18 @@ function renderVoiceMappingPanel() {
   // Voice selection is automatic in the normal VideoQuest flow. Keep the
   // legacy manual editor available only when an explicit override is enabled;
   // analysis failures must never ask the user to assign speakers by hand.
-  const manual = state.voiceMappingManualRequested === true;
+  // Surface a repair path when the source service has no verified speaker
+  // gender. Never claim that an automatically chosen voice matches a person
+  // whose voice identity was not established by the source transcript.
+  const manual = state.voiceMappingManualRequested === true || Boolean(
+    mediaClient.capture()?.manifest?.assets?.mix &&
+    speakers.some(speaker => !['male', 'female'].includes(speaker.gender)));
   els.voiceMappingPanel.classList.toggle('hidden', !manual || !speakers.length);
+  if (manual && els.voiceMappingPanel.querySelector?.('summary')) {
+    els.voiceMappingPanel.querySelector('summary').textContent =
+      speakers.some(speaker => !['male', 'female'].includes(speaker.gender))
+        ? 'Konuşmacı sesi belirsiz · kontrol et' : 'Konuşmacı seslerini seç';
+  }
   if (!manual) {
     els.voiceMappingPanel.open = false;
     els.voiceMappingRows.replaceChildren();
@@ -2771,7 +2782,8 @@ function prepareAdultScenes() {
   const isIntroduction = action => {
     const actionType = String(action.actionType || '').toLowerCase();
     const dialogueBridge = action.choiceSurface === 'story' &&
-      (actionType === 'dialogue' || (state.sourceContext?.segments || []).some(segment => sourceSpeechOverlaps(action, segment)));
+      (actionType === 'dialogue' || actionType === 'body_transition' ||
+        (state.sourceContext?.segments || []).some(segment => sourceSpeechOverlaps(action, segment)));
     const warmupFamily = String(playableAdultPanelFamily(action) || '').toLowerCase();
     const warmupCandidate = ['oral', 'manual'].includes(warmupFamily);
     return (action.choiceSurface === 'approach' || dialogueBridge || warmupCandidate) &&
@@ -2785,7 +2797,10 @@ function prepareAdultScenes() {
     (action, reason) => {
       const row = traceByAction.get(action);
       if (row && row.membershipReason !== 'VERIFIED_SAME_CAST_INTRODUCTION') row.membershipReason = reason;
-    });
+    }, (action, anchor, gap) =>
+      gap <= 90 && action.adultScene === true && action.choiceSurface === 'approach' &&
+      String(action.subjectTrackId || '').trim() === String(anchor.subjectTrackId || '').trim() &&
+      String(action.partnerTrackId || '').trim() === String(anchor.partnerTrackId || '').trim());
   introductions.forEach((sceneId, action) => sceneOccurrenceByAction.set(action, sceneId));
 
   actions.filter(action =>
@@ -2905,7 +2920,8 @@ function prepareAdultScenes() {
         Number.isFinite(endTime) &&
         endTime - startTime >= 2
       ) {
-        traceRow.route = sourceDialogue ? 'DIALOGUE' : 'FOREPLAY';
+        traceRow.route = sourceDialogue
+          ? (actionType === 'body_transition' ? 'STORY_TRANSITION' : 'DIALOGUE') : 'FOREPLAY';
         traceRow.routeReason = sourceDialogue ? 'INDEPENDENT_STORY_CATEGORY' : 'VERIFIED_APPROACH_CATEGORY';
         (sourceDialogue ? scene.dialogue : scene.foreplay).push({
           id: action.actionId || `${sceneId}:warmup-${index}`,
@@ -4827,7 +4843,7 @@ function selectMovementTempoVariant(choice) {
   selectAdultMovement(next.id, true, null, { awardProgress: false });
 }
 
-function selectAdultPosition(positionId, shouldSeek = true) {
+function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceId = null) {
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
@@ -4843,7 +4859,10 @@ function selectAdultPosition(positionId, shouldSeek = true) {
     : null;
   const nextForwardOccurrence = occurrences.find(group => Number(group.startTime) >= cursor - 0.25 &&
     Number(group.endTime) > cursor + 0.05);
-  const targetOccurrence = containingOccurrence || nextForwardOccurrence || retainedOccurrence ||
+  const requestedOccurrence = requestedOccurrenceId
+    ? occurrences.find(group => group.id === requestedOccurrenceId && Number(group.endTime) > cursor + 0.05)
+    : null;
+  const targetOccurrence = requestedOccurrence || containingOccurrence || nextForwardOccurrence || retainedOccurrence ||
     occurrences.find(group => Number(group.endTime) > cursor + 0.05) || occurrences[0] || null;
   // A canonical tab may summarize several distant returns, but a movement
   // selection must stay inside one continuous occurrence. This prevents the
@@ -4973,7 +4992,7 @@ function selectAdultPosition(positionId, shouldSeek = true) {
   // explicit play request (including the first unlock) may change playback.
   if (!shouldSeek) return;
   state.activeAdultEntryClip = null;
-  const separateEntry = position.entryClip;
+  const separateEntry = requestedOccurrenceId ? null : position.entryClip;
   const entryGuard = separateEntry && interactionEntryGuard(
     genericInteractionSnapshot().scene.groups.find(group => group.id === position.id), separateEntry,
     { occurrenceId: targetOccurrence?.id || state.activeAdultOccurrenceId || '' });
@@ -5156,8 +5175,24 @@ function finishAdultScene(options = {}) {
       !state.adultVisitedPositionIds.has(position.id)
     )
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
-  if (remainingPosition && !force) {
+  // One tab may contain multiple verified returns to the same configuration.
+  // Visiting its first occurrence must not cause a later source occurrence to
+  // disappear when the player advances the scene.
+  const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
+  const nextReturn = (scene.positions || [])
+    .filter(position => !isWarmupPosition(position) && state.adultUnlockedPositionIds.has(position.id))
+    .flatMap(position => positionOccurrenceGroups(position)
+      .filter(occurrence => Number(occurrence.startTime) > cursor + 0.05)
+      .map(occurrence => ({ position, occurrence })))
+    .sort((a, b) => Number(a.occurrence.startTime) - Number(b.occurrence.startTime))[0];
+  if (remainingPosition && !force && (!nextReturn ||
+      Number(remainingPosition.startTime) <= Number(nextReturn.occurrence.startTime))) {
     selectAdultPosition(remainingPosition.id, true);
+    return;
+  }
+  if (nextReturn && !force && !orderedLockedAdultPositions(scene).some(position =>
+    Number(position.startTime) < Number(nextReturn.occurrence.startTime))) {
+    selectAdultPosition(nextReturn.position.id, true, nextReturn.occurrence.id);
     return;
   }
   // "Sahneyi geç" inside an encounter means advance to the next verified
@@ -5612,9 +5647,10 @@ if (els.video?.requestVideoFrameCallback) {
 
 function isUnownedTimelineChoice(action) {
   if (action?.sourceVerified !== true) return false;
-  if (choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) }) !== 'story') return false;
+  const surface = choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) });
+  if (!['story', 'approach'].includes(surface)) return false;
   return !(state.adultScenes || []).some(scene => !state.completedAdultSceneIds?.has(scene.id) &&
-    sceneOwnsStoryChoice(scene, action));
+    (surface === 'story' ? sceneOwnsStoryChoice(scene, action) : sceneOwnsApproachChoice(scene, action)));
 }
 
 function futureActions() {
@@ -5631,9 +5667,17 @@ function futureActions() {
     isUnownedTimelineChoice(a)
   );
 
+  // Ordinary dialogue and unowned verified contact must never appear in the
+  // same decision stack. The scene-owned approach still uses the dedicated
+  // Lust surface; a later standalone contact remains a distinct timeline card.
+  const ordered = pool.sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const firstSurface = ordered.length ? choiceSurfaceForAction(ordered[0]) : '';
+  const boundary = ordered.find(item => choiceSurfaceForAction(item) !== firstSurface)?.startTime ?? Infinity;
+  const surfacePool = ordered.filter(item => choiceSurfaceForAction(item) === firstSurface &&
+    Number(item.startTime) < Number(boundary));
   const seenChoices = new Set();
 
-  const unique = pool.filter((action) => {
+  const unique = surfacePool.filter((action) => {
     const key = action.choiceKey ||
       action.label.trim().toLocaleLowerCase('tr-TR');
 
@@ -5726,6 +5770,14 @@ function renderChoices() {
     return;
   }
 
+  if (els.video?.ended) {
+    state.gameCursorTime = Number(els.video.duration) || Number(state.analysis?.videoDuration) || state.gameCursorTime;
+    els.choices.classList.remove('hidden');
+    els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
+    setGameState('ENDED');
+    return;
+  }
+
   const routeTime = nextVerifiedRouteTime();
   const gapTarget = state.analysis?.partial === true
     ? analysisGapBridgeTarget(
@@ -5805,7 +5857,9 @@ function renderChoices() {
 
   candidates.forEach((action) => {
     const button = document.createElement('button');
-    button.className = 'choice story-choice';
+    const approach = choiceSurfaceForAction(action) === 'approach';
+    button.className = `choice story-choice${approach ? ' approach-choice' : ''}`;
+    button.dataset.choiceSurface = approach ? 'approach' : 'story';
     const storyLabel = storyChoiceLabelForAction(action);
     button.innerHTML = `
       <div class="choice-title">${escapeHtml(storyLabel)}</div>
@@ -5834,6 +5888,7 @@ function showPlaybackRecovery(message, retry, label = 'Geçişi tekrar dene') {
 
 async function resumeSourceVideo() {
   if (state.navigationSeeking || state.adultMode) return;
+  if (els.video.ended) { renderChoices(); return; }
   const generation = state.playbackGeneration;
   state.activeAction = null;
   els.choices.classList.add('hidden');

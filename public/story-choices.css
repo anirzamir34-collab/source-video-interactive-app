@@ -46,6 +46,11 @@
   font-size: inherit !important;
   line-height: inherit !important;
 }
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .approach-choice {
+  border-color: rgba(71, 224, 177, .62) !important;
+  background: rgba(4, 37, 31, .86) !important;
+  box-shadow: inset 3px 0 #40d9aa !important;
+}
 #playerSection .video-stage.scene-player.cinematic-ui #choices > .story-choice::before,
 #playerSection .video-stage.scene-player.cinematic-ui #choices > .story-choice::after {
   content: none !important;
@@ -67,4 +72,75 @@
 }
 #playerSection .video-stage.scene-player.cinematic-ui .fullscreen-status[hidden] {
   display: none !important;
+}
+
+/* The expanded control list keeps its entire scrollable height on the video.
+   Its title and meters already live in the compact dock. */
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded {
+  top: max(48px, env(safe-area-inset-top)) !important;
+  bottom: max(6px, env(safe-area-inset-bottom)) !important;
+  width: min(320px, 39vw) !important;
+  max-width: min(320px, 39vw) !important;
+  height: auto !important;
+  max-height: calc(100dvh - 56px - env(safe-area-inset-bottom)) !important;
+  padding: 5px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded :is(.adult-panel-header, .adult-stage-summary) {
+  display: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .adult-compact-dock {
+  min-height: 38px !important;
+  margin: 0 0 3px !important;
+  padding: 3px 5px !important;
+  gap: 3px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .adult-feel-toggle {
+  flex-basis: 32px !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.position-section, .movement-section, .progressive-stage-section) {
+  margin: 2px 0 !important;
+  padding: 0 !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.position-tabs, .movement-choice-grid) {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 4px !important;
+  margin: 2px 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .movement-choice-wrap {
+  flex: 0 1 auto !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.position-tab, .movement-choice-card, .discovery-choice-card) {
+  width: fit-content !important;
+  max-width: 100% !important;
+  min-height: 36px !important;
+  padding: 5px 8px !important;
+  font-size: 11px !important;
+  line-height: 1.22 !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel .movement-choice-card .movement-variant-status {
+  display: none !important;
+}
+@media (orientation: portrait) {
+  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded {
+    top: auto !important;
+    left: max(7px, env(safe-area-inset-left)) !important;
+    right: max(7px, env(safe-area-inset-right)) !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: min(45dvh, 380px) !important;
+  }
 }

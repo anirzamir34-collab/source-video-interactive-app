@@ -229,6 +229,52 @@ test('same verified family returns merge into one tab across the encounter', () 
   assert.equal(positions[0].sourceRanges.length, 2);
 });
 
+test('unspecified activity and verified activity share one named tab with exact source clips', () => {
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    familyId: 'spoon', progressionRole: 'core', label: 'Yan pozisyon', sourceVerified: true };
+  const position = (id, start, end, routeNamespace) => ({ ...cast, id, startTime: start, endTime: end,
+    routeNamespace, sourceRanges: [{ id, startTime: start, endTime: end, sourceVerified: true }],
+    movements: [{ id: `move-${id}`, sourcePositionId: id, sourceVerified: true,
+      subjectTrackId: cast.subjectTrackId, partnerTrackId: cast.partnerTrackId,
+      routeNamespace, startTime: start, endTime: end, loopStartTime: start, loopEndTime: end }] });
+  const [joined] = consolidateVerifiedPositions([
+    position('source-a', 10, 20, 'vaginal'), position('source-b', 30, 40, 'other')
+  ], { mergeDistantReturns: true });
+  assert.equal(joined.movements.length, 2);
+  assert.equal(joined.routeNamespace, '');
+  assert.deepEqual(joined.sourceRanges.map(range => [range.startTime, range.endTime]), [[10, 20], [30, 40]]);
+  assert.ok(joined.movements.every(item => sourceRangeForClip(joined, item)));
+  assert.equal(consolidateVerifiedPositions([
+    position('source-a', 10, 20, 'vaginal'), position('source-c', 30, 40, 'anal')
+  ], { mergeDistantReturns: true }).length, 2);
+});
+
+test('verified named parent survives a broad side-lying tag and direction wording', () => {
+  const base = { sourceVerified: true, classificationReview: 'verified',
+    positionConfigurationConfidence: .95, positionEvidence: 'Source support is side-lying.',
+    receiverBodyOrientation: 'side_lying', receiverSupport: 'side', movementType: 'ritmik hareket',
+    actionType: 'tempo_change' };
+  assert.equal(movementBelongsToVerifiedPosition({ ...base, positionId: 'rear',
+    positionLabel: 'Arkadan Pozisyon', label: 'Arkadan ritmik şekilde devam et' }, 'rear'), true);
+  assert.equal(movementBelongsToVerifiedPosition({ ...base, positionId: 'spoon',
+    positionLabel: 'Yan pozisyon', label: 'Düzenli tempoda arkadan it' }, 'spoon'), true);
+  assert.equal(movementBelongsToVerifiedPosition({ ...base, positionId: 'spoon',
+    positionLabel: 'Yan pozisyon', label: 'Misyoner pozisyonuna geç' }, 'spoon'), false);
+});
+
+test('deep, fast and neutral actions never share a misleading choice badge', () => {
+  const items = [
+    ['deep', 'Derin hareket', 'ritmik hareket'],
+    ['fast', 'Hızlı hareket', 'ritmik hareket'],
+    ['steady', 'Kalçayı kavrayarak devam et', 'ritmik hareket']
+  ].map(([id, label, movementType], index) => ({ id, label, movementType,
+    sourceActionId: id, sourceVerified: true, actionType: 'movement', movementTempo: 'moderate',
+    sourcePositionId: 'one', loopStartTime: 10 + 5 * index, loopEndTime: 15 + 5 * index }));
+  const cards = buildVerifiedMovementChoices(items, 'Yan pozisyon', 5);
+  assert.deepEqual(cards.map(card => card.energyLabel), ['DERİN', 'HIZLI', 'RİTMİK']);
+  assert.deepEqual(cards.map(card => card.variants[0].id), ['deep', 'fast', 'steady']);
+});
+
 test('selection progress rewards novelty and reduces repeated farming', () => {
   const novel = computeAdultSelectionDelta({
     repeatCount: 0,

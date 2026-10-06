@@ -112,6 +112,7 @@ function fixture() {
     orderedLockedAdultPositions: () => (state.adultScene?.positions || [])
       .filter(position => !state.adultUnlockedPositionIds.has(position.id)),
     isWarmupPosition: () => false,
+    positionOccurrenceGroups: gameplay.positionOccurrenceGroups,
     selectAdultPosition: id => { state.selectedPositionId = id; },
     navigateTimelineTo: async target => { state.navigationTargets.push(target); },
     currentAdultFlow: () => 0, renderAdultProgressiveUI() {}, findAdultSceneAt: () => null,
@@ -236,6 +237,23 @@ test('scene skip reveals the next locked chapter before leaving', () => {
   assert.equal(f.state.adultUnlockedPositionIds.has('next'), true);
   assert.equal(f.state.selectedPositionId, 'next');
   assert.equal(f.state.adultMode, true);
+});
+
+test('scene skip opens a later verified return under the same position tab', () => {
+  const f = fixture();
+  f.state.adultScene.positions = [{ id: 'repeat', sourceVerified: true,
+    startTime: 10, endTime: 40, sourceRanges: [
+      { id: 'first', sourceVerified: true, startTime: 10, endTime: 20 },
+      { id: 'second', sourceVerified: true, startTime: 30, endTime: 40 }
+    ] }];
+  f.state.adultUnlockedPositionIds.add('repeat');
+  f.state.adultVisitedPositionIds.add('repeat');
+  f.state.adultTimelineFloor = 20;
+  f.els.video.time = 20;
+  f.skipCurrentScene();
+  assert.equal(f.state.selectedPositionId, 'repeat');
+  assert.equal(f.state.adultMode, true);
+  assert.equal(f.state.completedAdultSceneIds.has('chapter-1'), false);
 });
 
 test('scene exit cancels a pending seek and removes its recovery state', async () => {
@@ -1278,6 +1296,32 @@ test('selecting a later return never replays the separate entry of its first occ
   await flush();
   assert.equal(f.els.video.currentTime, 80);
   assert.equal(f.state.activeAdultEntryClip, null);
+  assert.equal(f.state.activeAdultOccurrenceId, 'source-later-return');
+  assert.equal(f.state.activeMovementId, 'later-return-0');
+});
+
+test('scene skip seeks to the later verified return even while the first occurrence is active', async () => {
+  const f = runtimeFixture();
+  const group = f.state.adultScene.positions[0];
+  const later = chapter('later-return', 80);
+  group.sourceRanges.push(...later.sourceRanges);
+  group.movements.push(...later.movements);
+  group.endTime = 110;
+  f.state.adultScene.positions = [group];
+  f.state.adultScene.endTime = 110;
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultVisitedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.state.adultTimelineFloor = 25;
+  f.els.video.time = 25;
+  f.state.activePositionId = 'one';
+  f.state.activeAdultOccurrenceId = 'source-one';
+  f.setAdultMachinePhase('positions');
+
+  f.skipCurrentScene();
+  await flush();
+  assert.equal(f.state.adultMode, true);
+  assert.equal(f.els.video.currentTime, 80);
   assert.equal(f.state.activeAdultOccurrenceId, 'source-later-return');
   assert.equal(f.state.activeMovementId, 'later-return-0');
 });
