@@ -92,6 +92,19 @@ test('resuming six of eleven chapters never repeats completed chapters or marks 
   assert.deepEqual(result.delays, [1800, 3600, 7200]);
 });
 
+test('an exhausted review wait pauses once and resumes only the review using the completed first pass', async () => {
+  const paused = await runChunks({ review: true, fetch: request => request.review
+    ? { available: false, retryable: false, reason: 'GEMINI_TEMPORARILY_UNAVAILABLE', message: 'Provider deadline expired' }
+    : ordinaryChapter(0) });
+  assert.deepEqual(paused.requests.map(request => request.review), [false, true]);
+  assert.equal(paused.delays.length, 0);
+  assert.equal(paused.body.available, false);
+  assert.equal(paused.session.firstPassResults[0].available, true);
+  const resumed = await runChunks({ review: true, session: paused.session, fetch: () => ordinaryChapter(0) });
+  assert.deepEqual(resumed.requests.map(request => request.review), [true]);
+  assert.equal(resumed.body.available, true);
+});
+
 test('non-retryable provider response is preserved without another request', async () => {
   const result = await runChunks({ fetch: () => ({
     available: false, retryable: false, reason: 'GEMINI_CREDITS_DEPLETED', message: 'Credits exhausted'

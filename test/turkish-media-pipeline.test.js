@@ -148,6 +148,26 @@ function useNativeTiming(f) {
   };
 }
 
+test('measured mix progress reaches the client before packaging without inventing a completed mix', async t => {
+  const f = await fixture(t); useNativeTiming(f);
+  const mix = f.audio.mixAudio;
+  f.audio.mixAudio = async input => {
+    await input.onProgress(3);
+    await input.onProgress(6);
+    await input.onProgress(14);
+    return mix(input);
+  };
+  const stages = [];
+  await f.pipeline(f.input, { onStage: async row => stages.push(row) });
+  const measured = stages.filter(row => row.state === 'MIXING_AUDIO' && row.stageProgress);
+  assert.deepEqual(measured.map(row => row.stageProgress), [
+    { loaded: 3, total: 12, unit: 'sn' }, { loaded: 6, total: 12, unit: 'sn' },
+    { loaded: 12, total: 12, unit: 'sn' }
+  ]);
+  assert.ok(stages.indexOf(measured.at(-1)) < stages.findIndex(row => row.state === 'PACKAGING'));
+  assert.ok(measured.every(row => !row.completedStages.includes('MIXING_AUDIO')));
+});
+
 test('complete v4 native timestamps produce real subtitle words without Forced Alignment permission', async t => {
   const f = await fixture(t); useNativeTiming(f);
   f.elevenLabs.align = () => assert.fail('The measured generation timings must be reused.');

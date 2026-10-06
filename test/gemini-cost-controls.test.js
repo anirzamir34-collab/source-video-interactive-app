@@ -149,6 +149,23 @@ const serverRequest = () => ({ body: { duration: 120, chunkEnd: 120, timestamps:
   files: Array.from({ length: 20 }, (_, i) => ({ buffer: Buffer.from(`frame-${i}`), mimetype: 'image/jpeg' })) });
 const serverResponse = () => ({ statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } });
 
+test('a timed-out storyboard request stops within the explicit provider budget without split or client retries', async () => {
+  for (const name of ['AbortError', 'TimeoutError']) {
+    let calls = 0;
+    const handler = serverHandler(async request => {
+      calls++;
+      assert.equal(request.config.httpOptions.timeout, 90000);
+      assert.equal(request.config.httpOptions.retryOptions.attempts, 1);
+      throw new DOMException('This operation was aborted', name);
+    });
+    const response = serverResponse(); await handler(serverRequest(), response);
+    assert.equal(calls, 2);
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.body.reason, 'GEMINI_TEMPORARILY_UNAVAILABLE');
+    assert.equal(response.body.retryable, false);
+  }
+});
+
 test('provider outage never fans twenty sheets into additional model calls', async () => {
   let calls = 0;
   const handler = serverHandler(async () => { calls++; throw Error('503 UNAVAILABLE'); });

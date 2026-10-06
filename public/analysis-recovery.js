@@ -5,6 +5,9 @@ import { geminiQuotaFailure } from './gemini-quota.js';
 export function storyboardFailureReason(error) {
   const code = String(error?.code || '');
   if (/^(?:GEMINI_|MODEL_)/.test(code)) return code;
+  // The SDK's HTTP deadline rejects as AbortError, without "timeout" in its
+  // message. Treat it as a provider wait, never as malformed image evidence.
+  if (['AbortError', 'TimeoutError'].includes(error?.name)) return 'GEMINI_TEMPORARILY_UNAVAILABLE';
   const details = `${code} ${String(error?.message || error || '')}`;
   if (/PROHIBITED_CONTENT|\bSAFETY\b|BLOCKLIST|GEMINI_CONTENT_RESTRICTED/i.test(details)) return 'GEMINI_CONTENT_RESTRICTED';
   const quota = geminiQuotaFailure(error);

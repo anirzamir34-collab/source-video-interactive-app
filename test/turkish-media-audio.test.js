@@ -388,6 +388,36 @@ function frequencyAmplitude(values, frequency, offset = 0) {
   return 2 * Math.sqrt(sine * sine + cosine * cosine) / values.length;
 }
 
+test('many separated dialogue turns preserve ducking, gapless timing and measured encoder progress', async t => {
+  const media = await realMedia(t); if (!media) return;
+  const duration = 24;
+  const bed = await media.fixture('many-turns-bed.wav', '.1*sin(2*PI*440*t)', duration);
+  const dub = await media.fixture('many-turns-dub.wav', '.15*sin(2*PI*880*t)', .25);
+  const turns = Array.from({ length: 24 }, (_, i) => ({ segmentId: `turn-${i}`, speakerId: `speaker-${i % 3}`,
+    sourceStart: i + .25, sourceEnd: i + .5, audioPath: dub }));
+  const progress = [];
+  const result = await media.service.mixAudio({ sourceAudio: bed, duration, format: 'mp3', dubSegments: turns,
+    onProgress: async seconds => {
+      await new Promise(resolve => setImmediate(resolve));
+      progress.push(seconds);
+    } });
+  assert.ok(progress.length > 0, 'FFmpeg reports measured encoded timeline seconds');
+  assert.ok(progress.at(-1) >= duration - .05, 'last progress write is flushed before the mix resolves');
+  assert.ok(progress.every((seconds, i) => seconds >= 0 && (!i || seconds > progress[i - 1])));
+  const decoded = await samples(result.path);
+  assert.equal(decoded.length, duration * SAMPLE_RATE);
+  for (const i of [0, 5, 11, 17, 23]) {
+    const outsideStart = Math.round((i + .05) * SAMPLE_RATE), outsideEnd = Math.round((i + .15) * SAMPLE_RATE);
+    const insideStart = Math.round((i + .32) * SAMPLE_RATE), insideEnd = Math.round((i + .42) * SAMPLE_RATE);
+    const outside = decoded.slice(outsideStart, outsideEnd), inside = decoded.slice(insideStart, insideEnd);
+    const normalBed = frequencyAmplitude(outside, 440, outsideStart);
+    const quietBed = frequencyAmplitude(inside, 440, insideStart);
+    assert.ok(normalBed > .08, 'bed remains audible between turns, accounting for MP3 encoder gain');
+    assert.ok(Math.abs(quietBed / normalBed - .18) < .01, 'only the matching interval ducks the bed');
+    assert.ok(frequencyAmplitude(inside, 880, insideStart) > .1, 'each late turn remains audible at its own offset');
+  }
+});
+
 test('real extraction retains the original amplitude/stereo rate and complete lossless speech input', async t => {
   const media = await realMedia(t); if (!media) return;
   const input = await media.fixture('source.wav', '0.12*sin(2*PI*440*t)', 1.25); if (!input) return;

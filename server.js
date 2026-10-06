@@ -678,6 +678,9 @@ Rules:
             model,
             contents: [{ role: "user", parts }],
             config: {
+              // Finish within the browser's 240-second request budget even
+              // after our one explicit retry. Disable nested SDK retries.
+              httpOptions: { timeout: 90000, retryOptions: { attempts: 1 } },
               responseMimeType: "application/json",
               temperature: 0.1,
               maxOutputTokens: 16384
