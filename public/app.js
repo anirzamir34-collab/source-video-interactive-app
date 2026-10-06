@@ -3,6 +3,7 @@ import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonis
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
 import { requestWithUploadProgress } from './progress-request.js';
+import { createServerRevisionReader } from './server-revision.js';
 import {
   adultPositionFamily,
   assignAdultSceneOccurrenceIds,
@@ -948,6 +949,7 @@ function storyboardProgress(progress, detail) {
 }
 
 const analysisResponseCache = createAnalysisResponseCache();
+const readServerRevision = createServerRevisionReader();
 
 async function postAnalysisForm(path, form, options = {}) {
   if (path !== '/api/gemini-storyboard-analyze') return sendAnalysisForm(path, form, options);
@@ -955,9 +957,7 @@ async function postAnalysisForm(path, form, options = {}) {
   signal?.throwIfAborted();
   let key = null;
   try {
-    const health = await fetch('/health', { cache: 'no-store', signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000) });
-    const revision = health.ok ? (await health.json()).analysisRevision : null;
+    const revision = await readServerRevision({ signal });
     key = await analysisRequestKey({ revision, path, form, headers: options.headers });
   } catch { signal?.throwIfAborted(); }
   const result = await analysisResponseCache.run(key, async () => {

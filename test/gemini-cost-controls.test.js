@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
+import { createServerRevisionReader } from '../public/server-revision.js';
 import { createAnalysisResponseCache, analysisRequestKey } from '../public/analysis-response-cache.js';
 import { geminiQuotaFailure } from '../public/gemini-quota.js';
 import { storyboardFailureReason, generateStoryboardWithRetry } from '../public/analysis-recovery.js';
@@ -117,10 +118,13 @@ test('actual browser upload path reuses exact successful requests and preserves 
   const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const start = source.indexOf('const analysisResponseCache =');
   const end = source.indexOf('\nconst mediaClient =', start);
-  let requests = 0;
+  let requests = 0, healthRequests = 0;
   const scope = vm.createContext({ createAnalysisResponseCache: () => createAnalysisResponseCache({ indexedDB: new IDBFactory() }),
     analysisRequestKey: args => analysisRequestKey({ ...args, crypto: webcrypto }),
     analysisAbortController: null, analysisProgress: { update() {} }, AbortSignal, Response, JSON, globalThis: {},
+    createServerRevisionReader: () => createServerRevisionReader({ fetch: async () => {
+      healthRequests++; return new Response(JSON.stringify({ analysisRevision: 'same' }));
+    } }),
     fetch: async path => path === '/health' ? new Response(JSON.stringify({ analysisRevision: 'same' }))
       : (requests++, new Response(JSON.stringify(result().body))),
   });
@@ -128,6 +132,7 @@ test('actual browser upload path reuses exact successful requests and preserves 
   const first = await (await scope.postAnalysisForm('/api/gemini-storyboard-analyze', form())).json();
   const repeat = await (await scope.postAnalysisForm('/api/gemini-storyboard-analyze', form())).json();
   assert.equal(requests, 1); assert.equal(first.aiUsage.requests, 1); assert.equal(repeat.aiUsage.requests, 0);
+  assert.equal(healthRequests, 1);
 });
 
 function serverHandler(generateContent) {
