@@ -399,7 +399,11 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
     const broadDirectionOnly = family === 'rear' &&
       /\b(?:arkadan|from[ -]behind|rear)\b/.test(text) &&
       !/doggy|dort|hands[ _-]knees/.test(text);
-    return Boolean(broadDirectionOnly && verifiedParent &&
+    const evidencedDeclaredParent = action.sourceVerified === true &&
+      Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
+      String(action.positionEvidence || '').trim() &&
+      adultPositionFamily(action.positionId) === canonicalId;
+    return Boolean(broadDirectionOnly && (verifiedParent || evidencedDeclaredParent) &&
       ['spoon', 'standing-rear', 'prone-bone'].includes(canonicalId));
   }
   return true;
