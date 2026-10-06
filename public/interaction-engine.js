@@ -198,9 +198,14 @@ export function computeInteractionProgress(budget, observations = {}) {
   const total = Math.max(0, Number(budget?.verifiedDuration) || 0);
   const observedEndTime = played.length || selected.length
     ? Math.max(...[...played, ...selected].map(range => range.endTime)) : budget?.openingStartTime;
-  const span = Math.max(0, Number(budget?.openingDuration) || 0);
-  const frontierFraction = span > 0 && observedEndTime !== null
-    ? clamp((observedEndTime - budget.openingStartTime) / span, 0, 1) : 0;
+  // The time between two verified choices is not progress-bearing evidence.
+  // A long gap before the first core scene must not keep the opening meter
+  // near zero after every playable approach clip has actually been observed.
+  const frontierFraction = total > 0 && observedEndTime !== null
+    ? clamp(intervalDuration(asList(budget?.intervals).map(interval => ({
+      startTime: interval.startTime,
+      endTime: Math.min(interval.endTime, observedEndTime)
+    }))) / total, 0, 1) : 0;
   const coverageValue = total > 0 ? 100 * (playedDuration + selectedDuration * budget.selectionWeight) / total : 0;
   // A future seek or a repeated interval cannot move this frontier. The final
   // verified CORE boundary is the authoritative transition to a full budget.

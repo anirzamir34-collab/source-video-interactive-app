@@ -83,6 +83,7 @@ import {
   extractStoryboard
 } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
+import { runContextualAnalysisChunks } from './analysis-scheduler.js';
 import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 
 import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
@@ -1637,20 +1638,21 @@ els.analyzeBtn.addEventListener('click', async () => {
     session.firstPassResults ||= {};
     let failureBody = null;
     let failedChunk = null;
-    let response = null;
     let body = null;
 
     let protagonistProfile = session.protagonistProfile || requestedProtagonist;
     let storyContextMemory = session.storyContextMemory || normalizeStoryContext({});
 
-  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+  const analyzeChunk = async (chunkIndex, contextSnapshot) => {
+      let response = null;
+      let chunkBody = null;
+      let chunkFailure = null;
       analysisOwner.signal.throwIfAborted();
       analysisProgress.update('analysis', { loaded: chunkResults.filter(result => result?.available).length,
         total: chunkCount, unit: 'bölüm', detail: 'Bölüm ' + (chunkIndex + 1) + '/' + chunkCount + ' hazırlanıyor.' });
       // Resume by index: completed later chapters survive a failure in the middle.
-      if (chunkResults[chunkIndex]?.available || chunkResults[chunkIndex]?.retryable === false) continue;
-      // A retry in the middle only receives context from earlier chapters.
-      storyContextMemory = mergeStoryContexts(chunkResults.slice(0, chunkIndex).filter(result => result?.available));
+      if (chunkResults[chunkIndex]?.available || chunkResults[chunkIndex]?.retryable === false)
+        return { chunkIndex, result: chunkResults[chunkIndex] };
       const { firstSheet, sheetCount } = analysisPlan.chunks[chunkIndex];
       const chunkSheets = storyboard.sheets.slice(
         firstSheet,
@@ -1716,8 +1718,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     );
     form.append('sensoryAudioContext', JSON.stringify(chunkSensoryAudio));
     form.append('qualityMode', modes.quality);
-    form.append('protagonistProfile', protagonistProfile);
-      form.append('storyContextMemory', JSON.stringify(storyContextMemory));
+      form.append('protagonistProfile', contextSnapshot.protagonistProfile);
+      form.append('storyContextMemory', JSON.stringify(contextSnapshot.storyContextMemory));
 
       const freshChunkForm = () => {
         const next = new FormData();
@@ -1738,9 +1740,11 @@ els.analyzeBtn.addEventListener('click', async () => {
 
       let chunkSucceeded = false;
       let firstPassBody = session.firstPassResults[chunkIndex] || null;
-      failureBody = null;
+      chunkFailure = null;
 
-      const maxChunkAttempts = 4;
+      // The server already retries a transient Gemini response twice. Bound
+      // client retries so one bad chapter cannot consume the entire session.
+      const maxChunkAttempts = 2;
       for (let attempt = 1; attempt <= maxChunkAttempts && !chunkSucceeded; attempt += 1) {
         els.analysisOutput.textContent =
           `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...\n` +
@@ -1752,7 +1756,7 @@ els.analyzeBtn.addEventListener('click', async () => {
 
         try {
           if (firstPassBody) {
-            body = firstPassBody;
+            chunkBody = firstPassBody;
             response = { ok: true };
           } else {
             response = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
@@ -1760,38 +1764,38 @@ els.analyzeBtn.addEventListener('click', async () => {
               stage: 'analysis', label: 'Bölüm ' + (chunkIndex + 1) + '/' + chunkCount
             });
 
-            body = await response.json();
-            recordAiUsage(body?.aiUsage);
+            chunkBody = await response.json();
+            recordAiUsage(chunkBody?.aiUsage);
 
-            if (response.ok && body?.available) {
+            if (response.ok && chunkBody?.available) {
               const normalizedChunk = normalizeChunkActionTimes(
-                body.actions,
+                chunkBody.actions,
                 chunkStart,
                 chunkEnd
               );
-              body = {
-                ...body,
+              chunkBody = {
+                ...chunkBody,
                 actions: normalizedChunk.actions,
                 chunkStart,
                 chunkEnd,
                 chunkTimeRebased: normalizedChunk.rebased
               };
-              firstPassBody = body;
-              session.firstPassResults[chunkIndex] = body;
+              firstPassBody = chunkBody;
+              session.firstPassResults[chunkIndex] = chunkBody;
             }
           }
 
-          if (!response.ok || !body?.available) {
-            failureBody = body || {
+          if (!response.ok || !chunkBody?.available) {
+            chunkFailure = chunkBody || {
               available: false,
               reason: 'CHUNK_ANALYSIS_FAILED',
               message: `Bölüm ${chunkIndex + 1} analiz edilemedi.`
             };
-            if (failureBody?.retryable === false || failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
+            if (chunkFailure?.retryable === false || chunkFailure?.reason === 'GEMINI_CREDITS_DEPLETED') {
               break;
             }
           } else {
-            const criticalReviewCandidates = secondPassReviewCandidates(body);
+            const criticalReviewCandidates = secondPassReviewCandidates(chunkBody);
             if (criticalReviewCandidates.length) {
               form.set('reviewMode', '1');
               form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
@@ -1818,40 +1822,34 @@ els.analyzeBtn.addEventListener('click', async () => {
                 };
               }
               if (!reviewResponse.ok || !reviewBody?.available) {
-                failureBody = reviewBody || {
+                chunkFailure = reviewBody || {
                   available: false,
                   reason: 'SECOND_PASS_REVIEW_FAILED',
                   message: `Bölüm ${chunkIndex + 1} ikinci doğrulamadan geçemedi.`
                 };
-                if (failureBody?.retryable === false || failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
+                if (chunkFailure?.retryable === false || chunkFailure?.reason === 'GEMINI_CREDITS_DEPLETED') {
                   break;
                 }
                 // Apply the same retry delay to failed review requests as to
                 // failed initial requests; preserve the provider's reason.
-                throw Object.assign(new Error(failureBody.message || 'Doğrulama isteği başarısız.'), {
-                  analysisFailure: failureBody
+                throw Object.assign(new Error(chunkFailure.message || 'Doğrulama isteği başarısız.'), {
+                  analysisFailure: chunkFailure
                 });
               }
-              body = mergeSecondPassReview(body, reviewBody, criticalReviewCandidates);
+              chunkBody = mergeSecondPassReview(chunkBody, reviewBody, criticalReviewCandidates);
             }
-            chunkResults[chunkIndex] = body;
+            chunkResults[chunkIndex] = chunkBody;
             delete session.firstPassResults[chunkIndex];
-            storyContextMemory = mergeStoryContexts(chunkResults.filter(result => result?.available));
-            if (body.protagonistProfile) {
-              protagonistProfile = String(body.protagonistProfile).trim();
-            }
             session.chunkResults = chunkResults;
-            session.storyContextMemory = storyContextMemory;
-            session.protagonistProfile = protagonistProfile;
             chunkSucceeded = true;
             analysisProgress.update('analysis', { loaded: chunkResults.filter(result => result?.available).length,
               total: chunkCount, unit: 'bölüm', detail: 'Bölüm ' + (chunkIndex + 1) + ' analiz edildi ve doğrulandı.' });
-            failureBody = null;
+            chunkFailure = null;
             break;
           }
         } catch (error) {
           if (analysisOwner.signal.aborted || error?.name === 'AbortError') throw error;
-          failureBody = error?.analysisFailure || {
+          chunkFailure = error?.analysisFailure || {
             available: false,
             reason: 'NETWORK_ERROR',
             message: `Bölüm ${chunkIndex + 1} sırasında bağlantı hatası oluştu.`,
@@ -1859,7 +1857,7 @@ els.analyzeBtn.addEventListener('click', async () => {
           };
         }
 
-        if (failureBody?.retryable === false || failureBody?.reason === 'GEMINI_CREDITS_DEPLETED') {
+        if (chunkFailure?.retryable === false || chunkFailure?.reason === 'GEMINI_CREDITS_DEPLETED') {
           break;
         }
 
@@ -1876,17 +1874,37 @@ els.analyzeBtn.addEventListener('click', async () => {
       }
 
       if (!chunkSucceeded) {
-        if (!canContinuePastChunkFailure(failureBody)) {
-          failedChunk = chunkIndex + 1;
-          break;
+        if (!canContinuePastChunkFailure(chunkFailure)) {
+          return { chunkIndex, failureBody: chunkFailure, failedChunk: chunkIndex + 1 };
         }
-        chunkResults[chunkIndex] = chunkGapResult(failureBody, chunkIndex, chunkStart, chunkEnd);
+        chunkResults[chunkIndex] = chunkGapResult(chunkFailure, chunkIndex, chunkStart, chunkEnd);
         session.chunkResults = chunkResults;
         els.analysisState.textContent = 'CONTINUING_WITH_GAP';
         els.analysisOutput.textContent = `Bölüm ${chunkIndex + 1} okunamadı; tamamlanan bölümler korunarak sıradaki bölüme geçiliyor.`;
-        failureBody = null;
+        chunkFailure = null;
       }
-    }
+      return { chunkIndex, result: chunkResults[chunkIndex] };
+    };
+
+    const stopped = await runContextualAnalysisChunks(chunkCount, {
+      concurrency: 2,
+      context: start => ({
+        protagonistProfile,
+        storyContextMemory: mergeStoryContexts(chunkResults.slice(0, start)
+          .filter(result => result?.available))
+      }),
+      analyze: analyzeChunk,
+      afterBatch: results => {
+        storyContextMemory = mergeStoryContexts(chunkResults.filter(result => result?.available));
+        protagonistProfile = [...results].reverse().find(item => item.result?.protagonistProfile)
+          ?.result.protagonistProfile || protagonistProfile;
+        session.storyContextMemory = storyContextMemory;
+        session.protagonistProfile = protagonistProfile;
+        session.chunkResults = chunkResults;
+      }
+    });
+    failureBody = stopped?.failureBody || null;
+    failedChunk = stopped?.failedChunk || null;
 
     const completeChunkAnalysis = isCompleteChunkAnalysis({
       completedChunkCount: chunkResults.filter(Boolean).length,
@@ -3287,7 +3305,8 @@ function prepareAdultScenes() {
 
   const graph = summarizeAdultSceneGraph(state.adultScenes);
   state.adultAnalysisTrace.graph = graph;
-  const acceptedApproachIds = new Set(state.adultScenes.flatMap(scene => scene.foreplay)
+  const acceptedApproachIds = new Set(state.adultScenes.flatMap(scene =>
+    [...scene.foreplay, ...scene.dialogue])
     .map(item => item.sourceActionId || item.id));
   const rejectedApproaches = actions.filter(action => action.sourceVerified === true && isIntroduction(action) &&
     !acceptedApproachIds.has(String(action.sourceActionId || action.actionId || ''))).map(action => {
@@ -4098,16 +4117,24 @@ function renderAdultApproachChoices(scene, later = false) {
     .sort((left, right) => Number(left.startTime) - Number(right.startTime));
   const firstDialogue = forwardApproach.find(item => item.nonIntimate === true);
   const firstIntimate = forwardApproach.find(item => item.nonIntimate !== true);
+  const firstIntimateStart = Math.min(...approachPool.filter(item => item.sourceVerified === true &&
+    item.nonIntimate !== true).map(item => Number(item.startTime)));
+  const approachAlreadyStarted = !later && Number.isFinite(firstIntimateStart) &&
+    projectedFloor >= firstIntimateStart - 0.05;
   // Dialogue may lead into the encounter, but once a verified intimacy clip is
   // reached it owns the surface immediately. Do not keep rendering the generic
   // dialogue overlay over a source-backed approach action.
-  const dialogueOnly = Boolean(firstDialogue && (
+  const dialogueOnly = !approachAlreadyStarted && Boolean(firstDialogue && (
     !firstIntimate ||
     (Number(firstDialogue.startTime) < Number(firstIntimate.startTime) - 0.05 &&
       projectedFloor < Number(firstIntimate.startTime) - 0.05)
   ));
-  const candidates = selectVerifiedChoiceQueue(choiceSurfaceWindow(approachPool,
-    dialogueOnly ? 'story' : 'approach', projectedFloor), {
+  // Once the verified opening begins, keep its controls in the same panel.
+  // A short dialogue between two approach clips is still selectable there;
+  // its nonIntimate flag prevents it from earning Lust.
+  const surfacePool = approachAlreadyStarted ? approachPool : choiceSurfaceWindow(approachPool,
+    dialogueOnly ? 'story' : 'approach', projectedFloor);
+  const candidates = selectVerifiedChoiceQueue(surfacePool, {
     timelineFloor: projectedFloor,
     limit: 5,
     maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60,
@@ -4333,7 +4360,13 @@ function renderAdultProgressiveUI(force = false) {
           item.endTime > approachCursor + 0.05)
         .sort((a, b) => a.startTime - b.startTime)[0]
     : null;
-  const approachUsesDialogueOverlay = Boolean(nextApproachSurface?.nonIntimate === true);
+  const firstIntimateStart = Math.min(...scenePreludeChoices(scene)
+    .filter(item => item.sourceVerified === true && item.nonIntimate !== true &&
+      (laterOverlay || Number(item.startTime) < Math.min(...(scene.positions || [])
+        .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)))))
+    .map(item => Number(item.startTime)));
+  const approachUsesDialogueOverlay = Boolean(nextApproachSurface?.nonIntimate === true &&
+    (laterOverlay || !Number.isFinite(firstIntimateStart) || approachCursor < firstIntimateStart - 0.05));
   const progressivePanelVisible =
     (phase !== 'foreplay' && !laterOverlay) ||
     ((phase === 'foreplay' || laterOverlay) && !approachUsesDialogueOverlay);

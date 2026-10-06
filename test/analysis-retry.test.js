@@ -6,11 +6,12 @@ import { createAnalysisProgress } from '../public/analysis-progress.js';
 import { canContinuePastChunkFailure, chunkGapResult } from '../public/analysis-recovery.js';
 import { isCompleteChunkAnalysis } from '../public/playback-logic.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
+import { runContextualAnalysisChunks } from '../public/analysis-scheduler.js';
 
-// Run the application's actual chunk loop with an ordinary chapter response
+// Run the application's actual chunk scheduler with an ordinary chapter response
 // and a simulated provider. This never calls a paid service.
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const start = source.indexOf('for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1)', source.indexOf('const chunkResults = session.chunkResults'));
+const start = source.indexOf('const analyzeChunk = async (chunkIndex, contextSnapshot)', source.indexOf('const chunkResults = session.chunkResults'));
 const end = source.indexOf('\n  if (\n    body?.available', start);
 assert.ok(start >= 0 && end > start);
 const loop = source.slice(start, end);
@@ -35,7 +36,7 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
     state: { dialogue: null }, session, modes: { quality: 'ultra' },
     els: { analysisTitle: {}, analysisState: {}, analysisOutput: {} },
     protagonistProfile: '', storyContextMemory: {}, failureBody: null, failedChunk: null, body: null, response: null,
-    geminiRequestHeaders: () => ({}), recordAiUsage() {},
+    geminiRequestHeaders: () => ({}), recordAiUsage() {}, runContextualAnalysisChunks,
     canContinuePastChunkFailure, chunkGapResult, isCompleteChunkAnalysis,
     skippedFrameCount: 0, ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test',
     normalizeChunkActionTimes: actions => ({ actions, rebased: false }),
@@ -45,11 +46,12 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
     fetch: async (_url, options) => {
       const request = {
         chunk: Number(options.body.get('chunkIndex')),
-        review: options.body.has('reviewMode')
+        review: options.body.has('reviewMode'),
+        protagonistProfile: options.body.get('protagonistProfile')
       };
       requests.push(request);
       windows.push([Number(options.body.get('chunkStart')), Number(options.body.get('chunkEnd'))]);
-      const body = fetch(request, requests.length);
+      const body = await fetch(request, requests.length);
       return { ok: body.available, json: async () => body };
     }
   });
@@ -65,6 +67,17 @@ test('focused timestamps produce contiguous source windows through the video end
     duration: 100, interval: 100 / 36
   }, fetch: request => ordinaryChapter(request.chunk) });
   assert.deepEqual(result.windows, [[0, 10], [10, 80], [80, 100]]);
+});
+
+test('the first chapter locks protagonist identity before later parallel requests', async () => {
+  const result = await runChunks({ total: 4, fetch: request => ({
+    ...ordinaryChapter(request.chunk),
+    protagonistProfile: request.chunk === 0 ? 'locked-main-character' : ''
+  }) });
+  assert.deepEqual(result.requests.map(request => request.chunk), [0, 1, 2, 3]);
+  assert.equal(result.requests[0].protagonistProfile, '');
+  assert.deepEqual(result.requests.slice(1).map(request => request.protagonistProfile),
+    ['locked-main-character', 'locked-main-character', 'locked-main-character']);
 });
 
 test('transient review failure waits before retrying and preserves the successful result', async () => {
@@ -86,10 +99,10 @@ test('resuming six of eleven chapters never repeats completed chapters or marks 
   const result = await runChunks({ completed: 6, total: 11, fetch: () => ({
     available: false, retryable: true, reason: 'NETWORK_ERROR', message: 'Connection lost'
   }) });
-  assert.deepEqual(result.requests.map(request => request.chunk), [6, 6, 6, 6]);
+  assert.deepEqual(result.requests.map(request => request.chunk), [6, 6]);
   assert.equal(result.chunkResults.length, 6);
   assert.equal(result.failureBody.reason, 'NETWORK_ERROR');
-  assert.deepEqual(result.delays, [1800, 3600, 7200]);
+  assert.deepEqual(result.delays, [1800]);
 });
 
 test('an exhausted review wait pauses once and resumes only the review using the completed first pass', async () => {
@@ -144,7 +157,7 @@ test('a temporarily unreadable chapter is retried alone while later successful c
   const first = await runChunks({ total: 3, fetch: request => request.chunk === 1
     ? { available: false, retryable: true, reason: 'CHUNK_ANALYSIS_GAP' }
     : ordinaryChapter(request.chunk) });
-  assert.deepEqual(first.requests.map(request => request.chunk), [0, 1, 1, 1, 1, 2]);
+  assert.deepEqual(first.requests.map(request => request.chunk), [0, 1, 2, 1]);
   assert.equal(first.body.partial, true);
   assert.equal(first.body.chunkCount, 2);
   const lastResult = first.chunkResults[2];
@@ -164,7 +177,8 @@ test('a failed review keeps the first pass even across a manual retry', async ()
   assert.equal(first.requests.filter(request => request.chunk === 0 && !request.review).length, 1);
   assert.equal(first.body.partial, true);
   const second = await runChunks({ total: 2, review: true, session: first.session, fetch: request => ordinaryChapter(request.chunk) });
-  assert.deepEqual(second.requests, [{ chunk: 0, review: true }]);
+  assert.deepEqual(second.requests.map(({ chunk, review }) => ({ chunk, review })),
+    [{ chunk: 0, review: true }]);
   assert.equal(second.body.partial, false);
 });
 

@@ -1160,6 +1160,47 @@ test('verified normal dialogue has its own choices and earns no progress before 
   assert.equal(f.els.video.playCalls, 1);
 });
 
+test('a dialogue between verified opening clips remains in the panel, then source core shows controls', () => {
+  const f = runtimeFixture();
+  f.state.adultScene.startTime = 28;
+  f.state.adultScene.endTime = 330;
+  f.els.video.duration = 330;
+  f.state.analysis.videoDuration = 330;
+  f.state.adultScene.positions = [chapter('reported-core', 295)];
+  f.state.adultScene.dialogue = [
+    { id: 'reported-dialogue', label: 'Existing dialogue', sourceVerified: true,
+      nonIntimate: true, choiceSurface: 'story', startTime: 91, endTime: 104 }
+  ];
+  f.state.adultScene.foreplay = [
+    { id: 'reported-opening', label: 'First opening', sourceVerified: true,
+      choiceSurface: 'approach', startTime: 82, endTime: 91 },
+    { id: 'reported-next', label: 'Next opening', sourceVerified: true,
+      choiceSurface: 'approach', startTime: 114, endTime: 126 }
+  ];
+  f.els.video.time = 82;
+  f.renderAdultPanel(f.state.adultScene);
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-opening', 'reported-dialogue']);
+  f.els.video.time = 91;
+  f.state.adultTimelineFloor = 91;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.els.choices.classList.contains('hidden'), true);
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-dialogue']);
+  f.els.video.time = 295;
+  f.state.adultTimelineFloor = 295;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+  assert.ok(f.els.positionTabs.querySelectorAll('.position-tab').length > 0);
+  assert.ok(f.els.movementChoices.querySelectorAll('.movement-choice-card').length > 0,
+    JSON.stringify({ phase: f.state.interactionRuntime.currentPhase,
+      active: f.state.activePositionId, unlocked: [...f.state.adultUnlockedPositionIds],
+      tabs: f.els.positionTabs.children.map(node => ({ id: node.dataset.positionId, disabled: node.disabled })),
+      movementCount: f.els.movementCount.textContent,
+      occurrence: f.state.activeAdultOccurrenceId, events: f.state.events.slice(-4) }));
+});
+
 test('a later source dialogue and opening interval retain exclusive surfaces between unlocked chapters', () => {
   const f = runtimeFixture();
   f.state.adultScene.positions = [chapter('first', 0), chapter('next', 60)];

@@ -45,13 +45,15 @@ test('actual natural playback increases progress with no selection and repeated 
   assert.ok(state.progressionValue > initial);
 });
 
-test('a long opening cannot fill from its first short clips and a verified boundary opens independently', () => {
+test('verified opening progress ignores an unplayable gap before the first core boundary', () => {
   let state = budgetState(opening({ choices: [row('first', 0, 10), row('second', 10, 20)],
     groups: [row('next', 300, 330, { phase: 'CORE' })] }));
+  state = observeInteractionPlayback(state, { startTime: 0, endTime: 10 });
+  assert.ok(state.progressionValue > 0 && state.progressionValue < 99);
   state = observeInteractionPlayback(state, { startTime: 0, endTime: 20 });
   state = completeInteractionSelection(state, 'first');
   state = completeInteractionSelection(state, 'second');
-  assert.ok(state.progressionValue < 10);
+  assert.equal(state.progressionValue, 99);
   assert.deepEqual(state.unlockedGroupIds, []);
   const before = state.currentTime;
   state = transitionInteraction(state, { type: 'source-time', currentTime: 301 });
@@ -62,6 +64,26 @@ test('a long opening cannot fill from its first short clips and a verified bound
   assert.deepEqual(state.unlockedGroupIds, ['next']);
   assert.equal(state.lastSeekTarget, null);
   assert.equal(before, 0);
+});
+
+test('long verified approach from the reported source earns progress without invented gap credit', () => {
+  const choices = [82, 114, 126, 138, 150, 159.9, 171, 182, 203.5]
+    .map((start, index, starts) => row(`reported-${index}`, start,
+      index === starts.length - 1 ? 208 : Math.min(start + 11, starts[index + 1])));
+  let state = budgetState(opening({ choices,
+    groups: [row('reported-core', 295, 308, { phase: 'CORE' })] }));
+  const first = observeInteractionPlayback(state, { startTime: 82, endTime: 91 });
+  assert.ok(first.progressionValue > 0);
+  assert.ok(first.progressionValue < 25);
+  for (const choice of choices) state = observeInteractionPlayback(state, {
+    startTime: choice.sourceRanges[0].startTime, endTime: choice.sourceRanges[0].endTime
+  });
+  assert.equal(state.progressionValue, 99);
+  assert.deepEqual(state.unlockedGroupIds, []);
+  state = transitionInteraction(state, { type: 'source-time', currentTime: 295 });
+  assert.equal(state.progressionValue, 100);
+  assert.equal(state.currentPhase, 'CORE');
+  assert.deepEqual(state.unlockedGroupIds, ['reported-core']);
 });
 
 test('selection requests and rejected or sought playback earn no budget credit', () => {
