@@ -15,7 +15,7 @@ function section(start, end) {
 }
 
 const branch = section('// The URL cache supplies one complete local source', '  const remoteStoryboardSource');
-const visualRequest = section('  const remoteStoryboardSource', '\n            body = await response.json();');
+const visualRequest = section('  const remoteStoryboardSource', '\n    const stopped = await runContextualAnalysisChunks');
 const handlerFailure = section("  } catch (error) {\n    console.error('Analysis failed:'", '\n});\n\nfunction assignPositionOccurrenceIds(');
 const updateTranscript = section('function updateSourceTranscript(', '\nfunction onTurkishMediaStatus(');
 const selectedModes = section('function selectedAnalysisModes(', '\nfunction updateAnalysisModesUI(');
@@ -81,7 +81,11 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
     normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}),
     geminiRequestHeaders: () => ({}),
-    fetch: async (url, options) => { calls.visual.push({ url, options }); return { ok: true }; },
+    fetch: async (url, options) => {
+      calls.visual.push({ url, options });
+      if (visual) throw new DOMException('First request captured', 'AbortError');
+      return { ok: true };
+    },
     prepareStoryboardSource: async (selectedSession, file) => {
       calls.prepare.push({ session: selectedSession, file });
       const result = prepare ? await prepare(selectedSession, file) : completeFile;
@@ -114,7 +118,13 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
   scope.postAnalysisForm = (url, body, options) => scope.fetch(url, { method: 'POST', body, headers: options.headers });
   // The optional continuation executes the real storyboard request setup,
   // then returns at the first fetch before unrelated response handling starts.
-  const continuation = visual ? `${visualRequest}\nreturn { file, fastStoryboardPreparation, response };\n}\n} finally {}\n}\n}` : '';
+  const continuation = visual ? `${visualRequest}
+try {
+  await analyzeChunk(0, { protagonistProfile, storyContextMemory });
+} catch (error) {
+  if (error?.name !== 'AbortError' || error.message !== 'First request captured') throw error;
+}
+return { file, fastStoryboardPreparation };` : '';
   vm.runInContext(`${updateTranscript}\n${selectedModes}\nasync function runBranch(file, session, modes) {\nconst requestedProtagonist = '';\nlet analysisModeKey = '';\n${branch}\n${continuation}\nreturn { file, fastStoryboardPreparation };\n}`, scope);
   vm.runInContext(`async function runHandler(file, session, modes) {\ntry {\nawait runBranch(file, session, modes);\n${handlerFailure}\n}`, scope);
   return { scope, state, els, session, calls, completeFile,
