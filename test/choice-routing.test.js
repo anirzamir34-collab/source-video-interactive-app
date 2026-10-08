@@ -16,7 +16,8 @@ test('scene envelopes and generic motion cannot turn a story action into an open
 
 test('existing verified action kinds have one surface even when their source contains speech', () => {
   assert.equal(choiceSurfaceForAction(action({ actionType: 'kiss', transcript: 'An existing line' })), 'approach');
-  assert.equal(choiceSurfaceForAction(action({ positionId: 'opaque-class', classificationReview: 'verified' })), 'panel');
+  assert.equal(choiceSurfaceForAction(action({ positionId: 'opaque-class', classificationReview: 'verified' })), 'story');
+  assert.equal(choiceSurfaceForAction(action({ positionId: 'opaque-class' }), { panelFamily: 'rear' }), 'panel');
   assert.equal(choiceSurfaceForAction(action({ actionType: 'dialogue' })), 'story');
   assert.equal(choiceSurfaceForAction(action({ sourceVerified: false, actionType: 'kiss' })), 'unverified');
 });
@@ -92,4 +93,13 @@ test('hardening preserves source times and assigns separate source categories wi
   assert.deepEqual(result.analysis.actions.map(row => row.choiceSurface), ['approach', 'story']);
   assert.deepEqual(input, original);
   assert.deepEqual([withChoiceSurface(input).startTime, withChoiceSurface(input).endTime], [10, 15]);
+});
+
+test('stale activity metadata cannot push observed opening actions into the position surface', () => {
+  for (const actionType of ['kiss', 'touch']) {
+    const source = action({ actionType, choiceSurface: 'panel',
+      positionId: '', positionLabel: '', activityType: 'oral',
+      activityTypeConfidence: 0.95, activityEvidence: 'Unverified provider claim' });
+    assert.equal(choiceSurfaceForAction(source), 'approach');
+  }
 });
