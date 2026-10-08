@@ -7,7 +7,7 @@ const storyTypes = new Set(['dialogue', 'story', 'scene_transition', 'camera_tra
 export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   if (action.sourceVerified !== true) return 'unverified';
   const type = text(action.actionType);
-  if (panelFamily || action.positionId || action.positionLabel || type === 'position' ||
+  if (panelFamily ||
       ['partner_transition', 'outcome', 'aftermath'].includes(type) ||
       ['climax', 'aftermath'].includes(text(action.outcomeType))) return 'panel';
   const declaredEvidence = String(action.choiceSurfaceEvidence || '').trim() && Number(action.choiceSurfaceConfidence) >= 0.6;
