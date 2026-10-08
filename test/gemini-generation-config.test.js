@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
 
 test('Gemini 3 uses low effort without shrinking detailed structured output', () => {
-  for (const model of ['gemini-3.8-flash', 'gemini-3-flash-preview', 'gemini-3.1-pro-preview']) {
+  for (const model of ['gemini-3.8-flash', 'gemini-3-flash-preview']) {
     const config = geminiGenerationConfig(model, {});
     assert.equal(config.thinkingConfig.thinkingLevel, 'low');
     assert.equal(config.maxOutputTokens, 16384);
@@ -27,4 +27,11 @@ test('operators can choose supported effort levels and invalid levels fail expli
   assert.throws(() => geminiGenerationConfig('gemini-3.8-flash', {
     GEMINI_ANALYSIS_THINKING_LEVEL: 'minimal'
   }), /must be/);
+});
+
+test('Gemini Pro analysis uses high reasoning and a sufficient response budget', () => {
+  const config = geminiGenerationConfig('gemini-3.1-pro-preview', {});
+  assert.equal(config.thinkingConfig.thinkingLevel, 'high');
+  assert.equal(config.maxOutputTokens, 32768);
+  assert.equal(config.httpOptions.timeout, 150000);
 });
