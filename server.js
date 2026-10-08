@@ -33,7 +33,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 10000;
 const ANALYSIS_SCHEMA_VERSION = 6;
-const ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-3.1-pro-preview';
+const ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-3.8-flash';
 const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 const storyboardRequestCache = createAnalysisRequestCache();
 // Cache identity tracks analysis behavior, not unrelated media routes or deployments.
