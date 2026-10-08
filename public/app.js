@@ -299,6 +299,7 @@ const els = {
   videoPrompt: $('videoPrompt'),
   debugOutput: $('debugOutput'),
   adultInteractionPanel: $('adultInteractionPanel'),
+  approachChoices: $('approachChoices'),
   adultPanelToggleBtn: $('adultPanelToggleBtn'),
   adultDockPhase: $('adultDockPhase'),
   adultDockTitle: $('adultDockTitle'),
@@ -3657,7 +3658,7 @@ function reconcileInteractionSeek(mediaTime) {
     state.adultMode = false;
     state.adultScene = null;
     syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-      panelVisible: false, overlayVisible: true });
+      approach: els.approachChoices, panelVisible: false, overlayVisible: true });
     state.gameCursorTime = Math.max(0, Number(mediaTime) || 0);
     state.consumedActionIds = new Set((state.analysis?.actions || [])
       .filter(action => Number(action.endTime) <= mediaTime).map(action => action.actionId));
@@ -4211,8 +4212,9 @@ function renderAdultApproachChoices(scene, later = false) {
   els.choices.dataset.interactionPhase = dialogueOnly ? 'DIALOGUE' : 'APPROACH';
   els.choices.innerHTML = '';
   els.foreplayChoices.innerHTML = '';
+  els.approachChoices.innerHTML = '';
 
-  const target = dialogueOnly ? els.choices : els.foreplayChoices;
+  const target = dialogueOnly ? els.choices : els.approachChoices;
   if (dialogueOnly) {
     els.choices.classList.remove('hidden');
     els.foreplaySection?.classList.add('hidden');
@@ -4222,8 +4224,11 @@ function renderAdultApproachChoices(scene, later = false) {
     els.choices.appendChild(heading);
   } else {
     els.choices.classList.add('hidden');
-    els.foreplaySection?.classList.remove('hidden');
-    if (els.foreplayCount) els.foreplayCount.textContent = `${candidates.length} seçenek`;
+    els.foreplaySection?.classList.add('hidden');
+    const heading = document.createElement('div');
+    heading.className = 'approach-overlay-heading';
+    heading.innerHTML = `<span>YAKINLAŞMA</span><strong>Seçimini yap</strong><small>Lust ${Math.round(flow)}/100 · ${candidates.length} seçenek</small>`;
+    target.appendChild(heading);
   }
 
   const compactChoiceLabel = value => String(value || '')
@@ -4419,9 +4424,7 @@ function renderAdultProgressiveUI(force = false) {
   els.adultInteractionPanel.dataset.phase = phase;
   els.outcomeSection?.classList.add('hidden');
 
-  // Dialogue remains on the ordinary story overlay. Intimate approach choices
-  // use the adult panel's own foreplay surface so the two interaction modes
-  // never share one visual container.
+  // Each phase owns exactly one surface: story, centered approach, or core panel.
   const approachCursor = Math.max(videoTime, Number(state.adultTimelineFloor) || 0);
   const nextApproachSurface = (phase === 'foreplay' || laterOverlay)
     ? [
@@ -4447,16 +4450,16 @@ function renderAdultProgressiveUI(force = false) {
     .map(item => Number(item.startTime)));
   const approachUsesDialogueOverlay = Boolean(nextApproachSurface?.nonIntimate === true &&
     (laterOverlay || !Number.isFinite(firstIntimateStart) || approachCursor < firstIntimateStart - 0.05));
-  const progressivePanelVisible =
-    (phase !== 'foreplay' && !laterOverlay) ||
-    ((phase === 'foreplay' || laterOverlay) && !approachUsesDialogueOverlay);
+  const progressivePanelVisible = phase !== 'foreplay' && !laterOverlay;
   const progressiveOverlayVisible =
     (phase === 'foreplay' || laterOverlay) && approachUsesDialogueOverlay;
 
   // Visibility is repaired even when the cached UI signature is unchanged.
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
     panelVisible: progressivePanelVisible,
-    overlayVisible: progressiveOverlayVisible });
+    overlayVisible: progressiveOverlayVisible,
+    approach: els.approachChoices,
+    approachVisible: (phase === 'foreplay' || laterOverlay) && !approachUsesDialogueOverlay });
   state.interactionRuntime = { ...state.interactionRuntime, panelVisible: progressivePanelVisible };
 
   if (!force && signature === state.adultUiSignature) return;
@@ -4471,8 +4474,8 @@ function renderAdultProgressiveUI(force = false) {
     if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = hasCorePosition
       ? 'Yakınlaşma, oral ve manuel seçenekleri Lust kazandırır; Lust 100 olunca yeni pozisyon beklemeden açılır.'
       : 'Bu bölümdeki doğrulanmış yakınlaşma seçenekleri Lust kazandırır.';
-    els.discoveryGate?.classList.toggle('hidden', approachUsesDialogueOverlay);
-    els.adultPanelToggleBtn?.classList.toggle('hidden', approachUsesDialogueOverlay);
+    els.discoveryGate?.classList.add('hidden');
+    els.adultPanelToggleBtn?.classList.add('hidden');
     renderAdultApproachChoices(scene, laterOverlay);
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
@@ -4483,6 +4486,7 @@ function renderAdultProgressiveUI(force = false) {
 
   els.choices.classList.add('hidden');
   els.choices.innerHTML = '';
+  els.approachChoices?.classList.add('hidden');
   els.adultInteractionPanel.classList.remove('hidden');
   els.adultPanelToggleBtn?.classList.remove('hidden');
 
@@ -5387,6 +5391,7 @@ function finishAdultScene(options = {}) {
   state.lastAdultMediaTime = null;
   if (els.video) els.video.playbackRate = 1;
   els.adultInteractionPanel?.classList.add('hidden');
+  els.approachChoices?.classList.add('hidden');
   els.adultPanelToggleBtn?.classList.add('hidden');
   els.outcomeSection?.classList.add('hidden');
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
@@ -5897,6 +5902,7 @@ async function resumeAnalysisGap(target) {
 }
 
 function renderChoices() {
+  if (!state.adultMode) els.approachChoices?.classList.add('hidden');
   if (
     state.adultMode &&
     state.adultScene &&
@@ -6526,8 +6532,11 @@ updateFullscreenButton();
 function syncFullscreenInteraction() {
   keepGameVideoControlsHidden();
   syncAdultPanelPlacement(fullscreenStage);
-  if (state.adultMode) revealFullscreenChoices({ document, stage: fullscreenStage,
-    panel: els.adultInteractionPanel, expand: () => setAdultPanelExpanded(true) });
+  if (state.adultMode) {
+    revealFullscreenChoices({ document, stage: fullscreenStage,
+      panel: els.adultInteractionPanel, expand: () => setAdultPanelExpanded(true) });
+    renderAdultProgressiveUI(true);
+  }
   updateFullscreenButton();
 }
 

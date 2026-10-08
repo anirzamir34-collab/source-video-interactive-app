@@ -121,3 +121,23 @@ test('approach and core rendering share one visible interaction surface', () => 
   assert.deepEqual(syncInteractionSurfaces({ panel, overlay }),
     { panelVisible: false, overlayVisible: false, overlayCount: 0 });
 });
+
+test('opening, story, and core phases never expose two choice surfaces together', () => {
+  const panel = new Element('core-panel');
+  const overlay = new Element('story-overlay');
+  const approach = new Element('approach-overlay');
+  for (const phase of ['approach', 'story', 'core', 'none']) {
+    const result = syncInteractionSurfaces({ panel, overlay, approach,
+      panelVisible: phase === 'core',
+      overlayVisible: phase === 'story',
+      approachVisible: phase === 'approach' });
+    const visible = [panel, overlay, approach].filter(node => !node.classes.has('hidden'));
+    assert.equal(visible.length, phase === 'none' ? 0 : 1, phase);
+    assert.equal(result.overlayCount, visible.length, phase);
+  }
+  const collision = syncInteractionSurfaces({ panel, overlay, approach,
+    panelVisible: true, overlayVisible: true, approachVisible: true });
+  assert.equal(collision.overlayCount, 1);
+  assert.equal(panel.classes.has('hidden'), false);
+  assert.equal(approach.classes.has('hidden'), true);
+});

@@ -36,14 +36,17 @@ export function resetInteractionSelection(state, {
   }
 }
 
-export function syncInteractionSurfaces({ panel, overlay, panelVisible = false,
-  overlayVisible = false } = {}) {
+export function syncInteractionSurfaces({ panel, overlay, approach, panelVisible = false,
+  overlayVisible = false, approachVisible = false } = {}) {
   const showPanel = Boolean(panel && panelVisible);
   // Dedicated controls and ordinary choices have a single visible owner. A
   // repeated seek/pause render updates the same nodes instead of remounting.
   const showOverlay = Boolean(overlay && overlayVisible && !showPanel);
+  const showApproach = Boolean(approach && approachVisible && !showPanel && !showOverlay);
   panel?.classList.toggle('hidden', !showPanel);
   overlay?.classList.toggle('hidden', !showOverlay);
+  approach?.classList.toggle('hidden', !showApproach);
   return { panelVisible: showPanel, overlayVisible: showOverlay,
-    overlayCount: Number(showPanel) + Number(showOverlay) };
+    ...(approach ? { approachVisible: showApproach } : {}),
+    overlayCount: Number(showPanel) + Number(showOverlay) + Number(showApproach) };
 }
