@@ -879,7 +879,8 @@ function updateAnalyzeAvailability() {
   els.motionMode,
   els.subtitleMode,
   els.dubMode,
-  els.dubQualityMode
+  els.dubQualityMode,
+  els.dubbingProvider
 ].forEach(control => {
   control?.addEventListener('change', updateAnalyzeAvailability);
 });
