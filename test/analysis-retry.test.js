@@ -36,7 +36,7 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
     state: { dialogue: null }, session, modes: { quality: 'ultra' },
     els: { analysisTitle: {}, analysisState: {}, analysisOutput: {} },
     protagonistProfile: '', storyContextMemory: {}, failureBody: null, failedChunk: null, body: null, response: null,
-    motionAnalysisHeaders: () => ({}), recordAiUsage() {}, runContextualAnalysisChunks,
+    geminiRequestHeaders: () => ({}), recordAiUsage() {}, runContextualAnalysisChunks,
     canContinuePastChunkFailure, chunkGapResult, isCompleteChunkAnalysis,
     skippedFrameCount: 0, ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test',
     normalizeChunkActionTimes: actions => ({ actions, rebased: false }),

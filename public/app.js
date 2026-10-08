@@ -261,12 +261,6 @@ const els = {
   testGeminiApiKeyBtn: $('testGeminiApiKeyBtn'),
   clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
   apiKeyStatus: $('apiKeyStatus'),
-  motionProvider: $('motionProvider'),
-  cloudflareAccountIdInput: $('cloudflareAccountIdInput'),
-  cloudflareApiTokenInput: $('cloudflareApiTokenInput'),
-  saveCloudflareApiBtn: $('saveCloudflareApiBtn'),
-  clearCloudflareApiBtn: $('clearCloudflareApiBtn'),
-  cloudflareApiStatus: $('cloudflareApiStatus'),
   elevenLabsApiKeyInput: $('elevenLabsApiKeyInput'),
   saveElevenLabsApiKeyBtn: $('saveElevenLabsApiKeyBtn'),
   testElevenLabsApiKeyBtn: $('testElevenLabsApiKeyBtn'),
@@ -604,8 +598,6 @@ function renderQuotaBadge(element, status) {
 }
 
 const GEMINI_SESSION_KEY = 'videoquest_gemini_api_key';
-let cloudflareCredentials = null;
-let cloudflareCredentialGeneration = 0;
 // ElevenLabs credentials live only in the password control or this module's
 // memory. They are deliberately excluded from the serializable game state.
 let browserElevenLabsApiKey = '';
@@ -711,51 +703,6 @@ function activeGeminiApiKey() {
 function geminiRequestHeaders(base = {}) {
   const key = activeGeminiApiKey();
   return key ? { ...base, 'X-Gemini-Api-Key': key } : { ...base };
-}
-
-function motionAnalysisProvider() {
-  return els.motionProvider?.value === 'cloudflare' ? 'cloudflare' : 'gemini';
-}
-
-function motionAnalysisHeaders() {
-  return motionAnalysisProvider() === 'cloudflare'
-    ? { 'X-Analysis-Provider': 'cloudflare', 'X-Cloudflare-Account-Id': cloudflareCredentials?.accountId || '',
-        'X-Cloudflare-Api-Token': cloudflareCredentials?.token || '' }
-    : geminiRequestHeaders();
-}
-
-function renderCloudflareApiState() {
-  if (els.cloudflareApiStatus) els.cloudflareApiStatus.textContent = cloudflareCredentials
-    ? 'Bu sekmede Cloudflare hesabın hazır' : motionAnalysisProvider() === 'cloudflare'
-      ? 'Account ID ve API tokenını gir' : 'Gemini seçili';
-  els.clearCloudflareApiBtn?.classList.toggle('hidden', !cloudflareCredentials);
-}
-
-function saveCloudflareApi() {
-  if (state.analysisInProgress || state.savedGameBusy) return;
-  const accountId = String(els.cloudflareAccountIdInput?.value || '').trim();
-  const token = normalizedProviderKey(els.cloudflareApiTokenInput?.value || '', 'CLOUDFLARE_API_TOKEN');
-  if (!/^[a-f0-9]{32}$/i.test(accountId) || token.length < 20 || token.length > 512 || /\s/.test(token)) {
-    if (els.cloudflareApiStatus) els.cloudflareApiStatus.textContent = 'Account ID veya API tokenı geçersiz';
-    return;
-  }
-  cloudflareCredentials = { accountId, token };
-  cloudflareCredentialGeneration++;
-  els.cloudflareApiTokenInput.value = '';
-  els.motionProvider.value = 'cloudflare';
-  renderCloudflareApiState();
-  updateAnalyzeAvailability();
-}
-
-function clearCloudflareApi() {
-  if (state.analysisInProgress || state.savedGameBusy) return;
-  cloudflareCredentials = null;
-  cloudflareCredentialGeneration++;
-  els.cloudflareAccountIdInput.value = '';
-  els.cloudflareApiTokenInput.value = '';
-  els.motionProvider.value = 'gemini';
-  renderCloudflareApiState();
-  updateAnalyzeAvailability();
 }
 
 function renderGeminiApiKeyState() {
@@ -870,7 +817,6 @@ async function checkTurkishMediaCapabilities() {
 function selectedAnalysisModes() {
   return {
     motion: Boolean(els.motionMode?.checked),
-    provider: els.motionProvider?.value === 'cloudflare' ? 'cloudflare' : 'gemini',
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
@@ -887,7 +833,7 @@ function updateAnalysisModesUI() {
   };
 
   const active = [];
-  if (modes.motion) active.push('hareket ve seçim · ' + (modes.provider === 'cloudflare' ? 'Cloudflare' : 'Gemini'));
+  if (modes.motion) active.push('hareket ve seçim');
   if (modes.subtitles) active.push('Türkçe altyazı');
   if (modes.dubbing) active.push('Türkçe dublaj');
 
@@ -907,17 +853,15 @@ function updateAnalyzeAvailability() {
   const geminiBlocked = needsGemini &&
     ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
       .includes(String(state.geminiProviderStatus?.state || ''));
-  const cloudflareBlocked = Boolean(els.motionMode?.checked) && motionAnalysisProvider() === 'cloudflare' && !cloudflareCredentials;
-  els.analyzeBtn.disabled = busy || geminiBlocked || cloudflareBlocked || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
+  els.analyzeBtn.disabled = busy || geminiBlocked || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
-  [els.qualityMode, els.dubQualityMode, els.motionMode, els.subtitleMode, els.dubMode, els.motionProvider]
+  [els.qualityMode, els.dubQualityMode, els.motionMode, els.subtitleMode, els.dubMode]
     .forEach(control => { if (control) control.disabled = busy; });
   [els.elevenLabsApiKeyInput, els.saveElevenLabsApiKeyBtn, els.testElevenLabsApiKeyBtn,
     els.clearElevenLabsApiKeyBtn, els.geminiApiKeyInput, els.saveGeminiApiKeyBtn,
-    els.testGeminiApiKeyBtn, els.clearGeminiApiKeyBtn, els.cloudflareAccountIdInput,
-    els.cloudflareApiTokenInput, els.saveCloudflareApiBtn, els.clearCloudflareApiBtn]
+    els.testGeminiApiKeyBtn, els.clearGeminiApiKeyBtn]
     .forEach(control => { if (control) control.disabled = busy; });
   if (els.mediaJobRetryBtn) els.mediaJobRetryBtn.disabled = busy;
   if (els.voiceMappingApplyBtn) els.voiceMappingApplyBtn.disabled = busy || !els.dubMode.checked;
@@ -939,11 +883,6 @@ els.healthBtn.addEventListener('click', checkHealth);
 els.saveGeminiApiKeyBtn?.addEventListener('click', saveGeminiApiKey);
 els.testGeminiApiKeyBtn?.addEventListener('click', testGeminiApiKey);
 els.clearGeminiApiKeyBtn?.addEventListener('click', clearGeminiApiKey);
-els.motionProvider?.addEventListener('change', () => { renderCloudflareApiState(); updateAnalyzeAvailability(); });
-els.saveCloudflareApiBtn?.addEventListener('click', saveCloudflareApi);
-els.clearCloudflareApiBtn?.addEventListener('click', clearCloudflareApi);
-els.cloudflareApiTokenInput?.addEventListener('keydown', event => { if (event.key === 'Enter') saveCloudflareApi(); });
-els.cloudflareAccountIdInput?.addEventListener('keydown', event => { if (event.key === 'Enter') saveCloudflareApi(); });
 els.geminiApiKeyInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter') saveGeminiApiKey();
 });
@@ -958,7 +897,6 @@ els.saveElevenLabsApiKeyBtn?.addEventListener('click', saveElevenLabsApiKey);
 els.testElevenLabsApiKeyBtn?.addEventListener('click', testElevenLabsApiKey);
 els.clearElevenLabsApiKeyBtn?.addEventListener('click', clearElevenLabsApiKey);
 renderGeminiApiKeyState();
-renderCloudflareApiState();
 renderElevenLabsApiKeyState();
 removeStoredValue('sessionStorage', 'videoquest_elevenlabs_api_key');
 
@@ -1028,7 +966,7 @@ async function postAnalysisForm(path, form, options = {}) {
     return { status: response.status, body: await response.json() };
   }, { signal });
   if (result.outcome) analysisProgress.update(options.stage || 'analysis', {
-    status: 'done', detail: (options.label || 'Analiz') + ' · Önceki doğrulanmış yanıt kullanıldı; yeni model çağrısı yapılmadı.' });
+    status: 'done', detail: (options.label || 'Analiz') + ' · Önceki doğrulanmış yanıt kullanıldı; Gemini çağrılmadı.' });
   return new Response(JSON.stringify(result.body), { status: result.status, headers: { 'Content-Type': 'application/json' } });
 }
 
@@ -1046,7 +984,7 @@ async function sendAnalysisForm(path, form, { stage = 'analysis', timeoutMs = 24
         loaded: transfer.loaded, total: transfer.total, unit: 'bytes', detail: label +
           (transfer.phase === 'waiting' ? ' · Görüntüler gönderildi.' : ' · Görüntüler gönderiliyor.') });
       if (transfer.phase === 'waiting') analysisProgress.update(stage, {
-        status: 'waiting', detail: label + ' · ' + (motionAnalysisProvider() === 'cloudflare' ? 'Cloudflare' : 'Gemini') + ' analiz yanıtı bekleniyor.' });
+        status: 'waiting', detail: label + ' · Gemini analiz yanıtı bekleniyor.' });
     } });
 }
 
@@ -1667,7 +1605,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, modes.quality, modes.provider);
+    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, modes.quality);
     const framesPerSheet = 12;
     const chunkCount = analysisPlan.chunkCount;
 
@@ -1681,9 +1619,6 @@ els.analyzeBtn.addEventListener('click', async () => {
       pipelineVersion: 'canonical-source-context-4',
       chunks: analysisPlan.chunks,
       motion: modes.motion,
-      provider: modes.provider,
-      cloudflareAccount: modes.provider === 'cloudflare' ? cloudflareCredentials?.accountId : '',
-      cloudflareCredentialGeneration: modes.provider === 'cloudflare' ? cloudflareCredentialGeneration : 0,
       quality: modes.quality,
       subtitles: modes.subtitles,
       dubbing: modes.dubbing,
@@ -1825,7 +1760,7 @@ els.analyzeBtn.addEventListener('click', async () => {
             response = { ok: true };
           } else {
             response = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
-              headers: motionAnalysisHeaders(),
+              headers: geminiRequestHeaders(),
               stage: 'analysis', label: 'Bölüm ' + (chunkIndex + 1) + '/' + chunkCount
             });
 
@@ -1867,7 +1802,7 @@ els.analyzeBtn.addEventListener('click', async () => {
               els.analysisOutput.textContent =
                 `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} bulgu ikinci kez doğrulanıyor...\nHazır kareler yeniden kullanılıyor; videodan tekrar kare çıkarılmıyor.`;
               const reviewResponse = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
-                headers: motionAnalysisHeaders(),
+                headers: geminiRequestHeaders(),
                 stage: 'review', label: 'Bölüm ' + (chunkIndex + 1) + ' · ' + criticalReviewCandidates.length + ' bulgu'
               });
               let reviewBody = await reviewResponse.json();
@@ -2204,7 +2139,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       : 'Bütün örnek kareler başarıyla hazırlandı.',
     `Son doğrulanmış aksiyon ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyede bitiyor.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
-    `Bu çalıştırmada yapay zekâ: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
+    `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Yeniden analiz, yalnız geçici hata veren eksik bölümleri dener.' : 'Oyun modu kullanıma hazır.'
   ].join('\n');
   initializeInteractive(normalized);
@@ -6959,7 +6894,7 @@ async function repairSavedGame(game, onProgress = () => {}) {
     form.append('sensoryAudioContext', JSON.stringify((savedSourceContext?.nonSpeechEvents || []).filter(item =>
       Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
     onProgress(`Eksik bölüm ${index + 1}/${gaps.length} analiz ediliyor…`);
-    const headers = motionAnalysisHeaders();
+    const headers = geminiRequestHeaders();
     let result;
     try {
       const response = await fetch('/api/gemini-storyboard-analyze', {
