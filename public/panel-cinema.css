@@ -415,3 +415,45 @@
     width: min(380px, 36vw) !important;
   }
 }
+
+/* Compact clear overlays: keep the source image visible in both orientations. */
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+  width: min(270px, 31vw) !important;
+  max-height: min(54%, 340px) !important;
+  gap: 5px !important;
+  padding: 8px !important;
+  border-color: rgba(255,255,255,.25) !important;
+  background: rgba(10, 10, 12, .10) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices button {
+  min-height: 37px !important;
+  padding: 6px 9px !important;
+  border-color: rgba(255,255,255,.36) !important;
+  background: rgba(10, 10, 12, .32) !important;
+  box-shadow: none !important;
+  font-size: 12px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading {
+  padding: 0 3px 3px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:not(.hidden) {
+  background: rgba(7, 20, 20, .17) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+@media (orientation: portrait) {
+  #playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+    width: min(250px, 65vw) !important;
+    max-height: min(45%, 300px) !important;
+  }
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  #playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+    width: min(270px, 31vw) !important;
+    max-height: min(68%, 340px) !important;
+  }
+}
