@@ -29,9 +29,9 @@ test('operators can choose supported effort levels and invalid levels fail expli
   }), /must be/);
 });
 
-test('Gemini Pro analysis uses high reasoning and a sufficient response budget', () => {
+test('Gemini Pro analysis uses fast reasoning and a sufficient response budget', () => {
   const config = geminiGenerationConfig('gemini-3.1-pro-preview', {});
-  assert.equal(config.thinkingConfig.thinkingLevel, 'high');
+  assert.equal(config.thinkingConfig.thinkingLevel, 'low');
   assert.equal(config.maxOutputTokens, 32768);
   assert.equal(config.httpOptions.timeout, 150000);
 });

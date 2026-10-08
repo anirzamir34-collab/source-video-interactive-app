@@ -4136,7 +4136,7 @@ function renderAdultApproachChoices(scene, later = false) {
         : verifiedPrelude).map(item => ({
       ...item, kind: 'foreplay', id: item.id, label: item.label,
       sourceVerified: item.sourceVerified === true,
-      nonIntimate: item.nonIntimate === true,
+      nonIntimate: item.nonIntimate === true || item.choiceSurface === 'story',
       startTime: item.startTime, endTime: item.endTime,
       playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
     })),
@@ -4178,7 +4178,30 @@ function renderAdultApproachChoices(scene, later = false) {
   const dialogueOnly = forwardApproach[0]?.nonIntimate === true;
   const surfacePool = choiceSurfaceWindow(approachPool,
     dialogueOnly ? 'story' : 'approach', projectedFloor);
-  const candidates = selectVerifiedChoiceQueue(surfacePool, {
+  const chronological = approachPool.filter(item => item.sourceVerified === true &&
+      Number.isFinite(Number(item.startTime)) && Number(item.endTime) > Number(item.startTime))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const replayGroups = [];
+  for (const item of chronological) {
+    if (item.nonIntimate) continue;
+    const group = replayGroups.at(-1);
+    const interveningStory = group && chronological.some(other => other.nonIntimate === true &&
+      Number(other.startTime) >= group.endTime - 0.05 && Number(other.startTime) < Number(item.startTime));
+    if (!group || interveningStory || Number(item.startTime) > group.endTime + 2) {
+      replayGroups.push({ startTime: Number(item.startTime), endTime: Number(item.endTime), items: [item] });
+    } else {
+      group.endTime = Math.max(group.endTime, Number(item.endTime));
+      group.items.push(item);
+    }
+  }
+  const replayGroup = replayGroups.find(group => projectedFloor >= group.startTime - 0.05 &&
+    projectedFloor <= group.endTime + 0.05) ||
+    [...replayGroups].reverse().find(group => group.startTime <= projectedFloor) || replayGroups[0];
+  const candidates = !dialogueOnly && !later
+    ? (replayGroup?.items || [])
+      .sort((a, b) => Number(a.playCount) - Number(b.playCount) || Number(a.startTime) - Number(b.startTime))
+      .slice(0, 5)
+    : selectVerifiedChoiceQueue(surfacePool, {
     timelineFloor: projectedFloor,
     limit: 5,
     maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60,
@@ -4186,7 +4209,7 @@ function renderAdultApproachChoices(scene, later = false) {
       .map(position => Number(position.startTime))),
     activeChoiceId: state.activeAdultPreludeId || activeWarmupPosition?.id || null,
     activeEndTime: Number(activePrelude?.endTime) || Number(activeWarmupMovement?.loopEndTime) || 0
-  });
+    });
 
   state.adultApproachChoices = candidates;
   els.choices.dataset.interactionPhase = dialogueOnly ? 'DIALOGUE' : 'APPROACH';
@@ -4411,7 +4434,7 @@ function renderAdultProgressiveUI(force = false) {
         ...scenePreludeChoices(scene).map(item => ({
           startTime: Number(item.startTime),
           endTime: Number(item.endTime),
-          nonIntimate: item.nonIntimate === true
+          nonIntimate: item.nonIntimate === true || item.choiceSurface === 'story'
         })),
         ...(!laterOverlay ? (scene.positions || []).filter(isWarmupPosition).map(position => ({
           startTime: Number(position.startTime),
@@ -4767,11 +4790,6 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scenePreludeChoices(scene).find(entry => entry.id === preludeId);
   if (!item || item.sourceVerified !== true || !els.video || state.adultOutcomePhase !== 'idle') return;
-  if (Number(els.video.currentTime) >= Number(item.endTime) - 0.05) {
-    state.adultUiSignature = '';
-    renderAdultProgressiveUI(true);
-    return;
-  }
   if (state.adultLoopSeeking && state.activeAdultPreludeId === preludeId) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
@@ -4786,14 +4804,9 @@ function playAdultPrelude(preludeId) {
   state.adultPendingSelectionProgress = { token, kind: 'prelude', item };
   renderAdultProgressiveUI(true);
   els.video.pause();
-  const current = Number(els.video.currentTime) || 0;
-  if (current >= Number(item.endTime) - 0.05) {
-    state.activeAdultPreludeId = null;
-    state.adultPendingSelectionProgress = null;
-    renderAdultProgressiveUI(true);
-    return;
-  }
-  void seekAdultLoop(current >= Number(item.startTime) ? current : item.startTime, token);
+  // A replayable choice starts at its own verified source interval every time.
+  // The current playhead may already be after this clip.
+  void seekAdultLoop(Number(item.startTime), token);
 }
 
 function applyAdultSelectionProgress(position, movement, { positionChanged = false } = {}) {

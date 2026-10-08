@@ -570,43 +570,9 @@ export function expandVerifiedMovementVariants(
 
   if (!source.length || positionDuration < minimum) return [];
 
-  {
-    const variants = [];
-    for (const [sourceIndex, item] of source.entries()) {
-      const itemStart = Number(item.loopStartTime);
-      const itemEnd = Number(item.loopEndTime);
-      const duration = itemEnd - itemStart;
-      const desiredParts = splitEachMovement
-        ? (duration >= 18 ? 3 : duration >= 10 ? 2 : 1)
-        : (duration >= 60 ? 4 : duration >= 30 ? 3 : duration >= 20 ? 2 : 1);
-      // The cap limits optional splitting, never the number of source clips.
-      // Reserve one slot for every remaining clip, even on long timelines.
-      const budget = Math.max(1, limit - variants.length - (source.length - sourceIndex - 1));
-      const partCount = Math.max(1, Math.min(desiredParts, Math.floor(duration / minimum), budget));
-      if (!splitEachMovement && partCount === 1) {
-        variants.push(item);
-        continue;
-      }
-      for (let index = 0; index < partCount; index += 1) {
-        const partStart = itemStart + (duration / partCount) * index;
-        const partEnd = index === partCount - 1
-          ? itemEnd
-          : itemStart + (duration / partCount) * (index + 1);
-        variants.push({
-          ...item,
-          id: `${item.id}:variant-${index + 1}-${Math.round(partStart * 1000)}`,
-          label: partCount > 1
-            ? `${String((splitEachMovement ? item.label || baseLabel : baseLabel || item.label) || 'Gerçek pozisyon hareketi').replace(/\s+·\s+(?:Bölüm|Sekans)\s+\d+$/iu, '')} · Sekans ${index + 1}`
-            : item.label || baseLabel || 'Gerçek pozisyon hareketi',
-          loopStartTime: partStart,
-          loopEndTime: partEnd,
-          sourceVerified: true,
-          derivedFromVerifiedSegment: item.id
-        });
-      }
-    }
-    return variants;
-  }
+  // One verified source action is one playable clip. Cutting a long action into
+  // equal slices creates apparent variety without any independent evidence.
+  return source;
 }
 
 export const ADULT_PHASE_ORDER = Object.freeze({

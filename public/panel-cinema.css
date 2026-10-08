@@ -484,3 +484,71 @@
     max-height: min(48dvh, calc(100% - 16px)) !important;
   }
 }
+
+/* Text-only controls leave the source frame visible, including fullscreen. */
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden),
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:not(.hidden),
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel:not(.hidden) {
+  width: min(220px, 28vw) !important;
+  max-width: min(220px, 28vw) !important;
+  max-height: min(55dvh, calc(100% - 18px)) !important;
+  padding: 4px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+  width: min(220px, 45%) !important;
+  max-width: min(220px, 45%) !important;
+  gap: 2px !important;
+  pointer-events: none;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices > * { pointer-events: auto; }
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading {
+  padding: 0 2px 2px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading strong {
+  font-size: 14px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices button,
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(button, .movement-choice-card, .position-tab, .category-tab, .panel-header, .panel-section, .position-tabs, .movement-choices) {
+  min-height: 30px !important;
+  padding: 3px 4px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  font-size: 11px !important;
+  text-shadow: 0 1px 2px #000, 0 2px 5px #000 !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices button .choice-kind,
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices button .choice-meta {
+  display: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(button, .movement-choice-card, .position-tab, .category-tab)::before,
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(button, .movement-choice-card, .position-tab, .category-tab)::after {
+  background: transparent !important;
+}
+@media (orientation: portrait) {
+  #playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden),
+  #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:not(.hidden),
+  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel:not(.hidden) {
+    width: min(220px, 54vw) !important;
+    max-width: min(220px, 54vw) !important;
+  }
+}
+
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:not(.hidden) *,
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) * {
+  background: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}

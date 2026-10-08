@@ -1166,6 +1166,23 @@ test('active introduction prepares upcoming choices without dropping the current
   assert.equal(f.els.video.playCalls, 0);
 });
 
+test('earlier verified opening choices remain available and seek back to their own start', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene.foreplay = [
+    { id: 'opening-a', label: 'Step A', sourceVerified: true, startTime: 10, endTime: 20 },
+    { id: 'opening-b', label: 'Step B', sourceVerified: true, startTime: 20, endTime: 30 }
+  ];
+  f.state.adultScene.positions = [chapter('main', 60)];
+  f.state.adultTimelineFloor = 30;
+  f.els.video.time = 30;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['opening-a', 'opening-b']);
+  f.playAdultPrelude('opening-a');
+  await flush();
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.state.activeAdultPreludeId, 'opening-a');
+});
+
 test('unverified groups and clips cannot be revealed or explicitly selected', async () => {
   const f = runtimeFixture();
   f.state.adultScene.positions[1].sourceVerified = false;

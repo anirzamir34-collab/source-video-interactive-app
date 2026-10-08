@@ -379,16 +379,16 @@ test('outcome pacing scales with scene length and remains deliberately slow', ()
   assert.equal(requiredCorePlaySecondsForOutcome(1000), 300);
 });
 
-test('long verified position becomes four playable variants of at least ten seconds', () => {
+test('one verified interval stays one playable source clip', () => {
   const variants = expandVerifiedMovementVariants([
     { id: 'doggy-long', label: 'Doggy-style ritmi', loopStartTime: 120, loopEndTime: 300, sourceVerified: true }
   ], 120, 300);
-  assert.equal(variants.length, 4);
+  assert.equal(variants.length, 1);
   assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 10));
-  assert.deepEqual(variants.map(item => item.loopStartTime), [120, 165, 210, 255]);
+  assert.deepEqual(variants.map(item => item.loopStartTime), [120]);
 });
 
-test('duplicate movement detections become distinct non-overlapping position sequences', () => {
+test('duplicate movement detections do not manufacture sequences', () => {
   const duplicate = {
     id: 'prone-repeat',
     label: 'Prone Bone',
@@ -402,12 +402,12 @@ test('duplicate movement detections become distinct non-overlapping position seq
     { ...duplicate, id: 'prone-repeat-2' },
     { ...duplicate, id: 'prone-repeat-3' }
   ], 100, 180, { baseLabel: 'Prone Bone Pozisyonu' });
-  assert.equal(variants.length, 4);
-  assert.equal(new Set(variants.map(item => item.loopStartTime)).size, 4);
+  assert.equal(variants.length, 1);
+  assert.equal(new Set(variants.map(item => item.loopStartTime)).size, 1);
   assert.deepEqual(variants.map(item => [item.loopStartTime, item.loopEndTime]), [
-    [100, 120], [120, 140], [140, 160], [160, 180]
+    [100, 180]
   ]);
-  assert.ok(variants.every((item, index) => item.label === `Prone Bone Pozisyonu · Sekans ${index + 1}`));
+  assert.equal(variants[0].label, duplicate.label);
 });
 
 test('prone bone stays a separate canonical position family', () => {
@@ -1104,7 +1104,7 @@ test('keeps early warmup oral separate from later bonus oral', () => {
   assert.notEqual(positions[0].id, positions[1].id);
 });
 
-test('splits each verified movement into repeatable real subclips', () => {
+test('optional split request does not invent independently verified subclips', () => {
   const variants = expandVerifiedMovementVariants([{
     id: 'fast-action',
     label: 'Hızlı hareketi sürdür',
@@ -1119,12 +1119,12 @@ test('splits each verified movement into repeatable real subclips', () => {
     splitEachMovement: true
   });
 
-  assert.equal(variants.length, 3);
+  assert.equal(variants.length, 1);
   assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 5));
-  assert.ok(variants.every(item => item.derivedFromVerifiedSegment === 'fast-action'));
+  assert.equal(variants[0].id, 'fast-action');
   assert.deepEqual(
     variants.map(item => [item.loopStartTime, item.loopEndTime]),
-    [[100, 107], [107, 114], [114, 121]]
+    [[100, 121]]
   );
 });
 
