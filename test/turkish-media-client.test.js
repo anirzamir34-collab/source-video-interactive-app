@@ -670,6 +670,45 @@ test('retry restarts the failed server job without uploading the cached source a
   assert.deepEqual(created.sceneContext, options.sceneContext);
 });
 
+test('recreates a vanished server job once after the server instance is replaced', async t => {
+  let jobs = 0;
+  const f = fixture(({ url, init }) => {
+    if (url.endsWith('/uploads/start')) return json({ uploadId: `upload-${jobs + 1}`, chunkSize: 3, totalChunks: 3 });
+    if (/\/uploads\/upload-\d+\/status$/.test(url)) return json({ completedChunks: [0, 1, 2] });
+    if (url.endsWith('/jobs') && init.method === 'POST') return json({ jobId: `job-${++jobs}` });
+    if (url.endsWith('/jobs/job-1')) return json({ error: 'Medya işlemi veya dosyası bulunamadı.' }, 404);
+    if (url.endsWith('/jobs/job-2')) return json({ id: 'job-2', state: 'READY', result: manifest('job-2') });
+    if (url.endsWith('/jobs/job-1') && init.method === 'DELETE') return json({});
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  });
+  t.after(() => f.client.destroy());
+  await f.client.start(sourceFile(), { outputs: { dub: true, subtitles: true } });
+  assert.equal(jobs, 2);
+  assert.equal(f.requests.filter(request => request.url.endsWith('/uploads/start')).length, 2);
+  assert.equal(f.client.capture().manifest.jobId, 'job-2');
+});
+
+test('retry uploads a fresh source when the old job has disappeared', async t => {
+  let jobs = 0;
+  const f = fixture(({ url, init }) => {
+    if (url.endsWith('/uploads/start')) return json({ uploadId: `upload-${jobs + 1}`, chunkSize: 3, totalChunks: 3 });
+    if (/\/uploads\/upload-\d+\/status$/.test(url)) return json({ completedChunks: [0, 1, 2] });
+    if (url.endsWith('/jobs') && init.method === 'POST') return json({ jobId: `job-${++jobs}` });
+    if (url.endsWith('/jobs/job-1') && !init.method) {
+      return jobs === 1 ? json({ id: 'job-1', state: 'FAILED', error: 'Provider unavailable' }) : json({}, 404);
+    }
+    if (url.endsWith('/jobs/job-1/retry')) return json({ error: 'Medya işlemi veya dosyası bulunamadı.' }, 404);
+    if (url.endsWith('/jobs/job-2')) return json({ id: 'job-2', state: 'READY', result: manifest('job-2') });
+    throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
+  });
+  t.after(() => f.client.destroy());
+  await assert.rejects(f.client.start(sourceFile()), /Provider unavailable/);
+  await f.client.retry();
+  assert.equal(jobs, 2);
+  assert.equal(f.requests.filter(request => request.url.endsWith('/uploads/start')).length, 2);
+  assert.equal(f.client.capture().manifest.jobId, 'job-2');
+});
+
 test('transient job polling failures recover without creating a duplicate job or reuploading source', async t => {
   let polls = 0;
   const f = fixture(({ url, init }) => {

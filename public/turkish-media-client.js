@@ -525,7 +525,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     throw abortError();
   }
 
-  async function start(source, options = {}) {
+  async function start(source, options = {}, lostJobRestarted = false) {
     if (destroyed) throw abortError();
     reset();
     const owner = scope();
@@ -561,7 +561,14 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       const created = await request(`${API}/jobs`, { method: 'POST',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uploadId, ...selected.options }) }, owner);
       return await pollJob(created, selected, owner);
-    } catch (error) { reportFailure(error, owner); throw error; }
+    } catch (error) {
+      if (error.status === 404 && jobId && current(owner) && !lostJobRestarted) {
+        notify({ state: 'RECONNECTING', message: 'Sunucu yeniden başladı; ses aktarımı ve Türkçe medya işi yeniden başlatılıyor.' });
+        return start(selected.source, selected.options, true);
+      }
+      reportFailure(error, owner);
+      throw error;
+    }
   }
 
   async function retry() {
@@ -581,7 +588,14 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
         ? await request(`${API}/jobs/${encodeURIComponent(previousId)}/retry`, { method: 'POST' }, owner)
         : { jobId: previousId };
       return await pollJob(created, selected, owner, previousId);
-    } catch (error) { reportFailure(error, owner); throw error; }
+    } catch (error) {
+      if (error.status === 404 && current(owner)) {
+        notify({ state: 'RECONNECTING', message: 'Önceki iş sunucuda bulunamadı; ses yeniden aktarılıyor.' });
+        return start(selected.source, selected.options, true);
+      }
+      reportFailure(error, owner);
+      throw error;
+    }
   }
 
   async function materializeAudio() {
