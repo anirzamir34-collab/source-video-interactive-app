@@ -27,11 +27,11 @@ test('card labels reject foreign and unverified variants and hide internal track
   assert.equal(sourceChoiceDisplayLabel({ label: 'Konuşma', variants: [invalid] }), 'Konuşma');
 });
 
-test('playback feedback keeps the verified target identity when a subclip replaces the card heading', () => {
+test('playback feedback keeps the source subclip label without appending repeated identity text', () => {
   const identified = { id: 'named', label: 'Hareketi sürdür', sourceVerified: true,
     identityResolution: 'verified', primaryCharacterLabel: 'Deniz' };
   assert.equal(sourceChoiceDisplayLabel({ label: 'Hareket', variants: [identified] }, identified),
-    'Hareketi sürdür · Deniz');
+    'Hareketi sürdür');
 });
 
 test('a used control stays dismissed during loading and playback, then returns on completion, failure or a new scene', () => {

@@ -870,7 +870,7 @@ async function checkTurkishMediaCapabilities() {
 function selectedAnalysisModes() {
   return {
     motion: Boolean(els.motionMode?.checked),
-    provider: motionAnalysisProvider(),
+    provider: els.motionProvider?.value === 'cloudflare' ? 'cloudflare' : 'gemini',
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
