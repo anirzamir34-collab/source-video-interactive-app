@@ -56,6 +56,19 @@ test('numeric quota errors remain terminal and do not create a retry storm', asy
   assert.equal(requests, 1);
 });
 
+test('provider status distinguishes authorization and unavailable model from a transient outage', async () => {
+  for (const [status, reason] of [[401, 'GEMINI_AUTH_ERROR'], [403, 'GEMINI_AUTH_ERROR'],
+    [404, 'GEMINI_MODEL_UNAVAILABLE'], [503, 'GEMINI_TEMPORARILY_UNAVAILABLE']]) {
+    let requests = 0;
+    const error = Object.assign(new Error('Provider request failed'), { status });
+    assert.equal(storyboardFailureReason(error), reason);
+    await assert.rejects(generateStoryboardWithRetry(async () => { requests++; throw error; }, {
+      wait: async () => {}
+    }), error);
+    assert.equal(requests, status === 503 ? 2 : 1);
+  }
+});
+
 const partial = () => ({ videoDuration: 30, chunkCount: 2, expectedChunkCount: 3,
   processedChunkCount: 3, partial: true,
   analysisGaps: [{ chunkIndex: 1, startTime: 10, endTime: 20, reason: 'MODEL_UNSTRUCTURED_RESPONSE' }],
