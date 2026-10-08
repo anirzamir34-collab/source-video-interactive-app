@@ -242,6 +242,7 @@ const els = {
   analyzeBtn: $('analyzeBtn'),
   qualityMode: $('qualityMode'),
   dubQualityMode: $('dubQualityMode'),
+  dubbingProvider: $('dubbingProvider'),
   subtitleTrack: $('subtitleTrack'),
   mediaJobStatus: $('mediaJobStatus'),
   mediaJobMessage: $('mediaJobMessage'),
@@ -821,6 +822,7 @@ function selectedAnalysisModes() {
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
+    dubbingProvider: els.dubbingProvider?.value === 'elevenlabs' ? 'elevenlabs' : 'classic',
     quality: String(els.qualityMode?.value || 'ultra')
   };
 }
@@ -850,7 +852,9 @@ function updateAnalysisModesUI() {
 function updateAnalyzeAvailability() {
   const hasMode = updateAnalysisModesUI();
   const busy = state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy;
-  const needsGemini = Boolean(els.dubMode?.checked || els.subtitleMode?.checked);
+  const needsGemini = Boolean(els.motionMode?.checked ||
+    ((els.dubMode?.checked || els.subtitleMode?.checked) &&
+      (!els.dubMode?.checked || els.dubbingProvider?.value !== 'elevenlabs')));
   const geminiBlocked = needsGemini &&
     ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
       .includes(String(state.geminiProviderStatus?.state || ''));
@@ -858,7 +862,7 @@ function updateAnalyzeAvailability() {
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
-  [els.qualityMode, els.dubQualityMode, els.motionMode, els.subtitleMode, els.dubMode]
+  [els.qualityMode, els.dubQualityMode, els.dubbingProvider, els.motionMode, els.subtitleMode, els.dubMode]
     .forEach(control => { if (control) control.disabled = busy; });
   [els.elevenLabsApiKeyInput, els.saveElevenLabsApiKeyBtn, els.testElevenLabsApiKeyBtn,
     els.clearElevenLabsApiKeyBtn, els.geminiApiKeyInput, els.saveGeminiApiKeyBtn,
@@ -1369,7 +1373,7 @@ els.voiceMappingApplyBtn?.addEventListener('click', async () => {
     els.voiceMappingMessage.textContent = 'Her konuşmacı için ayrı bir ses seç.'; return;
   }
   const modes = selectedAnalysisModes(), previous = mediaClient.capture();
-  const options = { outputs: { dub: modes.dubbing, subtitles: modes.subtitles }, qualityMode: modes.dubQuality,
+  const options = { outputs: { dub: modes.dubbing, subtitles: modes.subtitles, dubbingProvider: modes.dubbingProvider }, qualityMode: modes.dubQuality,
     voiceMapping: Object.fromEntries(values.map(select => [select.dataset.speakerId, select.value])),
     previousVoiceMapping: previous?.manifest.voiceMapping || {}, sceneContext: verifiedMediaSceneContext() };
   await regenerateTurkishVoices({ source, options, previous, session: state.analysisSession, started: false });
@@ -1506,7 +1510,8 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Attach a handler immediately; await below still surfaces the frame error.
   fastStoryboardPreparation?.catch(() => {});
   session.audioContextStatus = 'pending';
-  const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality });
+  const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality,
+    provider: modes.dubbingProvider });
   const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
   const reusableMedia = !contextualMedia && session.mediaManifest && session.mediaModeKey === mediaModeKey;
   session.mediaModeKey = mediaModeKey;
@@ -1531,7 +1536,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
           subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
         : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
-          transcriptOnly: !modes.dubbing && !modes.subtitles }, qualityMode: modes.dubQuality, sceneContext: [] });
+          transcriptOnly: !modes.dubbing && !modes.subtitles, dubbingProvider: modes.dubbingProvider }, qualityMode: modes.dubQuality, sceneContext: [] });
       session.mediaManifest = result;
     }
     updateSourceTranscript(result.sourceTranscript);
@@ -2114,7 +2119,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       'Ses seçimi; doğrulanmış karakter profili, Türkçe desteği ve mevcut duygu/ton etiketleriyle otomatik yapılıyor.'
     ].join('\n');
     const finalMedia = await mediaClient.start(file, {
-      outputs: { dub: modes.dubbing, subtitles: modes.subtitles },
+      outputs: { dub: modes.dubbing, subtitles: modes.subtitles, dubbingProvider: modes.dubbingProvider },
       qualityMode: modes.dubQuality,
       sceneContext: verifiedMediaSceneContext(),
       speakerHints
