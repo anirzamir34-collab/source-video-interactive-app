@@ -29,7 +29,9 @@ test('direct dubbing resumes the paid project and never creates a second target'
     };
     const dub = createDirectDubbing({
       config: { elevenLabs: { apiKey: 'test-key', baseUrl: 'https://api.elevenlabs.io' } },
-      request, fetchImpl: async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }),
+      request, fetchImpl: async () => ({ ok: true, body: new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); controller.close(); },
+      }) }),
     });
     const options = { audioPath, directory, jobId: 'test-job', onProject: async value => { checkpoint = value; } };
     const first = await dub(options);
