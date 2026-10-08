@@ -3042,6 +3042,8 @@ function prepareAdultScenes() {
       ? Number(action.endTime)
       : Number(action.positionEndTime ?? action.endTime);
 
+    const displayPositionLabel = adultPositionFamily(canonical.id) ? canonical.label
+      : (canonical.correctedFromAction ? '' : String(action.positionLabel || '').trim());
     const category = adultCategoryFor(action, canonical.id);
     const occurrenceId = String(
       action.positionOccurrenceId ||
@@ -3082,8 +3084,8 @@ function prepareAdultScenes() {
         activityType: routeNamespace,
         routeNamespace,
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
-        positionLabel: canonical.label,
-        label: sourceDisplayLabel({ ...action, positionLabel: canonical.label },
+        positionLabel: displayPositionLabel,
+        label: sourceDisplayLabel({ ...action, positionLabel: displayPositionLabel },
           sourceIdentityLabel(canonical.label,
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel })),
         categoryId: category.id,
@@ -5549,7 +5551,8 @@ function updateAdultPlayback(now, mediaTime) {
   // Hold the source frame while a decision is available. Otherwise playback
   // silently consumes the lookahead queue and a card can point behind the playhead.
   if (!els.video.paused && !state.activeAdultPreludeId && !state.activeMovementId &&
-      !state.activeAdultEntryClip && state.adultOutcomePhase === 'idle') {
+      !state.activeAdultEntryClip && state.adultOutcomePhase === 'idle' &&
+      mediaTime < Number(state.adultScene?.endTime) - 0.04) {
     renderAdultProgressiveUI(true);
     const hasDecision = state.interactionRuntime?.currentPhase === 'APPROACH'
       ? Boolean(state.adultApproachChoices?.length)
