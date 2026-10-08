@@ -46,7 +46,7 @@ export function adultPositionFamily(value) {
   if (/\b(misyoner|missionary)\b/.test(text)) return 'missionary';
   if (/\b(kovboy|cowgirl|rider|kadin ustte)\b/.test(text)) return 'cowgirl';
   if (/\b(ters\s+kasik|reverse\s+spoon)\b/.test(text)) return 'reverse-spoon';
-  if (/\b(kasik|spoon|yan yatarak|side[\s-]?lying|yan\s+pozisyon)\b/.test(text)) return 'spoon';
+  if (/\b(kasik|spoon|yan yatarak|side[\s-]?lying|yan\s+pozisyon(?:da|unda|u)?)\b/.test(text)) return 'spoon';
   if (/\b(arkadan|doggy(?:\s+style)?|dort\s+ayak)\b/.test(text) && /\b(ayakta|standing)\b/.test(text)) {
     return 'standing-rear';
   }
@@ -260,7 +260,13 @@ export function playableAdultPanelFamily(action = {}) {
   );
 
   if (['camera_transition', 'partner_transition', 'clothing', 'outcome', 'aftermath'].includes(type)) return '';
-  if (['other', 'body_transition', 'kiss'].includes(type) && !explicitActivity) return '';
+  // A provider's parent metadata can be stale. A visible kiss, ordinary touch,
+  // or dialogue is never a panel position merely because activityType claims
+  // otherwise. The observed action itself must name the claimed activity.
+  if (['kiss', 'touch', 'dialogue', 'story', 'body_transition'].includes(type)) {
+    return explicitActivity && sourceLabelFamily === family ? family : '';
+  }
+  if (['other'].includes(type) && !explicitActivity) return '';
   if (!action.positionId && !action.positionLabel &&
       !['position', 'tempo_change', 'movement', 'rhythm'].includes(type) &&
       !explicitActivity) return '';
