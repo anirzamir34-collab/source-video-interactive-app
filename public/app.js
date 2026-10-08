@@ -1667,7 +1667,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, modes.quality);
+    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, modes.quality, modes.provider);
     const framesPerSheet = 12;
     const chunkCount = analysisPlan.chunkCount;
 
