@@ -895,13 +895,18 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
         };
       })
       .filter(movement => sourceRangeForClip(position, movement, ranges));
-    // Keep separate continuous returns separate unless a caller explicitly
-    // requests an encounter-wide summary. Exact ranges still govern playback.
+    // A later return may share a tab only until another verified configuration
+    // starts between them. Otherwise the first tab spans that later position,
+    // so Lust can never reveal the actual chronological next group.
     const baseKey = `${String(position.familyId)}::${subjectKey}::${partnerKey}::${role}`;
     const existing = [...clusters].reverse().find(item =>
       item.baseKey === baseKey &&
       (!item.routeClass || !routeClass || item.routeClass === routeClass) && (
-        mergeDistantReturns || Number(position.startTime) <= Number(item.endTime) + 0.25
+        (mergeDistantReturns && !clusters.some(other => other !== item &&
+          other.familyId !== position.familyId &&
+          Number(other.startTime) >= Number(item.endTime) - 0.25 &&
+          Number(other.startTime) < Number(position.startTime) - 0.05)) ||
+        Number(position.startTime) <= Number(item.endTime) + 0.25
       )
     );
     if (!existing) {

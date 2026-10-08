@@ -36,6 +36,14 @@ export function clipPlaybackFeedback(clip, media = {}) {
   return { state: 'playing', label: 'Oynuyor', progress };
 }
 
+export function compactPanelChoiceLabel(value, clip = {}) {
+  const label = cleanDisplayLabel(value);
+  const identity = String(clip.primaryCharacterLabel || '').trim();
+  const suffix = identity && ` · ${identity}`;
+  return suffix && label.toLocaleLowerCase('tr-TR').endsWith(suffix.toLocaleLowerCase('tr-TR'))
+    ? label.slice(0, -suffix.length).trim() : label;
+}
+
 // Display existing source text; never invent actions or borrow another choice's clip.
 export function sourceChoiceDisplayLabel(choice, activeClip) {
   const variants = (choice?.variants || []).filter(clip => clip.sourceVerified === true);
@@ -43,7 +51,8 @@ export function sourceChoiceDisplayLabel(choice, activeClip) {
   const next = variants.find(clip => clip.id === choice?.nextClip?.id);
   const candidates = [active, next, variants[0], choice];
   const label = candidates
-    .map(item => sourceIdentityLabel(sourceActionLabel(cleanDisplayLabel(item?.label)), item))
+    .map(item => compactPanelChoiceLabel(
+      sourceIdentityLabel(sourceActionLabel(cleanDisplayLabel(item?.label)), item), item))
     .find(Boolean);
   return label || 'Kesiti oynat';
 }

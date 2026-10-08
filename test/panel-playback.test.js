@@ -6,7 +6,7 @@ import * as choiceRouting from '../public/choice-routing.js';
 import { sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
 import * as gameplay from '../public/adult-gameplay.js';
 import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
-import { forwardVerifiedClips } from '../public/panel-feedback.js';
+import { compactPanelChoiceLabel, forwardVerifiedClips } from '../public/panel-feedback.js';
 import { sourcePositionAtTime } from '../public/scene-entry.js';
 import * as interaction from '../public/interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
@@ -125,6 +125,15 @@ function fixture() {
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test('panel title keeps the source action but omits a repeated stale character description', () => {
+  assert.equal(compactPanelChoiceLabel('Ritmik hareket et · Masada oturan kişi konuşuyor', {
+    primaryCharacterLabel: 'Masada oturan kişi konuşuyor'
+  }), 'Ritmik hareket et');
+  assert.equal(compactPanelChoiceLabel('Ritmik hareket et · Tempoyu yükselt', {
+    primaryCharacterLabel: 'Masada oturan kişi konuşuyor'
+  }), 'Ritmik hareket et · Tempoyu yükselt');
+});
 
 test('selecting the current frame resumes without another seek request', async () => {
   const f = fixture();
@@ -345,6 +354,7 @@ function runtimeFixture() {
   const f = fixture();
   Object.assign(f, gameplay, interaction, timeline, panel, compat, {
     canPlayAction, advanceAdultPhase, queueMicrotask, forwardVerifiedClips, sourcePositionAtTime,
+    compactPanelChoiceLabel,
     primeAdultPositionLanguage() {}, escapeHtml: String,
     normalizeAdultLabel: value => String(value || '').toLowerCase()
   });
@@ -381,9 +391,10 @@ test('a grouped introduction card selects another existing clip on each click an
   f.els.video.time = 0;
   f.renderAdultApproachChoices(f.state.adultScene);
   const card = f.els.foreplayChoices.children[0];
-  assert.equal(card.dataset.variantIds, 'opening-0,opening-1,opening-2');
+  assert.equal(card.dataset.variantIds, 'opening-0,opening-1');
+  assert.equal(f.els.foreplayChoices.children[1].dataset.variantIds, 'opening-2');
   assert.equal(f.state.adultApproachChoices[0].startTime, 0);
-  assert.equal(f.state.adultApproachChoices[0].endTime, 30);
+  assert.equal(f.state.adultApproachChoices[0].endTime, 20);
   card.dispatchEvent(new Event('click'));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.state.activeMovementId, 'opening-0');
@@ -402,6 +413,31 @@ test('an empty introduction menu leaves a visible source playback control', () =
   f.renderAdultApproachChoices(f.state.adultScene);
   assert.equal(f.els.foreplayChoices.children.at(-1).textContent, 'Videoya devam et');
   assert.equal(f.els.video.paused, true);
+});
+
+test('a verified standalone introduction plays in its own panel and earns Lust', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'opening-only', startTime: 84, endTime: 133,
+    positions: [], dialogue: [], outcomes: [], foreplay: [
+      { id: 'first-kiss', label: 'Observed approach', sourceVerified: true,
+        startTime: 84, endTime: 93, subjectTrackId: 'actor-a', partnerTrackId: 'actor-b' },
+      { id: 'second-kiss', label: 'Observed follow-up', sourceVerified: true,
+        startTime: 115, endTime: 133, subjectTrackId: 'actor-a', partnerTrackId: 'actor-b' }
+    ] };
+  f.els.video.time = 84;
+  f.renderAdultProgressiveUI(true);
+  assert.ok(f.els.foreplayChoices.children.length >= 1,
+    JSON.stringify({ choices: f.state.adultApproachChoices, cards: f.els.foreplayChoices.children.map(item => item.textContent) }));
+  assert.equal(f.els.discoveryGateText.textContent, 'Yakınlaşma Lust 0/100');
+  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
+  f.els.foreplayChoices.children[0].dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.state.activeAdultPreludeId, 'first-kiss',
+    JSON.stringify({ choices: f.state.adultApproachChoices, cards: f.els.foreplayChoices.children.map(item => item.textContent) }));
+  f.els.video.time = 93;
+  assert.equal(f.settleInteractionClipBoundary(93), true);
+  assert.ok(f.currentAdultFlow() > 0);
+  assert.equal(f.state.adultUnlockedPositionIds.size, 0);
 });
 
 test('forward control moves past a finished clip when its active id was cleared', () => {
@@ -593,6 +629,79 @@ test('each completed gate reveals exactly one next verified chapter without movi
   assert.equal(f.state.activePositionId, 'one');
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.playCalls, plays);
+});
+
+test('a spent opening meter resets at the core boundary so the next full meter unlocks the next chapter', () => {
+  const f = runtimeFixture();
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.genericInteractionSnapshot();
+  f.state.interactionRuntime = { ...f.state.interactionRuntime, currentPhase: 'CORE',
+    progressionValue: 100, progressBudgetConsumed: true };
+  f.state.interactionMeterNeedsReset = true;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.currentAdultFlow(), 0);
+  assert.equal(f.els.adultDockLustValue.textContent, '0');
+  assert.equal(f.state.interactionMeterNeedsReset, false);
+  f.addFemaleLust(35);
+  assert.equal(f.state.adultUnlockedPositionIds.has('two'), true);
+  assert.equal(f.state.adultUnlockedPositionIds.has('three'), false);
+});
+
+test('tapping the paused active movement resumes on the first tap without another seek', async () => {
+  const f = runtimeFixture();
+  await startFirstChapter(f);
+  const previousToken = f.state.adultSelectionToken;
+  const previousPlayCalls = f.els.video.playCalls;
+  f.els.video.pause();
+  f.selectAdultMovement('one-0', true);
+  await flush();
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.els.video.playCalls, previousPlayCalls + 1);
+  assert.equal(f.state.adultSelectionToken, previousToken);
+});
+
+test('a second tap during a pending movement seek does not restart that seek', async () => {
+  const f = runtimeFixture();
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.state.activePositionId = 'one';
+  f.state.activeAdultOccurrenceId = 'source-one';
+  f.state.adultPhaseMachine = 'positions';
+  f.els.video.time = 10;
+  f.els.video.mode = 'stalled';
+  f.selectAdultMovement('one-0', true);
+  const token = f.state.adultSelectionToken;
+  const request = f.state.adultSeekRequestId;
+  assert.equal(f.state.adultLoopSeeking, true);
+  f.selectAdultMovement('one-0', true);
+  assert.equal(f.state.adultSelectionToken, token);
+  assert.equal(f.state.adultSeekRequestId, request);
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(f.els.panelPlaybackRecovery?.querySelector('button').dataset.playbackRecovery, 'retry');
+});
+
+test('repeated taps on a grouped movement card keep the first media seek alive', async () => {
+  const f = runtimeFixture();
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.state.activePositionId = 'one';
+  f.state.activeAdultOccurrenceId = 'source-one';
+  f.state.adultPhaseMachine = 'positions';
+  f.els.video.time = 10;
+  f.renderAdultProgressiveUI(true);
+  const card = f.els.movementChoices.querySelectorAll('.movement-choice-card')[0];
+  assert.ok(card);
+  f.els.video.mode = 'stalled';
+  card.dispatchEvent(new Event('click'));
+  const token = f.state.adultSelectionToken;
+  const request = f.state.adultSeekRequestId;
+  assert.equal(f.state.adultLoopSeeking, true);
+  card.dispatchEvent(new Event('click'));
+  assert.equal(f.state.adultSelectionToken, token);
+  assert.equal(f.state.adultSeekRequestId, request);
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(f.els.panelPlaybackRecovery?.querySelector('button').dataset.playbackRecovery, 'retry');
 });
 
 test('direct calls cannot play a locked chapter or movement', async () => {
@@ -1250,7 +1359,7 @@ test('unique opening clips fill the budget and open the core panel without repea
       assert.ok(f.state.adultApproachChoices.some(choice => choice.id === `step-${index + 1}`));
     }
   }
-  assert.equal(f.currentAdultFlow(), 100);
+  assert.equal(f.currentAdultFlow(), 0, 'the opening meter is spent when the core boundary opens');
   assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
   assert.equal(f.els.choices.classList.contains('hidden'), true);
@@ -1270,7 +1379,7 @@ test('natural opening playback advances the budget without button clicks and nev
   assert.ok(f.currentAdultFlow() > 0 && f.currentAdultFlow() < 100);
   f.els.video.time = 20;
   f.updateAdultPlayback(20000, 20);
-  assert.equal(f.currentAdultFlow(), 100);
+  assert.equal(f.currentAdultFlow(), 0, 'the next verified position starts a fresh Lust cycle');
   assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
   f.els.video.time = 21;
   f.updateAdultPlayback(21000, 21);

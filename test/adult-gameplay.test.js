@@ -229,6 +229,43 @@ test('same verified family returns merge into one tab across the encounter', () 
   assert.equal(positions[0].sourceRanges.length, 2);
 });
 
+test('a different verified position between returns keeps the later return chronological', () => {
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    progressionRole: 'core', sourceVerified: true };
+  const position = (id, familyId, startTime, endTime) => ({ ...cast, id, familyId,
+    startTime, endTime, sourceRanges: [{ id, startTime, endTime, sourceVerified: true }],
+    movements: [{ id: `${id}-clip`, sourcePositionId: id, sourceVerified: true,
+      loopStartTime: startTime, loopEndTime: endTime }] });
+  const result = consolidateVerifiedPositions([
+    position('first-rear', 'rear', 373, 515),
+    position('rear-return', 'rear', 566, 684),
+    position('prone', 'prone-bone', 693, 799),
+    position('last-rear', 'rear', 800, 853)
+  ], { mergeDistantReturns: true });
+  assert.deepEqual(result.map(item => item.startTime), [373, 693, 800]);
+  assert.deepEqual(result.map(item => item.familyId), ['rear', 'prone-bone', 'rear']);
+  assert.deepEqual(result[0].sourcePositionIds, ['first-rear', 'rear-return']);
+  assert.deepEqual(result[2].sourcePositionIds, ['last-rear']);
+});
+
+test('a rich verified position exposes several compact cards while retaining every source clip', () => {
+  const source = { id: 'observed-position', startTime: 0, endTime: 60, sourceVerified: true };
+  const movements = Array.from({ length: 6 }, (_, index) => ({
+    id: `clip-${index}`, sourcePositionId: source.id,
+    sourceActionId: index < 3 ? 'source-a' : 'source-b',
+    sourceVerified: true, actionType: 'position', movementType: 'ritmik hareket',
+    label: 'Doğrulanmış hareket', movementTempo: 'moderate',
+    startTime: index * 10, endTime: (index + 1) * 10,
+    loopStartTime: index * 10, loopEndTime: (index + 1) * 10
+  }));
+  const position = { id: 'position', startTime: 0, endTime: 60,
+    sourceRanges: [source], movements };
+  const choices = buildVerifiedMovementChoices(movements, 'Pozisyon', 8, position);
+  assert.ok(choices.length >= 3);
+  assert.deepEqual(choices.flatMap(item => item.variants.map(variant => variant.id)).sort(),
+    movements.map(item => item.id).sort());
+});
+
 test('unspecified activity and verified activity share one named tab with exact source clips', () => {
   const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
     familyId: 'spoon', progressionRole: 'core', label: 'Yan pozisyon', sourceVerified: true };

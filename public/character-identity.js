@@ -80,6 +80,30 @@ function canonicalCharacterId(character) {
   return text(character?.participantTrackId || character?.id);
 }
 
+// Provider chunks may use a local character id for a participant that the
+// verified story context already maps to a stable video track. Use only unique
+// explicit aliases; an ambiguous id must keep its original source identity.
+export function canonicalizeActionTrackIds(action, context = {}) {
+  const aliases = new Map();
+  for (const character of Array.isArray(context.characters) ? context.characters : []) {
+    const track = text(character?.participantTrackId);
+    if (!track) continue;
+    for (const id of [character.id, character.participantTrackId, ...(character.characterIds || [])]) {
+      const key = text(id);
+      if (!key) continue;
+      if (aliases.has(key) && aliases.get(key) !== track) aliases.set(key, null);
+      else if (!aliases.has(key)) aliases.set(key, track);
+    }
+  }
+  const canonical = id => aliases.get(text(id)) || text(id);
+  return { ...action,
+    subjectTrackId: canonical(action.subjectTrackId),
+    partnerTrackId: canonical(action.partnerTrackId),
+    participantTrackIds: Array.isArray(action.participantTrackIds)
+      ? action.participantTrackIds.map(canonical) : action.participantTrackIds
+  };
+}
+
 function verifiedRelationship(context, subject, target) {
   if (!subject || !target || subject === target) return null;
   const characters = Array.isArray(context.characters) ? context.characters : [];
@@ -224,3 +248,4 @@ export function bindActionCharacter(action, context = {}) {
   }
   return result;
 }
+

@@ -77,7 +77,7 @@ import {
   selectDiverseStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
-import { bindActionCharacter, verifiedCharacterName, verifiedVisualDescription } from './character-identity.js';
+import { bindActionCharacter, canonicalizeActionTrackIds, verifiedCharacterName, verifiedVisualDescription } from './character-identity.js';
 import {
   adaptiveAnalysisChunkPlan,
   extractStoryboard
@@ -86,7 +86,7 @@ import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
 import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 
-import { attachPanelFeedback, forwardVerifiedClips } from './panel-feedback.js';
+import { attachPanelFeedback, compactPanelChoiceLabel, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
 import { validateGame } from './saved-games.js';
 import {
@@ -2589,6 +2589,7 @@ function isBonusPosition(position) {
 // Only nearby source chapters can share one timeline panel.
 const ADULT_FRAGMENT_MERGE_GAP_SECONDS = 30;
 const ADULT_FRAGMENT_BRIDGED_GAP_SECONDS = 45;
+const ADULT_CORE_CONTINUATION_GAP_SECONDS = 60;
 
 function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals = []) {
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
@@ -2642,8 +2643,16 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
     // A verified transition for the same cast may cross the provider's scene
     // split. Keep its source ranges exact; joining panels never makes the gap
     // itself a playable clip or a new movement choice.
-    const maxGap = verifiedBridge ? ADULT_FRAGMENT_BRIDGED_GAP_SECONDS : ADULT_FRAGMENT_MERGE_GAP_SECONDS;
-    if (gap > maxGap || narrativeBarrier || unownedBarrier || castBarrier) {
+    // Two verified core chapters with the same cast can belong to the same
+    // encounter despite a quiet edit between them. Preserve each exact clip
+    // range; the intervening time is never offered as a movement.
+    const coreContinuation = (previous.positions || []).some(position =>
+      !['oral', 'manual'].includes(String(position.familyId || position.categoryId || ''))) &&
+      (scene.positions || []).some(position =>
+        !['oral', 'manual'].includes(String(position.familyId || position.categoryId || '')));
+    const maxGap = coreContinuation ? ADULT_CORE_CONTINUATION_GAP_SECONDS :
+      verifiedBridge ? ADULT_FRAGMENT_BRIDGED_GAP_SECONDS : ADULT_FRAGMENT_MERGE_GAP_SECONDS;
+    if (gap > maxGap || narrativeBarrier || (unownedBarrier && !coreContinuation) || castBarrier) {
       merged.push({ ...scene });
       continue;
     }
@@ -2685,7 +2694,8 @@ function prepareAdultScenes() {
       ? { startTime, endTime } : null;
   };
   const actions = (state.analysis?.actions || []).map(action => bindActionCharacter(
-    withChoiceSurface(normalizeSourceActionTimes(action), {
+    withChoiceSurface(canonicalizeActionTrackIds(normalizeSourceActionTimes(action),
+      state.analysis?.storyContext || {}), {
       panelFamily: playableAdultPanelFamily(action)
     }), state.analysis?.storyContext || {}));
   const traceRows = actions.map((action, index) => ({
@@ -2823,6 +2833,52 @@ function prepareAdultScenes() {
       String(action.subjectTrackId || '').trim() === String(anchor.subjectTrackId || '').trim() &&
       String(action.partnerTrackId || '').trim() === String(anchor.partnerTrackId || '').trim());
   introductions.forEach((sceneId, action) => sceneOccurrenceByAction.set(action, sceneId));
+
+  // A verified opening can be separated from the first core position by a
+  // substantial source gap. Keep it as its own exact, progress-bearing panel
+  // instead of silently routing its actions through the ordinary story UI.
+  // Never stretch this opening to a distant core position or across cast IDs.
+  const standaloneOpenings = [];
+  const openingCast = action => String(action.subjectTrackId || '').trim() &&
+    String(action.partnerTrackId || '').trim()
+    ? JSON.stringify([action.subjectTrackId, action.partnerTrackId,
+      action.groupScene === true ? [...(action.participantTrackIds || [])].sort() : []]) : '';
+  const orphanApproaches = actions.filter(action =>
+    action.choiceSurface === 'approach' && isIntroduction(action) &&
+    action.sourceVerified === true && Number(action.confidence) >= 0.6 &&
+    sourceInterval(action.startTime, action.endTime) && openingCast(action) &&
+    !verifiedPositionSceneIds.has(sceneIdFor(action)))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  for (const action of orphanApproaches) {
+    const previous = standaloneOpenings.at(-1);
+    const last = previous?.at(-1);
+    const gap = Number(action.startTime) - Number(last?.endTime);
+    const interveningBreak = last && actions.some(item => item.sourceVerified === true &&
+      Number(item.startTime) >= Number(last.endTime) - 0.05 &&
+      Number(item.endTime) <= Number(action.startTime) + 0.05 &&
+      ['scene_transition', 'partner_transition', 'outcome', 'aftermath'].includes(
+        String(item.actionType || '').toLowerCase()));
+    if (!last || openingCast(last) !== openingCast(action) || gap > 45 ||
+        gap < -0.15 || interveningBreak) standaloneOpenings.push([action]);
+    else previous.push(action);
+  }
+  for (const group of standaloneOpenings) {
+    const first = group[0], last = group.at(-1);
+    const id = `verified-opening:${String(first.actionId || Math.round(first.startTime * 1000))}`;
+    const cast = openingCast(first);
+    const members = [...group, ...actions.filter(action =>
+      action.sourceVerified === true && action.choiceSurface === 'story' &&
+      openingCast(action) === cast &&
+      Number(action.startTime) >= Number(first.startTime) - 0.05 &&
+      Number(action.endTime) <= Number(last.endTime) + 0.05 &&
+      !verifiedPositionSceneIds.has(sceneIdFor(action)) &&
+      !introductions.has(action))];
+    for (const action of members) {
+      sceneOccurrenceByAction.set(action, id);
+      traceByAction.get(action).membershipReason = 'VERIFIED_STANDALONE_OPENING';
+    }
+    verifiedPositionSceneIds.add(id);
+  }
 
   actions.filter(action =>
     verifiedPositionSceneIds.has(sceneIdFor(action))
@@ -3205,7 +3261,7 @@ function prepareAdultScenes() {
     state.adultScenes,
     actions,
     state.analysis?.unownedSourceIntervals || []
-  ).filter(scene => scene.positions?.length);
+  ).filter(scene => scene.positions?.length || scene.foreplay?.length);
 
   state.adultScenes.forEach(scene => {
     scene.positions = consolidateVerifiedPositions(scene.positions, {
@@ -3242,8 +3298,11 @@ function prepareAdultScenes() {
     scene.foreplay = scene.foreplay.filter(item => !Number.isFinite(firstCoreStart) ||
       Number(item.endTime) <= firstCoreStart + 0.05 ||
       Number(item.startTime) >= firstCoreStart - 0.05);
+    // Each separated source occurrence has its own chronological unlock.
+    // Collapsing distant same-family returns into one tab let the next Lust
+    // unlock jump past an intervening chapter without a new position card.
     scene.positions = consolidateVerifiedPositions(scene.positions, {
-      mergeDistantReturns: true
+      mergeDistantReturns: false
     }).map(position => {
       const controlClipIds = isWarmupPosition(position) ? new Set() : exclusiveControlClipIds(position);
       const occurrences = positionOccurrenceGroups(position);
@@ -3965,6 +4024,7 @@ function refreshAdultCompactDock() {
       const position = state.adultScene?.positions?.find(item => item.id === state.activePositionId);
       const choice = position?.activeMovementChoices?.find(item => item.id === choiceId);
       if (!choice) return;
+      if (state.adultLoopSeeking && choice.variants.some(item => item.id === state.activeMovementId)) return;
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId : null;
       const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
@@ -4071,11 +4131,14 @@ function renderAdultWarmupChoices(scene) {
 
 function renderAdultApproachChoices(scene, later = false) {
   const flow = currentAdultFlow();
+  const sceneCorePositions = (scene?.positions || []).filter(position => !isWarmupPosition(position));
+  const verifiedPrelude = scenePreludeChoices(scene).filter(item => item.sourceVerified === true);
   const approachPool = [
     ...(later ? scenePreludeChoices(scene).filter(item => Number(item.startTime) >=
       Math.min(...(scene?.positions || []).map(position => Number(position.startTime))))
-      : initialWarmupBeforeFirstPosition(scenePreludeChoices(scene),
-        (scene?.positions || []).filter(position => !isWarmupPosition(position)))).map(item => ({
+      : sceneCorePositions.length
+        ? initialWarmupBeforeFirstPosition(verifiedPrelude, sceneCorePositions)
+        : verifiedPrelude).map(item => ({
       ...item, kind: 'foreplay', id: item.id, label: item.label,
       sourceVerified: item.sourceVerified === true,
       nonIntimate: item.nonIntimate === true,
@@ -4138,8 +4201,8 @@ function renderAdultApproachChoices(scene, later = false) {
     timelineFloor: projectedFloor,
     limit: 5,
     maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60,
-    firstCoreTime: later ? null : Math.min(...(scene.positions || [])
-      .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime))),
+    firstCoreTime: later || !sceneCorePositions.length ? null : Math.min(...sceneCorePositions
+      .map(position => Number(position.startTime))),
     activeChoiceId: state.activeAdultPreludeId || activeWarmupPosition?.id || null,
     activeEndTime: Number(activePrelude?.endTime) || Number(activeWarmupMovement?.loopEndTime) || 0
   });
@@ -4172,7 +4235,9 @@ function renderAdultApproachChoices(scene, later = false) {
   candidates.forEach(choice => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = dialogueOnly ? 'choice-btn' : 'discovery-choice-card';
+    button.className = dialogueOnly ? 'choice-btn dialogue-card' :
+      `discovery-choice-card ${choice.nonIntimate ? 'dialogue-interlude-card' : 'approach-card'}`;
+    button.dataset.choiceSurface = choice.nonIntimate ? 'story' : 'approach';
     button.dataset.clipId = choice.movementId || choice.id;
     if (!dialogueOnly) {
       button.dataset.discoveryId = choice.id;
@@ -4183,7 +4248,8 @@ function renderAdultApproachChoices(scene, later = false) {
       button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     }
     const sourceSequenceCount = Array.isArray(choice.variants) ? choice.variants.length : 1;
-    button.innerHTML = `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>${
+    button.innerHTML = `<small class="choice-kind">${choice.nonIntimate ? 'DİYALOG' : 'YAKINLAŞMA'}</small>` +
+      `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>${
       sourceSequenceCount > 1
         ? `<small class="choice-meta">${sourceSequenceCount} doğrulanmış sekans · sırayla oynatılır</small>`
         : ''
@@ -4191,6 +4257,7 @@ function renderAdultApproachChoices(scene, later = false) {
     button.addEventListener('click', () => {
       if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
       else {
+        if (state.adultLoopSeeking && (choice.variants || []).some(item => item.id === state.activeMovementId)) return;
         selectAdultPosition(choice.id, false);
         const variants = (choice.variants || []).filter(item => Number(item.loopEndTime) > state.adultTimelineFloor + 0.05);
         const next = pickNextVariant(variants, state.activeMovementId, state.adultMovementPlayCounts);
@@ -4260,6 +4327,17 @@ function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel || state.adultOutcomePhase !== 'idle') return;
   state.interactionRuntime = transitionInteraction(genericInteractionSnapshot(), { type: 'normalize' });
+  // The source boundary spends the opening budget on the first core group.
+  // Leaving its 100 on screen while blocking another unlock made the next
+  // position appear to require the scene-skip button.
+  if (state.interactionMeterNeedsReset && state.interactionRuntime.progressBudgetConsumed &&
+      state.interactionRuntime.currentPhase === 'CORE') {
+    state.interactionRuntime = { ...state.interactionRuntime, progressionValue: 0 };
+    state.interactionMeterNeedsReset = false;
+    if (els.adultDockLustValue) els.adultDockLustValue.textContent = '0';
+    if (els.femaleProgressText) els.femaleProgressText.textContent = '0%';
+    if (els.femaleProgressBar) els.femaleProgressBar.style.width = '0%';
+  }
   if (state.interactionRuntime.currentPhase === 'CORE') state.interactionPhaseOverride = null;
 
   if (!state.activeAdultPreludeId && !state.activeMovementId) {
@@ -4334,7 +4412,9 @@ function renderAdultProgressiveUI(force = false) {
   if (els.adultPhaseBadge) els.adultPhaseBadge.textContent = phase === 'foreplay' ? 'YAKINLAŞMA' : phase === 'reward' ? 'BONUS' : 'POZİSYONLAR';
   if (els.adultPhaseTitle) els.adultPhaseTitle.textContent = phase === 'foreplay' ? 'Yakınlaşma' : 'Sahnedeki doğrulanmış pozisyonlar';
   if (els.adultPhaseHint) els.adultPhaseHint.textContent = phase === 'foreplay'
-    ? 'Yakınlaşma seçenekleri Lust göstergesini doldurur; ilk gerçek pozisyon sonra açılır.'
+    ? (scene.positions || []).some(position => !isWarmupPosition(position))
+      ? 'Yakınlaşma seçenekleri Lust göstergesini doldurur; ilk gerçek pozisyon sonra açılır.'
+      : 'Doğrulanmış yakınlaşma seçenekleri Lust göstergesini doldurur.'
     : 'Bir pozisyon ve ardından gerçek video hareketini seç.';
   els.adultInteractionPanel.dataset.phase = phase;
   els.outcomeSection?.classList.add('hidden');
@@ -4384,8 +4464,13 @@ function renderAdultProgressiveUI(force = false) {
   state.adultLastUiPhase = phase;
 
   if (phase === 'foreplay' || laterOverlay) {
-    if (els.discoveryGateText) els.discoveryGateText.textContent = `İlk seks pozisyonu için Lust ${Math.round(currentAdultFlow())}/100`;
-    if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = 'Yakınlaşma, oral ve manuel seçenekleri Lust kazandırır; Lust 100 olunca yeni pozisyon beklemeden açılır.';
+    const hasCorePosition = (scene.positions || []).some(position => !isWarmupPosition(position));
+    if (els.discoveryGateText) els.discoveryGateText.textContent = hasCorePosition
+      ? `İlk seks pozisyonu için Lust ${Math.round(currentAdultFlow())}/100`
+      : `Yakınlaşma Lust ${Math.round(currentAdultFlow())}/100`;
+    if (els.discoveryGateMeta) els.discoveryGateMeta.textContent = hasCorePosition
+      ? 'Yakınlaşma, oral ve manuel seçenekleri Lust kazandırır; Lust 100 olunca yeni pozisyon beklemeden açılır.'
+      : 'Bu bölümdeki doğrulanmış yakınlaşma seçenekleri Lust kazandırır.';
     els.discoveryGate?.classList.toggle('hidden', approachUsesDialogueOverlay);
     els.adultPanelToggleBtn?.classList.toggle('hidden', approachUsesDialogueOverlay);
     renderAdultApproachChoices(scene, laterOverlay);
@@ -4603,11 +4688,14 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     els.positionCount.textContent = `${positions.length} açık`;
   }
 
-  positions.forEach(position => {
+  positions.forEach((position, index) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'position-tab';
-    button.textContent = String(position.label || '').trim();
+    const familyCount = positions.filter(item => item.familyId === position.familyId).length;
+    const familyOrder = positions.slice(0, index + 1).filter(item => item.familyId === position.familyId).length;
+    button.textContent = String(position.label || '').trim() +
+      (familyCount > 1 ? ` · ${familyOrder}` : '');
     button.dataset.positionId = position.id;
   const hasVerifiedEntry = Boolean(interactionEntryClip(
       genericInteractionSnapshot().scene.groups.find(group => group.id === position.id)));
@@ -4696,6 +4784,7 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scenePreludeChoices(scene).find(entry => entry.id === preludeId);
   if (!item || item.sourceVerified !== true || !els.video || state.adultOutcomePhase !== 'idle') return;
+  if (state.adultLoopSeeking && state.activeAdultPreludeId === preludeId) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
   logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
@@ -4982,6 +5071,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'movement-choice-card';
+    button.title = choice.label;
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     const energyBadge = choice.energyLabel
@@ -4993,8 +5083,10 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
     const tempoSummary = choice.hasTempoShift && choice.tempoVariants?.length
       ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
       : '';
-    button.innerHTML = `${energyBadge}<span data-choice-label>${escapeHtml(choice.label)}</span>${variantStatus}${tempoSummary}`;
+    button.innerHTML = `${energyBadge}<span data-choice-label>${escapeHtml(
+      compactPanelChoiceLabel(choice.label, choice.variants[0] || choice))}</span>${variantStatus}${tempoSummary}`;
     button.addEventListener('click', () => {
+      if (state.adultLoopSeeking && choice.variants.some(item => item.id === state.activeMovementId)) return;
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
         : null;
@@ -5084,6 +5176,18 @@ function selectAdultMovement(
       sourcePositionId: movement.sourcePositionId || null
     });
     return;
+  }
+  // Repeated taps during a pending seek must not cancel that very seek. If
+  // the selected clip is merely paused, one tap resumes it directly.
+  if (shouldSeek && state.activeMovementId === movement.id) {
+    if (state.adultLoopSeeking) return;
+    const time = Number(els.video?.currentTime);
+    if (els.video?.paused && Number.isFinite(time) &&
+        time >= Number(movement.loopStartTime) - 0.05 &&
+        time < Number(movement.loopEndTime) - 0.05) {
+      void resumePanelPlayback();
+      return;
+    }
   }
   const forwardPlayable = forwardLocalMovementClips(position,
     Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0))
@@ -5898,6 +6002,7 @@ function renderChoices() {
     button.dataset.choiceSurface = approach ? 'approach' : 'story';
     const storyLabel = storyChoiceLabelForAction(action);
     button.innerHTML = `
+      <small class="choice-kind">${approach ? 'YAKINLAŞMA' : 'HİKÂYE'}</small>
       <div class="choice-title">${escapeHtml(storyLabel)}</div>
     `;
     button.addEventListener('click', () => playAction(action));

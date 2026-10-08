@@ -10,6 +10,7 @@ import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
 import { interactionEntryGuard, interactionClipGuard } from '../public/interaction-timeline.js';
 import { sourceSpeechOverlaps } from '../public/source-transcript.js';
+import { canonicalizeActionTrackIds } from '../public/character-identity.js';
 
 test('verified action time repairs zeroed position and loop metadata', () => {
   const repaired = gameplay.normalizeSourceActionTimes({ startTime: 332.653, endTime: 345.5,
@@ -47,10 +48,11 @@ const action = (id, start, end, extra = {}) => ({
   loopStartTime: start, loopEndTime: end, ...extra
 });
 
-function prepare(actions, overrides = {}, sourceContext = null) {
-  const state = { analysis: { actions }, analysisFingerprint: 'test', sourceContext };
+function prepare(actions, overrides = {}, sourceContext = null, storyContext = {}) {
+  const state = { analysis: { actions, storyContext }, analysisFingerprint: 'test', sourceContext };
   const scope = vm.createContext({
     ...gameplay, ...choiceRouting, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole, sourceSpeechOverlaps,
+    canonicalizeActionTrackIds,
     sourceIdentityLabel, sourceDisplayLabel, interactionEntryGuard,
     bindActionCharacter: item => item,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
@@ -69,6 +71,40 @@ function prepare(actions, overrides = {}, sourceContext = null) {
   vm.runInContext(`${handler}\nprepareAdultScenes();`, scope);
   return state;
 }
+
+test('distant verified intimacy remains a separate progressing panel with explicit track aliases', () => {
+  const shared = { partnerTrackId: 'actor-b', positionId: '', positionLabel: '',
+    adultScene: false, adultSceneId: '', adultSceneStartTime: undefined,
+    adultSceneEndTime: undefined };
+  const first = action('approach-1', 84, 93, { ...shared, subjectTrackId: 'char-001',
+    actionType: 'kiss', label: 'Observed first kiss' });
+  const interlude = action('story-interlude', 93, 106, { ...shared,
+    subjectTrackId: 'char-001', actionType: 'story', label: 'Observed conversation' });
+  const second = action('approach-2', 115, 133, { ...shared,
+    subjectTrackId: 'actor-a', actionType: 'kiss', label: 'Observed second kiss' });
+  const third = action('approach-3', 160, 202, { ...shared,
+    subjectTrackId: 'actor-a', actionType: 'kiss', label: 'Observed embrace' });
+  const core = action('core', 373, 395, { subjectTrackId: 'actor-a', partnerTrackId: 'actor-b',
+    adultSceneId: 'scene-core', adultSceneStartTime: 373, adultSceneEndTime: 395,
+    positionStartTime: 373, positionEndTime: 395 });
+  const actions = [first, interlude, second, third, core];
+  const original = structuredClone(actions);
+  const state = prepare(actions, {}, null, { characters: [
+    { id: 'char-001', participantTrackId: 'actor-a' },
+    { id: 'actor-b', participantTrackId: 'actor-b' }
+  ] });
+  assert.equal(state.adultScenes.length, 2);
+  const [opening, positionScene] = state.adultScenes;
+  assert.deepEqual(Array.from(opening.foreplay, item => item.id),
+    ['approach-1', 'approach-2', 'approach-3']);
+  assert.deepEqual(Array.from(opening.dialogue, item => item.id), ['story-interlude']);
+  assert.deepEqual([opening.startTime, opening.endTime, opening.positions.length], [84, 202, 0]);
+  assert.equal(positionScene.startTime, 373);
+  assert.deepEqual(Array.from(positionScene.positions[0].sourceRanges,
+    item => [item.startTime, item.endTime]), [[373, 395]]);
+  assert.equal(state.adultAnalysisTrace.actions[0].membershipReason, 'VERIFIED_STANDALONE_OPENING');
+  assert.deepEqual(actions, original);
+});
 
 test('preparation never fabricates a verified full-parent clip from rejected evidence', () => {
   const state = prepare([action('rejected', 10, 30, { accepted: false })]);
@@ -273,7 +309,7 @@ for (const example of [
   });
 }
 
-test('introduction routing still rejects unverified actions, a different cast, and a large source gap', () => {
+test('introduction routing never joins unverified, different-cast, or distant clips to a core position', () => {
   const cast = { subjectTrackId: 'actor-a', partnerTrackId: 'actor-b' };
   const core = action('chapter', 100, 120, { ...cast, actionType: 'position',
     adultSceneStartTime: 90, adultSceneEndTime: 100,
@@ -292,12 +328,19 @@ test('introduction routing still rejects unverified actions, a different cast, a
     const state = prepare(actions, {
       verifiedAdultPositionFamily: item => item.sourceVerified && item.positionId ? 'chapter' : ''
     });
-    assert.equal(state.adultScenes.length, 1, example.actionId);
-    assert.equal(state.adultScenes[0].foreplay.length, 0, example.actionId);
-    assert.equal(state.adultScenes[0].startTime, 100, example.actionId);
-    assert.deepEqual(Array.from(state.adultScenes[0].positions[0].sourceRanges,
+    const coreScene = state.adultScenes.at(-1);
+    assert.equal(state.adultScenes.length, example.actionId === 'unverified' ? 1 : 2, example.actionId);
+    assert.equal(coreScene.foreplay.length, 0, example.actionId);
+    assert.equal(coreScene.startTime, 100, example.actionId);
+    assert.deepEqual(Array.from(coreScene.positions[0].sourceRanges,
       item => [item.startTime, item.endTime]), [[100, 120]], example.actionId);
-    assert.equal(state.adultAnalysisTrace.actions[0].route, 'NOT_ROUTED', example.actionId);
+    if (example.actionId === 'unverified') {
+      assert.equal(state.adultAnalysisTrace.actions[0].route, 'NOT_ROUTED');
+    } else {
+      assert.deepEqual([state.adultScenes[0].startTime, state.adultScenes[0].endTime],
+        [introduction.startTime, introduction.endTime]);
+      assert.equal(state.adultScenes[0].foreplay[0].id, introduction.actionId);
+    }
     assert.deepEqual(actions, original, example.actionId);
   }
 });
@@ -440,16 +483,18 @@ test('a preceding transition cannot become an entry across another cast, a wide 
   }
 });
 
-test('a rejected verified introduction reports its source times and membership reason', () => {
+test('a distant verified introduction reports a separate opening without changing source times', () => {
   const core = action('core:a', 100, 120, { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a',
     positionStartTime: 100, positionEndTime: 120 });
   const intro = action('intro:a', 10, 20, { adultScene: false, adultSceneId: '', actionType: 'touch',
     positionId: '', positionLabel: '', subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' });
   const state = prepare([intro, core]);
-  const warning = state.adultAnalysisTrace.warnings.find(item => item.code === 'VERIFIED_APPROACH_REJECTED');
-  assert.equal(warning.actionId, 'intro:a');
-  assert.equal(warning.membershipReason, 'SOURCE_GAP_TOO_LARGE');
-  assert.deepEqual([warning.sourceStartTime, warning.sourceEndTime], [10, 20]);
+  const [opening, positionScene] = state.adultScenes;
+  assert.deepEqual([opening.startTime, opening.endTime, opening.foreplay[0].id], [10, 20, 'intro:a']);
+  assert.deepEqual([positionScene.startTime, positionScene.endTime], [100, 120]);
+  const trace = state.adultAnalysisTrace.actions.find(item => item.actionId === 'intro:a');
+  assert.equal(trace.membershipReason, 'VERIFIED_STANDALONE_OPENING');
+  assert.equal(trace.route, 'FOREPLAY');
 });
 
 test('nearby scene fragments with a different opaque cast remain separate', () => {
@@ -488,6 +533,52 @@ test('a verified same-cast transition joins a 41-second opening-to-core gap with
     range.startTime <= 535 && range.endTime > 535)), false);
   assert.equal(mergeFragments([opening, core], [{ ...bridge, actionType: 'scene_transition' }]).length, 2);
   assert.equal(mergeFragments([opening, { ...core, startTime: 556 }], [bridge]).length, 2);
+});
+
+test('two same-cast core chapters separated by a quiet 51-second edit stay in one choice panel', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A' };
+  const scene = (id, startTime, endTime, familyId) => ({ id, startTime, endTime, postSceneTime: endTime,
+    positions: [{ ...cast, familyId, startTime, endTime, sourceRanges: [
+      { id: `${id}:source`, startTime, endTime, sourceVerified: true }
+    ] }], foreplay: [], dialogue: [], partnerTransitions: [], outcomes: [] });
+  const joined = mergeFragments([scene('rear', 373, 515, 'rear'),
+    scene('prone', 566, 853, 'prone-bone')], [], [{ startTime: 515, endTime: 566 }]);
+  assert.equal(joined.length, 1);
+  assert.deepEqual(Array.from(joined[0].positions, item => item.familyId), ['rear', 'prone-bone']);
+  assert.equal(joined[0].positions.some(position => position.sourceRanges.some(range =>
+    range.startTime <= 535 && range.endTime > 535)), false);
+});
+
+test('separated returns in one encounter unlock as source-ordered position chapters', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A', actionType: 'position' };
+  const sourceChapter = (id, startTime, endTime, family, sceneId) =>
+    action(id, startTime, endTime, { ...cast, adultSceneId: sceneId,
+      adultSceneStartTime: startTime, adultSceneEndTime: endTime,
+      positionId: family, positionLabel: family,
+      positionOccurrenceId: id, positionStartTime: startTime, positionEndTime: endTime });
+  const state = prepare([
+    sourceChapter('rear-1', 373, 515, 'rear', 'scene-a'),
+    sourceChapter('rear-2', 566, 688, 'rear', 'scene-b'),
+    sourceChapter('prone', 693, 781, 'prone-bone', 'scene-b'),
+    sourceChapter('rear-3', 799, 853, 'rear', 'scene-b')
+  ], {
+    mergeAdultSceneFragments: mergeFragments,
+    playableAdultPanelFamily: item => item.positionId || '',
+    canonicalAdultPosition: item => ({ id: item.positionId, label: item.positionLabel }),
+    adultCategoryFor: (_item, id) => ({ id, label: id })
+  });
+  assert.equal(state.adultScenes.length, 1);
+  const positions = state.adultScenes[0].positions;
+  assert.deepEqual(Array.from(positions, position => position.startTime), [373, 566, 693, 799]);
+  assert.equal(new Set(positions.map(position => position.id)).size, 4);
+  assert.deepEqual(Array.from(positions, position => position.sourceRanges[0].endTime),
+    [515, 688, 781, 853]);
 });
 
 test('preparation keeps dialogue, opening activity, and first core position in one progressing encounter', () => {
@@ -546,7 +637,7 @@ test('a wide provider position envelope cannot merge distant exact source chapte
   assert.deepEqual(actions, original);
 });
 
-test('unverified scene-tagged provider rows cannot join a distant introduction to a core occurrence', () => {
+test('unverified scene-tagged provider rows cannot bridge a standalone opening to core', () => {
   const cast = { subjectTrackId: 'subject:a', partnerTrackId: 'partner:a' };
   for (const sourceVerified of [false, undefined, 'true', 1]) {
     const intro = action('intro:a', 10, 20, { ...cast, actionType: 'touch', positionId: '', positionLabel: '' });
@@ -559,16 +650,15 @@ test('unverified scene-tagged provider rows cannot join a distant introduction t
     const actions = [intro, ...bridges, core];
     const original = structuredClone(actions);
     const state = prepare(actions);
-    assert.equal(state.adultScenes.length, 1);
-    const [scene] = state.adultScenes;
+    assert.equal(state.adultScenes.length, 2);
+    const [opening, scene] = state.adultScenes;
+    assert.deepEqual([opening.startTime, opening.endTime, opening.foreplay.length], [10, 20, 1]);
     assert.deepEqual([scene.startTime, scene.endTime], [400, 420]);
     assert.equal(scene.foreplay.length, 0);
     assert.deepEqual(Array.from(scene.positions[0].sourceRanges, range => [range.startTime, range.endTime]), [[400, 420]]);
     assert.ok(scene.positions[0].movements.every(movement => sourceRangeForClip(scene.positions[0], movement)));
-    const warning = state.adultAnalysisTrace.warnings.find(item => item.code === 'VERIFIED_APPROACH_REJECTED' &&
-      item.actionId === 'intro:a');
-    assert.ok(warning);
-    assert.deepEqual([warning.sourceStartTime, warning.sourceEndTime], [10, 20]);
+    assert.equal(state.adultAnalysisTrace.actions[0].route, 'FOREPLAY');
+    assert.ok(state.adultAnalysisTrace.actions.slice(1, -1).every(item => item.route !== 'FOREPLAY'));
     assert.deepEqual(actions, original);
   }
 });

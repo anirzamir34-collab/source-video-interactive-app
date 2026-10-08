@@ -59,7 +59,11 @@ export function groupSourceChoiceCards(clips, {
   const requestedTarget = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
   // This is a density preference, never a hard cap that combines unrelated
   // source actions. Small rich inputs should still expose several choices.
-  const target = Math.min(requestedTarget, Math.max(1, Math.ceil(source.length / 3)));
+  // A position with several verified source clips should expose more than one
+  // or two cards; grouping still keeps adjacent variants from the same
+  // observed action together and never synthesizes a new clip.
+  const target = Math.min(requestedTarget, mergeWithinContext
+    ? source.length : Math.max(1, Math.ceil(source.length / 3)));
   const groups = new Map();
   for (const clip of source) {
     const label = sourceActionLabel(labelFor?.(clip) || clip.label);
