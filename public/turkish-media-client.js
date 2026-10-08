@@ -531,7 +531,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const owner = scope();
     lastStart = { source, options: { outputs: { dub: options.outputs?.dub !== false,
       subtitles: options.outputs?.subtitles !== false,
-       dubbingProvider: options.outputs?.dubbingProvider === 'elevenlabs' ? 'elevenlabs' : 'classic',
+       ...(options.outputs?.dubbingProvider === 'elevenlabs' ? { dubbingProvider: 'elevenlabs' } : {}),
        ...(options.outputs?.transcriptOnly ? { transcriptOnly: true } : {}) },
       qualityMode: String(options.qualityMode || 'quality'),
       voiceMapping: jsonCopy(options.voiceMapping || {}),
