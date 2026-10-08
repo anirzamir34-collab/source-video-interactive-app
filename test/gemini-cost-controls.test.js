@@ -160,9 +160,9 @@ test('a timed-out storyboard request stops within the explicit provider budget w
     let calls = 0;
     const handler = serverHandler(async request => {
       calls++;
-      assert.equal(request.config.httpOptions.timeout, 90000);
+      assert.equal(request.config.httpOptions.timeout, 150000);
       assert.equal(request.config.httpOptions.retryOptions.attempts, 1);
-      assert.equal(request.config.thinkingConfig.thinkingLevel, 'low');
+      assert.equal(request.config.thinkingConfig.thinkingLevel, 'high');
       throw new DOMException('This operation was aborted', name);
     });
     const response = serverResponse(); await handler(serverRequest(), response);
