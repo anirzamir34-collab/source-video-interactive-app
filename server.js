@@ -33,12 +33,13 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 10000;
 const ANALYSIS_SCHEMA_VERSION = 6;
+const ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-3.1-pro-preview';
 const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 const storyboardRequestCache = createAnalysisRequestCache();
 const analysisRevision = crypto.createHash('sha256').update(JSON.stringify([
   fs.readFileSync(__filename, 'utf8'), fs.readFileSync(path.join(__dirname, 'lib/gemini-generation-config.js'), 'utf8'),
-  process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL,
-  geminiGenerationConfig(process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL)
+  ANALYSIS_MODEL,
+  geminiGenerationConfig(ANALYSIS_MODEL)
 ])).digest('hex');
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
@@ -341,6 +342,12 @@ SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
 You receive chronological contact-sheet images sampled from one local video.
 Each tile contains its source timestamp. Analyze only directly visible evidence.
 Never invent people, actions, dialogue, objects, contact, movement or outcomes.
+For every imperative label, verify the named contact point in the actual sampled frames.
+When hands or the contact point are occluded, use a neutral visible description;
+never guess a body part from posture, previous labels, or category metadata.
+A kiss or general touch is an opening interaction, not evidence for a different
+activity. Keep positionId, positionLabel and activityType neutral unless the
+specific interval directly and consistently supports them.
 
 Identify the recurring male protagonist. Describe only his directly visible
 actions in chronological order. Create a new action when visible movement,
@@ -671,7 +678,7 @@ Rules:
           }
         }))
       ];
-      const model = process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
+      const model = ANALYSIS_MODEL;
       const generationConfig = geminiGenerationConfig(model);
       const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
       const requestUsage = emptyGeminiUsage();
@@ -1570,7 +1577,7 @@ app.get('/health', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ status: 'ok', service: 'source-video-interactive-app',
     analysisRevision,
-    analysisGeneration: { thinkingLevel: geminiGenerationConfig(process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL).thinkingConfig?.thinkingLevel || 'default' },
+    analysisGeneration: { thinkingLevel: geminiGenerationConfig(ANALYSIS_MODEL).thinkingConfig?.thinkingLevel || 'default' },
     deploymentCommit: process.env.RENDER_GIT_COMMIT || null,
     turkishMedia: { qualityMode: mediaConfig.qualityMode, pipelineVersion: mediaConfig.version,
       translationProvider: mediaConfig.translation.provider, openAIRequired: false,
