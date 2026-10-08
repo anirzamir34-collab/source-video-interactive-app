@@ -8,6 +8,7 @@ import { analysisRequestKey } from '../public/analysis-response-cache.js';
 import { parseStoryboardResponse, generateStoryboardWithRetry, storyboardFailureReason, isTerminalStoryboardFailure } from '../public/analysis-recovery.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
 import { serializeReviewCandidates } from '../public/classification-integrity.js';
+import { adaptiveAnalysisChunkPlan } from '../public/storyboard.js';
 
 const accountId = '0123456789abcdef0123456789abcdef';
 const token = 'a-secure-test-token-that-is-long-enough';
@@ -31,6 +32,8 @@ test('Cloudflare sends source sheets with the timestamp prompt and parses a veri
     const body = JSON.parse(options.body);
     assert.equal(body.messages[0].content[0].text, 'timestamps [12]');
     assert.equal(body.messages[0].content[1].image_url.url, 'data:image/jpeg;base64,ZnJhbWU=');
+    assert.equal(body.reasoning_effort, 'low');
+    assert.equal(body.max_completion_tokens, 8192);
     return { ok: true, json: async () => ({ success: true, result: {
       response: JSON.stringify({ available: true, actions: [{ actionId: 'a', startTime: 12, endTime: 25 }] }),
       usage: { prompt_tokens: 100, completion_tokens: 40, total_tokens: 140 }
@@ -41,6 +44,12 @@ test('Cloudflare sends source sheets with the timestamp prompt and parses a veri
   assert.equal(called, 1);
   assert.equal(response.usageMetadata.totalTokenCount, 140);
   assert.equal(parseStoryboardResponse(response).actions[0].actionId, 'a');
+});
+
+test('Cloudflare sends each contact sheet in a separate request', () => {
+  const plan = adaptiveAnalysisChunkPlan(13, 400, 'fast', 'cloudflare');
+  assert.equal(plan.chunkCount, 13);
+  assert.deepEqual(plan.chunks, Array.from({ length: 13 }, (_, firstSheet) => ({ firstSheet, sheetCount: 1 })));
 });
 
 test('Cloudflare quota and malformed output remain failures with no implicit Gemini call', async () => {
