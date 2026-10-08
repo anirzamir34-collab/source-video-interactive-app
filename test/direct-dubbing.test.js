@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createDirectDubbing } from '../lib/turkish-media/direct-dubbing.js';
+import { createMediaRequest } from '../lib/turkish-media/http.js';
 
 test('direct dubbing resumes the paid project and never creates a second target', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'videoquest-direct-dub-'));
@@ -82,4 +83,18 @@ test('permission rejection clears uncertain marker and permits a later explicit 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('Dubbing scope error reports the actionable permission', async () => {
+  const request = createMediaRequest({
+    fetchImpl: async () => ({
+      ok: false, status: 401, headers: { get: () => null },
+      text: async () => JSON.stringify({ detail: {
+        type: 'authentication_error', code: 'unauthorized', status: 'missing_permissions',
+        message: 'The API key you used is missing the permission dubbing_write to execute this operation.',
+      } }),
+    }), maxRetries: 0,
+  });
+  await assert.rejects(request('https://api.elevenlabs.io/v1/dubbing/project'), error =>
+    error.code === 'ELEVENLABS_DUBBING_PERMISSION_MISSING' && /dubbing_write/.test(error.message));
 });
