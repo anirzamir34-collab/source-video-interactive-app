@@ -21,8 +21,8 @@ test('foreplay-only adult fragments survive until they can merge with the first 
   assert.match(source, /mergeAdultSceneFragments\([\s\S]*?\)\.filter\(scene => scene\.positions\?\.length \|\| scene\.foreplay\?\.length\)/);
 });
 
-test('first intimate approach uses the adult foreplay surface instead of ordinary dialogue choices', () => {
-  assert.match(source, /const target = dialogueOnly \? els\.choices : els\.foreplayChoices/);
+test('first intimate approach uses its own overlay instead of the core panel or dialogue choices', () => {
+  assert.match(source, /const target = dialogueOnly \? els\.choices : els\.approachChoices/);
   assert.match(source, /panelVisible: progressivePanelVisible/);
   assert.match(source, /overlayVisible: progressiveOverlayVisible/);
 });

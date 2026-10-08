@@ -3545,9 +3545,10 @@ function genericInteractionTrace() {
   const panelVisible = Boolean(els.adultInteractionPanel &&
     !els.adultInteractionPanel.classList.contains('hidden'));
   const overlayVisible = Boolean(els.choices && !els.choices.classList.contains('hidden'));
+  const approachVisible = Boolean(els.approachChoices && !els.approachChoices.classList.contains('hidden'));
   const report = interactionTrace({ ...runtime, panelVisible,
     blockedSeekReason: state.interactionBlockedSeekReason || runtime.blockedSeekReason }, {
-    overlayCount: Number(panelVisible) + Number(overlayVisible)
+    overlayCount: Number(panelVisible) + Number(overlayVisible) + Number(approachVisible)
   });
   return { ...report, phaseOverride: state.interactionPhaseOverride || null, overlayVisible,
     phaseInvariantValid: !(runtime.progressionValue >= 100 && state.adultOutcomePhase === 'idle' &&
