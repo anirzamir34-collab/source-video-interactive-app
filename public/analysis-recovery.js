@@ -16,7 +16,7 @@ export function storyboardFailureReason(error) {
   if (status === 401 || status === 403 || /API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(details)) return 'GEMINI_AUTH_ERROR';
   if (status === 404 || /NOT_FOUND|model.*not found/i.test(details)) return 'GEMINI_MODEL_UNAVAILABLE';
   if (status === 400) return 'GEMINI_INVALID_REQUEST';
-  if (/502|503|504|UNAVAILABLE|high demand|fetch failed|timeout|timed out|ECONNRESET|ETIMEDOUT|network|socket/i.test(details)) return 'GEMINI_TEMPORARILY_UNAVAILABLE';
+  if ([500, 502, 503, 504].includes(status) || /502|503|504|UNAVAILABLE|high demand|fetch failed|timeout|timed out|ECONNRESET|ETIMEDOUT|network|socket/i.test(details)) return 'GEMINI_TEMPORARILY_UNAVAILABLE';
   if (/GEMINI_EMPTY_JSON_RESPONSE/i.test(details)) return 'GEMINI_EMPTY_RESPONSE';
   if (/Unexpected end of JSON input|Unexpected token|not valid JSON|GEMINI_INVALID_JSON/i.test(details)) return 'GEMINI_INVALID_JSON';
   return 'GEMINI_STORYBOARD_ERROR';
