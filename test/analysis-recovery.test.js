@@ -134,7 +134,7 @@ test('the live server handler reports refused chapters without retrying or split
       addGeminiUsage: usage => { usage.requests += 1; },
       storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
       geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig, storyboardRequestCache: createAnalysisRequestCache(),
-      GEMINI_DEFAULT_MODEL: 'gemini-test-model',
+      GEMINI_DEFAULT_MODEL: 'gemini-test-model', ANALYSIS_MODEL: 'gemini-3.1-pro-preview',
       process: { env: {} }, console: { warn() {}, error() {}, info() {} }
     });
     const req = { body: { chunkIndex, chunkCount: 12, chunkStart: chunkIndex * 12,
@@ -151,3 +151,4 @@ test('the live server handler reports refused chapters without retrying or split
     assert.equal(res.body.analysisGaps[0].startTime, chunkIndex * 12);
   }
 });
+
