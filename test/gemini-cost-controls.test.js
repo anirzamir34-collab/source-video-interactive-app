@@ -146,7 +146,7 @@ function serverHandler(generateContent) {
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
     storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,
-    storyboardRequestCache: createAnalysisRequestCache(), GEMINI_DEFAULT_MODEL: 'gemini-3.8-flash',
+    storyboardRequestCache: createAnalysisRequestCache(), GEMINI_DEFAULT_MODEL: 'gemini-3.8-flash', ANALYSIS_MODEL: 'gemini-3.1-pro-preview',
     generateStoryboardWithRetry: (load, options) => generateStoryboardWithRetry(load, { ...options, wait: async () => {} }),
     process: { env: {} }, console: { warn() {}, error() {}, info() {} }
   });
@@ -213,3 +213,4 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
   const response = serverResponse(); await handler({ body: { verify: true } }, response);
   assert.equal(calls, 1); assert.equal(response.body.state, 'available');
 });
+
