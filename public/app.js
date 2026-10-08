@@ -5558,10 +5558,12 @@ function updateAdultPlayback(now, mediaTime) {
   // Hold the source frame while a decision is available. Otherwise playback
   // silently consumes the lookahead queue and a card can point behind the playhead.
   if (!els.video.paused && !state.activeAdultPreludeId && !state.activeMovementId &&
-      !state.activeAdultEntryClip && state.adultOutcomePhase === 'idle' &&
-      state.interactionRuntime?.currentPhase === 'APPROACH') {
+      !state.activeAdultEntryClip && state.adultOutcomePhase === 'idle') {
     renderAdultProgressiveUI(true);
-    if (state.adultApproachChoices?.length) {
+    const hasDecision = state.interactionRuntime?.currentPhase === 'APPROACH'
+      ? Boolean(state.adultApproachChoices?.length)
+      : Boolean(els.positionTabs?.querySelector('button:not(:disabled)'));
+    if (hasDecision) {
       els.video.pause();
       setGameState('DECISION_PENDING');
       state.lastAdultFrameNow = now;
