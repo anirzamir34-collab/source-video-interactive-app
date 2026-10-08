@@ -690,9 +690,12 @@ Rules:
           addGeminiUsage(requestUsage, response?.usageMetadata);
           return response;
         }, {
-          onRetry: (reason, attempt) => console.warn(
-            `[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/2: ${reason}`
-          )
+          onRetry: (reason, attempt, error) => console.warn('[gemini-storyboard-retry]', JSON.stringify({
+            chunkIndex, retryLabel, attempt, reason,
+            status: Number(error?.status ?? error?.statusCode ?? error?.response?.status) || null,
+            code: typeof error?.code === 'number' ? error.code : String(error?.code || '').slice(0, 64),
+            name: String(error?.name || '').slice(0, 64)
+          }))
         }));
         outcome = cached.outcome;
         if (outcome !== 'completed') {
@@ -712,6 +715,12 @@ Rules:
       parsed = await generateStoryboardJson(prompt, files);
     } catch (fullChunkError) {
       const fullFailureReason = storyboardFailureReason(fullChunkError);
+      console.warn('[gemini-storyboard-failure]', JSON.stringify({
+        chunkIndex, reason: fullFailureReason,
+        status: Number(fullChunkError?.status ?? fullChunkError?.statusCode ?? fullChunkError?.response?.status) || null,
+        code: typeof fullChunkError?.code === 'number' ? fullChunkError.code : String(fullChunkError?.code || '').slice(0, 64),
+        name: String(fullChunkError?.name || '').slice(0, 64)
+      }));
       const quotaFailure = geminiQuotaFailure(fullChunkError);
       if (quotaFailure) {
         console.warn(
@@ -723,6 +732,17 @@ Rules:
           chunkCount,
           chunkStart,
           chunkEnd
+        });
+      }
+      if (['GEMINI_AUTH_ERROR', 'GEMINI_MODEL_UNAVAILABLE', 'GEMINI_INVALID_REQUEST'].includes(fullFailureReason)) {
+        const message = fullFailureReason === 'GEMINI_AUTH_ERROR'
+          ? 'Gemini API anahtarı veya proje yetkisi geçersiz. Gemini anahtarını ve erişimini kontrol et.'
+          : fullFailureReason === 'GEMINI_MODEL_UNAVAILABLE'
+            ? 'Seçili Gemini modeli bu API anahtarı veya proje için kullanılamıyor.'
+            : 'Gemini isteği geçersiz olarak reddedildi. Sunucu kayıtlarındaki hata kodunu kontrol et.';
+        return res.status(fullFailureReason === 'GEMINI_AUTH_ERROR' ? 403 : 502).json({
+          available: false, retryable: false, reason: fullFailureReason, message,
+          chunkIndex, chunkCount, chunkStart, chunkEnd, aiUsage: analysisUsage
         });
       }
       if (isTerminalStoryboardFailure(fullChunkError)) {
