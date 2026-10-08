@@ -2528,10 +2528,10 @@ function canonicalAdultPosition(action) {
     'legs-up': 'Bacaklar Yukarı Pozisyon',
     missionary: 'Misyoner Pozisyonu',
     cowgirl: 'Kovboy Pozisyonu',
-    spoon: 'Kaşık Pozisyonu',
+    spoon: 'Spooning',
     'reverse-spoon': 'Ters Kaşık Pozisyonu',
-    'standing-rear': 'Ayakta Arkadan Pozisyon',
-    rear: 'Arkadan Pozisyon',
+    'standing-rear': 'Standing Doggy Style',
+    rear: 'Doggy Style',
     seated: 'Oturarak Pozisyon',
     standing: 'Ayakta Pozisyon'
   };
@@ -2964,11 +2964,7 @@ function prepareAdultScenes() {
     // Some analysis providers correctly identify the visible position in the
     // verified label but omit the optional positionId/positionLabel fields.
     // Treat that evidence as a real position so it stays in this panel.
-    const hasPositionEvidence = Boolean(
-      action.positionId ||
-      action.positionLabel ||
-      playableAdultPanelFamily(action)
-    );
+    const hasPositionEvidence = Boolean(playableAdultPanelFamily(action));
     if (!hasPositionEvidence) {
       const actionType = String(action.actionType || '').toLowerCase();
       if (actionType === 'partner_transition') {
@@ -3086,14 +3082,9 @@ function prepareAdultScenes() {
         activityType: routeNamespace,
         routeNamespace,
         activityTypeConfidence: Number(action.activityTypeConfidence || 0),
-        positionLabel: action.classificationReview === 'verified' && String(action.positionLabel || '').trim()
-          ? String(action.positionLabel).trim()
-          : (canonical.correctedFromAction ? '' : String(action.positionLabel || '').trim()),
-        label: sourceDisplayLabel(
-          action.classificationReview === 'verified' && String(action.positionLabel || '').trim()
-            ? action
-            : (canonical.correctedFromAction ? { ...action, positionLabel: '' } : action),
-          sourceIdentityLabel(activityDisplayLabel(canonical.label, action),
+        positionLabel: canonical.label,
+        label: sourceDisplayLabel({ ...action, positionLabel: canonical.label },
+          sourceIdentityLabel(canonical.label,
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel })),
         categoryId: category.id,
         categoryLabel: category.label,
@@ -3283,7 +3274,7 @@ function prepareAdultScenes() {
       const category = String(position?.categoryId || '').toLowerCase();
       const activityOpening = ['oral', 'manual'].includes(family) ||
         ['oral', 'manual'].includes(category);
-      const beforeFirstCore = Number.isFinite(firstPrimaryCoreStart) &&
+      const beforeFirstCore = !Number.isFinite(firstPrimaryCoreStart) ||
         Number(position.startTime) < firstPrimaryCoreStart - 0.05;
       return {
         ...position,
@@ -3309,7 +3300,7 @@ function prepareAdultScenes() {
       const occurrences = positionOccurrenceGroups(position);
       const firstOccurrence = occurrences[0];
       const firstRange = firstOccurrence?.sourceRanges[0];
-      const transition = firstRange && scene.foreplay.filter(item =>
+      const transition = firstRange && [...scene.foreplay, ...scene.dialogue].filter(item =>
         item.sourceVerified === true && item.nonIntimate !== true && item.sourceActionId &&
         ['body_transition', 'position_transition', 'transition'].includes(String(item.actionType || '').toLowerCase()) &&
         sourceInterval(item.startTime, item.endTime) &&
@@ -5138,12 +5129,12 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   const movement = playableEntry;
 
   if (movement) {
-    selectAdultMovement(
-      movement.id,
-      shouldSeek,
-      selectionToken,
-      { positionChanged: changedPosition }
-    );
+    // Position selection establishes the source-backed position frame. The
+    // user explicitly selects a movement after that; never auto-play one.
+    state.activeMovementId = null;
+    state.lastAdultMediaTime = null;
+    els.video?.pause();
+    void seekAdultLoop(Number(movement.loopStartTime), selectionToken, { resume: false });
   } else {
     state.activeMovementId = null;
     if (els.movementChoices) els.movementChoices.innerHTML = '';
