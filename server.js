@@ -40,7 +40,7 @@ const storyboardRequestCache = createAnalysisRequestCache();
 const serverSource = fs.readFileSync(__filename, 'utf8');
 const analysisRouteSource = serverSource.slice(
   serverSource.indexOf("app.post('/api/gemini-storyboard-analyze'"),
-  serverSource.indexOf("app.post('/api/external-analyze'")
+  serverSource.indexOf("app.post(" + "'/api/external-analyze'")
 );
 if (!analysisRouteSource || !analysisRouteSource.includes('generateContent')) {
   throw new Error('Gemini analysis route could not be versioned.');
