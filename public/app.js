@@ -4180,24 +4180,10 @@ function renderAdultApproachChoices(scene, later = false) {
   const forwardApproach = approachPool.filter(item => item.sourceVerified === true &&
     Number(item.endTime) > projectedFloor + 0.05)
     .sort((left, right) => Number(left.startTime) - Number(right.startTime));
-  const firstDialogue = forwardApproach.find(item => item.nonIntimate === true);
-  const firstIntimate = forwardApproach.find(item => item.nonIntimate !== true);
-  const firstIntimateStart = Math.min(...approachPool.filter(item => item.sourceVerified === true &&
-    item.nonIntimate !== true).map(item => Number(item.startTime)));
-  const approachAlreadyStarted = !later && Number.isFinite(firstIntimateStart) &&
-    projectedFloor >= firstIntimateStart - 0.05;
-  // Dialogue may lead into the encounter, but once a verified intimacy clip is
-  // reached it owns the surface immediately. Do not keep rendering the generic
-  // dialogue overlay over a source-backed approach action.
-  const dialogueOnly = !approachAlreadyStarted && Boolean(firstDialogue && (
-    !firstIntimate ||
-    (Number(firstDialogue.startTime) < Number(firstIntimate.startTime) - 0.05 &&
-      projectedFloor < Number(firstIntimate.startTime) - 0.05)
-  ));
-  // Once the verified opening begins, keep its controls in the same panel.
-  // A short dialogue between two approach clips is still selectable there;
-  // its nonIntimate flag prevents it from earning Lust.
-  const surfacePool = approachAlreadyStarted ? approachPool : choiceSurfaceWindow(approachPool,
+  // The next verified source action owns the surface. A later dialogue cannot
+  // enter the approach cards, and an earlier dialogue cannot mask intimacy.
+  const dialogueOnly = forwardApproach[0]?.nonIntimate === true;
+  const surfacePool = choiceSurfaceWindow(approachPool,
     dialogueOnly ? 'story' : 'approach', projectedFloor);
   const candidates = selectVerifiedChoiceQueue(surfacePool, {
     timelineFloor: projectedFloor,
@@ -4449,8 +4435,7 @@ function renderAdultProgressiveUI(force = false) {
       (laterOverlay || Number(item.startTime) < Math.min(...(scene.positions || [])
         .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)))))
     .map(item => Number(item.startTime)));
-  const approachUsesDialogueOverlay = Boolean(nextApproachSurface?.nonIntimate === true &&
-    (laterOverlay || !Number.isFinite(firstIntimateStart) || approachCursor < firstIntimateStart - 0.05));
+  const approachUsesDialogueOverlay = nextApproachSurface?.nonIntimate === true;
   const progressivePanelVisible = phase !== 'foreplay' && !laterOverlay;
   const progressiveOverlayVisible =
     (phase === 'foreplay' || laterOverlay) && approachUsesDialogueOverlay;
@@ -4789,6 +4774,11 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scenePreludeChoices(scene).find(entry => entry.id === preludeId);
   if (!item || item.sourceVerified !== true || !els.video || state.adultOutcomePhase !== 'idle') return;
+  if (Number(els.video.currentTime) >= Number(item.endTime) - 0.05) {
+    state.adultUiSignature = '';
+    renderAdultProgressiveUI(true);
+    return;
+  }
   if (state.adultLoopSeeking && state.activeAdultPreludeId === preludeId) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
@@ -4803,7 +4793,14 @@ function playAdultPrelude(preludeId) {
   state.adultPendingSelectionProgress = { token, kind: 'prelude', item };
   renderAdultProgressiveUI(true);
   els.video.pause();
-  void seekAdultLoop(item.startTime, token);
+  const current = Number(els.video.currentTime) || 0;
+  if (current >= Number(item.endTime) - 0.05) {
+    state.activeAdultPreludeId = null;
+    state.adultPendingSelectionProgress = null;
+    renderAdultProgressiveUI(true);
+    return;
+  }
+  void seekAdultLoop(current >= Number(item.startTime) ? current : item.startTime, token);
 }
 
 function applyAdultSelectionProgress(position, movement, { positionChanged = false } = {}) {
@@ -5526,7 +5523,9 @@ function observeInteractionProgress(mediaTime) {
       els.video?.paused || els.video?.seeking || state.adultLoopSeeking || mediaTime <= Number(previous)) return;
   const selected = state.activeAdultEntryClip || scenePreludeChoices(state.adultScene).find(item => item.id === state.activeAdultPreludeId) ||
     state.adultScene?.positions?.find(item => item.id === state.activePositionId)?.movements?.find(item => item.id === state.activeMovementId);
-  const endTime = selected ? Math.min(Number(mediaTime), Number(selected.loopEndTime ?? selected.endTime)) : Number(mediaTime);
+  // A passive video frame is not a user choice and must not earn Lust.
+  if (!selected) return;
+  const endTime = Math.min(Number(mediaTime), Number(selected.loopEndTime ?? selected.endTime));
   const runtime = genericInteractionSnapshot();
   state.interactionRuntime = transitionInteraction(runtime, { type: 'playback', startTime: Number(previous), endTime,
     playing: true, seek: false });
@@ -5556,6 +5555,19 @@ function updateAdultPlayback(now, mediaTime) {
   observeInteractionProgress(mediaTime);
   if (settleInteractionClipBoundary(mediaTime)) return;
   reconcileInteractionSource(mediaTime);
+  // Hold the source frame while a decision is available. Otherwise playback
+  // silently consumes the lookahead queue and a card can point behind the playhead.
+  if (!els.video.paused && !state.activeAdultPreludeId && !state.activeMovementId &&
+      !state.activeAdultEntryClip && state.adultOutcomePhase === 'idle' &&
+      state.interactionRuntime?.currentPhase === 'APPROACH') {
+    renderAdultProgressiveUI(true);
+    if (state.adultApproachChoices?.length) {
+      els.video.pause();
+      setGameState('DECISION_PENDING');
+      state.lastAdultFrameNow = now;
+      return;
+    }
+  }
 
   const sceneEnd = Number(state.adultScene?.endTime);
   const hasActiveClip = state.activeAdultPreludeId || state.activeMovementId ||
@@ -5624,7 +5636,8 @@ function updateAdultPlayback(now, mediaTime) {
   // Do not move the chronology floor through the currently playable clip.
   // Doing so made every visible card a forbidden "past" target moments after
   // playback started. Completed clips advance the floor in their own branches.
-  if (!state.activeAdultPreludeId && !state.activeMovementId) {
+  if (!state.activeAdultPreludeId && !state.activeMovementId &&
+      !state.adultApproachChoices?.length) {
     state.adultTimelineFloor = Math.max(previousFloor, Number(mediaTime) || 0);
   }
   const floorAdvanced = state.adultTimelineFloor > previousFloor + 0.01;
