@@ -822,7 +822,7 @@ function selectedAnalysisModes() {
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
-    dubbingProvider: els.dubbingProvider?.value === 'elevenlabs' ? 'elevenlabs' : 'classic',
+    dubbingProvider: els.dubMode?.checked && els.dubbingProvider?.value === 'elevenlabs' ? 'elevenlabs' : 'classic',
     quality: String(els.qualityMode?.value || 'ultra')
   };
 }
