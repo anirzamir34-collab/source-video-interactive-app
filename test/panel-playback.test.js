@@ -503,6 +503,10 @@ async function startFirstChapter(f) {
   f.selectAdultPosition('one', true);
   await flush();
   assert.equal(f.state.activePositionId, 'one');
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
+  f.selectAdultMovement('one-0', true);
+  await flush();
   assert.equal(f.els.video.paused, false);
 }
 
@@ -524,6 +528,11 @@ test('first unlock reveals a clickable chapter; only explicit selection plays it
   assert.ok(tab);
   assert.equal(tab.disabled, false);
   tab.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.els.video.playCalls, 0);
+  f.selectAdultMovement('one-0', true);
   await flush();
   assert.equal(f.state.activeMovementId, 'one-0');
   assert.equal(f.els.video.currentTime, 20);
@@ -564,6 +573,10 @@ test('first core tab starts its verified clip and shows the next card across a s
   f.els.video.time = 551;
 
   f.selectAdultPosition('first', true);
+  await flush();
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
+  f.selectAdultMovement('first-a', true);
   await flush();
   assert.equal(f.state.activeMovementId, 'first-a');
   assert.equal(f.els.video.paused, false);
@@ -721,6 +734,7 @@ for (const mode of ['error', 'blocked']) {
   test(`a ${mode} selection earns nothing until recovery actually starts playback`, async () => {
     const f = runtimeFixture();
     f.els.video.mode = mode;
+    if (mode === 'error') f.state.adultScene.foreplay[0].startTime = 12;
     f.playAdultPrelude('intro');
     await flush();
     assert.equal(f.state.femaleSceneProgress, 0);
@@ -791,7 +805,9 @@ test('one canonical position tab keeps each distant return occurrence local and 
   const tabPlayCalls = f.els.video.playCalls;
   f.selectAdultPosition('one', true);
   await flush();
-  assert.equal(f.els.video.playCalls, tabPlayCalls + 1);
+  assert.equal(f.els.video.playCalls, tabPlayCalls);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
   assert.equal(f.els.video.currentTime, 120,
     'an explicit tab near a later return enters that forward verified occurrence instead of rewinding');
   assert.equal(f.state.activeAdultOccurrenceId, 'source-return');
@@ -1005,6 +1021,10 @@ test('explicit future chapter click plays its verified entry beyond passive look
   tab.dispatchEvent(new Event('click'));
   await flush();
   assert.equal(f.els.video.currentTime, 60);
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
+  f.selectAdultMovement('two-0', true);
+  await flush();
   assert.equal(f.state.activeMovementId, 'two-0');
   assert.equal(f.state.activeAdultOccurrenceId, 'source-two');
   assert.equal(f.state.adultMovementPlayCounts.has('two-1'), false);
@@ -1271,7 +1291,7 @@ test('verified normal dialogue has its own choices and earns no progress before 
   assert.equal(f.els.video.playCalls, 1);
 });
 
-test('a dialogue between verified opening clips stays on the approach card, then source core shows controls', () => {
+test('a dialogue between verified opening clips owns a separate story surface, then source core shows controls', () => {
   const f = runtimeFixture();
   f.state.adultScene.startTime = 28;
   f.state.adultScene.endTime = 330;
@@ -1292,13 +1312,13 @@ test('a dialogue between verified opening clips stays on the approach card, then
   f.renderAdultPanel(f.state.adultScene);
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
   assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-opening', 'reported-dialogue']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-opening']);
   f.els.video.time = 91;
   f.state.adultTimelineFloor = 91;
   f.renderAdultProgressiveUI(true);
-  assert.equal(f.els.choices.classList.contains('hidden'), true);
+  assert.equal(f.els.choices.classList.contains('hidden'), false);
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
-  assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
+  assert.equal(f.els.approachChoices.classList.contains('hidden'), true);
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-dialogue']);
   f.els.video.time = 295;
   f.state.adultTimelineFloor = 295;
@@ -1372,7 +1392,7 @@ test('unique opening clips fill the budget and open the core panel without repea
   assert.equal(f.els.video.time, 60);
 });
 
-test('natural opening playback advances the budget without button clicks and never double-unlocks', () => {
+test('passive opening playback pauses for decisions and earns no unselected progress', () => {
   const f = runtimeFixture();
   f.els.video.time = 0;
   f.els.video.paused = false;
@@ -1380,7 +1400,8 @@ test('natural opening playback advances the budget without button clicks and nev
   f.updateAdultPlayback(0, 0);
   f.els.video.time = 10;
   f.updateAdultPlayback(10000, 10);
-  assert.ok(f.currentAdultFlow() > 0 && f.currentAdultFlow() < 100);
+  assert.equal(f.currentAdultFlow(), 0);
+  assert.equal(f.els.video.paused, true);
   f.els.video.time = 20;
   f.updateAdultPlayback(20000, 20);
   assert.equal(f.currentAdultFlow(), 0, 'the next verified position starts a fresh Lust cycle');
@@ -1451,7 +1472,8 @@ test('selecting a later return never replays the separate entry of its first occ
   assert.equal(f.els.video.currentTime, 80);
   assert.equal(f.state.activeAdultEntryClip, null);
   assert.equal(f.state.activeAdultOccurrenceId, 'source-later-return');
-  assert.equal(f.state.activeMovementId, 'later-return-0');
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
 });
 
 test('scene skip seeks to the later verified return even while the first occurrence is active', async () => {
@@ -1477,7 +1499,8 @@ test('scene skip seeks to the later verified return even while the first occurre
   assert.equal(f.state.adultMode, true);
   assert.equal(f.els.video.currentTime, 80);
   assert.equal(f.state.activeAdultOccurrenceId, 'source-later-return');
-  assert.equal(f.state.activeMovementId, 'later-return-0');
+  assert.equal(f.state.activeMovementId, null);
+  assert.equal(f.els.video.paused, true);
 });
 
 test('tab text retains the full verified provider display label', () => {
@@ -1524,3 +1547,4 @@ test('context-control clips stay visible as ordinary movement choices', () => {
     new Set(['one-0', 'one-1', 'one-2'])
   );
 });
+
