@@ -41,9 +41,14 @@ export function sheetsPerAnalysisChunk(qualityMode = 'ultra', remote = false) {
   return 3;
 }
 
-export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityMode = 'ultra') {
+export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityMode = 'ultra', provider = 'gemini') {
   const sheets = Math.max(1, Math.floor(Number(sheetCount) || 1));
   const seconds = Math.max(1, Number(duration) || 1);
+  // Send one contact sheet per Cloudflare vision request while retaining all frames.
+  if (provider === 'cloudflare') return {
+    sheetsPerChunk: 1, chunkCount: sheets,
+    chunks: Array.from({ length: sheets }, (_, firstSheet) => ({ firstSheet, sheetCount: 1 }))
+  };
   const fast = String(qualityMode || 'ultra').toLowerCase() === 'fast';
   // Model calls scale with the source duration, not with a dense patch of
   // focused frames. Short videos should never pay the long-video ceiling.
