@@ -141,7 +141,7 @@ for (const splitEachMovement of [true, false]) {
 test('overlapping observations do not erase a distinct labelled interval', () => {
   const source = [clip('first', 0, 20), clip('second', 1, 21)];
   const variants = expandVerifiedMovementVariants(source, 0, 21, { minSeconds: 3, splitEachMovement: true });
-  assert.deepEqual(new Set(variants.map(v => v.derivedFromVerifiedSegment)), new Set(['first', 'second']));
+  assert.deepEqual(new Set(variants.map(v => v.derivedFromVerifiedSegment || v.id)), new Set(['first', 'second']));
 });
 
 test('unknown-tempo source actions become separate cards and preserve every clip', () => {
