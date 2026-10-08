@@ -8,10 +8,14 @@ export function storyboardFailureReason(error) {
   // The SDK's HTTP deadline rejects as AbortError, without "timeout" in its
   // message. Treat it as a provider wait, never as malformed image evidence.
   if (['AbortError', 'TimeoutError'].includes(error?.name)) return 'GEMINI_TEMPORARILY_UNAVAILABLE';
+  const status = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
   const details = `${code} ${String(error?.message || error || '')}`;
   if (/PROHIBITED_CONTENT|\bSAFETY\b|BLOCKLIST|GEMINI_CONTENT_RESTRICTED/i.test(details)) return 'GEMINI_CONTENT_RESTRICTED';
   const quota = geminiQuotaFailure(error);
   if (quota) return quota.reason;
+  if (status === 401 || status === 403 || /API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(details)) return 'GEMINI_AUTH_ERROR';
+  if (status === 404 || /NOT_FOUND|model.*not found/i.test(details)) return 'GEMINI_MODEL_UNAVAILABLE';
+  if (status === 400) return 'GEMINI_INVALID_REQUEST';
   if (/502|503|504|UNAVAILABLE|high demand|fetch failed|timeout|timed out|ECONNRESET|ETIMEDOUT|network|socket/i.test(details)) return 'GEMINI_TEMPORARILY_UNAVAILABLE';
   if (/GEMINI_EMPTY_JSON_RESPONSE/i.test(details)) return 'GEMINI_EMPTY_RESPONSE';
   if (/Unexpected end of JSON input|Unexpected token|not valid JSON|GEMINI_INVALID_JSON/i.test(details)) return 'GEMINI_INVALID_JSON';
@@ -49,7 +53,8 @@ export function parseStoryboardResponse(response) {
 
 export function isTerminalStoryboardFailure(error) {
   return ['GEMINI_CONTENT_RESTRICTED', 'MODEL_UNSTRUCTURED_RESPONSE', 'GEMINI_QUOTA_OR_CREDITS',
-    'GEMINI_CREDITS_DEPLETED', 'GEMINI_RATE_LIMITED', 'GEMINI_DAILY_LIMIT']
+    'GEMINI_CREDITS_DEPLETED', 'GEMINI_RATE_LIMITED', 'GEMINI_DAILY_LIMIT',
+    'GEMINI_AUTH_ERROR', 'GEMINI_MODEL_UNAVAILABLE', 'GEMINI_INVALID_REQUEST']
     .includes(storyboardFailureReason(error));
 }
 
@@ -62,7 +67,7 @@ export async function generateStoryboardWithRetry(generate, {
       const reason = storyboardFailureReason(error);
       const retryable = ['GEMINI_TEMPORARILY_UNAVAILABLE', 'GEMINI_EMPTY_RESPONSE', 'GEMINI_INVALID_JSON'].includes(reason);
       if (!retryable || isTerminalStoryboardFailure(error) || attempt === 2) throw error;
-      onRetry(reason, attempt);
+      onRetry(reason, attempt, error);
       await wait(attempt * 1800);
     }
   }
