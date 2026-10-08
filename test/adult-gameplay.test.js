@@ -1175,3 +1175,15 @@ test('cowgirl orientation metadata outranks a stale reverse label', () => {
   };
   assert.equal(resolveVerifiedAdultPosition(awayFacing).family, 'reverse-cowgirl');
 });
+
+test('ordinary source actions ignore conflicting parent activity metadata', () => {
+  for (const actionType of ['kiss', 'touch']) {
+    const source = { sourceVerified: true, adultScene: true, actionType,
+      label: actionType === 'kiss' ? 'Kadını öp' : 'Kalçasına dokun',
+      activityType: actionType === 'kiss' ? 'oral' : 'manual',
+      activityTypeConfidence: 0.95, activityEvidence: 'A mismatched parent claim',
+      positionId: '', positionLabel: '' };
+    assert.equal(playableAdultPanelFamily(source), '');
+  }
+  assert.equal(adultPositionFamily('Yan pozisyonda arkadan'), 'spoon');
+});
