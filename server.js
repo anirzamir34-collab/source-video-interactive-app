@@ -36,10 +36,22 @@ const ANALYSIS_SCHEMA_VERSION = 6;
 const ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-3.1-pro-preview';
 const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 const storyboardRequestCache = createAnalysisRequestCache();
+// Cache identity tracks analysis behavior, not unrelated media routes or deployments.
+const serverSource = fs.readFileSync(__filename, 'utf8');
+const analysisRouteSource = serverSource.slice(
+  serverSource.indexOf("app.post('/api/gemini-storyboard-analyze'"),
+  serverSource.indexOf("app.post('/api/external-analyze'")
+);
+if (!analysisRouteSource || !analysisRouteSource.includes('generateContent')) {
+  throw new Error('Gemini analysis route could not be versioned.');
+}
 const analysisRevision = crypto.createHash('sha256').update(JSON.stringify([
-  fs.readFileSync(__filename, 'utf8'), fs.readFileSync(path.join(__dirname, 'lib/gemini-generation-config.js'), 'utf8'),
-  ANALYSIS_MODEL,
-  geminiGenerationConfig(ANALYSIS_MODEL)
+  ANALYSIS_SCHEMA_VERSION, ANALYSIS_ENGINE_VERSION, analysisRouteSource,
+  ...['lib/gemini-generation-config.js', 'public/choice-routing.js',
+    'public/classification-integrity.js', 'public/analysis-recovery.js',
+    'public/gemini-quota.js', 'public/model-json.js'].map(file =>
+    fs.readFileSync(path.join(__dirname, file), 'utf8')),
+  ANALYSIS_MODEL, geminiGenerationConfig(ANALYSIS_MODEL)
 ])).digest('hex');
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 

@@ -670,22 +670,20 @@ test('retry restarts the failed server job without uploading the cached source a
   assert.deepEqual(created.sceneContext, options.sceneContext);
 });
 
-test('recreates a vanished server job once after the server instance is replaced', async t => {
+test('a vanished server job fails without automatically spending credits on a new job', async t => {
   let jobs = 0;
   const f = fixture(({ url, init }) => {
-    if (url.endsWith('/uploads/start')) return json({ uploadId: `upload-${jobs + 1}`, chunkSize: 3, totalChunks: 3 });
-    if (/\/uploads\/upload-\d+\/status$/.test(url)) return json({ completedChunks: [0, 1, 2] });
+    if (url.endsWith('/uploads/start')) return json({ uploadId: 'upload-1', chunkSize: 3, totalChunks: 3 });
+    if (url.endsWith('/uploads/upload-1/status')) return json({ completedChunks: [0, 1, 2] });
     if (url.endsWith('/jobs') && init.method === 'POST') return json({ jobId: `job-${++jobs}` });
     if (url.endsWith('/jobs/job-1')) return json({ error: 'Medya işlemi veya dosyası bulunamadı.' }, 404);
-    if (url.endsWith('/jobs/job-2')) return json({ id: 'job-2', state: 'READY', result: manifest('job-2') });
-    if (url.endsWith('/jobs/job-1') && init.method === 'DELETE') return json({});
     throw new Error(`Unexpected request ${init.method ?? 'GET'} ${url}`);
   });
   t.after(() => f.client.destroy());
-  await f.client.start(sourceFile(), { outputs: { dub: true, subtitles: true } });
-  assert.equal(jobs, 2);
-  assert.equal(f.requests.filter(request => request.url.endsWith('/uploads/start')).length, 2);
-  assert.equal(f.client.capture().manifest.jobId, 'job-2');
+  await assert.rejects(f.client.start(sourceFile()), error => error.code === 'MEDIA_JOB_LOST');
+  assert.equal(jobs, 1);
+  assert.equal(f.requests.filter(request => request.url.endsWith('/uploads/start')).length, 1);
+  assert.equal(f.statuses.at(-1).error.code, 'MEDIA_JOB_LOST');
 });
 
 test('retry uploads a fresh source when the old job has disappeared', async t => {
