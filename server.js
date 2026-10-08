@@ -12,7 +12,7 @@ import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResoluti
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
-import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
+import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, parseStoryboardResponse } from './public/analysis-recovery.js';
 import { loadMediaConfig, GEMINI_DEFAULT_MODEL } from './lib/turkish-media/config.js';
 import { createMediaCache } from './lib/turkish-media/cache.js';
 import { createLimiter } from './lib/turkish-media/limiter.js';
@@ -25,6 +25,7 @@ import { serializeReviewCandidates } from './public/classification-integrity.js'
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 import { geminiGenerationConfig } from './lib/gemini-generation-config.js';
+import { CLOUDFLARE_STORYBOARD_MODEL, cloudflareCredentials, runCloudflareStoryboard } from './lib/cloudflare-storyboard.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -267,8 +268,15 @@ const storyboardUpload = multer({
 app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards', 20), async (req, res) => {
   try {
     const analysisUsage = emptyGeminiUsage();
-    const apiKey = resolveGeminiApiKey(req);
-    if (!apiKey) {
+    const cloudflare = req.get?.('x-analysis-provider') === 'cloudflare';
+    const credentials = cloudflare ? cloudflareCredentials(req) : null;
+    const apiKey = cloudflare ? '' : resolveGeminiApiKey(req);
+    if (cloudflare && !credentials) {
+      return res.status(400).json({ available: false, retryable: false,
+        reason: 'CLOUDFLARE_CREDENTIALS_REQUIRED',
+        message: 'Cloudflare Account ID ve Workers AI izni olan API tokenını gir.' });
+    }
+    if (!cloudflare && !apiKey) {
       return res.status(503).json({
         available: false,
         reason: 'GEMINI_NOT_CONFIGURED',
@@ -644,7 +652,7 @@ Rules:
 - Never invent any position, movement, transition, outcome or label absent from the source frames.
 `;
 
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = cloudflare ? null : new GoogleGenAI({ apiKey });
     const unverifiedGapResult = (startTime, endTime, reason) => ({
       available: true,
       videoDuration: duration,
@@ -671,25 +679,25 @@ Rules:
           }
         }))
       ];
-      const model = process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
-      const generationConfig = geminiGenerationConfig(model);
-      const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
+      const model = cloudflare ? CLOUDFLARE_STORYBOARD_MODEL : process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
+      const generationConfig = cloudflare ? { maxOutputTokens: 8192 } : geminiGenerationConfig(model);
+      const key = storyboardRequestKey({ apiKey: cloudflare ? `${credentials.accountId}:${credentials.token}` : apiKey,
+        model, prompt: requestPrompt, files: requestFiles, generationConfig });
       const requestUsage = emptyGeminiUsage();
       const startedAt = Date.now();
       let attempts = 0;
       let outcome = 'failed';
       try {
-        const cached = await storyboardRequestCache.run(key, () => generateStoryboardWithRetry(async () => {
+        const invoke = async () => {
           attempts++;
-          const response = await ai.models.generateContent({
-            model,
-            contents: [{ role: "user", parts }],
-            config: generationConfig
-          });
+          const response = cloudflare
+            ? await runCloudflareStoryboard({ ...credentials, prompt: requestPrompt, files: requestFiles })
+            : await ai.models.generateContent({ model, contents: [{ role: "user", parts }], config: generationConfig });
           addGeminiUsage(analysisUsage, response?.usageMetadata);
           addGeminiUsage(requestUsage, response?.usageMetadata);
           return response;
-        }, {
+        };
+        const cached = await storyboardRequestCache.run(key, () => cloudflare ? invoke().then(parseStoryboardResponse) : generateStoryboardWithRetry(invoke, {
           onRetry: (reason, attempt) => console.warn(
             `[gemini-storyboard-retry:${retryLabel}] attempt ${attempt}/2: ${reason}`
           )
@@ -701,7 +709,7 @@ Rules:
         }
         return cached.value;
       } finally {
-        console.info('[gemini-request-usage]', JSON.stringify({ stage: reviewMode ? 'review' : 'analysis',
+        console.info('[storyboard-request-usage]', JSON.stringify({ provider: cloudflare ? 'cloudflare' : 'gemini', stage: reviewMode ? 'review' : 'analysis',
           chunkIndex, outcome, model, thinkingLevel: generationConfig.thinkingConfig?.thinkingLevel || 'default',
           durationMs: Date.now() - startedAt, attempts, sheetCount: requestFiles.length, ...requestUsage }));
       }
@@ -711,6 +719,11 @@ Rules:
     try {
       parsed = await generateStoryboardJson(prompt, files);
     } catch (fullChunkError) {
+      if (cloudflare) return res.status(fullChunkError.statusCode === 429 ? 429 : fullChunkError.statusCode === 401 || fullChunkError.statusCode === 403 ? 403 : 502).json({
+        available: false, retryable: false, reason: String(fullChunkError.code || 'CLOUDFLARE_INVALID_RESPONSE').replace(/^GEMINI_/, 'CLOUDFLARE_'),
+        message: `Cloudflare bölüm ${chunkIndex + 1}/${chunkCount} analizini tamamlayamadı: ${String(fullChunkError.message || 'Yanıt okunamadı.').slice(0, 240)}`,
+        chunkIndex, chunkCount, chunkStart, chunkEnd, aiUsage: analysisUsage
+      });
       const fullFailureReason = storyboardFailureReason(fullChunkError);
       const quotaFailure = geminiQuotaFailure(fullChunkError);
       if (quotaFailure) {
@@ -1000,7 +1013,7 @@ Rules:
     return res.json({
       available: true,
       schemaVersion: ANALYSIS_SCHEMA_VERSION,
-      engineVersion: ANALYSIS_ENGINE_VERSION,
+      engineVersion: cloudflare ? 'cloudflare-qwen-storyboard-experiment-v1' : ANALYSIS_ENGINE_VERSION,
       reviewPass: reviewMode ? 'visual-second-pass' : 'first-pass',
       videoDuration: resolvedDuration,
       introEndTime,
@@ -1639,3 +1652,4 @@ app.listen(PORT, '0.0.0.0', () => {
   void checkTurkishMediaRoutes();
   void runConfiguredVideoProbe();
 });
+

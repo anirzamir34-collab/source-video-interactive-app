@@ -4333,6 +4333,9 @@ body { font-size: 13px; }
   background: rgba(56,227,176,.035);
 }
 .api-key-setting__copy { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.api-key-setting #motionProvider { width: 100%; min-height: 40px; margin: 7px 0; padding: 0 10px; border-radius: 10px; color: #f3fffb; background: #14231e; border: 1px solid rgba(255,255,255,.14); }
+.api-key-setting__row.cloudflare-key-row { grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto auto; }
+@media (max-width: 680px) { .api-key-setting__row.cloudflare-key-row { grid-template-columns: minmax(0,1fr) auto auto; } .cloudflare-key-row #cloudflareAccountIdInput { grid-column: 1 / -1; } }
 .api-key-setting__copy b { color: #dffbf2; font-size: .69rem; letter-spacing: .04em; }
 .api-key-setting__copy small { color: #67dcb9; font-size: .61rem; text-align: right; }
 .api-key-setting__row { display: grid; grid-template-columns: minmax(0,1fr) repeat(3, auto); gap: 6px; }

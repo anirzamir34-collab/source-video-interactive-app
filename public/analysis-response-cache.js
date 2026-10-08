@@ -13,7 +13,9 @@ export async function analysisRequestKey({ revision, path, form, headers, crypto
   // File names are upload labels, not evidence. Everything the model actually
   // reads, the revision, and the account scope participate in the identity.
   return digest(encode(JSON.stringify([VERSION, revision, path,
-    new Headers(headers).get('x-gemini-api-key') || 'server', fields])));
+    new Headers(headers).get('x-analysis-provider') || 'gemini',
+    new Headers(headers).get('x-cloudflare-account-id') || '',
+    new Headers(headers).get('x-cloudflare-api-token') || new Headers(headers).get('x-gemini-api-key') || 'server', fields])));
 }
 
 export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, now = Date.now,
@@ -89,3 +91,4 @@ export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, 
     async close() { if (connection) (await connection).close(); connection = null; }
   };
 }
+

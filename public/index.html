@@ -113,6 +113,24 @@
 
         <div class="api-key-setting">
           <div class="api-key-setting__copy">
+            <b>HAREKET ANALİZİ SAĞLAYICISI</b>
+            <small id="cloudflareApiStatus">Gemini seçili</small>
+          </div>
+          <select id="motionProvider" aria-label="Hareket analizi sağlayıcısı">
+            <option value="gemini">Gemini</option>
+            <option value="cloudflare">Cloudflare Workers AI (deneme)</option>
+          </select>
+          <div class="api-key-setting__row cloudflare-key-row">
+            <input id="cloudflareAccountIdInput" type="text" inputmode="text" placeholder="Cloudflare Account ID (32 karakter)" autocomplete="off" spellcheck="false" maxlength="32" />
+            <input id="cloudflareApiTokenInput" type="password" placeholder="Workers AI API tokenı" autocomplete="off" spellcheck="false" maxlength="512" />
+            <button id="saveCloudflareApiBtn" type="button">Kullan</button>
+            <button id="clearCloudflareApiBtn" type="button" class="hidden">Sil</button>
+          </div>
+          <small>Account ID ve Workers AI izni olan API tokenı gerekir. Anahtar yalnız bu açık sekmenin belleğinde tutulur; analiz kareleri Cloudflare'a gönderilir. Cloudflare yalnız hareket ve seçim analizi içindir; altyazı/dublaj hâlâ Gemini kullanır. Workers Paid planında ücretsiz kota aşımı ücretlendirilir. Hata durumunda Gemini'ye otomatik geçilmez.</small>
+        </div>
+
+        <div class="api-key-setting">
+          <div class="api-key-setting__copy">
             <b>KENDİ GEMINI API ANAHTARIN</b>
             <small id="apiKeyStatus">Sunucu anahtarı kullanılıyor</small>
           </div>
@@ -123,7 +141,7 @@
             <button id="testGeminiApiKeyBtn" class="hidden" type="button">Test et</button>
             <button id="clearGeminiApiKeyBtn" class="hidden" type="button">Sil</button>
           </div>
-          <small>İsteğe bağlıdır; boş bırakırsan sunucu anahtarı kullanılır. Hareket analizi ve Türkçe çeviride kendi anahtarın önceliklidir.</small>
+          <small>İsteğe bağlıdır; boş bırakırsan sunucu anahtarı kullanılır. Gemini seçiliyken hareket analizinde ve Türkçe çeviride kendi anahtarın önceliklidir.</small>
         </div>
 
         <div class="api-key-setting">
@@ -422,3 +440,4 @@
   <script src="/app.js" type="module"></script>
 </body>
 </html>
+
