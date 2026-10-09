@@ -564,6 +564,18 @@ Return ONLY valid JSON with this exact shape:
       "confidence": number
     }
   ],
+  "storyContext": {
+    "synopsisTr": "",
+    "currentSceneTitle": "",
+    "currentSceneGoal": "",
+    "setting": "",
+    "emotionalTone": "",
+    "characters": [],
+    "relationships": [],
+    "facts": [],
+    "inferences": [],
+    "unknowns": []
+  },
   "warnings": []
 }
 
