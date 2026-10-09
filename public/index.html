@@ -10,33 +10,22 @@
   <link rel="stylesheet" href="/panel-cinema.css" />
   <link rel="stylesheet" href="/saved-games.css" />
   <link rel="stylesheet" href="/story-choices.css" />
+  <link rel="stylesheet" href="/ui-refinement.css" />
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="brand-mark">▣</div>
+      <div class="brand-mark" aria-hidden="true">◈</div>
       <div class="brand-copy">
-        <div class="brand-title">SOURCE VIDEO</div>
-        <div class="brand-title">INTERACTIVE</div>
-      </div>
-      <div class="top-pills">
-        <span class="pill">PROTAGONIST ENGINE</span>
-        <span class="pill">TRUTH LOCKED</span>
+        <div class="brand-title">VIDEOQUEST</div>
+        <div class="brand-subtitle">Videon, senin hikâyen.</div>
       </div>
     </header>
 
-    <section class="truth-card">
-      <div class="truth-icon">✣</div>
-      <div>
-        <h1>SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH</h1>
-        <p>Yeni sahne veya uydurma hareket üretilmez. Harici analiz motoru gerçek bir zaman çizelgesi döndürmedikçe interaktif seçim oluşturulmaz.</p>
-      </div>
-    </section>
-
     <section class="status-card">
       <div>
-        <div class="eyebrow">EXTERNAL ANALYSIS SERVICE</div>
-        <div id="serviceStatus" class="status status-checking">CHECKING…</div>
+        <div class="eyebrow">SERVİS DURUMU</div>
+        <div id="serviceStatus" class="status status-checking">Kontrol ediliyor…</div>
       </div>
       <div class="status-actions">
         <button id="healthBtn" class="ghost-btn">Yeniden test et</button>
@@ -50,7 +39,7 @@
         <button type="button" data-games-import-button>Yedek yükle</button>
         <input type="file" data-games-import accept=".vqgame" hidden />
       </div>
-      <p>Video, analiz, altyazı ve hazır dublaj bu cihazdaki tarayıcıda kalır. Uygulama kayıtları otomatik silmez. Tarayıcı verilerini silmeden veya cihaz değiştirmeden önce yedek indir.</p>
+      <p>Kayıtlar bu tarayıcıda saklanır. Cihaz değiştirmeden önce yedek indirebilirsin.</p>
       <div class="saved-games-current">
         <input type="text" data-game-title aria-label="Kayıt adı" placeholder="Oyun adı (isteğe bağlı)" maxlength="120" />
         <button type="button" data-game-save disabled>Şimdi kaydet</button>
@@ -64,17 +53,17 @@
     <section class="upload-card">
       <label class="upload-target" for="videoInput">
         <div class="upload-icon">⇧</div>
-        <strong>Cihazından Video Seç</strong>
+        <strong>Video seç</strong>
         <span>MP4, MOV, WEBM veya M4V</span>
       </label>
       <input id="videoInput" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" hidden />
       <div id="fileMeta" class="meta"></div>
       <div class="url-import">
-        <div class="url-divider"><span>VEYA VİDEO SAYFASI URL'Sİ</span></div>
+        <div class="url-divider"><span>VİDEO BAĞLANTISI</span></div>
         <div class="url-row">
           <input id="videoUrl" class="url-input" type="url" inputmode="url"
             placeholder="https://site.com/video-sayfasi" autocomplete="off" />
-          <button id="resolveUrlBtn" class="url-btn" type="button">BUL VE İNDİR</button>
+          <button id="resolveUrlBtn" class="url-btn" type="button">Videoyu bul</button>
         </div>
         <div id="urlStatus" class="url-status" role="status" aria-live="polite"></div>
         <small class="url-download-note">Video önce cihazda hazırlanır; ardından analiz edilir.</small>
@@ -88,7 +77,7 @@
         </div>
       </div>
       <div class="protagonist-lock">
-        <label for="protagonistInput">BAŞKARAKTER KİLİDİ</label>
+        <label for="protagonistInput">Başkarakter</label>
         <input
           id="protagonistInput"
           type="text"
@@ -101,8 +90,8 @@
       <section class="analysis-modes">
         <div class="analysis-modes__head">
           <div>
-            <strong>ANALİZ MODLARI</strong>
-            <small>Yalnızca ihtiyacın olan özellikleri çalıştır.</small>
+            <strong>Videonu hazırla</strong>
+            <small>Oynamak istediğin özellikleri seç.</small>
           </div>
           <select id="qualityMode" aria-label="Analiz kalitesi">
             <option value="fast">Hızlı</option>
@@ -111,9 +100,11 @@
           </select>
         </div>
 
+        <details class="provider-settings">
+          <summary>API anahtarları <span>İsteğe bağlı</span></summary>
         <div class="api-key-setting">
           <div class="api-key-setting__copy">
-            <b>KENDİ GEMINI API ANAHTARIN</b>
+            <b>Gemini API anahtarı</b>
             <small id="apiKeyStatus">Sunucu anahtarı kullanılıyor</small>
           </div>
           <div class="api-key-setting__row">
@@ -128,7 +119,7 @@
 
         <div class="api-key-setting">
           <div class="api-key-setting__copy">
-            <b>ELEVENLABS DOĞAL DUBLAJ</b>
+            <b>ElevenLabs API anahtarı</b>
             <small id="elevenLabsApiKeyStatus">Sunucu anahtarı kullanılıyor</small>
           </div>
           <div class="api-key-setting__row">
@@ -140,6 +131,8 @@
           </div>
           <small>Anahtarını yazman yeterli. Kaynak konuşma tespiti, doğal dublaj ve ses eşitleme için kullanılır; yalnız bu açık sekmede tutulur.</small>
         </div>
+
+        </details>
 
         <label class="mode-switch">
           <span>
@@ -153,7 +146,7 @@
         <label class="mode-switch">
           <span>
             <b>Türkçe altyazı <em id="subtitleQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
-            <small>Kaynak konuşma ve Türkçe dublaj için iki zaman çizelgesi</small>
+            <small>Konuşmaların Türkçe altyazısı</small>
           </span>
           <input id="subtitleMode" type="checkbox" />
           <i></i>
@@ -162,43 +155,25 @@
         <label class="mode-switch">
           <span>
             <b>Türkçe dublaj <em id="dubQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
-            <small>Sabit konuşmacı sesleri ve kaynak arka planıyla hazır ses dosyası</small>
+            <small>Konuşmaların Türkçe sesi</small>
           </span>
           <input id="dubMode" type="checkbox" />
           <i></i>
         </label>
 
-        <div class="media-quality-control">
-          <label for="dubbingProvider">Türkçe dublaj yöntemi</label>
-          <select id="dubbingProvider">
-            <option value="classic" selected>Ekonomik · metin çevirisi ve Türkçe ses</option>
-          </select>
-          <small>Eski yöntem: ElevenLabs konuşmayı çözümler, Gemini metni Türkçeye çevirir, ElevenLabs yalnız konuşulan Türkçe metni seslendirir. Tam video süresine göre ücretli doğrudan dublaj kullanılmaz.</small>
-        </div>
-
-        <div class="media-quality-control">
-          <label for="dubQualityMode">Türkçe ses kalitesi</label>
-          <select id="dubQualityMode" aria-describedby="dubQualityReason">
-            <option value="quality" selected>Kaliteli</option>
-            <option value="fast" disabled>Hızlı · henüz kullanılamıyor</option>
-          </select>
-          <small id="dubQualityReason">Hızlı modelin bağlantı protokolü henüz doğrulanmadı. Kaliteli mod kullanılabilir.</small>
-        </div>
-
-        <div id="selectedModesSummary" class="selected-modes-summary">
-          Ultra hareket ve seçim analizi seçildi.
-        </div>
+        <input type="hidden" id="dubbingProvider" value="classic" />
+        <input type="hidden" id="dubQualityMode" value="quality" />
       </section>
 
       <button id="analyzeBtn" class="primary-btn" disabled>
-        Seçili analizleri başlat
+        Videoyu hazırla
       </button>
     </section>
 
     <section id="analysisCard" class="analysis-card hidden">
       <div class="section-head">
         <div>
-          <div class="eyebrow">ANALYSIS</div>
+          <div class="eyebrow">ANALİZ</div>
           <h2 id="analysisTitle">Hazırlanıyor</h2>
         </div>
         <span id="analysisState" class="mini-state">IDLE</span>
@@ -231,9 +206,9 @@
 
     <section id="playerSection" class="player-card hidden">
       <div class="tabs">
-        <button class="tab active" data-tab="interactive">PLAY INTERACTIVE</button>
-        <button class="tab" data-tab="timeline">ACTION TIMELINE</button>
-        <button class="tab" data-tab="prompt">VIDEO PROMPT</button>
+        <button class="tab active" data-tab="interactive">Oynat</button>
+        <button class="tab" data-tab="timeline">Zaman çizelgesi</button>
+        <button class="tab" data-tab="prompt">Video özeti</button>
       </div>
 
       <div id="interactivePanel" class="tab-panel active">
