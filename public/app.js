@@ -4788,6 +4788,8 @@ function applyAdultPreludeProgress(item) {
   if (runtime.progressBudget && !runtime.progressBudgetConsumed) {
     state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
       choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
+    if (!runtime.progressBudgetConsumed && state.interactionRuntime.progressBudgetConsumed)
+      state.interactionMeterNeedsReset = true;
   } else addFemaleLust(delta.female * currentWarmupLustScale());
   renderAdultProgress();
 }
