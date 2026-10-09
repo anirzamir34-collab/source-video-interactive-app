@@ -15,7 +15,8 @@ test('scene envelopes and generic motion cannot turn a story action into an open
 });
 
 test('existing verified action kinds have one surface even when their source contains speech', () => {
-  assert.equal(choiceSurfaceForAction(action({ actionType: 'kiss', transcript: 'An existing line' })), 'approach');
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'kiss', transcript: 'An existing line',
+    choiceSurfaceEvidence: 'The people visibly kiss in this source interval.', choiceSurfaceConfidence: 0.92 })), 'approach');
   assert.equal(choiceSurfaceForAction(action({ positionId: 'opaque-class', classificationReview: 'verified' })), 'story');
   assert.equal(choiceSurfaceForAction(action({ positionId: 'opaque-class' }), { panelFamily: 'rear' }), 'panel');
   assert.equal(choiceSurfaceForAction(action({ actionType: 'dialogue' })), 'story');
@@ -25,6 +26,18 @@ test('existing verified action kinds have one surface even when their source con
 test('ordinary hand gestures and dialogue wording do not promote a story action', () => {
   assert.equal(choiceSurfaceForAction(action({ label: 'Elini şakağına götürüp konuş', adultScene: true })), 'story');
   assert.equal(choiceSurfaceForAction(action({ label: 'Kollarını bağlayıp izle', adultScene: true })), 'story');
+});
+
+test('spoken invitations and uncorroborated contact tags remain ordinary choices', () => {
+  const dialogue = action({ actionType: 'dialogue', label: 'Seks yapalım dedi',
+    transcript: 'Seks yapalım', choiceSurface: 'approach',
+    choiceSurfaceEvidence: 'Only spoken words; the visible people are talking', choiceSurfaceConfidence: .99 });
+  assert.equal(choiceSurfaceForAction(dialogue), 'story');
+  for (const actionType of ['kiss', 'touch', 'clothing']) {
+    const unverifiedContact = action({ actionType, choiceSurface: 'approach',
+      label: 'A speculative interaction suggested by dialogue' });
+    assert.equal(choiceSurfaceForAction(unverifiedContact), 'story');
+  }
 });
 
 test('a declared category requires interval evidence and confidence and cannot create a panel', () => {
@@ -87,7 +100,7 @@ test('a scene owns only its explicitly linked opening contacts', () => {
 });
 
 test('hardening preserves source times and assigns separate source categories without provider calls', () => {
-  const input = action({ actionType: 'kiss' });
+  const input = action({ actionType: 'kiss', choiceSurfaceEvidence: 'The source visibly shows a kiss.', choiceSurfaceConfidence: 0.93 });
   const original = structuredClone(input);
   const result = reviewAndHardenAnalysis({ videoDuration: 30, actions: [input, action({ actionId: 'line', startTime: 16, endTime: 21, actionType: 'dialogue' })] });
   assert.deepEqual(result.analysis.actions.map(row => row.choiceSurface), ['approach', 'story']);
