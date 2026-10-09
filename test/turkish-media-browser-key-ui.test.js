@@ -88,9 +88,9 @@ function fixture({ capability, geminiStatus } = {}) {
 }
 
 test('typing an ElevenLabs password alone enables effective capabilities and forwards that key to the real job client with server Gemini fallback', async t => {
-  assert.match(html, /ELEVENLABS DOĞAL DUBLAJ/);
+  assert.match(html, /ElevenLabs API anahtarı/);
   assert.match(html, /id="elevenLabsApiKeyInput" type="password"/);
-  assert.match(html, /KENDİ GEMINI API ANAHTARIN/);
+  assert.match(html, /Gemini API anahtarı/);
   const f = fixture(); t.after(() => f.client.destroy());
   await f.scope.checkTurkishMediaCapabilities();
   assert.match(f.els.dubQuotaStatus.title, /ElevenLabs anahtarını gir/);
