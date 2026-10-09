@@ -34,9 +34,11 @@ test('spoken invitations and uncorroborated contact tags remain ordinary choices
     choiceSurfaceEvidence: 'Only spoken words; the visible people are talking', choiceSurfaceConfidence: .99 });
   assert.equal(choiceSurfaceForAction(dialogue), 'story');
   for (const actionType of ['kiss', 'touch', 'clothing']) {
-    const unverifiedContact = action({ actionType, choiceSurface: 'approach',
-      label: 'A speculative interaction suggested by dialogue' });
-    assert.equal(choiceSurfaceForAction(unverifiedContact), 'story');
+    const spokenOnly = action({ actionType, choiceSurface: 'approach',
+      label: 'A speculative interaction suggested by dialogue',
+      choiceSurfaceEvidence: 'Only spoken words; no corresponding visible event',
+      choiceSurfaceConfidence: 0.99 });
+    assert.equal(choiceSurfaceForAction(spokenOnly), 'story');
   }
 });
 
