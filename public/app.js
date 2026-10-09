@@ -6171,7 +6171,10 @@ async function playAction(action) {
   setGameState('SEGMENT_SEEKING');
   els.video.pause();
 
-  const seekTarget = Math.max(state.gameCursorTime, actionStart);
+  // Play the exact verified source clip, including when its beginning is
+  // slightly behind the current cursor. Starting at the cursor truncated
+  // overlapping dialogue choices and made a selection show the wrong frames.
+  const seekTarget = actionStart;
   const controller = new AbortController();
   state.navigationSeekController = controller;
   state.navigationSeeking = true;
