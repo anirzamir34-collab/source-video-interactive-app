@@ -6171,10 +6171,14 @@ async function playAction(action) {
   setGameState('SEGMENT_SEEKING');
   els.video.pause();
 
-  // Play the exact verified source clip, including when its beginning is
-  // slightly behind the current cursor. Starting at the cursor truncated
-  // overlapping dialogue choices and made a selection show the wrong frames.
-  const seekTarget = actionStart;
+  // New choices begin at their verified source start, including overlapping
+  // clips. If natural playback and the decision cursor already sit INSIDE
+  // that exact clip, keep the currently audible dialogue uninterrupted.
+  const mediaTime = Number(els.video.currentTime);
+  const continuingCurrentClip = Number.isFinite(mediaTime) &&
+    Math.abs(mediaTime - Number(state.gameCursorTime)) <= 0.15 &&
+    mediaTime >= actionStart && mediaTime < actionEnd - 0.03;
+  const seekTarget = continuingCurrentClip ? mediaTime : actionStart;
   const controller = new AbortController();
   state.navigationSeekController = controller;
   state.navigationSeeking = true;
