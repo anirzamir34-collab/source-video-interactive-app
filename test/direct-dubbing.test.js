@@ -34,7 +34,7 @@ test('direct dubbing resumes the paid project and never creates a second target'
         start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); controller.close(); },
       }) }),
     });
-    const options = { audioPath, directory, jobId: 'test-job', onProject: async value => { checkpoint = value; } };
+    const options = { audioPath, directory, jobId: 'test-job', modelId: 'dubbing_v2', onProject: async value => { checkpoint = value; } };
     const first = await dub(options);
     assert.equal(first.rows[0].text, 'Merhaba');
     assert.equal(chargedPosts, 1);
