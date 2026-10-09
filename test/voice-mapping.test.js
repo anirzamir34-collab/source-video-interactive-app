@@ -341,7 +341,7 @@ test('ambiguous raw speaker IDs matched to two visible people are not forced int
   assert.deepEqual(copy(f.scope.verifiedSpeakerVoiceHints()), {});
 });
 
-test('an unverified speaker keeps the voice repair control available after dubbing', () => {
+test('voice editing remains optional after dubbing even when the source gender is known', () => {
   const f = uiFixture({ manual: false });
   f.els.voiceMappingPanel.open = true;
   f.scope.renderVoiceMappingPanel();
@@ -349,9 +349,9 @@ test('an unverified speaker keeps the voice repair control available after dubbi
   assert.equal(f.els.voiceMappingPanel.classes.has('hidden'), false);
   f.state.sourceTranscript.speakers[0].gender = 'male';
   f.scope.renderVoiceMappingPanel();
-  assert.equal(f.els.voiceMappingPanel.open, false);
-  assert.equal(f.els.voiceMappingRows.children.length, 0);
-  assert.equal(f.els.voiceMappingPanel.classes.has('hidden'), true);
+  assert.equal(f.els.voiceMappingPanel.open, true);
+  assert.equal(f.els.voiceMappingRows.children.length, 2);
+  assert.equal(f.els.voiceMappingPanel.classes.has('hidden'), false);
 });
 
 test('manual voice UI labels uncertain source gender and displays catalogue names and IDs without invented defaults', () => {
@@ -359,15 +359,15 @@ test('manual voice UI labels uncertain source gender and displays catalogue name
   f.scope.renderVoiceMappingPanel();
   const rows = f.els.voiceMappingRows.children;
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].children[0].textContent, 'Konuşmacı 1 · Belirsiz');
-  assert.equal(rows[1].children[0].textContent, 'Konuşmacı 2 · Kadın');
+  assert.equal(rows[0].children[0].textContent, 'Kaynak ses 1 · Belirsiz');
+  assert.equal(rows[1].children[0].textContent, 'Kaynak ses 2 · Kadın');
   const selects = f.els.voiceMappingRows.querySelectorAll('select');
   assert.deepEqual(selects[0].options.map(option => option.value), ['', ...catalogue.map(voice => voice.voiceId)]);
   assert.deepEqual(selects[0].options.map(option => option.textContent), [
     'Otomatik ses seçimi', 'Katalog Ses A · Erkek · tr', 'Katalog Ses B · Kadın · tr'
   ]);
   assert.equal(selects[0].dataset.speakerId, 'source-a');
-  assert.equal(selects[0].value, 'catalogue-custom-a');
+  assert.equal(selects[0].value, '', 'unverified voice must not reuse a possibly mismatched saved default');
   assert.equal(selects[1].value, 'catalogue-custom-b');
   assert.equal(f.els.voiceMappingApplyBtn.disabled, false);
 });
@@ -476,7 +476,8 @@ test('source cleanup removes old voice drafts before rendering another saved map
   f.mediaClient.loadResult(f.previous.manifest, f.previous);
   f.els.voiceMappingPanel.open = true;
   f.scope.renderVoiceMappingPanel();
-  assert.equal(f.els.voiceMappingRows.querySelectorAll('select')[0].value, 'catalogue-custom-a', 'previous source draft cannot override a newly loaded mapping');
+  assert.equal(f.els.voiceMappingRows.querySelectorAll('select')[0].value, '',
+    'unverified source voice must be selected explicitly on a newly loaded mapping');
 });
 
 test('late completion of a previous voice regeneration cannot unlock a newer analysis', async () => {
@@ -502,3 +503,4 @@ test('late completion of a previous voice regeneration cannot unlock a newer ana
   assert.equal(f.els.analyzeBtn.clickCalls, 0);
   assert.deepEqual(f.els.video.seekWrites, []);
 });
+
