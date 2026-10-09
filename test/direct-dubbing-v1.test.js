@@ -10,6 +10,7 @@ test('Dubbing v1 is selected, completed audio survives bad cues, and retry does 
   const audioPath = path.join(directory, 'source.mp3');
   await fs.writeFile(audioPath, Buffer.from('source-audio'));
   let creates = 0;
+  let failTranscript = false;
   const projectUpdates = [];
   const request = async (url, options = {}) => {
     if (options.method === 'POST') {
@@ -18,11 +19,14 @@ test('Dubbing v1 is selected, completed audio survives bad cues, and retry does 
       assert.equal(options.body.get('target_language'), 'tr');
       return { project_id: 'proj_1234567890', language_ids: ['lang_1234567890'] };
     }
-    if (url.endsWith('/transcript')) return { segments: [
+    if (url.endsWith('/transcript')) {
+      if (failTranscript) throw new Error('transcript unavailable');
+      return { segments: [
       { id: 'valid', start_s: 1, end_s: 2, translation: 'Merhaba' },
       { id: 'silent', start_s: 3, end_s: 3, translation: '' },
       { id: 'outside', start_s: 4, end_s: 5, translation: 'Geçersiz' },
     ] };
+    }
     if (url.endsWith('/language/lang_1234567890')) return { status: 'completed',
       outputs: { lossless_audio: 'https://storage.googleapis.com/eleven-dubbing/test/output.flac' } };
     return { status: 'ready', model_id: 'dubbing_v1' };
@@ -41,7 +45,9 @@ test('Dubbing v1 is selected, completed audio survives bad cues, and retry does 
     assert.equal(first.modelId, 'dubbing_v1');
     assert.equal(creates, 1);
     assert.deepEqual(await fs.readFile(first.dubbedPath), Buffer.from([1, 2, 3]));
-    await dub({ ...input, resume: projectUpdates.find(value => value.projectId) });
+    failTranscript = true;
+    const retried = await dub({ ...input, resume: projectUpdates.find(value => value.projectId) });
+    assert.equal(retried.subtitleUnavailable, true);
     assert.equal(creates, 1);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
