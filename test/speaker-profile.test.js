@@ -12,6 +12,13 @@ test('source pitch windows distinguish stable low and high voices without guessi
   const high = fundamentalFrequency(tone(215));
   assert.ok(Math.abs(low - 110) < 4);
   assert.ok(Math.abs(high - 215) < 4);
+  // Regression: the previous period-picker preferred subharmonics, returning
+  // 110 Hz for 220 Hz and 75 Hz for 225 Hz source speakers.
+  for (const hz of [220, 225]) {
+    const measured = fundamentalFrequency(tone(hz));
+    assert.ok(measured !== null && Math.abs(measured - hz) < 4,
+      `Expected a ${hz} Hz voice near its fundamental, received ${measured} Hz`);
+  }
   assert.equal(classifyPitchSamples(Array(10).fill(low)), 'male');
   assert.equal(classifyPitchSamples(Array(10).fill(high)), 'female');
   assert.equal(classifyPitchSamples(Array(10).fill(169)), null);
