@@ -153,10 +153,12 @@
   box-sizing: border-box !important;
   left: auto !important;
   right: max(8px, env(safe-area-inset-right)) !important;
-  width: min(236px, 32vw) !important;
-  max-width: min(236px, 32vw) !important;
+  /* Size from visible labels rather than reserving a fixed-width sheet. */
+  width: max-content !important;
+  inline-size: max-content !important;
+  max-width: min(238px, 40vw, calc(100% - 16px)) !important;
   min-width: 0 !important;
-  max-height: min(54dvh, calc(100% - 20px)) !important;
+  max-height: min(calc(100dvh - 64px), calc(100% - 16px)) !important;
   height: auto !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
@@ -179,8 +181,9 @@
     bottom: max(8px, env(safe-area-inset-bottom)) !important;
     left: auto !important;
     right: max(8px, env(safe-area-inset-right)) !important;
-    width: min(236px, 70vw) !important;
-    max-width: min(236px, 70vw) !important;
-    max-height: min(40dvh, 330px) !important;
+    width: max-content !important;
+    inline-size: max-content !important;
+    max-width: min(238px, 70vw, calc(100% - 16px)) !important;
+    max-height: min(calc(100dvh - 72px), calc(100% - 16px)) !important;
   }
 }

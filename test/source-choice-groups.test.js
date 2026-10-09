@@ -150,18 +150,22 @@ test('verified identity follows a source action into every adult card without ex
   assert.equal(sourceIdentityLabel('Ritmi sürdür', { ...identified, primaryCharacterLabel: 'Karakter A' }), 'Ritmi sürdür');
 });
 
-test('a stable tracked participant label survives adult card rendering when no proper name is verified', () => {
+test('internal track aliases never appear as user-facing names without verified identity', () => {
   const tracked = clip(0, {
     label: 'Ritmi sürdür',
     partnerTrackId: 'PARTNER_B',
     identityResolution: 'unknown',
     primaryCharacterLabel: 'Karakter B'
   });
-  assert.equal(sourceIdentityLabel('Ritmi sürdür', tracked), 'Ritmi sürdür · Karakter B');
+  assert.equal(sourceIdentityLabel('Ritmi sürdür', tracked), 'Ritmi sürdür');
   assert.equal(sourceIdentityLabel('Ritmi sürdür', {
     ...tracked,
     primaryCharacterLabel: 'Karakter A'
   }), 'Ritmi sürdür');
+  assert.equal(sourceIdentityLabel('Karakter B ile konuş', tracked), 'Onunla konuş');
+  assert.equal(sourceIdentityLabel('Onunla konuş', {
+    ...tracked, identityResolution: 'verified', primaryCharacterLabel: 'Deniz'
+  }), 'Onunla konuş · Deniz');
 });
 
 test('an already verified adult partner relationship remains the card identity instead of duplicating the proper name', () => {
