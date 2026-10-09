@@ -1442,12 +1442,6 @@ async function prepareStoryboardSource(session, file) {
 els.analyzeBtn.addEventListener('click', async () => {
   if (state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
-  if (!updateAnalysisModesUI()) return;
-  if (selectedAnalysisModes().dubbingProvider === 'elevenlabs_v1') {
-    const minutes = Number(els.video.duration) > 0 ? Number(els.video.duration) / 60 : null;
-    const estimate = minutes ? `Yaklaşık ${Math.ceil(minutes * 3100).toLocaleString('tr-TR')} kredi (${minutes.toFixed(1)} dk).` : 'Tutar kaynak sesin toplam süresine bağlıdır.';
-    if (!window.confirm(`ElevenLabs Dubbing v1 ücretli bir işlem başlatacak. ${estimate} Başarılı dublaj uygulamada sonradan hata verse bile kredi harcanabilir. Devam edilsin mi?`)) return;
-  }
   state.analysisInProgress = true;
   state.aiUsage = { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
   state.savedGameReady = false;
@@ -1460,6 +1454,15 @@ els.analyzeBtn.addEventListener('click', async () => {
     storyboardProgress(progress, detail);
   };
   try {
+  const preflightModes = selectedAnalysisModes();
+  if (preflightModes.dubbingProvider === 'elevenlabs_v1') {
+    const minutes = Number(els.video.duration) > 0 ? Number(els.video.duration) / 60 : null;
+    const estimate = minutes ? `Yaklaşık ${Math.ceil(minutes * 3100).toLocaleString('tr-TR')} kredi (${minutes.toFixed(1)} dk).` : 'Tutar kaynak sesin toplam süresine bağlıdır.';
+    if (!window.confirm(`ElevenLabs Dubbing v1 ücretli bir işlem başlatacak. ${estimate} Başarılı dublaj uygulamada sonradan hata verse bile kredi harcanabilir. Devam edilsin mi?`)) {
+      analysisSucceeded = true;
+      return;
+    }
+  }
   updateAnalyzeAvailability();
   els.analyzeBtn.disabled = true;
   els.videoInput.disabled = true;
