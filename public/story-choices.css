@@ -144,3 +144,43 @@
     max-height: min(45dvh, 380px) !important;
   }
 }
+
+
+/* Compact, content-agnostic player controls: the expanded overlay should
+   occupy only a corner of the media, not become a full-width mobile sheet. */
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded:not(.hidden),
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded:not(.hidden) {
+  box-sizing: border-box !important;
+  left: auto !important;
+  right: max(8px, env(safe-area-inset-right)) !important;
+  width: min(236px, 32vw) !important;
+  max-width: min(236px, 32vw) !important;
+  min-width: 0 !important;
+  max-height: min(54dvh, calc(100% - 20px)) !important;
+  height: auto !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  padding: 5px !important;
+  border-radius: 10px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded :is(.position-tab, .movement-choice-card, .category-tab) {
+  box-sizing: border-box !important;
+  max-width: 100% !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  font-size: 11px !important;
+  line-height: 1.3 !important;
+  min-height: 40px !important;
+}
+@media (orientation: portrait) {
+  #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded:not(.hidden),
+  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded:not(.hidden) {
+    top: auto !important;
+    bottom: max(8px, env(safe-area-inset-bottom)) !important;
+    left: auto !important;
+    right: max(8px, env(safe-area-inset-right)) !important;
+    width: min(236px, 70vw) !important;
+    max-width: min(236px, 70vw) !important;
+    max-height: min(40dvh, 330px) !important;
+  }
+}
