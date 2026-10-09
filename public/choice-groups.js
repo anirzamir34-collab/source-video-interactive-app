@@ -42,8 +42,23 @@ export function groupSourceChoiceCards(clips, {
   labelFor,
   mergeWithinContext = false
 } = {}) {
+  // Deduplicate only identical source records. The same title at different
+  // verified timestamps is not a duplicate and must retain its own playback
+  // route. Never manufacture extra options from a single recorded interval.
+  const exactRecords = new Set();
   const source = (Array.isArray(clips) ? clips : [])
-    .filter(clip => clip?.sourceVerified === true && clip.id && clipRange(clip))
+    .filter(clip => {
+      const range = clipRange(clip);
+      if (clip?.sourceVerified !== true || !clip.id || !range) return false;
+      const identity = JSON.stringify([
+        String(clip.id), String(clip.sourcePositionId || clip.sourceGroupId || ''),
+        String(clip.sourceOccurrenceId || clip.positionOccurrenceId || clip.occurrenceId || ''),
+        range.startTime, range.endTime
+      ]);
+      if (exactRecords.has(identity)) return false;
+      exactRecords.add(identity);
+      return true;
+    })
     .sort((a, b) => clipRange(a).startTime - clipRange(b).startTime || String(a.id).localeCompare(String(b.id)));
   const requestedTarget = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
   // This is a density preference, never a hard cap that combines unrelated

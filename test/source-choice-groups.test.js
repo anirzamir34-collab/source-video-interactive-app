@@ -37,6 +37,21 @@ const clip = (index, extra = {}) => ({ id: `clip-${index}`, sourceVerified: true
   partnerTrackId: 'person-a', participantTrackIds: ['person-a', 'person-b'],
   loopStartTime: index * 5, loopEndTime: index * 5 + 5, ...extra });
 
+test('identical verified source records are idempotent but later distinct clips remain available', () => {
+  const first = clip(0, { label: 'Parkta yürümeye başla' });
+  const second = clip(1, { label: 'Yürüyüşü sürdür' });
+  const duplicate = { ...first };
+  const cards = groupSourceChoiceCards([first, duplicate, second, { ...first }]);
+  assert.deepEqual(cards.flatMap(card => card.variants.map(variant => variant.id)),
+    ['clip-0', 'clip-1']);
+  assert.equal(groupSourceChoiceCards([first]).flatMap(card => card.variants).length, 1);
+  // A valid second occurrence with a reused source ID must never disappear.
+  const later = { ...first, loopStartTime: 30, loopEndTime: 35 };
+  const separate = groupSourceChoiceCards([first, later]);
+  assert.deepEqual(separate.flatMap(card => card.variants.map(item => item.loopStartTime)),
+    [0, 30]);
+});
+
 test('many distinct labels in one verified occurrence form compact coherent cards', () => {
   const movements = Array.from({ length: 20 }, (_, index) => clip(index, {
     label: `Kaynak hareket ${index + 1}`, sourcePositionId: 'same-occurrence'
