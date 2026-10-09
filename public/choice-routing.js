@@ -21,7 +21,7 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   // An explicit spoken-only description cannot prove a visual event. Keep
   // older verified source-action types playable even when legacy analysis
   // omitted a dedicated evidence field; never promote a spoken invitation.
-  const speechOnly = /\\b(?:only spoken words|speech only|dialogue only|only dialogue|only speech|sadece konusma|yalnizca konusma|yalnizca soz)\\b/iu.test(
+  const speechOnly = /\b(?:only spoken words|speech only|dialogue only|only dialogue|only speech|sadece konusma|yalnizca konusma|yalnizca soz)\b/iu.test(
     String(action.choiceSurfaceEvidence || '').toLocaleLowerCase('tr-TR')
       .replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u'));
   if (approachTypes.has(type)) return (ordinaryContact && declaredEvidence) || speechOnly ? 'story' : 'approach';
