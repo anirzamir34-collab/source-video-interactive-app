@@ -53,8 +53,8 @@ test('verified opening progress ignores an unplayable gap before the first core 
   state = observeInteractionPlayback(state, { startTime: 0, endTime: 20 });
   state = completeInteractionSelection(state, 'first');
   state = completeInteractionSelection(state, 'second');
-  assert.equal(state.progressionValue, 99);
-  assert.deepEqual(state.unlockedGroupIds, []);
+  assert.equal(state.progressionValue, 100);
+  assert.deepEqual(state.unlockedGroupIds, ['next']);
   const before = state.currentTime;
   state = transitionInteraction(state, { type: 'source-time', currentTime: 301 });
   assert.equal(state.progressionValue, 100);
@@ -78,12 +78,26 @@ test('long verified approach from the reported source earns progress without inv
   for (const choice of choices) state = observeInteractionPlayback(state, {
     startTime: choice.sourceRanges[0].startTime, endTime: choice.sourceRanges[0].endTime
   });
-  assert.equal(state.progressionValue, 99);
-  assert.deepEqual(state.unlockedGroupIds, []);
+  assert.equal(state.progressionValue, 100);
+  assert.deepEqual(state.unlockedGroupIds, ['reported-core']);
   state = transitionInteraction(state, { type: 'source-time', currentTime: 295 });
   assert.equal(state.progressionValue, 100);
   assert.equal(state.currentPhase, 'CORE');
   assert.deepEqual(state.unlockedGroupIds, ['reported-core']);
+});
+
+test('all independently confirmed choices reach the next generic stage without watching every clip to the end', () => {
+  let state = budgetState(opening({ choices: [row('one', 0, 10), row('two', 20, 30), row('three', 40, 50)],
+    groups: [row('next', 80, 100, { phase: 'CORE' })] }));
+  state = completeInteractionSelection(state, 'one');
+  assert.ok(state.progressionValue > 0 && state.progressionValue < 100);
+  state = completeInteractionSelection(state, 'three');
+  assert.ok(state.progressionValue < 100);
+  state = completeInteractionSelection(state, 'two');
+  assert.equal(state.progressionValue, 100);
+  assert.deepEqual(state.unlockedGroupIds, ['next']);
+  assert.equal(state.currentPhase, 'CORE');
+  assert.equal(state.lastSeekTarget, null);
 });
 
 test('selection requests and rejected or sought playback earn no budget credit', () => {
@@ -133,7 +147,8 @@ test('opening budget is consumed once and cannot refill the next group gate', ()
   let state = budgetState(opening({ groups: [row('next', 180, 210, { phase: 'CORE' }),
     row('later', 250, 280, { phase: 'CORE' })] }));
   state = observeInteractionPlayback(state, { startTime: 0, endTime: 180 });
-  assert.equal(state.progressionValue, 99);
+  assert.equal(state.progressionValue, 100);
+  assert.deepEqual(state.unlockedGroupIds, ['next']);
   state = transitionInteraction(state, { type: 'source-time', currentTime: 180 });
   assert.equal(state.progressBudgetConsumed, true);
   state = transitionInteraction(state, { type: 'progress', value: 0 });
