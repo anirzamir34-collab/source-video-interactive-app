@@ -171,10 +171,9 @@
         <div class="media-quality-control">
           <label for="dubbingProvider">Türkçe dublaj yöntemi</label>
           <select id="dubbingProvider">
-            <option value="classic" selected>Mevcut · metin çevirisi ve Türkçe ses</option>
-            <option value="elevenlabs">Deneme · ElevenLabs doğrudan dublaj v2</option>
+            <option value="elevenlabs_v1" selected>ElevenLabs Dubbing v1 · Türkçe ses ve çeviri</option>
           </select>
-          <small>Deneme seçeneği aynı ElevenLabs API anahtarını kullanır. Kaynak ses süresine göre ElevenLabs Dubbing v2 kullanım hakkı harcar; Gemini yalnız hareket analizi için kullanılır. Önce kısa videoyla dene.</small>
+          <small>ElevenLabs kaynak sesi doğrudan Türkçeye çevirir ve dublajlar; Gemini sadece hareket analizi için kullanılır. Dubbing v1 filigransız yaklaşık 2.750 kredi/dk; konuşma çözümlemesiyle birlikte yaklaşık 3.100 kredi/dk harcayabilir (6 dk yaklaşık 18.600 kredi). Ücret konuşma süresine değil, gönderilen sesin toplam süresine bağlıdır. Başlamadan önce tahmini maliyeti onaylarsın.</small>
         </div>
 
         <div class="media-quality-control">

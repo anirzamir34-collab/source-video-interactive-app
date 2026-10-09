@@ -792,11 +792,12 @@ async function checkTurkishMediaCapabilities() {
     const capabilities = await mediaClient.getCapabilities();
     if (generation !== state.mediaCredentialGeneration) return;
 
-    let available = Boolean(capabilities.configured);
+    let available = els.dubbingProvider?.value === 'elevenlabs_v1'
+      ? Boolean(capabilities.transcriptionConfigured) : Boolean(capabilities.configured);
     let stateName = available ? 'available' : 'unconfigured';
     let message = capabilities.transcriptionConfigured === false
       ? 'Türkçe dublaj için ElevenLabs anahtarını gir.'
-      : capabilities.translationConfigured === false
+      : capabilities.translationConfigured === false && els.dubbingProvider?.value !== 'elevenlabs_v1'
         ? 'Türkçe çeviri için Gemini anahtarı gerekiyor. Kendi anahtarını girebilirsin.'
         : available
           ? 'Türkçe medya servisi hazır.'
@@ -822,7 +823,7 @@ function selectedAnalysisModes() {
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
-    dubbingProvider: els.dubMode?.checked && els.dubbingProvider?.value === 'elevenlabs' ? 'elevenlabs' : 'classic',
+    dubbingProvider: els.dubMode?.checked && els.dubbingProvider?.value === 'elevenlabs_v1' ? 'elevenlabs_v1' : 'classic',
     quality: String(els.qualityMode?.value || 'ultra')
   };
 }
@@ -841,12 +842,13 @@ function updateAnalysisModesUI() {
   if (modes.dubbing) active.push('Türkçe dublaj');
 
   if (els.selectedModesSummary) {
-    els.selectedModesSummary.textContent = active.length
-      ? `${qualityNames[modes.quality]} · ${active.join(' + ')}`
+    els.selectedModesSummary.textContent = modes.subtitles && !modes.dubbing
+      ? 'Türkçe altyazı için ElevenLabs dublajını da aç.'
+      : active.length ? `${qualityNames[modes.quality]} · ${active.join(' + ')}`
       : 'En az bir analiz modu seçmelisin.';
   }
 
-  return active.length > 0;
+  return active.length > 0 && !(modes.subtitles && !modes.dubbing);
 }
 
 function updateAnalyzeAvailability() {
@@ -854,7 +856,7 @@ function updateAnalyzeAvailability() {
   const busy = state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy;
   const needsGemini = Boolean(els.motionMode?.checked ||
     ((els.dubMode?.checked || els.subtitleMode?.checked) &&
-      (!els.dubMode?.checked || els.dubbingProvider?.value !== 'elevenlabs')));
+      (!els.dubMode?.checked || els.dubbingProvider?.value !== 'elevenlabs_v1')));
   const geminiBlocked = needsGemini &&
     ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
       .includes(String(state.geminiProviderStatus?.state || ''));
@@ -1374,7 +1376,7 @@ els.voiceMappingApplyBtn?.addEventListener('click', async () => {
     els.voiceMappingMessage.textContent = 'Her konuşmacı için ayrı bir ses seç.'; return;
   }
   const modes = selectedAnalysisModes(), previous = mediaClient.capture();
-  const options = { outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs' ? { dubbingProvider: 'elevenlabs' } : {}) }, qualityMode: modes.dubQuality,
+  const options = { outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) }, qualityMode: modes.dubQuality,
     voiceMapping: Object.fromEntries(values.map(select => [select.dataset.speakerId, select.value])),
     previousVoiceMapping: previous?.manifest.voiceMapping || {}, sceneContext: verifiedMediaSceneContext() };
   await regenerateTurkishVoices({ source, options, previous, session: state.analysisSession, started: false });
@@ -1452,6 +1454,15 @@ els.analyzeBtn.addEventListener('click', async () => {
     storyboardProgress(progress, detail);
   };
   try {
+  const preflightModes = selectedAnalysisModes();
+  if (preflightModes.dubbingProvider === 'elevenlabs_v1') {
+    const minutes = Number(els.video.duration) > 0 ? Number(els.video.duration) / 60 : null;
+    const estimate = minutes ? `Yaklaşık ${Math.ceil(minutes * 3100).toLocaleString('tr-TR')} kredi (${minutes.toFixed(1)} dk).` : 'Tutar kaynak sesin toplam süresine bağlıdır.';
+    if (!window.confirm(`ElevenLabs Dubbing v1 ücretli bir işlem başlatacak. ${estimate} Başarılı dublaj uygulamada sonradan hata verse bile kredi harcanabilir. Devam edilsin mi?`)) {
+      analysisSucceeded = true;
+      return;
+    }
+  }
   updateAnalyzeAvailability();
   els.analyzeBtn.disabled = true;
   els.videoInput.disabled = true;
@@ -1512,7 +1523,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   fastStoryboardPreparation?.catch(() => {});
   session.audioContextStatus = 'pending';
   const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality,
-    ...(modes.dubbingProvider === 'elevenlabs' ? { provider: 'elevenlabs' } : {}) });
+    ...(modes.dubbingProvider === 'elevenlabs_v1' ? { provider: 'elevenlabs_v1' } : {}) });
   const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
   const reusableMedia = !contextualMedia && session.mediaManifest && session.mediaModeKey === mediaModeKey;
   session.mediaModeKey = mediaModeKey;
@@ -1537,7 +1548,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
           subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
         : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
-          transcriptOnly: !modes.dubbing && !modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs' ? { dubbingProvider: 'elevenlabs' } : {}) }, qualityMode: modes.dubQuality, sceneContext: [] });
+          transcriptOnly: !modes.dubbing && !modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) }, qualityMode: modes.dubQuality, sceneContext: [] });
       session.mediaManifest = result;
     }
     updateSourceTranscript(result.sourceTranscript);
@@ -2120,7 +2131,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       'Ses seçimi; doğrulanmış karakter profili, Türkçe desteği ve mevcut duygu/ton etiketleriyle otomatik yapılıyor.'
     ].join('\n');
     const finalMedia = await mediaClient.start(file, {
-      outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs' ? { dubbingProvider: 'elevenlabs' } : {}) },
+      outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) },
       qualityMode: modes.dubQuality,
       sceneContext: verifiedMediaSceneContext(),
       speakerHints
