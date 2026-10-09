@@ -792,12 +792,11 @@ async function checkTurkishMediaCapabilities() {
     const capabilities = await mediaClient.getCapabilities();
     if (generation !== state.mediaCredentialGeneration) return;
 
-    let available = els.dubbingProvider?.value === 'elevenlabs_v1'
-      ? Boolean(capabilities.transcriptionConfigured) : Boolean(capabilities.configured);
+    let available = Boolean(capabilities.configured);
     let stateName = available ? 'available' : 'unconfigured';
     let message = capabilities.transcriptionConfigured === false
       ? 'Türkçe dublaj için ElevenLabs anahtarını gir.'
-      : capabilities.translationConfigured === false && els.dubbingProvider?.value !== 'elevenlabs_v1'
+      : capabilities.translationConfigured === false
         ? 'Türkçe çeviri için Gemini anahtarı gerekiyor. Kendi anahtarını girebilirsin.'
         : available
           ? 'Türkçe medya servisi hazır.'
@@ -823,7 +822,7 @@ function selectedAnalysisModes() {
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
-    dubbingProvider: els.dubMode?.checked && els.dubbingProvider?.value === 'elevenlabs_v1' ? 'elevenlabs_v1' : 'classic',
+    dubbingProvider: 'classic',
     quality: String(els.qualityMode?.value || 'ultra')
   };
 }
@@ -842,21 +841,18 @@ function updateAnalysisModesUI() {
   if (modes.dubbing) active.push('Türkçe dublaj');
 
   if (els.selectedModesSummary) {
-    els.selectedModesSummary.textContent = modes.subtitles && !modes.dubbing
-      ? 'Türkçe altyazı için ElevenLabs dublajını da aç.'
-      : active.length ? `${qualityNames[modes.quality]} · ${active.join(' + ')}`
+    els.selectedModesSummary.textContent = active.length
+      ? `${qualityNames[modes.quality]} · ${active.join(' + ')}`
       : 'En az bir analiz modu seçmelisin.';
   }
 
-  return active.length > 0 && !(modes.subtitles && !modes.dubbing);
+  return active.length > 0;
 }
 
 function updateAnalyzeAvailability() {
   const hasMode = updateAnalysisModesUI();
   const busy = state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy;
-  const needsGemini = Boolean(els.motionMode?.checked ||
-    ((els.dubMode?.checked || els.subtitleMode?.checked) &&
-      (!els.dubMode?.checked || els.dubbingProvider?.value !== 'elevenlabs_v1')));
+  const needsGemini = Boolean(els.motionMode?.checked || els.dubMode?.checked || els.subtitleMode?.checked);
   const geminiBlocked = needsGemini &&
     ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
       .includes(String(state.geminiProviderStatus?.state || ''));
@@ -1454,15 +1450,6 @@ els.analyzeBtn.addEventListener('click', async () => {
     storyboardProgress(progress, detail);
   };
   try {
-  const preflightModes = selectedAnalysisModes();
-  if (preflightModes.dubbingProvider === 'elevenlabs_v1') {
-    const minutes = Number(els.video.duration) > 0 ? Number(els.video.duration) / 60 : null;
-    const estimate = minutes ? `Yaklaşık ${Math.ceil(minutes * 3100).toLocaleString('tr-TR')} kredi (${minutes.toFixed(1)} dk).` : 'Tutar kaynak sesin toplam süresine bağlıdır.';
-    if (!window.confirm(`ElevenLabs Dubbing v1 ücretli bir işlem başlatacak. ${estimate} Başarılı dublaj uygulamada sonradan hata verse bile kredi harcanabilir. Devam edilsin mi?`)) {
-      analysisSucceeded = true;
-      return;
-    }
-  }
   updateAnalyzeAvailability();
   els.analyzeBtn.disabled = true;
   els.videoInput.disabled = true;
