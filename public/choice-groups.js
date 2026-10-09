@@ -1,5 +1,6 @@
 import { clipRange } from './sequence-integrity.js';
 import { choiceSurfaceKey } from './choice-routing.js';
+import { cleanDisplayLabel } from './display-labels.js';
 
 const text = value => String(value || '').trim();
 export const sourceActionLabel = value => text(value)
@@ -19,29 +20,17 @@ export function sourceDisplayLabel(group = {}, fallback = '', {
     ? `${label} · ${partner}` : label;
 }
 
-function stableParticipantLabelForTrack(value, trackId) {
-  const label = text(value);
-  const track = text(trackId);
-  const labelMatch = /^(?:karakter|partner)\s+([a-z0-9]+)$/iu.exec(label);
-  const trackMatch = /^(?:partner|character|char|person)[_-]?([a-z0-9]+)$/iu.exec(track);
-  if (!labelMatch || !trackMatch) return '';
-  return labelMatch[1].toLocaleLowerCase('tr-TR') === trackMatch[1].toLocaleLowerCase('tr-TR')
-    ? label : '';
-}
-
+// Display never exposes stable internal track aliases. A track ID can be
+// useful for routing without constituting a verified, visible person's name.
 export function sourceIdentityLabel(value, clip = {}) {
-  const label = sourceActionLabel(value);
+  const label = cleanDisplayLabel(sourceActionLabel(value));
   if (!label || clip?.relationshipResolution === 'verified') return label;
-  const candidate = text(clip.primaryCharacterLabel);
-  const stableParticipant = stableParticipantLabelForTrack(candidate, clip.partnerTrackId);
   const identity = ['verified', 'described'].includes(clip?.identityResolution)
-    ? candidate
-    : stableParticipant;
+    ? text(clip.primaryCharacterLabel) : '';
   if (!identity ||
-      ((!stableParticipant || clip?.identityResolution === 'verified') &&
-        /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity)) ||
+      /^(?:karakter|ana karakter|partner|kadın|erkek|adam|kişi)(?:\s+\S+)?$/iu.test(identity) ||
       label.toLocaleLowerCase('tr-TR').includes(identity.toLocaleLowerCase('tr-TR'))) return label;
-  return `${label} · ${identity}`;
+  return cleanDisplayLabel(`${label} · ${identity}`);
 }
 
 // Arrange existing clips only. These groups never join media ranges, create
