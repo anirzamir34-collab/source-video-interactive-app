@@ -4345,7 +4345,9 @@ function renderAdultProgressiveUI(force = false) {
   // Leaving its 100 on screen while blocking another unlock made the next
   // position appear to require the scene-skip button.
   if (state.interactionMeterNeedsReset && state.interactionRuntime.progressBudgetConsumed &&
-      state.interactionRuntime.currentPhase === 'CORE') {
+      state.interactionRuntime.currentPhase === 'CORE' && !state.activeAdultPreludeId) {
+    // Keep a confirmed selection's progress visible while its source clip is
+    // still active. A stage transition must not instantly erase earned credit.
     state.interactionRuntime = { ...state.interactionRuntime, progressionValue: 0 };
     state.interactionMeterNeedsReset = false;
     if (els.adultDockLustValue) els.adultDockLustValue.textContent = '0';
