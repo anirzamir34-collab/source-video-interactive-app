@@ -316,6 +316,16 @@ test('ordinary choice seek errors expose retry without starting playback', async
   assert.equal(f.state.activeAction, action);
 });
 
+test('overlapping unconsumed ordinary choices play from their actual source start', async () => {
+  const f = fixture();
+  f.state.gameCursorTime = 12;
+  const action = { actionId: 'overlap', startTime: 10, endTime: 20, sourceVerified: true };
+  await f.playAction(action);
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.activeAction, action);
+});
+
 test('blocked ordinary choice resumes with its original end boundary intact', async () => {
   const f = fixture();
   const action = { actionId: 'walk', startTime: 20, endTime: 30 };
