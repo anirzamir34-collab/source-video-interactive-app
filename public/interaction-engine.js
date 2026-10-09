@@ -212,7 +212,15 @@ export function computeInteractionProgress(budget, observations = {}) {
   // exhausted choice set at 99 even though there were no more choices to play.
   // Both played and confirmed selected source ranges count; raw seeks do not.
   const observed = compactCoverage([...played, ...selected]);
-  const complete = asList(budget?.entries).length > 0 && asList(budget.entries).every(entry => {
+  const sourceEntries = asList(budget?.entries);
+  // Multiple labels claiming the same exact interval are not independent
+  // source choices. Do not allow duplicate cards to exhaust the budget by
+  // selecting each alias without observing the underlying video interval.
+  const uniqueIntervals = new Set(sourceEntries.map(entry => `${entry.startTime}:${entry.endTime}`));
+  const duplicateWindows = uniqueIntervals.size !== sourceEntries.length;
+  const verifiedPlaybackDuration = intervalDuration(intervalUnion(played));
+  const complete = sourceEntries.length > 0 &&
+    (!duplicateWindows || verifiedPlaybackDuration >= total - 0.05) && sourceEntries.every(entry => {
     const matching = observed.filter(range => range.sourceKey === entry.sourceKey &&
       range.sourcePositionId === entry.id && range.sourceOccurrenceId === entry.occurrenceId);
     const covered = intervalUnion(matching.map(range => ({
