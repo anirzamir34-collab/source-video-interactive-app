@@ -18,7 +18,10 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
     /\b(?:ordinary greeting|handshake|greeting gesture|selamlasma|tokalasma|konusurken jest)\b/iu.test(
       String(action.choiceSurfaceEvidence || '').toLocaleLowerCase('tr-TR')
         .replace(/ş/g, 's').replace(/ı/g, 'i'));
-  if (approachTypes.has(type)) return ordinaryContact && declaredEvidence ? 'story' : 'approach';
+  // A word-level transcript or a guessed actionType is not visual proof of
+  // physical interaction. Unsubstantiated contact stays in ordinary story
+  // routing; only timestamp-specific evidence can promote it to approach.
+  if (approachTypes.has(type)) return !declaredEvidence || ordinaryContact ? 'story' : 'approach';
   if (storyTypes.has(type) || (text(action.choiceSurface) === 'story' && declaredEvidence)) return 'story';
   if (text(action.choiceSurface) === 'approach' && declaredEvidence) return 'approach';
   return 'story';
