@@ -63,3 +63,17 @@ export function choiceSurfaceWindow(items, surface, timelineFloor = 0) {
   return forward.filter(item => key(item) === surface && Number(item.startTime) < Number(boundary) &&
     Number(item.endTime) <= Number(boundary) + 0.05);
 }
+
+// A decision can jump to any verified clip in its bounded scene chapter.
+// Timeline order is the default playback path, not a requirement to watch
+// intervening footage before another source-backed choice becomes available.
+export function sceneSurfaceChoices(items, surface, { floor = 0, ceiling = Infinity, replay = false } = {}) {
+  return (items || []).filter(item => item?.sourceVerified === true &&
+    choiceSurfaceKey(item) === surface &&
+    Number.isFinite(Number(item.startTime)) && Number.isFinite(Number(item.endTime)) &&
+    Number(item.endTime) > Number(item.startTime) &&
+    Number(item.startTime) < ceiling - 0.05 &&
+    (replay || Number(item.endTime) > floor + 0.05))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+}
+

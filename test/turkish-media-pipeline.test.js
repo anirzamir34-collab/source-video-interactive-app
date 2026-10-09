@@ -89,7 +89,9 @@ async function fixture(t, { words = sourceWords(), failAlignmentOnce = false, mi
     async transcribe(file) {
       calls.transcribe += 1;
       assert.equal(await readFile(file, 'utf8'), 'full-source-speech');
-      return { language_code: 'en', text: words.map(row => row.text).join(' '), words };
+      return { language_code: 'en', text: words.map(row => row.text).join(' '), words,
+        speakers: [...new Set(words.map(row => row.speaker_id).filter(Boolean))]
+          .map(speaker_id => ({ speaker_id, gender: speaker_id === 'speaker_1' ? 'female' : 'male' })) };
     },
     async validateCapabilities() { return { modelId: 'eleven_v4', maxTextLength: 2000 }; },
     async listVoices() { return voices; },
@@ -879,3 +881,4 @@ test('cache eviction cannot delete prepared source audio while a provider is con
   assert.equal(result.dubSegments.length, 2);
   assert.equal(f.calls.mix.length, 1);
 });
+

@@ -103,7 +103,7 @@ import { analysisRequestKey, createAnalysisResponseCache } from './analysis-resp
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
-  sceneOwnsApproachChoice, choiceSurfaceWindow } from './choice-routing.js';
+  sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -1013,6 +1013,9 @@ function updateSourceTranscript(transcript) {
 
 function onTurkishMediaStatus(status) {
   state.turkishMediaStatus = status;
+  if (status.state === 'FAILED' && status.error?.code === 'VOICE_PROFILE_UNVERIFIED') {
+    state.voiceMappingManualRequested = true;
+  }
   if (status.sourceTranscript) { updateSourceTranscript(status.sourceTranscript); renderVoiceMappingPanel(); }
   logEngineEvent('TURKISH_MEDIA_STATUS', { state: status.state, jobId: status.jobId || null });
   if (status.state === 'PLAYBACK_READY') { els.dubBufferStatus.classList.add('hidden'); return; }
@@ -1161,27 +1164,26 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
 function renderVoiceMappingPanel() {
   const speakers = state.sourceTranscript?.speakers || [];
   if (!els.voiceMappingPanel || !els.voiceMappingRows) return;
-  // Voice selection is automatic in the normal VideoQuest flow. Keep the
-  // legacy manual editor available only when an explicit override is enabled;
-  // analysis failures must never ask the user to assign speakers by hand.
-  // Surface a repair path when the source service has no verified speaker
-  // gender. Never claim that an automatically chosen voice matches a person
-  // whose voice identity was not established by the source transcript.
+  // Voice selection stays automatic. The optional editor is collapsed by
+  // default and must not imply that an unknown source voice blocks a ready dub.
   const manual = state.voiceMappingManualRequested === true || Boolean(
-    mediaClient.capture()?.manifest?.assets?.mix &&
-    speakers.some(speaker => !['male', 'female'].includes(speaker.gender)));
+    mediaClient.capture()?.manifest?.assets?.mix && speakers.length);
   els.voiceMappingPanel.classList.toggle('hidden', !manual || !speakers.length);
   if (manual && els.voiceMappingPanel.querySelector?.('summary')) {
     els.voiceMappingPanel.querySelector('summary').textContent =
-      speakers.some(speaker => !['male', 'female'].includes(speaker.gender))
-        ? 'Konuşmacı sesi belirsiz · kontrol et' : 'Konuşmacı seslerini seç';
+      state.turkishMediaStatus?.error?.code === 'VOICE_PROFILE_UNVERIFIED'
+        ? 'Dublaj için kaynak sesleri seç' : 'Sesleri düzenle · isteğe bağlı';
   }
   if (!manual) {
     els.voiceMappingPanel.open = false;
     els.voiceMappingRows.replaceChildren();
+    els.voiceMappingApplyBtn.disabled = true;
     return;
   }
-  if (!els.voiceMappingPanel.open || !state.voiceCatalog) return;
+  if (!els.voiceMappingPanel.open || !state.voiceCatalog) {
+    els.voiceMappingApplyBtn.disabled = true;
+    return;
+  }
   const previous = mediaClient.capture()?.manifest.voiceMapping || {};
   const draft = new Map([...els.voiceMappingRows.querySelectorAll('select')]
     .map(select => [select.dataset.speakerId, select.value]));
@@ -1189,7 +1191,7 @@ function renderVoiceMappingPanel() {
   const rows = speakers.map((speaker, index) => {
     const label = document.createElement('label');
     const title = document.createElement('span');
-    title.textContent = `Konuşmacı ${index + 1} · ${genderLabel(speaker.gender)}`;
+    title.textContent = `Kaynak ses ${index + 1} · ${genderLabel(speaker.gender)}`;
     const select = document.createElement('select');
     select.dataset.speakerId = speaker.speakerId;
     select.setAttribute('aria-label', `${title.textContent} için Türkçe ses`);
@@ -1200,7 +1202,8 @@ function renderVoiceMappingPanel() {
       option.textContent = `${voice.name} · ${genderLabel(voice.gender)}${voice.language ? ` · ${voice.language}` : ''}`;
       select.append(option);
     }
-    const selected = draft.get(speaker.speakerId) ?? previous[speaker.speakerId] ?? '';
+    const selected = draft.get(speaker.speakerId) ??
+      (['male', 'female'].includes(speaker.gender) ? previous[speaker.speakerId] : '') ?? '';
     if (selected && !state.voiceCatalog.some(voice => voice.voiceId === selected)) {
       const unavailable = document.createElement('option');
       unavailable.value = selected; unavailable.disabled = true;
@@ -1356,11 +1359,16 @@ els.voiceMappingPanel?.addEventListener('toggle', async () => {
     const voices = await loadVoiceCatalog();
     if (generation !== state.voiceMappingGeneration || !els.voiceMappingPanel.open) return;
     els.voiceMappingMessage.textContent = voices.length
-      ? `Konuşmacının cinsiyeti belirsizse sesini kendin seç. Ses etiketleri katalog bilgisidir.${els.dubMode.checked ? '' : ' Sesleri uygulamak için Türkçe dublaj modunu seç.'}`
+      ? `${state.turkishMediaStatus?.error?.code === 'VOICE_PROFILE_UNVERIFIED'
+        ? 'Kaynak seslerin uygun Türkçe seslerini seç; yanlış cinsiyette varsayılan ses üretilmedi.'
+        : 'Dublaj hazır. Kaynak ses grupları farklı kişiler anlamına gelmeyebilir. İstersen sesleri değiştirebilirsin.'}${els.dubMode.checked ? '' : ' Sesleri uygulamak için Türkçe dublaj modunu seç.'}`
       : 'Bu hesapta kullanılabilir ses bulunamadı.';
     renderVoiceMappingPanel();
   } catch (error) {
-    if (generation === state.voiceMappingGeneration) els.voiceMappingMessage.textContent = error.message;
+    if (generation === state.voiceMappingGeneration) {
+      els.voiceMappingApplyBtn.disabled = true;
+      els.voiceMappingMessage.textContent = 'Sesleri değiştirmek için API ayarlarına ElevenLabs anahtarını gir. Hazır dublaj kullanılabilir.';
+    }
   }
 });
 els.voiceMappingApplyBtn?.addEventListener('click', async () => {
@@ -4146,6 +4154,7 @@ function renderAdultApproachChoices(scene, later = false) {
       ...item, kind: 'foreplay', id: item.id, label: item.label,
       sourceVerified: item.sourceVerified === true,
       nonIntimate: item.nonIntimate === true || item.choiceSurface === 'story',
+      choiceSurface: item.nonIntimate === true || item.choiceSurface === 'story' ? 'story' : 'approach',
       startTime: item.startTime, endTime: item.endTime,
       playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
     })),
@@ -4158,6 +4167,7 @@ function renderAdultApproachChoices(scene, later = false) {
         choiceId: card.id, variants: card.variants,
         sourceVerified: position.sourceVerified === true && card.variants.every(item => item.sourceVerified === true),
         kind: 'position', id: position.id,
+        choiceSurface: 'approach',
         castIds: [position.subjectTrackId, position.partnerTrackId].filter(Boolean),
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
         label: card?.label || card?.variants?.[0]?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
@@ -4185,37 +4195,28 @@ function renderAdultApproachChoices(scene, later = false) {
   // The next verified source action owns the surface. A later dialogue cannot
   // enter the approach cards, and an earlier dialogue cannot mask intimacy.
   const dialogueOnly = forwardApproach[0]?.nonIntimate === true;
-  const surfacePool = choiceSurfaceWindow(approachPool,
-    dialogueOnly ? 'story' : 'approach', projectedFloor);
-  const chronological = approachPool.filter(item => item.sourceVerified === true &&
-      Number.isFinite(Number(item.startTime)) && Number(item.endTime) > Number(item.startTime))
-    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
-  const replayGroups = [];
-  for (const item of chronological) {
-    if (item.nonIntimate) continue;
-    const group = replayGroups.at(-1);
-    const interveningStory = group && chronological.some(other => other.nonIntimate === true &&
-      Number(other.startTime) >= group.endTime - 0.05 && Number(other.startTime) < Number(item.startTime));
-    if (!group || interveningStory || Number(item.startTime) > group.endTime + 2) {
-      replayGroups.push({ startTime: Number(item.startTime), endTime: Number(item.endTime), items: [item] });
-    } else {
-      group.endTime = Math.max(group.endTime, Number(item.endTime));
-      group.items.push(item);
-    }
-  }
-  const replayGroup = replayGroups.find(group => projectedFloor >= group.startTime - 0.05 &&
-    projectedFloor <= group.endTime + 0.05) ||
-    [...replayGroups].reverse().find(group => group.startTime <= projectedFloor) || replayGroups[0];
+  const firstCoreTime = Math.min(...sceneCorePositions.map(position => Number(position.startTime)));
+  const firstOpeningTime = Math.min(...approachPool.filter(item => item.sourceVerified && !item.nonIntimate)
+    .map(item => Number(item.startTime)).filter(Number.isFinite));
+  const decisionWindowEnd = projectedFloor + 90;
+  const boundedOpeningEnd = Number.isFinite(firstOpeningTime)
+    ? Math.max(decisionWindowEnd, firstOpeningTime + 90) : decisionWindowEnd;
+  const surfacePool = sceneSurfaceChoices(approachPool,
+    dialogueOnly ? 'story' : 'approach', {
+      floor: projectedFloor,
+      ceiling: Math.min(later || !Number.isFinite(firstCoreTime) ? Infinity : firstCoreTime,
+        dialogueOnly || later ? decisionWindowEnd : boundedOpeningEnd),
+      replay: !dialogueOnly && !later
+    });
   const candidates = !dialogueOnly && !later
-    ? (replayGroup?.items || [])
-      .sort((a, b) => Number(a.playCount) - Number(b.playCount) || Number(a.startTime) - Number(b.startTime))
-      .slice(0, 5)
+    ? [...surfacePool].sort((a, b) => Number(a.playCount) - Number(b.playCount) ||
+        Number(a.startTime) - Number(b.startTime)).slice(0, 5)
+    : dialogueOnly ? surfacePool.slice(0, 5)
     : selectVerifiedChoiceQueue(surfacePool, {
     timelineFloor: projectedFloor,
     limit: 5,
     maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60,
-    firstCoreTime: later || !sceneCorePositions.length ? null : Math.min(...sceneCorePositions
-      .map(position => Number(position.startTime))),
+    firstCoreTime: later || !sceneCorePositions.length ? null : firstCoreTime,
     activeChoiceId: state.activeAdultPreludeId || activeWarmupPosition?.id || null,
     activeEndTime: Number(activePrelude?.endTime) || Number(activeWarmupMovement?.loopEndTime) || 0
     });
@@ -4230,10 +4231,6 @@ function renderAdultApproachChoices(scene, later = false) {
   if (dialogueOnly) {
     els.choices.classList.remove('hidden');
     els.foreplaySection?.classList.add('hidden');
-    const heading = document.createElement('div');
-    heading.className = 'approach-status';
-    heading.innerHTML = '<strong>DİYALOG</strong>';
-    els.choices.appendChild(heading);
   } else {
     els.choices.classList.add('hidden');
     els.foreplaySection?.classList.add('hidden');
@@ -4265,7 +4262,7 @@ function renderAdultApproachChoices(scene, later = false) {
       button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     }
     const sourceSequenceCount = Array.isArray(choice.variants) ? choice.variants.length : 1;
-    button.innerHTML = `<small class="choice-kind">${choice.nonIntimate ? 'DİYALOG' : 'YAKINLAŞMA'}</small>` +
+    button.innerHTML = `${choice.nonIntimate ? '' : '<small class="choice-kind">YAKINLAŞMA</small>'}` +
       `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>${
       sourceSequenceCount > 1
         ? `<small class="choice-meta">${sourceSequenceCount} doğrulanmış sekans · sırayla oynatılır</small>`
@@ -6040,7 +6037,7 @@ function renderChoices() {
     button.dataset.choiceSurface = approach ? 'approach' : 'story';
     const storyLabel = storyChoiceLabelForAction(action);
     button.innerHTML = `
-      <small class="choice-kind">${approach ? 'YAKINLAŞMA' : 'HİKÂYE'}</small>
+      ${approach ? '<small class="choice-kind">YAKINLAŞMA</small>' : ''}
       <div class="choice-title">${escapeHtml(storyLabel)}</div>
     `;
     button.addEventListener('click', () => playAction(action));

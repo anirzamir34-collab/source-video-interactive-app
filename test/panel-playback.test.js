@@ -1285,7 +1285,7 @@ test('verified normal dialogue has its own choices and earns no progress before 
   f.renderAdultPanel(f.state.adultScene);
   assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-dialogue']);
-  assert.equal(f.els.choices.children[0].html, '<strong>DİYALOG</strong>');
+  assert.equal(f.els.choices.children[0].html, '<span data-choice-label>Existing line</span>');
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
   f.playAdultPrelude('source-dialogue');
   await flush();
@@ -1329,7 +1329,7 @@ test('a dialogue between verified opening clips owns a separate story surface, t
   f.renderAdultPanel(f.state.adultScene);
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
   assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-opening']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-opening', 'reported-next']);
   f.els.video.time = 91;
   f.state.adultTimelineFloor = 91;
   f.renderAdultProgressiveUI(true);

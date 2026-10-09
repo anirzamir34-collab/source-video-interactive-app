@@ -87,7 +87,8 @@ async function fixture(t, { geminiKey = serverGeminiKey, failAlignmentOnce = fal
         assert.equal(options.body.get('diarize'), 'true');
         assert.equal(options.body.get('timestamps_granularity'), 'word');
         assert.ok((await options.body.get('file').arrayBuffer()).byteLength > 0);
-        return jsonResponse({ text: 'Hello. Yes.', language_code: 'en', words: [
+        return jsonResponse({ text: 'Hello. Yes.', language_code: 'en',
+          speakers: [{ speaker_id: 'speaker_0', gender: 'male' }, { speaker_id: 'speaker_1', gender: 'female' }], words: [
           { text: 'Hello.', type: 'word', start: 1, end: 3, speaker_id: 'speaker_0', logprob: -.03 },
           { text: ' ', type: 'spacing', start: 3, end: 3 },
           { text: 'Yes.', type: 'word', start: 3.5, end: 5.5, speaker_id: 'speaker_1', logprob: -.02 },
