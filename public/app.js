@@ -1445,7 +1445,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (!updateAnalysisModesUI()) return;
   if (selectedAnalysisModes().dubbingProvider === 'elevenlabs_v1') {
     const minutes = Number(els.video.duration) > 0 ? Number(els.video.duration) / 60 : null;
-    const estimate = minutes ? `Yaklaşık ${Math.ceil(minutes * 2750).toLocaleString('tr-TR')} kredi (${minutes.toFixed(1)} dk).` : 'Tutar kaynak sesin toplam süresine bağlıdır.';
+    const estimate = minutes ? `Yaklaşık ${Math.ceil(minutes * 3100).toLocaleString('tr-TR')} kredi (${minutes.toFixed(1)} dk).` : 'Tutar kaynak sesin toplam süresine bağlıdır.';
     if (!window.confirm(`ElevenLabs Dubbing v1 ücretli bir işlem başlatacak. ${estimate} Başarılı dublaj uygulamada sonradan hata verse bile kredi harcanabilir. Devam edilsin mi?`)) return;
   }
   state.analysisInProgress = true;
