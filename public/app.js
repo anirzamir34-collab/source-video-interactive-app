@@ -4345,7 +4345,9 @@ function renderAdultProgressiveUI(force = false) {
   // Leaving its 100 on screen while blocking another unlock made the next
   // position appear to require the scene-skip button.
   if (state.interactionMeterNeedsReset && state.interactionRuntime.progressBudgetConsumed &&
-      state.interactionRuntime.currentPhase === 'CORE') {
+      state.interactionRuntime.currentPhase === 'CORE' && !state.activeAdultPreludeId) {
+    // Keep a confirmed selection's progress visible while its source clip is
+    // still active. A stage transition must not instantly erase earned credit.
     state.interactionRuntime = { ...state.interactionRuntime, progressionValue: 0 };
     state.interactionMeterNeedsReset = false;
     if (els.adultDockLustValue) els.adultDockLustValue.textContent = '0';
@@ -4788,6 +4790,8 @@ function applyAdultPreludeProgress(item) {
   if (runtime.progressBudget && !runtime.progressBudgetConsumed) {
     state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
       choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
+    if (!runtime.progressBudgetConsumed && state.interactionRuntime.progressBudgetConsumed)
+      state.interactionMeterNeedsReset = true;
   } else addFemaleLust(delta.female * currentWarmupLustScale());
   renderAdultProgress();
 }
@@ -6171,7 +6175,14 @@ async function playAction(action) {
   setGameState('SEGMENT_SEEKING');
   els.video.pause();
 
-  const seekTarget = Math.max(state.gameCursorTime, actionStart);
+  // New choices begin at their verified source start, including overlapping
+  // clips. If natural playback and the decision cursor already sit INSIDE
+  // that exact clip, keep the currently audible dialogue uninterrupted.
+  const mediaTime = Number(els.video.currentTime);
+  const continuingCurrentClip = Number.isFinite(mediaTime) &&
+    Math.abs(mediaTime - Number(state.gameCursorTime)) <= 0.15 &&
+    mediaTime >= actionStart && mediaTime < actionEnd - 0.03;
+  const seekTarget = continuingCurrentClip ? mediaTime : actionStart;
   const controller = new AbortController();
   state.navigationSeekController = controller;
   state.navigationSeeking = true;

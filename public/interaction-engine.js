@@ -207,9 +207,29 @@ export function computeInteractionProgress(budget, observations = {}) {
       endTime: Math.min(interval.endTime, observedEndTime)
     }))) / total, 0, 1) : 0;
   const coverageValue = total > 0 ? 100 * (playedDuration + selectedDuration * budget.selectionWeight) / total : 0;
-  // A future seek or a repeated interval cannot move this frontier. The final
-  // verified CORE boundary is the authoritative transition to a full budget.
-  const progressionValue = observations.coreBoundaryObserved === true ? 100 :
+  // Verified coverage of every eligible source interval may finish a budget
+  // before the next chapter boundary. Requiring that boundary stranded a fully
+  // exhausted choice set at 99 even though there were no more choices to play.
+  // Both played and confirmed selected source ranges count; raw seeks do not.
+  const observed = compactCoverage([...played, ...selected]);
+  const sourceEntries = asList(budget?.entries);
+  // Multiple labels claiming the same exact interval are not independent
+  // source choices. Do not allow duplicate cards to exhaust the budget by
+  // selecting each alias without observing the underlying video interval.
+  const uniqueIntervals = new Set(sourceEntries.map(entry => `${entry.startTime}:${entry.endTime}`));
+  const duplicateWindows = uniqueIntervals.size !== sourceEntries.length;
+  const verifiedPlaybackDuration = intervalDuration(intervalUnion(played));
+  const complete = sourceEntries.length > 0 &&
+    (!duplicateWindows || verifiedPlaybackDuration >= total - 0.05) && sourceEntries.every(entry => {
+    const matching = observed.filter(range => range.sourceKey === entry.sourceKey &&
+      range.sourcePositionId === entry.id && range.sourceOccurrenceId === entry.occurrenceId);
+    const covered = intervalUnion(matching.map(range => ({
+      startTime: Math.max(entry.startTime, range.startTime),
+      endTime: Math.min(entry.endTime, range.endTime)
+    })).filter(range => range.endTime > range.startTime));
+    return intervalDuration(covered) >= entry.endTime - entry.startTime - 0.05;
+  });
+  const progressionValue = observations.coreBoundaryObserved === true || complete ? 100 :
     clamp(Math.min(coverageValue, frontierFraction * 100, budget?.firstCoreTime === null ? 100 : 99), 0, 100);
   return { progressionValue, playedDuration, selectedDuration, observedEndTime,
     verifiedDuration: total, frontierFraction };
