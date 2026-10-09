@@ -21,6 +21,7 @@ test('Dubbing v1 is selected, completed audio survives bad cues, and retry does 
     if (url.endsWith('/transcript')) return { segments: [
       { id: 'valid', start_s: 1, end_s: 2, translation: 'Merhaba' },
       { id: 'silent', start_s: 3, end_s: 3, translation: '' },
+      { id: 'outside', start_s: 4, end_s: 5, translation: 'Geçersiz' },
     ] };
     if (url.endsWith('/language/lang_1234567890')) return { status: 'completed',
       outputs: { lossless_audio: 'https://storage.googleapis.com/eleven-dubbing/test/output.flac' } };
@@ -32,10 +33,10 @@ test('Dubbing v1 is selected, completed audio survives bad cues, and retry does 
   const dub = createDirectDubbing({ config: { elevenLabs: { apiKey: 'test', baseUrl: 'https://api.elevenlabs.io' } },
     request, fetchImpl });
   try {
-    const input = { audioPath, directory, jobId: 'test-job', modelId: 'dubbing_v1',
+    const input = { audioPath, directory, jobId: 'test-job', modelId: 'dubbing_v1', duration: 3,
       signal: new AbortController().signal, onProject: value => projectUpdates.push(value) };
     const first = await dub(input);
-    assert.equal(first.skippedTranscriptSegments, 1);
+    assert.equal(first.skippedTranscriptSegments, 2);
     assert.equal(first.rows.length, 1);
     assert.equal(first.modelId, 'dubbing_v1');
     assert.equal(creates, 1);
