@@ -2117,12 +2117,17 @@ els.analyzeBtn.addEventListener('click', async () => {
       'Aynı kişiye ait parçalanmış konuşmacı kimlikleri tek sabit Türkçe sese bağlanıyor.',
       'Ses seçimi; doğrulanmış karakter profili, Türkçe desteği ve mevcut duygu/ton etiketleriyle otomatik yapılıyor.'
     ].join('\n');
-    const finalMedia = await mediaClient.start(file, {
-      outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) },
-      qualityMode: modes.dubQuality,
-      sceneContext: verifiedMediaSceneContext(),
-      speakerHints
-    });
+    // A successful media retry has already completed the paid stages. Reuse
+    // its manifest while rebuilding the game from saved visual chapters.
+    const finalMedia = session.mediaManifest && session.mediaModeKey === mediaModeKey
+      ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
+        subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
+      : await mediaClient.start(file, {
+        outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) },
+        qualityMode: modes.dubQuality,
+        sceneContext: verifiedMediaSceneContext(),
+        speakerHints
+      });
     session.mediaManifest = finalMedia;
     recordAiUsage(finalMedia?.qualityReport?.geminiUsage);
     session.mediaModeKey = mediaModeKey;
