@@ -1442,6 +1442,16 @@ async function prepareStoryboardSource(session, file) {
   return localFile;
 }
 
+// A source-only or subtitle-only job never provides a dubbed soundtrack.
+// Match the exact completed mode and real audio assets before replaying cache.
+function canReuseTurkishMedia(session, modeKey, modes) {
+  const manifest = session?.mediaManifest;
+  if (!manifest || manifest.version !== 1 || session.mediaModeKey !== modeKey) return false;
+  if (modes.dubbing && (!manifest.assets?.mix?.url || manifest.outputs?.dub === false)) return false;
+  if (modes.subtitles && manifest.outputs?.subtitles === false) return false;
+  return true;
+}
+
 els.analyzeBtn.addEventListener('click', async () => {
   if (state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
@@ -1519,8 +1529,9 @@ els.analyzeBtn.addEventListener('click', async () => {
   const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality,
     ...(modes.dubbingProvider === 'elevenlabs_v1' ? { provider: 'elevenlabs_v1' } : {}) });
   const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
-  const reusableMedia = !contextualMedia && session.mediaManifest && session.mediaModeKey === mediaModeKey;
-  session.mediaModeKey = mediaModeKey;
+  const reusableMedia = !contextualMedia && canReuseTurkishMedia(session, mediaModeKey, modes);
+  // Do not stamp a previous media manifest with the newly requested mode.
+  // Contextual dubbing only becomes reusable after the finished mix exists.
   let result;
   try {
     if (contextualMedia) {
@@ -1544,6 +1555,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
           transcriptOnly: !modes.dubbing && !modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) }, qualityMode: modes.dubQuality, sceneContext: [] });
       session.mediaManifest = result;
+      session.mediaModeKey = mediaModeKey;
     }
     updateSourceTranscript(result.sourceTranscript);
     if (reusableMedia) onTurkishMediaStatus({ state: 'READY', sourceTranscript: result.sourceTranscript });
@@ -2181,7 +2193,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     // A successful media retry has already completed the paid stages. Reuse
     // its manifest while rebuilding the game from saved visual chapters.
     try {
-      const finalMedia = session.mediaManifest && session.mediaModeKey === mediaModeKey
+      const finalMedia = canReuseTurkishMedia(session, mediaModeKey, modes)
         ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
           subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
         : await mediaClient.start(file, {
