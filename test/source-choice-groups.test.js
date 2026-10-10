@@ -238,7 +238,9 @@ test('verified provider display labels remain opaque and partner distinction is 
   const group = { sourceVerified: true, positionLabel: 'Chapter A', partnerLabel: 'Participant B' };
   assert.equal(sourceDisplayLabel(group, 'Existing fallback'), 'Chapter A');
   assert.equal(sourceDisplayLabel(group, 'Existing fallback', { distinguishPartner: true }),
-    'Chapter A · Participant B');
+    'Chapter A');
+  assert.equal(sourceDisplayLabel({ ...group, partnerLabel: 'Meral' }, 'Existing fallback',
+    { distinguishPartner: true }), 'Chapter A · Meral');
   assert.equal(sourceDisplayLabel({ ...group, positionLabel: 'Chapter A · Participant B' }, '',
     { distinguishPartner: true }), 'Chapter A · Participant B');
   assert.equal(sourceDisplayLabel({ ...group, sourceVerified: false }, 'Existing fallback'), 'Existing fallback');

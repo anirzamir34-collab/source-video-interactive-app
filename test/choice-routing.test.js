@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneOwnsStoryChoice,
-  sceneOwnsApproachChoice } from '../public/choice-routing.js';
+import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneSurfaceChoices,
+  distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 
@@ -76,6 +76,39 @@ test('choice windows stop at the next category boundary instead of offering late
   assert.deepEqual(choiceSurfaceWindow(rows, 'story', 117).map(row => row.id), ['talk-a', 'talk-b', 'talk-c']);
   assert.deepEqual(choiceSurfaceWindow(rows, 'approach', 117), []);
   assert.deepEqual(choiceSurfaceWindow(rows, 'approach', 149.5).map(row => row.id), ['opening-b']);
+});
+
+test('a global choice surface removes duplicate provider rows without losing real alternatives', () => {
+  const row = (id, extra = {}) => action({
+    id, sourceActionId: 'observed:1', choiceSurface: 'story',
+    participantTrackIds: ['MAIN', 'OTHER'], startTime: 10, endTime: 16, ...extra
+  });
+  const first = row('card-a', { label: 'Soruyu sor' });
+  const copied = row('card-b', { label: 'Yanıtı bekle' });
+  const later = row('card-c', { startTime: 20, endTime: 25 });
+  const differentSource = row('card-d', { sourceActionId: 'observed:2' });
+  const differentCast = row('card-e', { participantTrackIds: ['MAIN', 'THIRD'] });
+  const unverified = row('invalid', { sourceVerified: false });
+  const input = [first, copied, later, differentSource, differentCast, unverified];
+  const copy = structuredClone(input);
+  assert.deepEqual(distinctVerifiedSourceChoices(input).map(item => item.id),
+    ['card-a', 'card-c', 'card-d', 'card-e']);
+  assert.deepEqual(sceneSurfaceChoices(input, 'story', { ceiling: 30 }).map(item => item.id),
+    ['card-a', 'card-d', 'card-e', 'card-c']);
+  assert.deepEqual(choiceSurfaceWindow(input, 'story', 10).map(item => item.id),
+    ['card-a', 'card-d', 'card-e', 'card-c']);
+  assert.deepEqual(input, copy, 'source analysis and playback ranges remain untouched');
+});
+
+test('global choice dedup never merges identical labels across source categories', () => {
+  const first = action({ id: 'story', sourceActionId: 'source:1', choiceSurface: 'story',
+    label: 'Devam et' });
+  const second = { ...first, id: 'different-category', choiceSurface: 'approach' };
+  const third = { ...first, id: 'another-occurrence', sourceOccurrenceId: 'visit-2' };
+  assert.deepEqual(distinctVerifiedSourceChoices([first, second, third]).map(item => item.id),
+    ['story', 'different-category', 'another-occurrence']);
+  assert.deepEqual(sceneSurfaceChoices([first, second, third], 'story').map(item => item.id),
+    ['story', 'another-occurrence']);
 });
 
 test('identical labels and origins never combine different category clips into one card', () => {

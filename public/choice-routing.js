@@ -61,6 +61,31 @@ export function sceneOwnsApproachChoice(scene, action) {
     item.sourceVerified === true && [item.id, item.sourceActionId].includes(id)));
 }
 
+// Collapse only evidence-identical observations across the same source,
+// route, cast and timestamp. Equal labels alone never prove duplication.
+export function distinctVerifiedSourceChoices(items = []) {
+  const seen = new Set();
+  return (Array.isArray(items) ? items : []).filter(item => {
+    if (item?.sourceVerified !== true) return false;
+    const origin = String(item.sourceActionId || item.observedActionId ||
+      item.actionOriginId || item.derivedFromVerifiedSegment || item.actionId || item.id || '').trim();
+    const start = Number(item.startTime), end = Number(item.endTime);
+    if (!origin || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return true;
+    const cast = [...new Set([...(item.participantTrackIds || []), ...(item.involvedCharacterIds || []),
+      item.subjectTrackId, item.partnerTrackId, item.primaryCharacterId]
+      .filter(Boolean).map(String))].sort();
+    const key = JSON.stringify([
+      origin, start, end, choiceSurfaceKey(item),
+      String(item.sourceGroupId || item.sourcePositionId || ''),
+      String(item.sourceOccurrenceId || item.positionOccurrenceId || item.occurrenceId || ''),
+      String(item.routeNamespace || ''), String(item.actionType || ''), cast
+    ]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function choiceSurfaceWindow(items, surface, timelineFloor = 0) {
   const forward = (items || []).filter(item => item.sourceVerified === true &&
     Number(item.endTime) > Number(timelineFloor) + 0.05)
@@ -69,20 +94,20 @@ export function choiceSurfaceWindow(items, surface, timelineFloor = 0) {
   const first = forward[0];
   if (!first || key(first) !== surface) return [];
   const boundary = forward.find(item => key(item) !== surface)?.startTime ?? Infinity;
-  return forward.filter(item => key(item) === surface && Number(item.startTime) < Number(boundary) &&
-    Number(item.endTime) <= Number(boundary) + 0.05);
+  return distinctVerifiedSourceChoices(forward.filter(item => key(item) === surface && Number(item.startTime) < Number(boundary) &&
+    Number(item.endTime) <= Number(boundary) + 0.05));
 }
 
 // A decision can jump to any verified clip in its bounded scene chapter.
 // Timeline order is the default playback path, not a requirement to watch
 // intervening footage before another source-backed choice becomes available.
 export function sceneSurfaceChoices(items, surface, { floor = 0, ceiling = Infinity, replay = false } = {}) {
-  return (items || []).filter(item => item?.sourceVerified === true &&
+  return distinctVerifiedSourceChoices((items || []).filter(item => item?.sourceVerified === true &&
     choiceSurfaceKey(item) === surface &&
     Number.isFinite(Number(item.startTime)) && Number.isFinite(Number(item.endTime)) &&
     Number(item.endTime) > Number(item.startTime) &&
     Number(item.startTime) < ceiling - 0.05 &&
     (replay || Number(item.endTime) > floor + 0.05))
-    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime)));
 }
 

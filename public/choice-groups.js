@@ -14,7 +14,11 @@ export function sourceDisplayLabel(group = {}, fallback = '', {
 } = {}) {
   const label = group.sourceVerified === true && text(group.positionLabel)
     ? text(group.positionLabel) : text(fallback);
-  const partner = text(partnerLabel);
+  const suppliedPartner = text(partnerLabel);
+  // Provider tracking aliases are not character names. Never append them to
+  // any verified source category label, regardless of the video genre.
+  const internalTrack = /^(?:karakter|character|partner|person|participant|kişi)[\s_-]+(?:[a-z]\d*|\d+)(?:[\s/]+(?:[a-z]\d*|\d+))*$/iu;
+  const partner = internalTrack.test(suppliedPartner) ? '' : suppliedPartner;
   return label && distinguishPartner === true && partner &&
     label !== partner && !label.endsWith(` · ${partner}`)
     ? `${label} · ${partner}` : label;
