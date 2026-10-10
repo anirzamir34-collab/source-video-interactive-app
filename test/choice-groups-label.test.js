@@ -13,5 +13,7 @@ test('verified provider position label is preserved instead of a canonical fallb
 test('partner suffix is added only when the caller explicitly needs disambiguation', () => {
   const group = { sourceVerified: true, positionLabel: 'Misyoner', partnerLabel: 'Partner A' };
   assert.equal(sourceDisplayLabel(group, 'Misyoner Pozisyonu'), 'Misyoner');
-  assert.equal(sourceDisplayLabel(group, 'Misyoner Pozisyonu', { distinguishPartner: true }), 'Misyoner · Partner A');
+  assert.equal(sourceDisplayLabel(group, 'Misyoner Pozisyonu', { distinguishPartner: true }), 'Misyoner');
+  assert.equal(sourceDisplayLabel({ ...group, partnerLabel: 'Meral' }, 'Misyoner Pozisyonu',
+    { distinguishPartner: true }), 'Misyoner · Meral');
 });
