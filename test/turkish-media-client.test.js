@@ -346,6 +346,17 @@ test('rapid scene skip waits for the dubbed MP3 seek to finish before playing th
   await settle();
   const audio = f.audios.findLast(value => value.src);
   assert.equal(audio.paused, false);
+  // Simulate a browser that starts another asynchronous decoder seek whenever
+  // the dub currentTime is assigned.
+  Object.defineProperty(audio, 'currentTime', {
+    get() { return this._currentTime; },
+    set(value) {
+      this.seekWrites.push(value);
+      this._currentTime = value;
+      this.seeking = true;
+      this.fire('seeking');
+    }
+  });
 
   // A real mobile MP3 decoder can still be seeking after the video seeked.
   f.video.seeking = true;
