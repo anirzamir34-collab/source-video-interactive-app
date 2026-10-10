@@ -1,6 +1,7 @@
 const DATABASE = 'videoquest-analysis-responses';
 const STORE = 'responses';
-const VERSION = 'exact-analysis-response-v1';
+const VERSION = 'exact-analysis-response-v2-source-evidence';
+const CHECKPOINT_VERSION = 'verified-chunk-v1';
 
 export async function analysisRequestKey({ revision, path, form, headers, crypto = globalThis.crypto }) {
   if (!revision || !crypto?.subtle) return null;
@@ -10,14 +11,32 @@ export async function analysisRequestKey({ revision, path, form, headers, crypto
   const fields = [];
   for (const [name, value] of form) fields.push([name, typeof value === 'string'
     ? value : { type: value.type, size: value.size, digest: await digest(await value.arrayBuffer()) }]);
-  // File names are upload labels, not evidence. Everything the model actually
-  // reads, the revision, and the account scope participate in the identity.
-  return digest(encode(JSON.stringify([VERSION, revision, path,
-    new Headers(headers).get('x-gemini-api-key') || 'server', fields])));
+  // API keys are *credentials*, not scene evidence. Identical images, dialogue,
+  // prompt and revision on this one browser must reuse verified results even
+  // after the user rotates an exhausted Gemini key. Never store the key.
+  return digest(encode(JSON.stringify([VERSION, revision, path, fields])));
+}
+
+export async function analysisCheckpointKey({ sheets, timestamps, duration, mode, crypto = globalThis.crypto } = {}) {
+  if (!crypto?.subtle || !Array.isArray(sheets) || !sheets.length ||
+      !Array.isArray(timestamps) || !Number.isFinite(Number(duration)) || !mode) return null;
+  const digest = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', value)))
+    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+  const proofs = [];
+  // Hash all actual storyboard image bytes, not just a filename, URL or
+  // claimed video duration. Re-selecting a different video cannot import
+  // another video's game even if its superficial file metadata matches.
+  for (const sheet of sheets) {
+    if (!(sheet instanceof Blob) || sheet.size === 0) return null;
+    proofs.push(await digest(await sheet.arrayBuffer()));
+  }
+  return digest(new TextEncoder().encode(JSON.stringify([
+    CHECKPOINT_VERSION, Number(duration), timestamps, proofs, mode
+  ])));
 }
 
 export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, now = Date.now,
-  ttlMs = 86400000, maxEntries = 64 } = {}) {
+  ttlMs = 86400000, maxEntries = 64, maxCheckpoints = 128 } = {}) {
   let connection;
   const pending = new Map();
   async function open() {
@@ -73,7 +92,8 @@ export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, 
             const request = store.getAll();
             request.onsuccess = () => {
               const rows = request.result.filter(row => row.key !== key);
-              const live = rows.filter(row => row.expiresAt > now()).sort((a, b) => a.createdAt - b.createdAt);
+              const live = rows.filter(row => !row.checkpoint && row.expiresAt > now())
+                .sort((a, b) => a.createdAt - b.createdAt);
               for (const row of rows) if (row.expiresAt <= now()) store.delete(row.key);
               while (live.length >= maxEntries) store.delete(live.shift().key);
               store.put({ key, result, createdAt: now(), expiresAt: now() + ttlMs });
@@ -85,6 +105,36 @@ export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, 
       pending.set(key, task);
       try { const result = await task; signal?.throwIfAborted(); return result; }
       finally { if (pending.get(key) === task) pending.delete(key); }
+    },
+    async readCheckpoint(prefix, chunkIndex) {
+      if (!prefix || !Number.isSafeInteger(chunkIndex) || chunkIndex < 0) return null;
+      const key = `checkpoint:${prefix}:${chunkIndex}`;
+      return transaction('readonly', (store, done) => {
+        const request = store.get(key);
+        request.onsuccess = () => {
+          const row = request.result;
+          done(row?.checkpoint && row.expiresAt > now() &&
+            row.result?.available === true && Array.isArray(row.result.actions)
+            ? structuredClone(row.result) : null);
+        };
+      }).catch(() => null);
+    },
+    async saveCheckpoint(prefix, chunkIndex, result) {
+      if (!prefix || !Number.isSafeInteger(chunkIndex) || chunkIndex < 0 ||
+          result?.available !== true || !Array.isArray(result.actions)) return false;
+      const key = `checkpoint:${prefix}:${chunkIndex}`;
+      return transaction('readwrite', store => {
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const rows = request.result;
+          for (const row of rows) if (row.expiresAt <= now()) store.delete(row.key);
+          const live = rows.filter(row => row.checkpoint && row.key !== key && row.expiresAt > now())
+            .sort((a, b) => a.createdAt - b.createdAt);
+          while (live.length >= maxCheckpoints) store.delete(live.shift().key);
+          store.put({ key, checkpoint: true, result: structuredClone(result),
+            createdAt: now(), expiresAt: now() + ttlMs });
+        };
+      }).then(() => true).catch(() => false);
     },
     async close() { if (connection) (await connection).close(); connection = null; }
   };
