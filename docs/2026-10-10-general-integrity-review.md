@@ -56,4 +56,26 @@ Açık cinsel eylemlere özel seçenek üretimi, hareket/pozisyon sekmeleri, öz
 
 Video URL ve API anahtarı girişleri, altyazı/dublaj kontrolleri ve güncel arayüz kaldırılmadı. Eski ses yamalarından taşınmayan bölümler yeni yayın kapsamında çözülmüş sayılmıyor.
 
-Bu dosya yayın öncesi teknik kayıt ve test raporudur. GitHub commit'i, Render build/servis sonucu ve yayın sonrası doğrulama son çalışma yanıtında ayrıca bildirilir.
+## Yayında gözlenen bağımlılıklar ve ek doğrulama
+
+Genel altyapı düzeltmeleri `c5f9299e0a952b738f2847c7a9b83da1d1f772c8` ile GitHub main'e kaydedildi.
+Render `dep-db50th49v7es738kukhg` yayını 10 Ekim 2026 10:10:52 UTC'de canlıya geçti.
+Çalışan servisin başlangıç logu aynı commit'i, çalışma kontrolü `ready: true` ve `errors: []` değerlerini doğruladı.
+Kabiliyet uç noktalarının yerel servis başlangıç kontrolleri HTTP 200 döndü; bu kontroller gerçek sağlayıcı erişimini doğrulamıyor.
+Backend ElevenLabs anahtarı ayarlı değil, tarayıcı anahtarı desteği mevcut; yapılandırma değiştirilmedi.
+
+Bu yayının npm ci logu iki mevcut bağımlılık uyarısı gösterdi. `package-lock.json` içinde yalnızca ilgili paketler uyumlu aralıklarında güncellendi:
+
+- `proxy-addr` 2.0.7 → 2.0.8: [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h).
+- `multer` 2.3.0 → 2.4.0: [GHSA-3pph-fpjx-jg34](https://github.com/advisories/GHSA-3pph-fpjx-jg34).
+
+Bu uyarılar uygulamaya saldırı yapıldığı anlamına gelmez. Yeni bağımlılıklar temiz `npm ci` ile kuruldu;
+MP3 modülü derlendi; tam test paketi yeniden **1.015/1.015** geçti; `npm audit` bildirilen açık sayısı **0** oldu.
+Gerçek yerel HTTP üzerinden oturum açma, diske multipart yükleme ve kontrollü yerel analiz sunucusuna iletme,
+bellek yüklemesinde yanlış alanı reddetme, sağlık/sayfa/modül sunumu tekrar doğrulandı. Bu testte sağlayıcı API çağrısı yapılmadı.
+
+Canlı URL'ye doğrudan HTTP kontrolü zaman aşımına uğradı; bulut tarayıcısı önce Render uyanma ekranını gösterdi,
+sonraki okuma tarayıcı URL politikası tarafından engellendi. Kısıtlama aşılmaya çalışılmadı.
+Bu nedenle yayın sonrası kullanıcı arayüzü/oynatma testi tamamlandı sayılmıyor; yayın durumu ve aktif commit Render API ve servis loglarıyla doğrulanıyor.
+
+Bağımlılık güncellemesinin son commit'i ve Render yayın sonucu son çalışma yanıtında ayrıca bildirilir.
