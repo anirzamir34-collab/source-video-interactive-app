@@ -146,17 +146,78 @@ test('native audio-only MP3 skips redundant lossless speech conversion and prese
     ffmpegPath: 'media', ffprobePath: 'probe', spawn: mocked.spawn
   });
   const result = await service.extractSource({ path: source, duration: 2 }, { directory });
-  assert.ok(result.originalPath.endsWith('.wav'));
-  assert.ok(result.sttPath.endsWith('.mp3'));
+  assert.equal(result.originalPath, source);
+  assert.equal(result.sttPath, source, 'one MP3 file serves both Scribe and source bed');
   assert.equal(result.duration, 2);
   assert.equal((await readFile(result.sttPath)).toString(), 'MP3-original-source');
-  assert.equal((await readFile(source)).toString(), 'MP3-original-source');
   const transcodes = mocked.calls.filter(item => item.binary === 'media' && item.args.at(-1) !== 'pipe:1');
-  assert.equal(transcodes.length, 1, 'only the lossless timeline bed may be derived');
-  assert.ok(!transcodes.some(item => item.args.includes('flac')));
-  await rm(path.dirname(result.sttPath), { recursive: true, force: true });
+  assert.equal(transcodes.length, 0, 'no full-length PCM WAV or FLAC is created for a validated native MP3');
+  assert.equal((await readdir(directory)).filter(name => name.endsWith('.wav')).length, 0);
   assert.equal((await readFile(source)).toString(), 'MP3-original-source',
-    'clearing a hard-linked temporary speech file never removes the leased upload source');
+    'original leased audio is never modified');
+});
+
+
+test('real encoder-delay MP3 is sample-aligned and mixed without an original WAV on disk',
+  { skip: !MEDIA_AVAILABLE || !fs.existsSync(FFPROBE) }, async t => {
+    const directory = await workspace(t);
+    const source = path.join(directory, 'upload.bin');
+    await execute(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+      'sine=frequency=225:duration=3:sample_rate=48000',
+      '-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3', '-y', source]);
+    const service = createAudioService({ ffmpegPath: FFMPEG, ffprobePath: FFPROBE });
+    const result = await service.extractSource({ path: source }, { directory });
+    assert.equal(result.originalPath, source);
+    assert.equal(result.sttPath, source);
+    assert.ok(result.duration >= 3 && result.duration <= 3.08);
+    const profiles = await service.inferSpeakerProfiles(result.originalPath, {
+      speakers: [{ speakerId: 'unverified-voice', gender: null }],
+      utterances: [0.15, 0.83, 1.51, 2.19].map((start, index) => ({
+        segmentId: `voice-${index}`, speakerId: 'unverified-voice',
+        sourceStart: start, sourceEnd: start + 0.6
+      }))
+    });
+    assert.equal(profiles['unverified-voice']?.gender, 'female',
+      'direct MP3 mode must not break existing source-voice verification');
+    const paths = await readdir(directory);
+    assert.ok(!paths.some(name => name.endsWith('.wav') || name.endsWith('.flac')),
+      'native MP3 source never persists a large lossless bed');
+    const rendered = await service.mixAudio({ sourceAudio: result.originalPath, dubSegments: [],
+      duration: result.duration, directory, format: 'mp3' });
+    assert.equal(rendered.mimeType, 'audio/mpeg');
+    assert.ok(Math.abs(rendered.duration - result.duration) <= 2 / SAMPLE_RATE);
+    assert.equal((await readFile(source)).subarray(0, 3).length, 3, 'source upload remains available');
+  });
+
+test('MP3 with a mismatched video timeline conservatively uses the lossless padded bed', async t => {
+  const directory = await workspace(t);
+  const source = path.join(directory, 'video-audio.bin');
+  await writeFile(source, 'MP3-input');
+  const mocked = fakeSpawn(async (binary, args, child) => {
+    if (binary === 'probe') {
+      const filename = args.at(-1);
+      const mp3 = filename === source || filename.endsWith('speech.mp3');
+      child.stdout.write(JSON.stringify({
+        streams: [{ codec_name: mp3 ? 'mp3' : 'pcm_f32le',
+          duration_ts: mp3 ? 96000 : 192000, time_base: '1/48000',
+          duration: mp3 ? '2' : '4', start_time: mp3 ? '0.023' : '0' }],
+        format: { format_name: mp3 ? 'mp3' : 'wav',
+          duration: mp3 ? '2.023' : '4', start_time: mp3 ? '0.023' : '0' }
+      }));
+      close(child);
+    } else if (args.at(-1) === 'pipe:1') {
+      child.stdout.write(Buffer.alloc(2 * SAMPLE_RATE * 4));
+      close(child);
+    } else {
+      await writeFile(args.at(-1), 'mock decoded WAV/FLAC'); close(child);
+    }
+  });
+  const service = createAudioService({ ffmpegPath: 'media', ffprobePath: 'probe', spawn: mocked.spawn });
+  const result = await service.extractSource({ path: source, duration: 2.023, timelineDuration: 4 }, { directory });
+  assert.ok(result.originalPath.endsWith('.wav'));
+  assert.notEqual(result.originalPath, source);
+  assert.ok(mocked.calls.some(row => row.binary === 'media' && row.args.includes('pcm_f32le')));
+  assert.equal(await readFile(source, 'utf8'), 'MP3-input');
 });
 
 test('failed extraction removes derived files without deleting the original input', async t => {
