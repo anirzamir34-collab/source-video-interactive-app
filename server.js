@@ -25,6 +25,7 @@ import { serializeReviewCandidates } from './public/classification-integrity.js'
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 import { geminiGenerationConfig } from './lib/gemini-generation-config.js';
+import { analysisModelCandidates, analysisTierFromRequest } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -51,7 +52,7 @@ const analysisRevision = crypto.createHash('sha256').update(JSON.stringify([
     'public/classification-integrity.js', 'public/analysis-recovery.js',
     'public/gemini-quota.js', 'public/model-json.js'].map(file =>
     fs.readFileSync(path.join(__dirname, file), 'utf8')),
-  ANALYSIS_MODEL, geminiGenerationConfig(ANALYSIS_MODEL)
+  ANALYSIS_MODEL, analysisModelCandidates('economy'), geminiGenerationConfig(ANALYSIS_MODEL)
 ])).digest('hex');
 const EXTERNAL_ANALYSIS_URL = (process.env.EXTERNAL_ANALYSIS_URL || 'https://source-video-analysis.onrender.com').replace(/\/$/, '');
 
@@ -315,7 +316,9 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const dialogueContext = String(req.body?.dialogueContext || '[]');
   const dialogueSpeakerContext = String(req.body?.dialogueSpeakerContext || '[]').slice(0, 16000);
   const sensoryAudioContext = String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
-  const qualityMode = String(req.body?.qualityMode || 'ultra');
+  // Detailed storyboard coverage is fixed; only the selected model changes.
+  const qualityMode = 'ultra';
+  const analysisTier = analysisTierFromRequest(req.body?.analysisTier);
   const reviewMode = String(req.body?.reviewMode || '') === '1';
   let reviewCandidates;
   try { reviewCandidates = serializeReviewCandidates(req.body?.reviewCandidates || '[]'); }
@@ -702,43 +705,59 @@ Rules:
           }
         }))
       ];
-      const model = ANALYSIS_MODEL;
-      const generationConfig = geminiGenerationConfig(model);
-      const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
-      const requestUsage = emptyGeminiUsage();
-      const startedAt = Date.now();
-      let attempts = 0;
-      let outcome = 'failed';
-      try {
-        const cached = await storyboardRequestCache.run(key, () => generateStoryboardWithRetry(async () => {
-          attempts++;
-          const response = await ai.models.generateContent({
-            model,
-            contents: [{ role: "user", parts }],
-            config: generationConfig
-          });
-          addGeminiUsage(analysisUsage, response?.usageMetadata);
-          addGeminiUsage(requestUsage, response?.usageMetadata);
-          return response;
-        }, {
-          onRetry: (reason, attempt, error) => console.warn('[gemini-storyboard-retry]', JSON.stringify({
-            chunkIndex, retryLabel, attempt, reason,
-            status: Number(error?.status ?? error?.statusCode ?? error?.response?.status) || null,
-            code: typeof error?.code === 'number' ? error.code : String(error?.code || '').slice(0, 64),
-            name: String(error?.name || '').slice(0, 64)
-          }))
-        }));
-        outcome = cached.outcome;
-        if (outcome !== 'completed') {
-          analysisUsage.cacheHits = (analysisUsage.cacheHits || 0) + 1;
-          requestUsage.cacheHits = 1;
+      const candidates = analysisModelCandidates(analysisTier,
+        { ...process.env, GEMINI_ANALYSIS_MODEL: ANALYSIS_MODEL });
+      for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
+        const model = candidates[modelIndex];
+        const generationConfig = geminiGenerationConfig(model);
+        const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
+        const requestUsage = emptyGeminiUsage();
+        const startedAt = Date.now();
+        let attempts = 0;
+        let outcome = 'failed';
+        try {
+          const cached = await storyboardRequestCache.run(key, () => generateStoryboardWithRetry(async () => {
+            attempts++;
+            const response = await ai.models.generateContent({
+              model,
+              contents: [{ role: "user", parts }],
+              config: generationConfig
+            });
+            addGeminiUsage(analysisUsage, response?.usageMetadata);
+            addGeminiUsage(requestUsage, response?.usageMetadata);
+            return response;
+          }, {
+            onRetry: (reason, attempt, error) => console.warn('[gemini-storyboard-retry]', JSON.stringify({
+              chunkIndex, retryLabel, attempt, reason,
+              status: Number(error?.status ?? error?.statusCode ?? error?.response?.status) || null,
+              code: typeof error?.code === 'number' ? error.code : String(error?.code || '').slice(0, 64),
+              name: String(error?.name || '').slice(0, 64)
+            }))
+          }));
+          outcome = cached.outcome;
+          if (outcome !== 'completed') {
+            analysisUsage.cacheHits = (analysisUsage.cacheHits || 0) + 1;
+            requestUsage.cacheHits = 1;
+          }
+          return cached.value;
+        } catch (error) {
+          // Legacy 2.5 models are access-restricted for some projects. Retry
+          // once with current Lite ONLY on true model unavailability: never
+          // substitute a paid stronger model or retry exhausted credits.
+          if (storyboardFailureReason(error) !== 'GEMINI_MODEL_UNAVAILABLE' ||
+              modelIndex + 1 >= candidates.length) throw error;
+          console.warn('[gemini-economy-model-fallback]', JSON.stringify({
+            chunkIndex, from: model, to: candidates[modelIndex + 1],
+            reason: 'MODEL_UNAVAILABLE'
+          }));
+        } finally {
+          console.info('[gemini-request-usage]', JSON.stringify({ stage: reviewMode ? 'review' : 'analysis',
+            chunkIndex, outcome, model, analysisTier,
+            thinkingLevel: generationConfig.thinkingConfig?.thinkingLevel || 'default',
+            durationMs: Date.now() - startedAt, attempts, sheetCount: requestFiles.length, ...requestUsage }));
         }
-        return cached.value;
-      } finally {
-        console.info('[gemini-request-usage]', JSON.stringify({ stage: reviewMode ? 'review' : 'analysis',
-          chunkIndex, outcome, model, thinkingLevel: generationConfig.thinkingConfig?.thinkingLevel || 'default',
-          durationMs: Date.now() - startedAt, attempts, sheetCount: requestFiles.length, ...requestUsage }));
       }
+      throw Object.assign(new Error('No available economy analysis model.'), { code: 'GEMINI_MODEL_UNAVAILABLE' });
     };
 
     let parsed;

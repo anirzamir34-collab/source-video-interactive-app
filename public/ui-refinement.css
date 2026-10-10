@@ -126,3 +126,24 @@ body .player-card .tab.active { color: #ebf8ec; }
   body .provider-settings .api-key-setting__row { display: flex; flex-wrap: wrap; }
   body .provider-settings .api-key-setting__row input { min-width: 100%; }
 }
+
+/* One explicit quality-independent model switch: detailed visual sampling in
+   both modes, lower-cost inference unless the user requests Deep Analysis. */
+body .analysis-deep-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  max-width: min(100%, 230px); padding: 8px 10px;
+  border: 1px solid #405449; border-radius: 9px;
+  background: #16231f; color: #e6f1e8;
+  font-size: 11px; font-weight: 650; line-height: 1.3;
+  cursor: pointer;
+}
+body .analysis-deep-toggle input {
+  flex: 0 0 auto; width: 17px; height: 17px; margin: 0;
+  accent-color: #78d8ae; cursor: pointer;
+}
+body .analysis-deep-toggle:has(input:checked) {
+  border-color: #78d8ae; background: #1a3129;
+}
+@media (max-width: 600px) {
+  body .analysis-deep-toggle { max-width: 58%; font-size: 10px; padding: 6px 8px; }
+}

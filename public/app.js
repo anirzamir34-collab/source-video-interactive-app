@@ -241,7 +241,7 @@ const els = {
   videoInput: $('videoInput'),
   fileMeta: $('fileMeta'),
   analyzeBtn: $('analyzeBtn'),
-  qualityMode: $('qualityMode'),
+  deepAnalysisMode: $('deepAnalysisMode'),
   dubQualityMode: $('dubQualityMode'),
   dubbingProvider: $('dubbingProvider'),
   subtitleTrack: $('subtitleTrack'),
@@ -824,17 +824,15 @@ function selectedAnalysisModes() {
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
     dubbingProvider: 'classic',
-    quality: String(els.qualityMode?.value || 'ultra')
+    quality: 'ultra',
+    analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy'
   };
 }
 
 function updateAnalysisModesUI() {
   const modes = selectedAnalysisModes();
-  const qualityNames = {
-    fast: 'Hızlı',
-    balanced: 'Dengeli',
-    ultra: 'Ultra'
-  };
+  const analysisModelLabel = modes.analysisTier === 'deep'
+    ? 'Derin Analiz · güçlü Gemini' : 'Ayrıntılı analiz · ekonomik Gemini';
 
   const active = [];
   if (modes.motion) active.push('hareket ve seçim');
@@ -843,7 +841,7 @@ function updateAnalysisModesUI() {
 
   if (els.selectedModesSummary) {
     els.selectedModesSummary.textContent = active.length
-      ? `${qualityNames[modes.quality]} · ${active.join(' + ')}`
+      ? `${analysisModelLabel} · ${active.join(' + ')}`
       : 'En az bir analiz modu seçmelisin.';
   }
 
@@ -861,7 +859,7 @@ function updateAnalyzeAvailability() {
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
-  [els.qualityMode, els.dubQualityMode, els.dubbingProvider, els.motionMode, els.subtitleMode, els.dubMode]
+  [els.deepAnalysisMode, els.dubQualityMode, els.dubbingProvider, els.motionMode, els.subtitleMode, els.dubMode]
     .forEach(control => { if (control) control.disabled = busy; });
   [els.elevenLabsApiKeyInput, els.saveElevenLabsApiKeyBtn, els.testElevenLabsApiKeyBtn,
     els.clearElevenLabsApiKeyBtn, els.geminiApiKeyInput, els.saveGeminiApiKeyBtn,
@@ -874,7 +872,7 @@ function updateAnalyzeAvailability() {
 }
 
 [
-  els.qualityMode,
+  els.deepAnalysisMode,
   els.motionMode,
   els.subtitleMode,
   els.dubMode,
@@ -1631,6 +1629,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     ].join('|');
     analysisModeKey = JSON.stringify({
       pipelineVersion: 'canonical-source-context-4',
+      analysisTier: modes.analysisTier,
       chunks: analysisPlan.chunks,
       motion: modes.motion,
       quality: modes.quality,
@@ -1731,7 +1730,8 @@ els.analyzeBtn.addEventListener('click', async () => {
       Number(event.endTime) >= chunkStart && Number(event.startTime) <= chunkEnd
     );
     form.append('sensoryAudioContext', JSON.stringify(chunkSensoryAudio));
-    form.append('qualityMode', modes.quality);
+    form.append('qualityMode', 'ultra');
+    form.append('analysisTier', modes.analysisTier);
       form.append('protagonistProfile', contextSnapshot.protagonistProfile);
       form.append('storyContextMemory', JSON.stringify(contextSnapshot.storyContextMemory));
 
@@ -1745,9 +1745,9 @@ els.analyzeBtn.addEventListener('click', async () => {
       };
 
       els.analysisTitle.textContent =
-        `Derin analiz: bölüm ${chunkIndex + 1}/${chunkCount}`;
+        `Ayrıntılı sahne analizi: bölüm ${chunkIndex + 1}/${chunkCount}`;
 
-      els.analysisState.textContent = 'DEEP_CHUNK_ANALYSIS';
+      els.analysisState.textContent = 'DETAILED_CHUNK_ANALYSIS';
 
       els.analysisOutput.textContent =
         `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye ayrıntılı inceleniyor...`;
@@ -2173,7 +2173,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   els.analysisState.textContent = body.partial ? 'PARTIAL_TIMELINE_READY' : 'TIMELINE_READY';
   els.analysisTitle.textContent = `${body.partial ? 'Kısmi analiz hazır · ' : ''}${normalized.actions.length} doğrulanmış aksiyon`;
   els.analysisOutput.textContent = [
-    body.partial ? 'Analiz kısmen hazır. Okunamayan aralıklarda seçenek üretilmedi.' : 'Derin analiz tamamlandı.',
+    body.partial ? 'Analiz kısmen hazır. Okunamayan aralıklarda seçenek üretilmedi.' : 'Ayrıntılı analiz tamamlandı.',
     `${normalized.actions.length} doğrulanmış aksiyon hazır.`,
     `${Number(body.chunkCount || 0)}/${Number(body.expectedChunkCount || chunkCount)} analiz bölümü başarıyla birleştirildi.`,
     ...(body.analysisGaps || []).map(gap => `Bölüm ${gap.chunkIndex + 1}: ${gap.startTime.toFixed(1)}–${gap.endTime.toFixed(1)} sn doğrulanamadı.`),
