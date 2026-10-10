@@ -9,6 +9,7 @@ import { serializeReviewCandidates } from '../public/classification-integrity.js
 import { geminiQuotaFailure } from '../public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
 import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
+import { analysisModelCandidates, analysisTierFromRequest } from '../lib/analysis-model-routing.js';
 
 for (const response of [
   { text: 'I cannot fulfill this request.' },
@@ -133,11 +134,12 @@ test('the live server handler reports refused chapters without retrying or split
       resolveGeminiApiKey: () => 'test-only', emptyGeminiUsage: () => ({ requests: 0 }),
       addGeminiUsage: usage => { usage.requests += 1; },
       storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
-      geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig, storyboardRequestCache: createAnalysisRequestCache(),
+      geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,
+      analysisModelCandidates, analysisTierFromRequest, storyboardRequestCache: createAnalysisRequestCache(),
       GEMINI_DEFAULT_MODEL: 'gemini-test-model', ANALYSIS_MODEL: 'gemini-3.1-pro-preview',
       process: { env: {} }, console: { warn() {}, error() {}, info() {} }
     });
-    const req = { body: { chunkIndex, chunkCount: 12, chunkStart: chunkIndex * 12,
+    const req = { body: { chunkIndex, chunkCount: 12, analysisTier: 'deep', chunkStart: chunkIndex * 12,
       chunkEnd: (chunkIndex + 1) * 12, duration: 144, timestamps: '[108,109,110,111]' },
       files: [0, 1].map(() => ({ buffer: Buffer.from('test image'), mimetype: 'image/jpeg' })) };
     const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
