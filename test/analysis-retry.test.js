@@ -131,7 +131,7 @@ test('exhausted Gemini credits preserve twelve cached chapters as a partial play
   assert.equal(result.body.actions.length, 12);
   assert.ok(result.body.actions.every(action => action.sourceVerified));
   assert.deepEqual(result.chunkResults.slice(0, 12), preserved);
-  assert.deepEqual(attempted, [12, 13], 'stop provider requests after the first exhausted batch');
+  assert.deepEqual(attempted, [12], 'stop provider requests immediately after confirmed credit exhaustion');
   assert.equal(reviewAndHardenAnalysis(result.body).integrity.fatal, false);
 });
 
