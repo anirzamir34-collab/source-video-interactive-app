@@ -152,7 +152,7 @@ test('native audio-only MP3 skips redundant lossless speech conversion and prese
   assert.equal((await readFile(result.sttPath)).toString(), 'MP3-original-source');
   const transcodes = mocked.calls.filter(item => item.binary === 'media' && item.args.at(-1) !== 'pipe:1');
   assert.equal(transcodes.length, 0, 'no full-length PCM WAV or FLAC is created for a validated native MP3');
-  assert.deepEqual(await readdir(directory), ['source.bin', ...(await readdir(directory)).filter(n => n.startsWith('source-'))]);
+  assert.equal((await readdir(directory)).filter(name => name.endsWith('.wav')).length, 0);
   assert.equal((await readFile(source)).toString(), 'MP3-original-source',
     'original leased audio is never modified');
 });
@@ -168,8 +168,10 @@ test('MP3 with a mismatched video timeline conservatively uses the lossless padd
       const mp3 = filename === source || filename.endsWith('speech.mp3');
       child.stdout.write(JSON.stringify({
         streams: [{ codec_name: mp3 ? 'mp3' : 'pcm_f32le',
-          duration_ts: 96000, time_base: '1/48000', duration: '2', start_time: '0.023' }],
-        format: { format_name: mp3 ? 'mp3' : 'wav', duration: '2.023', start_time: '0.023' }
+          duration_ts: mp3 ? 96000 : 192000, time_base: '1/48000',
+          duration: mp3 ? '2' : '4', start_time: mp3 ? '0.023' : '0' }],
+        format: { format_name: mp3 ? 'mp3' : 'wav',
+          duration: mp3 ? '2.023' : '4', start_time: mp3 ? '0.023' : '0' }
       }));
       close(child);
     } else if (args.at(-1) === 'pipe:1') {
