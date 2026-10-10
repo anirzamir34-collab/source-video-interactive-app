@@ -160,15 +160,19 @@ const serverResponse = () => ({ statusCode: 200, status(code) { this.statusCode 
 test('a timed-out storyboard request stops within the explicit provider budget without split or client retries', async () => {
   for (const name of ['AbortError', 'TimeoutError']) {
     let calls = 0;
+    const observed = [];
     const handler = serverHandler(async request => {
       calls++;
-      assert.equal(request.config.httpOptions.timeout, 150000);
-      assert.equal(request.config.httpOptions.retryOptions.attempts, 1);
-      assert.equal(request.config.thinkingConfig.thinkingLevel, 'low');
+      observed.push({ model: request.model,
+        timeout: request.config.httpOptions.timeout,
+        retries: request.config.httpOptions.retryOptions.attempts,
+        thinking: request.config.thinkingConfig?.thinkingLevel });
       throw new DOMException('This operation was aborted', name);
     });
     const response = serverResponse(); await handler(serverRequest(), response);
-    assert.equal(calls, 2);
+    assert.equal(calls, 2, JSON.stringify(observed));
+    assert.deepEqual(observed, Array(2).fill({ model: 'gemini-3.1-pro-preview',
+      timeout: 150000, retries: 1, thinking: 'low' }));
     assert.equal(response.statusCode, 503);
     assert.equal(response.body.reason, 'GEMINI_TEMPORARILY_UNAVAILABLE');
     assert.equal(response.body.retryable, false);
