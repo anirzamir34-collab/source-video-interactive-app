@@ -34,7 +34,45 @@ export function analysisGapBridgeTarget(gaps, currentTime, routeTimes, duration)
   return crossesGap ? target : null;
 }
 
+const pendingMediaSeeks = new WeakMap();
+const pendingMediaPlays = new WeakMap();
+
+// play() may remain pending indefinitely while buffering. Bound that wait and
+// require actual media readiness; a stale promise must never resume an old UI.
+export function playMedia(video, { signal, timeoutMs = 12000 } = {}) {
+  pendingMediaPlays.get(video)?.();
+  return new Promise((resolve, reject) => {
+    let timer, poll, settled = false, started = false;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      if (error && error.name !== 'AbortError' && pendingMediaPlays.get(video) === aborted) video.pause?.();
+      clearTimeout(timer); clearInterval(poll);
+      video.removeEventListener('playing', playing);
+      video.removeEventListener('error', failed);
+      signal?.removeEventListener('abort', aborted);
+      if (pendingMediaPlays.get(video) === aborted) pendingMediaPlays.delete(video);
+      error ? reject(error) : resolve();
+    };
+    const ready = () => { if (started && !video.paused && !video.seeking && video.readyState >= 2) finish(); };
+    const playing = () => { started = true; ready(); };
+    const failed = () => finish(new Error('Video oynatılamadı. Yeniden deneyebilirsin.'));
+    const aborted = () => finish(new DOMException('Oynatma iptal edildi.', 'AbortError'));
+    if (signal?.aborted) return aborted();
+    pendingMediaPlays.set(video, aborted);
+    signal?.addEventListener('abort', aborted, { once: true });
+    video.addEventListener('playing', playing);
+    video.addEventListener('error', failed);
+    timer = setTimeout(() => finish(new Error('Video yüklenmesi zaman aşımına uğradı. Devam etmek için yeniden dene.')), timeoutMs);
+    poll = setInterval(ready, 100);
+    try { Promise.resolve(video.play()).then(playing, finish); }
+    catch (error) { finish(error); }
+  });
+}
+
 export function seekMediaTo(video, requestedTime, { signal, timeoutMs = 8000 } = {}) {
+  pendingMediaPlays.get(video)?.();
+  pendingMediaSeeks.get(video)?.();
   const target = sceneExitTime(requestedTime, video.duration);
   return new Promise((resolve, reject) => {
     let timer;
@@ -48,6 +86,7 @@ export function seekMediaTo(video, requestedTime, { signal, timeoutMs = 8000 } =
       video.removeEventListener('canplay', onSeeked);
       video.removeEventListener('error', onError);
       signal?.removeEventListener('abort', onAbort);
+      if (pendingMediaSeeks.get(video) === onAbort) pendingMediaSeeks.delete(video);
     };
     const finish = (error) => {
       if (settled) return;
@@ -62,6 +101,7 @@ export function seekMediaTo(video, requestedTime, { signal, timeoutMs = 8000 } =
     const onError = () => finish(new Error('Video konumu yüklenemedi. Tekrar deneyebilirsin.'));
     const onAbort = () => finish(new DOMException('Geçiş iptal edildi.', 'AbortError'));
     if (signal?.aborted) return onAbort();
+    pendingMediaSeeks.set(video, onAbort);
     if (atTarget()) return finish();
     // Listen first, including for synchronous/same-frame seek completion.
     video.addEventListener('seeked', onSeeked);

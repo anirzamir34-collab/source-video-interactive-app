@@ -7,6 +7,9 @@ const storyTypes = new Set(['dialogue', 'story', 'scene_transition', 'camera_tra
 export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   if (action.sourceVerified !== true) return 'unverified';
   const type = text(action.actionType);
+  // A verified dialogue range keeps its own category even when a broad parent
+  // carries unrelated outcome metadata. Speech is not a performed event.
+  if (storyTypes.has(type)) return 'story';
   if (panelFamily ||
       ['partner_transition', 'outcome', 'aftermath'].includes(type) ||
       ['climax', 'aftermath'].includes(text(action.outcomeType))) return 'panel';

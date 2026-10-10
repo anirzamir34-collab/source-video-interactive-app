@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { bindActionCharacter, verifiedCharacterName } from '../public/character-identity.js';
+import { bindActionCharacter, canonicalizeActionTrackIds, verifiedCharacterName } from '../public/character-identity.js';
 import { mergeStoryContexts, storyChoiceLabelForAction } from '../public/story-engine.js';
 import { mergeSecondPassReview } from '../public/engine-hardening.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from '../public/protagonist-ownership.js';
@@ -12,6 +12,19 @@ const named = (id, participantTrackId, displayName) => ({
   evidence: `Diyalogda kendisini ${displayName} olarak tanıtıyor.`
 });
 const cast = { characters: [named('DANNY', 'MAIN_MALE', 'Danny'), named('MERAL', 'PARTNER_A', 'Meral'), named('DENIZ', 'PARTNER_B', 'Deniz')] };
+
+test('all action identity references use the same unique registry track', () => {
+  const source = { subjectTrackId: 'DANNY', primaryCharacterId: 'MERAL', partnerTrackId: 'MERAL',
+    involvedCharacterIds: ['DANNY', 'MERAL', 'PARTNER_A'], participantTrackIds: ['DANNY', 'MERAL'] };
+  const result = canonicalizeActionTrackIds(source, cast);
+  assert.equal(result.subjectTrackId, 'MAIN_MALE');
+  assert.equal(result.primaryCharacterId, 'PARTNER_A');
+  assert.equal(result.partnerTrackId, 'PARTNER_A');
+  assert.deepEqual(result.involvedCharacterIds, ['MAIN_MALE', 'PARTNER_A']);
+  assert.equal(source.primaryCharacterId, 'MERAL');
+  assert.equal(canonicalizeActionTrackIds(source, { characters: [{ ...cast.characters[1], identityConflict: true }] })
+    .primaryCharacterId, 'MERAL');
+});
 cast.relationships = [{ from: 'DANNY', to: 'MERAL', relation: 'eşi', evidenceLevel: 'fact', confidence: 0.96,
   evidence: 'Diyalogda Danny, Meral’i eşi olarak tanıtıyor.' }];
 

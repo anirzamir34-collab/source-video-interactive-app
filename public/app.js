@@ -53,7 +53,7 @@ import {
   verifiedAdultPositionFamily,
   verifiedPartnerTransition
 } from './adult-gameplay.js';
-import { analysisGapBridgeTarget, hasRemainingVideo, isCompleteChunkAnalysis, sceneExitTime, seekMediaTo } from './playback-logic.js';
+import { analysisGapBridgeTarget, hasRemainingVideo, isCompleteChunkAnalysis, sceneExitTime, seekMediaTo, playMedia } from './playback-logic.js';
 import {
   ANALYSIS_SCHEMA_VERSION,
   ENGINE_VERSION,
@@ -5920,8 +5920,9 @@ async function resumeAnalysisGap(target) {
   const stop = state.stopListener;
   els.video.addEventListener('timeupdate', stop);
   try {
-    await els.video.play();
-  } catch {
+    await playMedia(els.video, { signal: state.navigationSeekController?.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
     if (generation !== state.playbackGeneration || state.stopListener !== stop) return;
     els.video.removeEventListener('timeupdate', stop);
     state.stopListener = null;
@@ -6073,8 +6074,9 @@ async function resumeSourceVideo() {
   state.activeAction = null;
   els.choices.classList.add('hidden');
   setGameState('SEGMENT_PLAYING');
-  try { await els.video.play(); }
-  catch {
+  try { await playMedia(els.video, { signal: state.navigationSeekController?.signal }); }
+  catch (error) {
+    if (error?.name === 'AbortError') return;
     if (generation !== state.playbackGeneration) return;
     setGameState('DECISION_PENDING');
     showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.', resumeSourceVideo, 'Videoya devam et');
@@ -6213,8 +6215,9 @@ async function resumeActionPlayback(action) {
   const generation = state.playbackGeneration;
   els.choices.classList.add('hidden');
   setGameState('SEGMENT_PLAYING');
-  try { await els.video.play(); }
-  catch {
+  try { await playMedia(els.video, { signal: state.navigationSeekController?.signal }); }
+  catch (error) {
+    if (error?.name === 'AbortError') return;
     if (state.activeAction !== action || generation !== state.playbackGeneration) return;
     setGameState('DECISION_PENDING');
     showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.',

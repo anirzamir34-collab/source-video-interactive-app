@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { canvasBlob, hasRemainingVideo, analysisGapBridgeTarget, isCompleteChunkAnalysis, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import { canvasBlob, hasRemainingVideo, analysisGapBridgeTarget, isCompleteChunkAnalysis, sceneExitTime, seekMediaTo, playMedia } from '../public/playback-logic.js';
 
 test('scene exit preserves adjacent footage and only actual video end is terminal', () => {
   assert.equal(sceneExitTime(24, 100), 24);
@@ -25,6 +25,19 @@ class TestMedia extends EventTarget {
     if (this.mode === 'error') this.dispatchEvent(new Event('error'));
   }
 }
+
+test('pending browser playback times out and a new seek cancels old play ownership', async () => {
+  const video = new TestMedia();
+  video.paused = true;
+  video.play = () => new Promise(() => {});
+  await assert.rejects(playMedia(video, { timeoutMs: 5 }), /zaman aşımına/);
+  const pending = playMedia(video, { timeoutMs: 100 });
+  const cancelled = assert.rejects(pending, { name: 'AbortError' });
+  await seekMediaTo(video, 30);
+  await cancelled;
+  video.play = async () => { video.paused = false; };
+  await playMedia(video, { timeoutMs: 20 });
+});
 
 test('seek listener catches immediate events and repeated same-time navigation', async () => {
   const video = new TestMedia();
@@ -55,6 +68,18 @@ test('superseded seek is cancelled and cannot settle the new navigation', async 
   await assert.rejects(oldSeek, { name: 'AbortError' });
   video.mode = 'sync';
   assert.equal(await seekMediaTo(video, 50, { timeoutMs: 20 }), 50);
+});
+
+test('the media element supersedes an older seek even across independent controllers', async () => {
+  const video = new TestMedia();
+  video.mode = 'stalled';
+  const oldSeek = seekMediaTo(video, 10, { timeoutMs: 100 });
+  const cancelled = assert.rejects(oldSeek, { name: 'AbortError' });
+  video.mode = 'sync';
+  assert.equal(await seekMediaTo(video, 60, { timeoutMs: 20 }), 60);
+  await cancelled;
+  video.dispatchEvent(new Event('seeked'));
+  assert.equal(video.currentTime, 60);
 });
 
 test('same-time seek waits for decoded image data, including the first frame', async () => {

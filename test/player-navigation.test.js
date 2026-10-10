@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
 import { selectDiverseStoryActions } from '../public/story-engine.js';
 import { conversationEnd } from '../public/conversation-timing.js';
-import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo, playMedia } from '../public/playback-logic.js';
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
@@ -66,7 +66,7 @@ function fixture() {
   };
   const els = new Proxy({ video: new Media() }, { get(target, key) { return target[key] ||= new Element(); } });
   const scope = vm.createContext({ ...choiceRouting, state, els, AbortController, DOMException,
-    analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo,
+    analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo, playMedia,
     mediaClient: { conversationEndAt: (time, rows, duration) => conversationEnd(time, rows, [], { duration }) },
     setTimeout, clearTimeout,
     guardPlayable: () => ({ allowed: true }),

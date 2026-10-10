@@ -91,6 +91,7 @@ export function canonicalizeActionTrackIds(action, context = {}) {
     for (const id of [character.id, character.participantTrackId, ...(character.characterIds || [])]) {
       const key = text(id);
       if (!key) continue;
+      if (character.identityConflict) { aliases.set(key, null); continue; }
       if (aliases.has(key) && aliases.get(key) !== track) aliases.set(key, null);
       else if (!aliases.has(key)) aliases.set(key, track);
     }
@@ -98,7 +99,10 @@ export function canonicalizeActionTrackIds(action, context = {}) {
   const canonical = id => aliases.get(text(id)) || text(id);
   return { ...action,
     subjectTrackId: canonical(action.subjectTrackId),
+    primaryCharacterId: canonical(action.primaryCharacterId),
     partnerTrackId: canonical(action.partnerTrackId),
+    involvedCharacterIds: Array.isArray(action.involvedCharacterIds)
+      ? [...new Set(action.involvedCharacterIds.map(canonical))] : action.involvedCharacterIds,
     participantTrackIds: Array.isArray(action.participantTrackIds)
       ? action.participantTrackIds.map(canonical) : action.participantTrackIds
   };
@@ -139,6 +143,7 @@ function participantLabel(character) {
 }
 
 export function bindActionCharacter(action, context = {}) {
+  action = canonicalizeActionTrackIds(action, context);
   const characters = Array.isArray(context.characters) ? context.characters : [];
   const lookup = id => characterLookup(characters, id);
   const declared = [...new Set([...(action.involvedCharacterIds || []), ...(action.participantTrackIds || [])].map(text).filter(Boolean))];

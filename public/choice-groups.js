@@ -53,7 +53,13 @@ export function groupSourceChoiceCards(clips, {
       const identity = JSON.stringify([
         String(clip.id), String(clip.sourcePositionId || clip.sourceGroupId || ''),
         String(clip.sourceOccurrenceId || clip.positionOccurrenceId || clip.occurrenceId || ''),
-        range.startTime, range.endTime
+        range.startTime, range.endTime,
+        choiceSurfaceKey(clip), text(clip.adultSceneId), text(clip.routeNamespace),
+        text(clip.subjectTrackId), text(clip.partnerTrackId), text(clip.primaryCharacterId),
+        [...new Set([...(clip.participantTrackIds || []), ...(clip.involvedCharacterIds || [])].map(text))].sort(),
+        text(clip.actionType), text(clip.movementType),
+        text(clip.sourceActionId || clip.observedActionId || clip.actionOriginId || clip.derivedFromVerifiedSegment),
+        clip.startTime ?? null, clip.endTime ?? null
       ]);
       if (exactRecords.has(identity)) return false;
       exactRecords.add(identity);
