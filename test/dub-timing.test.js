@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dubEndLimit, dubTimingGroups, planDubWindows, validDubWindow } from '../lib/turkish-media/timing.js';
+import { dubEndLimit, dubTimingGroups, planDubWindows, validDubWindow, dubTimingDiagnostics } from '../lib/turkish-media/timing.js';
 
 test('dub slack stops at the next speech, overlapping speech, audio event and video end', () => {
   const turn = { segmentId: 'a', sourceStart: 1, sourceEnd: 2 };
@@ -48,4 +48,22 @@ test('phrase budgets stay positive, ordered and inside their source window even 
     }
     assert.ok(end <= 8.1);
   }
+});
+
+
+test('dub timing diagnostics isolate impossible tempo and overlapping intervals without changing source data', () => {
+  const inputs = [
+    { segmentId: 'one', start: 1, end: 7, tempo: 1.1 },
+    { segmentId: 'two', start: 2, end: 3, tempo: 78.5267 },
+    { segmentId: 'three', start: 4, end: 5, tempo: 2.5 },
+    { segmentId: 'next-scene', start: 12, end: 16, tempo: 1 }
+  ];
+  const copy = structuredClone(inputs);
+  const quality = dubTimingDiagnostics(inputs);
+  assert.equal(quality.extremeTempoCount, 2);
+  assert.deepEqual(quality.extremeTempoSegments.map(row => row.segmentId), ['two', 'three']);
+  assert.equal(quality.extremeTempoSegments[0].tempo, 78.53);
+  assert.equal(quality.overlappingDubSegmentCount, 2);
+  assert.deepEqual(quality.overlappingDubSegments.map(row => row.secondId), ['two', 'three']);
+  assert.deepEqual(inputs, copy);
 });

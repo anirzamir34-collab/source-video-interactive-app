@@ -216,6 +216,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
 
   function canPlayAudio() {
     return dubEnabled && audio && !video.paused && !video.seeking && !video.ended &&
+      !audio.seeking && (audio.readyState === undefined || audio.readyState >= 3) &&
       !waiting && (video.readyState === undefined || video.readyState >= 3) && !playbackFailed;
   }
 
@@ -235,7 +236,9 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const duration = Number(audio.duration || manifest?.assets?.mix?.duration);
     const atEnd = Number.isFinite(duration) && duration > 0 && target >= duration - 0.015;
     try {
-      if (needsSeek || Math.abs((Number(audio.currentTime) || 0) - target) > 0.25) {
+      // An in-flight MP3 seek must settle before attempting another seek or play.
+      // Otherwise the decoder can briefly replay samples from the old scene.
+      if (!audio.seeking && (needsSeek || Math.abs((Number(audio.currentTime) || 0) - target) > 0.25)) {
         audio.currentTime = Number.isFinite(duration) && duration > 0 ? Math.min(target, duration) : target;
         needsSeek = false;
       }
@@ -354,8 +357,11 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       if (audioBlob) objectUrl = urlImpl.createObjectURL(audioBlob);
       selectedAudio.src = objectUrl || safe.assets.mix.url;
       selectedAudio.preload = 'auto';
-      for (const event of ['loadedmetadata', 'canplay']) selectedAudio.addEventListener?.(event, () => {
+      for (const event of ['loadedmetadata', 'canplay', 'seeked']) selectedAudio.addEventListener?.(event, () => {
         if (current(owner) && selectedAudio === audio) sync();
+      });
+      selectedAudio.addEventListener?.('seeking', () => {
+        if (current(owner) && selectedAudio === audio) stopAudio();
       });
       selectedAudio.addEventListener?.('error', () => {
         if (!current(owner) || selectedAudio !== audio) return;

@@ -335,6 +335,57 @@ test('final mix follows the video clock and lifecycle without controlling video 
   assert.equal(f.video.pauseCalls, 0, 'client never pauses the source video');
 });
 
+test('rapid scene skip waits for the dubbed MP3 seek to finish before playing the new dialogue', async t => {
+  const f = fixture();
+  t.after(() => f.client.destroy());
+  await f.client.loadResult(manifest());
+  f.client.setDubEnabled(true);
+  f.video.paused = false;
+  f.video.sourceTime(4);
+  f.video.fire('playing');
+  await settle();
+  const audio = f.audios.findLast(value => value.src);
+  assert.equal(audio.paused, false);
+  // Simulate a browser that starts another asynchronous decoder seek whenever
+  // the dub currentTime is assigned.
+  Object.defineProperty(audio, 'currentTime', {
+    get() { return this._currentTime; },
+    set(value) {
+      this.seekWrites.push(value);
+      this._currentTime = value;
+      this.seeking = true;
+      this.fire('seeking');
+    }
+  });
+
+  // A real mobile MP3 decoder can still be seeking after the video seeked.
+  f.video.seeking = true;
+  f.video.sourceTime(45);
+  f.video.fire('seeking');
+  audio.seeking = true;
+  const playedBefore = audio.playCalls;
+  f.video.seeking = false;
+  f.video.fire('seeked');
+  f.client.sync();
+  await settle();
+  assert.equal(audio.paused, true);
+  assert.equal(audio.playCalls, playedBefore, 'no stale audio is played while decoder is seeking');
+
+  // Decoding the older target must not start it either.
+  audio.seeking = false;
+  audio.fire('seeked');
+  audio.seeking = true;
+  f.client.sync();
+  assert.equal(audio.currentTime, 45);
+  assert.equal(audio.paused, true);
+  audio.seeking = false;
+  audio.fire('seeked');
+  await settle();
+  assert.equal(audio.currentTime, 45);
+  assert.equal(audio.paused, false);
+  assert.deepEqual(f.video.seekWrites, [], 'never seek the source video from dub sync');
+});
+
 test('dub disable and reset restore the video original mute state', async t => {
   const f = fixture();
   t.after(() => f.client.destroy());
