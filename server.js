@@ -705,7 +705,8 @@ Rules:
           }
         }))
       ];
-      const candidates = analysisModelCandidates(analysisTier);
+      const candidates = analysisModelCandidates(analysisTier,
+        { ...process.env, GEMINI_ANALYSIS_MODEL: ANALYSIS_MODEL });
       for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
         const model = candidates[modelIndex];
         const generationConfig = geminiGenerationConfig(model);
