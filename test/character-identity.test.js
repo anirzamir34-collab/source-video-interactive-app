@@ -95,6 +95,33 @@ test('ordinary dialogue shows an evidenced relationship without exposing unnamed
   assert.equal(storyChoiceLabelForAction(unknown), 'Konuşmayı sürdür');
 });
 
+test('ordinary dialogue resolves verified source characters without emitting Karakter A/B as a visible name', () => {
+  const context = {
+    characters: [
+      { id: 'char-001', participantTrackId: 'MAIN_MALE', displayName: 'Üvey Baba',
+        evidenceLevel: 'fact', confidence: .95, evidence: 'Diyalogdaki ilişki doğrulandı.' },
+      { id: 'char-002', participantTrackId: 'PARTNER_A', displayName: 'Genç Kadın',
+        evidenceLevel: 'fact', confidence: .95, evidence: 'Diyalogdaki ilişki doğrulandı.' }
+    ],
+    relationships: [{ from: 'char-001', to: 'char-002', relation: 'üvey kızı',
+      evidenceLevel: 'fact', confidence: .95, evidence: 'Konuşmada ilişkiden söz ediliyor.' }]
+  };
+  const original = { label: 'Ayrılığı hakkında konuş', adultScene: false, actionType: 'dialogue',
+    subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    primaryCharacterId: 'PARTNER_A', primaryCharacterLabel: 'Karakter A',
+    partnerLabel: 'Karakter A', involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A'],
+    startTime: 15, endTime: 28, sourceVerified: true };
+  const bound = bindActionCharacter(original, context);
+  assert.equal(bound.primaryCharacterId, 'PARTNER_A');
+  assert.equal(bound.primaryCharacterLabel, '');
+  assert.equal(bound.partnerLabel, '');
+  assert.equal(bound.identityResolution, 'unknown');
+  assert.equal(bound.relationshipResolution, 'verified');
+  assert.equal(storyChoiceLabelForAction(bound), 'Üvey kızı · Ayrılığı hakkında konuş');
+  assert.deepEqual([bound.startTime, bound.endTime, bound.sourceVerified], [15, 28, true]);
+  assert.equal(original.primaryCharacterLabel, 'Karakter A');
+});
+
 test('repeated relationship evidence using track aliases does not erase an ordinary dialogue fact', () => {
   const action = { label: 'Cevabını dinle', subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'MERAL' };
   const context = { ...cast, relationships: [cast.relationships[0],
@@ -196,7 +223,7 @@ test('same names never merge distinct tracks and contradictory names do not sile
   assert.equal(merged.characters[0].identityConflict, true);
   assert.equal(merged.characters[1].displayName, 'Meral');
   const action = bindActionCharacter({ label: 'Soruyu dinle', partnerTrackId: 'PARTNER_A' }, merged);
-  assert.equal(action.primaryCharacterLabel, 'Karakter A');
+  assert.equal(action.primaryCharacterLabel, '');
   assert.equal(action.identityResolution, 'conflict');
 });
 
