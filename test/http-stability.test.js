@@ -110,6 +110,47 @@ test('HTTP integration: authentication, safe errors and restart-resumable full-s
       assert.equal(response.status, status); assert.equal((await response.json()).available, false);
     }
   });
+  await t.test('17-field storyboard review is accepted by multipart parsing before Gemini inference', async () => {
+    // The Deep/Economy selector added the 15th ordinary field. The review
+    // adds two more: the old 16-field Multer limit rejected every such request
+    // before reaching the route. This test uses intentionally invalid review
+    // JSON so that NO real or paid model call can occur.
+    const form = new FormData();
+    const regularFields = {
+      duration: '120', timestamps: '[0,10,20]', motionProfile: '[]',
+      sceneBoundaries: '[]', chunkStart: '0', chunkEnd: '120',
+      chunkIndex: '1', chunkCount: '15', dialogueContext: '[]',
+      dialogueSpeakerContext: '[]', sensoryAudioContext: '[]',
+      qualityMode: 'ultra', analysisTier: 'economy',
+      protagonistProfile: '', storyContextMemory: '{}'
+    };
+    for (const [key, value] of Object.entries(regularFields)) form.append(key, value);
+    form.append('reviewMode', '1');
+    form.append('reviewCandidates', '{intentionally invalid, no model call}');
+    form.append('storyboards', new Blob(['tiny image'], { type: 'image/jpeg' }), 'frame.jpg');
+    assert.equal([...form.keys()].filter(key => key !== 'storyboards').length, 17);
+    const response = await request('/api/gemini-storyboard-analyze', {
+      method: 'POST', headers: { Cookie: cookie }, body: form
+    });
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.equal(body.reason, 'INVALID_REVIEW_CANDIDATES',
+      'multipart reached the existing review validator, not the generic form-limit error');
+    assert.equal(body.retryable, false);
+
+    // Keep the larger but bounded server-side field limit intact.
+    const overflow = new FormData();
+    for (let index = 0; index < 25; index++) overflow.append(`field${index}`, 'safe');
+    overflow.append('storyboards', new Blob(['tiny image'], { type: 'image/jpeg' }), 'frame.jpg');
+    const rejected = await request('/api/gemini-storyboard-analyze', {
+      method: 'POST', headers: { Cookie: cookie }, body: overflow
+    });
+    assert.equal(rejected.status, 400);
+    const rejectedBody = await rejected.json();
+    assert.equal(rejectedBody.reason, 'STORYBOARD_FORM_FIELDS_EXCEEDED');
+    assert.doesNotMatch(JSON.stringify(rejectedBody), /geminiMarker|server-gemini-http-capability-only/);
+  });
+
   await t.test('ordered uploads are idempotent and reject changed retry bytes', async () => {
     const { uploadId } = await uploadStart({ totalSize: 6, chunkSize: 3, fileName: 'test.mp4', mimeType: 'video/mp4' });
     assert.equal((await (await chunk(uploadId, 0, 'abc')).json()).receivedSize, 3);

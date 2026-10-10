@@ -269,12 +269,16 @@ app.get('/api/external-capabilities', async (_req, res) => {
 });
 
 
+// The largest legitimate request is the ordinary 15-field storyboard plus
+// reviewMode/reviewCandidates (17). Keep a bounded allowance so adding a
+// harmless routing field cannot break the review pass before it reaches Gemini.
+const STORYBOARD_MAX_FORM_FIELDS = 24;
 const storyboardUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 2 * 1024 * 1024,
     files: 20,
-    fields: 16
+    fields: STORYBOARD_MAX_FORM_FIELDS
   }
 });
 
@@ -1638,13 +1642,19 @@ function handleRequestError(error, _req, res, next) {
   if (res.destroyed) return;
   const tooLarge = error.code === 'LIMIT_FILE_SIZE' || error.type === 'entity.too.large';
   const invalid = error instanceof multer.MulterError || error.type === 'entity.parse.failed';
+  const storyboardFieldsExceeded = error instanceof multer.MulterError &&
+    error.code === 'LIMIT_FIELD_COUNT' && _req.path === '/api/gemini-storyboard-analyze';
   const unsupported = error.message === 'UNSUPPORTED_VIDEO_FORMAT';
   const status = tooLarge ? 413 : unsupported ? 415 : invalid ? 400 : 500;
   if (status === 500) console.error('Request failed:', error?.message || error);
   res.status(status).json({
     available: false,
-    reason: tooLarge ? 'UPLOAD_TOO_LARGE' : unsupported ? 'UNSUPPORTED_VIDEO_FORMAT' : invalid ? 'INVALID_REQUEST' : 'INTERNAL_ERROR',
-    message: tooLarge ? 'Gönderilen veri bu işlemin boyut sınırını aşıyor.' : unsupported ? 'Video biçimi desteklenmiyor.' : invalid ? 'Gönderilen veri geçersiz.' : 'İşlem tamamlanamadı. Tekrar deneyebilirsin.'
+    reason: tooLarge ? 'UPLOAD_TOO_LARGE' : unsupported ? 'UNSUPPORTED_VIDEO_FORMAT'
+      : storyboardFieldsExceeded ? 'STORYBOARD_FORM_FIELDS_EXCEEDED'
+      : invalid ? 'INVALID_REQUEST' : 'INTERNAL_ERROR',
+    message: tooLarge ? 'Gönderilen veri bu işlemin boyut sınırını aşıyor.' : unsupported ? 'Video biçimi desteklenmiyor.'
+      : storyboardFieldsExceeded ? 'Sahne analiz formu izin verilen alan sayısını aşıyor. Bu bölüm korunarak yeniden denenebilir.'
+      : invalid ? 'Gönderilen veri geçersiz.' : 'İşlem tamamlanamadı. Tekrar deneyebilirsin.'
   });
 }
 
