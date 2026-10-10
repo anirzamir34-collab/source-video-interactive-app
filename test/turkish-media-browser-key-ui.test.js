@@ -13,7 +13,7 @@ const slice = (start, end) => {
 };
 const credentials = slice('const GEMINI_SESSION_KEY', '\nfunction selectedAnalysisModes(');
 const badge = slice('function renderQuotaBadge(', '\nconst GEMINI_SESSION_KEY');
-const availability = slice('function selectedAnalysisModes(', '\n[\n  els.qualityMode');
+const availability = slice('function selectedAnalysisModes(', '\n[\n  els.deepAnalysisMode');
 const listeners = slice("els.elevenLabsApiKeyInput?.addEventListener('input'", '\nrenderGeminiApiKeyState();');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const json = (value, init = {}) => new Response(JSON.stringify(value), {
