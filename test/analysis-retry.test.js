@@ -7,6 +7,7 @@ import { canContinuePastChunkFailure, chunkGapResult } from '../public/analysis-
 import { isCompleteChunkAnalysis } from '../public/playback-logic.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 import { runContextualAnalysisChunks } from '../public/analysis-scheduler.js';
+import { recoverVerifiedChunksOnCreditExhaustion } from '../public/partial-analysis-recovery.js';
 
 // Run the application's actual chunk scheduler with an ordinary chapter response
 // and a simulated provider. This never calls a paid service.
@@ -38,6 +39,7 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
     protagonistProfile: '', storyContextMemory: {}, failureBody: null, failedChunk: null, body: null, response: null,
     geminiRequestHeaders: () => ({}), recordAiUsage() {}, runContextualAnalysisChunks,
     canContinuePastChunkFailure, chunkGapResult, isCompleteChunkAnalysis,
+    recoverVerifiedChunksOnCreditExhaustion,
     skippedFrameCount: 0, ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test',
     normalizeChunkActionTimes: actions => ({ actions, rebased: false }),
     secondPassReviewCandidates: () => review ? [{ actionId: 'walk' }] : [],
@@ -103,6 +105,42 @@ test('resuming six of eleven chapters never repeats completed chapters or marks 
   assert.equal(result.chunkResults.length, 6);
   assert.equal(result.failureBody.reason, 'NETWORK_ERROR');
   assert.deepEqual(result.delays, [1800]);
+});
+
+test('exhausted Gemini credits preserve twelve cached chapters as a partial playable timeline without inventing actions', async () => {
+  const preserved = Array.from({ length: 12 }, (_, index) => ordinaryChapter(index));
+  const session = { chunkResults: [...preserved], firstPassResults: {} };
+  const attempted = [];
+  const result = await runChunks({ total: 18, session, fetch: request => {
+    attempted.push(request.chunk);
+    return { available: false, retryable: false,
+      reason: 'GEMINI_CREDITS_DEPLETED', message: 'Credits exhausted' };
+  } });
+  assert.equal(result.failureBody, null);
+  assert.equal(result.body.available, true);
+  assert.equal(result.body.partial, true);
+  assert.equal(result.body.recoveryReason, 'GEMINI_CREDITS_DEPLETED');
+  assert.equal(result.body.chunkCount, 12);
+  assert.equal(result.body.expectedChunkCount, 18);
+  assert.equal(result.body.processedChunkCount, 18);
+  assert.equal(result.body.analysisCoverage, 12 / 18);
+  assert.equal(result.body.analysisGaps.length, 6);
+  assert.deepEqual(result.body.analysisGaps.map(gap => gap.chunkIndex), [12,13,14,15,16,17]);
+  assert.deepEqual(result.body.analysisGaps[0].startTime, 144);
+  assert.deepEqual(result.body.analysisGaps.at(-1).endTime, 216);
+  assert.equal(result.body.actions.length, 12);
+  assert.ok(result.body.actions.every(action => action.sourceVerified));
+  assert.deepEqual(result.chunkResults.slice(0, 12), preserved);
+  assert.deepEqual(attempted, [12, 13], 'stop provider requests after the first exhausted batch');
+  assert.equal(reviewAndHardenAnalysis(result.body).integrity.fatal, false);
+});
+
+test('a Gemini quota failure with zero verified chapters does not fabricate a playable game', async () => {
+  const result = await runChunks({ total: 3, fetch: () =>
+    ({ available: false, retryable: false, reason: 'GEMINI_CREDITS_DEPLETED' }) });
+  assert.equal(result.body.available, false);
+  assert.equal(result.failureBody?.reason, 'GEMINI_CREDITS_DEPLETED');
+  assert.equal(result.chunkResults.filter(Boolean).length, 0);
 });
 
 test('an exhausted review wait pauses once and resumes only the review using the completed first pass', async () => {
