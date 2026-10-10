@@ -163,13 +163,22 @@ test('real encoder-delay MP3 is sample-aligned and mixed without an original WAV
     const directory = await workspace(t);
     const source = path.join(directory, 'upload.bin');
     await execute(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-      'sine=frequency=440:duration=3:sample_rate=48000',
+      'sine=frequency=225:duration=3:sample_rate=48000',
       '-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3', '-y', source]);
     const service = createAudioService({ ffmpegPath: FFMPEG, ffprobePath: FFPROBE });
     const result = await service.extractSource({ path: source }, { directory });
     assert.equal(result.originalPath, source);
     assert.equal(result.sttPath, source);
     assert.ok(result.duration >= 3 && result.duration <= 3.08);
+    const profiles = await service.inferSpeakerProfiles(result.originalPath, {
+      speakers: [{ speakerId: 'unverified-voice', gender: null }],
+      utterances: [0.15, 0.83, 1.51, 2.19].map((start, index) => ({
+        segmentId: `voice-${index}`, speakerId: 'unverified-voice',
+        sourceStart: start, sourceEnd: start + 0.6
+      }))
+    });
+    assert.equal(profiles['unverified-voice']?.gender, 'female',
+      'direct MP3 mode must not break existing source-voice verification');
     const paths = await readdir(directory);
     assert.ok(!paths.some(name => name.endsWith('.wav') || name.endsWith('.flac')),
       'native MP3 source never persists a large lossless bed');
