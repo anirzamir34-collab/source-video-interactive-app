@@ -158,6 +158,28 @@ test('native audio-only MP3 skips redundant lossless speech conversion and prese
 });
 
 
+test('real encoder-delay MP3 is sample-aligned and mixed without an original WAV on disk',
+  { skip: !MEDIA_AVAILABLE || !fs.existsSync(FFPROBE) }, async t => {
+    const directory = await workspace(t);
+    const source = path.join(directory, 'upload.bin');
+    await execute(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+      'sine=frequency=440:duration=3:sample_rate=48000',
+      '-c:a', 'libmp3lame', '-b:a', '128k', '-y', source]);
+    const service = createAudioService({ ffmpegPath: FFMPEG, ffprobePath: FFPROBE });
+    const result = await service.extractSource({ path: source }, { directory });
+    assert.equal(result.originalPath, source);
+    assert.equal(result.sttPath, source);
+    assert.ok(result.duration >= 3 && result.duration <= 3.08);
+    const paths = await readdir(directory);
+    assert.ok(!paths.some(name => name.endsWith('.wav') || name.endsWith('.flac')),
+      'native MP3 source never persists a large lossless bed');
+    const rendered = await service.mixAudio({ sourceAudio: result.originalPath, dubSegments: [],
+      duration: result.duration, directory, format: 'mp3' });
+    assert.equal(rendered.mimeType, 'audio/mpeg');
+    assert.ok(Math.abs(rendered.duration - result.duration) <= 2 / SAMPLE_RATE);
+    assert.equal((await readFile(source)).subarray(0, 3).length, 3, 'source upload remains available');
+  });
+
 test('MP3 with a mismatched video timeline conservatively uses the lossless padded bed', async t => {
   const directory = await workspace(t);
   const source = path.join(directory, 'video-audio.bin');
