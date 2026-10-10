@@ -93,11 +93,10 @@
             <strong>Videonu hazırla</strong>
             <small>Oynamak istediğin özellikleri seç.</small>
           </div>
-          <select id="qualityMode" aria-label="Analiz kalitesi">
-            <option value="fast">Hızlı</option>
-            <option value="balanced">Dengeli</option>
-            <option value="ultra" selected>Ultra</option>
-          </select>
+          <label class="analysis-deep-toggle" for="deepAnalysisMode">
+            <input id="deepAnalysisMode" type="checkbox" />
+            <span>Derin Analiz (güçlü Gemini)</span>
+          </label>
         </div>
 
         <details class="provider-settings">
