@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createMediaCache } from '../lib/turkish-media/cache.js';
@@ -658,6 +658,12 @@ test('real jobs count physical ElevenLabs retries, redact keys and recover persi
   assert.equal(ready.result.qualityReport.retryCount, 1);
   assert.ok(!JSON.stringify(ready).includes('eleven-server-key'));
   assert.ok(!JSON.stringify(ready).includes('gemini-server-key'));
+  // Polling may see READY before the final cleanup has settled. A READY retry
+  // is idempotent and waits for the owner to finish its finally block.
+  assert.equal((await jobs.retry(created.id)).state, 'READY');
+  const jobFiles = await readdir(path.join(f.config.directory, 'jobs', created.id));
+  assert.deepEqual(jobFiles, ['job.json'],
+    'completed disposable processing files must not occupy server disk for the full cache TTL');
   const interruptedId = 'b8eb5a12-f28d-4d23-b8ed-5d94cbbf5f1f';
   const interruptedPath = path.join(f.config.directory, 'jobs', interruptedId);
   await mkdir(interruptedPath, { recursive: true });
