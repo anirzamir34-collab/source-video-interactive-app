@@ -118,6 +118,47 @@ test('extraction keeps the original stereo bed separate from the speech codec an
   assert.equal(speech.args[speech.args.indexOf('-i') + 1], result.originalPath);
 });
 
+test('native audio-only MP3 skips redundant lossless speech conversion and preserves the source', async t => {
+  const directory = await workspace(t);
+  // The upload service stores opaque .bin files, so trust probed format/codec,
+  // never the filename extension or a client-supplied MIME string.
+  const source = path.join(directory, 'source.bin');
+  await writeFile(source, Buffer.from('MP3-original-source'));
+  const mocked = fakeSpawn(async (binary, args, child) => {
+    const filename = args.at(-1);
+    if (binary === 'probe') {
+      const mp3 = filename === source || filename.endsWith('speech.mp3');
+      child.stdout.write(JSON.stringify({
+        streams: [{ codec_name: mp3 ? 'mp3' : 'pcm_f32le',
+          duration_ts: 96000, time_base: '1/48000', duration: '2', start_time: '0' }],
+        format: { format_name: mp3 ? 'mp3' : 'wav', duration: '2', start_time: '0' }
+      }));
+      close(child);
+    } else if (filename === 'pipe:1') {
+      child.stdout.write(Buffer.alloc(2 * SAMPLE_RATE * 4));
+      close(child);
+    } else {
+      await writeFile(filename, 'verified-timeline-wav');
+      close(child);
+    }
+  });
+  const service = createAudioService({
+    ffmpegPath: 'media', ffprobePath: 'probe', spawn: mocked.spawn
+  });
+  const result = await service.extractSource({ path: source, duration: 2 }, { directory });
+  assert.ok(result.originalPath.endsWith('.wav'));
+  assert.ok(result.sttPath.endsWith('.mp3'));
+  assert.equal(result.duration, 2);
+  assert.equal((await readFile(result.sttPath)).toString(), 'MP3-original-source');
+  assert.equal((await readFile(source)).toString(), 'MP3-original-source');
+  const transcodes = mocked.calls.filter(item => item.binary === 'media' && item.args.at(-1) !== 'pipe:1');
+  assert.equal(transcodes.length, 1, 'only the lossless timeline bed may be derived');
+  assert.ok(!transcodes.some(item => item.args.includes('flac')));
+  await rm(path.dirname(result.sttPath), { recursive: true, force: true });
+  assert.equal((await readFile(source)).toString(), 'MP3-original-source',
+    'clearing a hard-linked temporary speech file never removes the leased upload source');
+});
+
 test('failed extraction removes derived files without deleting the original input', async t => {
   const directory = await workspace(t);
   const source = path.join(directory, 'source.mp4');
