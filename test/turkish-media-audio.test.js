@@ -164,7 +164,7 @@ test('real encoder-delay MP3 is sample-aligned and mixed without an original WAV
     const source = path.join(directory, 'upload.bin');
     await execute(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
       'sine=frequency=440:duration=3:sample_rate=48000',
-      '-c:a', 'libmp3lame', '-b:a', '128k', '-y', source]);
+      '-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3', '-y', source]);
     const service = createAudioService({ ffmpegPath: FFMPEG, ffprobePath: FFPROBE });
     const result = await service.extractSource({ path: source }, { directory });
     assert.equal(result.originalPath, source);
