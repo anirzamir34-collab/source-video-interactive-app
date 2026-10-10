@@ -181,9 +181,13 @@ export function bindActionCharacter(action, context = {}) {
   result.characterPairLabel = '';
   result.characterPairResolution = 'unknown';
   let targetRole = '';
+  // Track aliases are private routing keys. Ordinary story/dialogue metadata
+  // must not pretend that 'Karakter A' is a verified on-screen identity.
+  const ordinary = isOrdinaryRelationshipAction(action);
+  const evidencedLabel = character => verifiedCharacterName(character) || verifiedVisualDescription(character);
   if (target) {
     result.primaryCharacterId = target.participantTrackId || target.id;
-    result.primaryCharacterLabel = verifiedCharacterName(target) || verifiedVisualDescription(target) || participantLabel(target);
+    result.primaryCharacterLabel = evidencedLabel(target) || (ordinary ? '' : participantLabel(target));
     result.identityResolution = target.identityConflict ? 'conflict' : verifiedCharacterName(target) ? 'verified'
       : verifiedVisualDescription(target) ? 'described' : 'unknown';
   } else if (targetId || declared.length || vaguePossessive.test(text(action.primaryCharacterLabel))) {
@@ -193,7 +197,7 @@ export function bindActionCharacter(action, context = {}) {
   if (action.partnerTrackId) {
     const partner = lookup(action.partnerTrackId);
     result.partnerLabel = !mismatch && partner && (!declared.length || present.includes(partner))
-      ? verifiedCharacterName(partner) || verifiedVisualDescription(partner) || participantLabel(partner) : '';
+      ? evidencedLabel(partner) || (ordinary ? '' : participantLabel(partner)) : '';
   }
   // Relationship labels are story context only. Intimate controls retain the
   // verified name/track so a family role never becomes erotic UI wording.
