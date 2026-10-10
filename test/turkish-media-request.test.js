@@ -140,7 +140,7 @@ test('translation preserves every speaker and source segment using structured sc
   let requestBody;
   const provider = createTranslationProvider({ config, request: async (url, options) => {
     assert.equal(options.headers['x-goog-api-key'], 'server-gemini-key');
-    assert.equal(new URL(url).pathname, '/v1beta/models/gemini-3.8-flash:generateContent');
+    assert.equal(new URL(url).pathname, '/v1beta/models/gemini-2.5-flash-lite:generateContent');
     assert.equal(new URL(url).search, '');
     requestBody = JSON.parse(options.body);
     return { candidates: [{ content: { parts: [{ text: JSON.stringify({ translations: [
