@@ -83,6 +83,7 @@ import {
   extractStoryboard
 } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
+import { recoverVerifiedChunksOnCreditExhaustion } from './partial-analysis-recovery.js';
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
 import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 
@@ -1919,6 +1920,24 @@ els.analyzeBtn.addEventListener('click', async () => {
     failureBody = stopped?.failureBody || null;
     failedChunk = stopped?.failedChunk || null;
 
+    // A depleted key must never force a completed, independently verified
+    // chapter to be thrown away. Convert ONLY the unobserved source windows
+    // into declared gaps; never ask Gemini to invent their contents.
+    const creditRecovery = failureBody?.reason === 'GEMINI_CREDITS_DEPLETED'
+      ? recoverVerifiedChunksOnCreditExhaustion({
+          chunkResults, plan: analysisPlan.chunks, timestamps: storyboard.timestamps,
+          duration: storyboard.duration, framesPerSheet
+        })
+      : { recovered: false, completed: 0, gapCount: 0 };
+    if (creditRecovery.recovered) {
+      session.chunkResults = chunkResults;
+      failureBody = null;
+      analysisProgress.update('analysis', {
+        loaded: creditRecovery.completed, total: chunkCount, unit: 'bölüm',
+        detail: `Gemini kredisi tükendi. ${creditRecovery.completed} doğrulanmış bölümle kısmi oyun hazırlanıyor.`
+      });
+    }
+
     const completeChunkAnalysis = isCompleteChunkAnalysis({
       completedChunkCount: chunkResults.filter(Boolean).length,
       expectedChunkCount: chunkCount,
@@ -1974,6 +1993,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       body = {
         available: true,
         partial: analysisGaps.length > 0,
+        ...(creditRecovery.recovered ? { recoveryReason: 'GEMINI_CREDITS_DEPLETED' } : {}),
         videoDuration: storyboard.duration,
         introEndTime: Number(firstResult.introEndTime || 0),
         playStartTime: Number(
@@ -2115,7 +2135,14 @@ els.analyzeBtn.addEventListener('click', async () => {
   } catch (error) {
     console.warn("Analysis could not be saved locally:", error);
   }
-  if (modes.motion && (modes.dubbing || modes.subtitles)) {
+  if (creditRecovery?.recovered && (modes.dubbing || modes.subtitles)) {
+    // Do not make more paid translation/TTS calls after the credit failure.
+    // The original video's audio and verified interactive options remain
+    // playable; source transcription already obtained stays in this session.
+    els.analysisOutput.textContent +=
+      '\nTürkçe dublaj/çeviri, API kredisi yenilenene kadar ertelendi; kaynak ses korunuyor.';
+  }
+  if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
     analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
     els.analysisState.textContent = 'PREPARING_TURKISH_MEDIA';
@@ -2158,13 +2185,17 @@ els.analyzeBtn.addEventListener('click', async () => {
     `Son doğrulanmış aksiyon ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyede bitiyor.`,
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
     `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
-    body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Yeniden analiz, yalnız geçici hata veren eksik bölümleri dener.' : 'Oyun modu kullanıma hazır.'
+    body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Eksik bölgelerden seçenek uydurulmadı.' : 'Oyun modu kullanıma hazır.',
+    creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : ''
   ].join('\n');
   initializeInteractive(normalized);
   state.savedGameReady = true;
   analysisProgress.update('save', { detail: 'Analiz, seçimler ve Türkçe medya kaydediliyor.' });
-  await savedGames?.saveCurrent(true);
-  analysisProgress.done('save', 'Oyun kaydedildi.'); analysisSucceeded = true;
+  const saveCompleted = await savedGames?.saveCurrent(true);
+  analysisProgress.done('save', saveCompleted
+    ? 'Oyun cihazına kaydedildi.'
+    : 'Oyun oynatılabilir fakat otomatik kayıt tamamlanamadı; kaydetme alanını kontrol et.');
+  analysisSucceeded = true;
   analysisProgress.finish();
   } catch (error) {
     console.error('Analysis failed:', error);
