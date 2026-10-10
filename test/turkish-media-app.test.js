@@ -19,6 +19,7 @@ const visualRequest = section('  const remoteStoryboardSource', '\n    const sto
 const handlerFailure = section("  } catch (error) {\n    console.error('Analysis failed:'", '\n});\n\nfunction assignPositionOccurrenceIds(');
 const updateTranscript = section('function updateSourceTranscript(', '\nfunction onTurkishMediaStatus(');
 const selectedModes = section('function selectedAnalysisModes(', '\nfunction updateAnalysisModesUI(');
+const mediaCacheRule = section('function canReuseTurkishMedia(', "\nels.analyzeBtn.addEventListener('click'");
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const copy = value => JSON.parse(JSON.stringify(value));
 
@@ -127,7 +128,7 @@ try {
   if (error?.name !== 'AbortError' || error.message !== 'First request captured') throw error;
 }
 return { file, fastStoryboardPreparation };` : '';
-  vm.runInContext(`${updateTranscript}\n${selectedModes}\nasync function runBranch(file, session, modes) {\nconst requestedProtagonist = '';\nlet analysisModeKey = '';\n${branch}\n${continuation}\nreturn { file, fastStoryboardPreparation };\n}`, scope);
+  vm.runInContext(`${updateTranscript}\n${selectedModes}\n${mediaCacheRule}\nasync function runBranch(file, session, modes) {\nconst requestedProtagonist = '';\nlet analysisModeKey = '';\n${branch}\n${continuation}\nreturn { file, fastStoryboardPreparation };\n}`, scope);
   vm.runInContext(`async function runHandler(file, session, modes) {\ntry {\nawait runBranch(file, session, modes);\n${handlerFailure}\n}`, scope);
   return { scope, state, els, session, calls, completeFile,
     run: file => scope.runBranch(file ?? null, session, scope.selectedAnalysisModes()),
@@ -201,6 +202,48 @@ test('a matching cached media manifest restores the client without uploading the
   assert.deepEqual(f.calls.load[0].settings, { dubEnabled: false, subtitleTrack: 'off' });
   assert.equal(f.session.mediaManifest, cached);
   assert.equal(f.session.audioContextStatus, 'ready');
+});
+
+test('switching from cached source-only media to contextual dubbing never relabels the old result as dubbed audio', async () => {
+  const cached = sourceManifest();
+  const oldMode = JSON.stringify({ dub: false, subtitles: false, quality: 'quality' });
+  const session = { sourceTranscript: cached.sourceTranscript, mediaManifest: cached, mediaModeKey: oldMode,
+    storyboard: { frames: ['retained frames'] } };
+  const f = fixture({ session, motion: true, dubbing: true });
+  await f.run();
+  assert.equal(f.calls.load.length, 0, 'a transcript-only mix cannot be restored as Turkish dubbing');
+  assert.equal(f.calls.start.length, 0, 'the first contextual pass reuses the verified source transcript');
+  assert.equal(f.session.mediaManifest, cached, 'old result remains available for its actual mode');
+  assert.equal(f.session.mediaModeKey, oldMode, 'the cached mode is not overwritten before a new mix is produced');
+});
+
+test('missing dubbed MP3 on an otherwise matching cache key starts real dubbing, then reuses only the finished result', async () => {
+  const cached = sourceManifest();
+  const dubMode = JSON.stringify({ dub: true, subtitles: false, quality: 'quality' });
+  const finished = { ...sourceManifest(), outputs: { dub: true, subtitles: false },
+    assets: { mix: { url: '/api/turkish-media/jobs/final/assets/mix', mimeType: 'audio/mpeg' } } };
+  const session = { sourceTranscript: cached.sourceTranscript, mediaManifest: cached, mediaModeKey: dubMode };
+  const f = fixture({ session, motion: false, dubbing: true, start: async () => finished });
+  await f.run();
+  assert.equal(f.calls.load.length, 0, 'missing mix must never reach setDubEnabled(true)');
+  assert.equal(f.calls.start.length, 1, 'missing mix triggers a fresh dubbing job');
+  assert.equal(f.session.mediaManifest, finished);
+  assert.equal(f.session.mediaModeKey, dubMode);
+  await f.run();
+  assert.equal(f.calls.start.length, 1, 'a confirmed finished MP3 is not regenerated');
+  assert.equal(f.calls.load.length, 1);
+  assert.equal(f.calls.load[0].manifest, finished);
+  assert.equal(f.calls.load[0].settings.dubEnabled, true);
+});
+
+test('cache with subtitles explicitly disabled is not reused for a subtitle request', async () => {
+  const cached = { ...sourceManifest(), outputs: { dub: false, subtitles: false } };
+  const mode = JSON.stringify({ dub: false, subtitles: true, quality: 'quality' });
+  const session = { sourceTranscript: cached.sourceTranscript, mediaManifest: cached, mediaModeKey: mode };
+  const f = fixture({ session, motion: false, subtitles: true });
+  await f.run();
+  assert.equal(f.calls.load.length, 0);
+  assert.equal(f.calls.start.length, 1, 'subtitle job must run rather than claiming source-only media is ready');
 });
 
 test('subtitle-only analysis skips frame extraction and awaits the saved-game write after becoming playable', async () => {
