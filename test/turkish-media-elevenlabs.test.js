@@ -70,6 +70,56 @@ test('quality sends only official REST fields, server key and generated-audio ra
   assert.deepEqual(result.alignment, nativeAudio().alignment);
 });
 
+test('a corrupt isolated v4 dialogue uses the SAME voice and measured TTS character clock', async () => {
+  const requested = [];
+  const { provider } = harness((url, options) => {
+    requested.push({ pathname: url.pathname, body: options.body ? JSON.parse(options.body) : null });
+    if (url.pathname === '/v1/models') return catalog();
+    if (url.pathname === '/v1/text-to-dialogue/with-timestamps') {
+      return { ...nativeAudio(), voice_segments: [{
+        ...nativeAudio().voice_segments[0], voice_id: 'wrong-voice'
+      }] };
+    }
+    assert.equal(url.pathname, '/v1/text-to-speech/voice-man/with-timestamps');
+    assert.equal(url.searchParams.get('output_format'), 'mp3_44100_128');
+    const body = JSON.parse(options.body);
+    assert.equal(body.model_id, 'eleven_v4');
+    assert.equal(body.language_code, 'tr');
+    assert.equal(body.text, 'Selam.');
+    return { audio_base64: Buffer.from('valid-isolated-v4-voice').toString('base64'),
+      alignment: { characters: [...'Selam.'],
+        character_start_times_seconds: [0, .1, .2, .3, .4, .5],
+        character_end_times_seconds: [.1, .2, .3, .4, .5, .6] } };
+  });
+  const result = await provider.synthesizeDialogue([inputs[0]]);
+  assert.equal(result.audio.toString(), 'valid-isolated-v4-voice');
+  assert.equal(result.isolatedVoiceFallback, true);
+  assert.equal(result.voiceSegments.length, 1);
+  assert.equal(result.voiceSegments[0].voice_id, 'voice-man');
+  assert.equal(result.voiceSegments[0].dialogue_input_index, 0);
+  assert.equal(result.voiceSegments[0].end_time_seconds, .6);
+  assert.deepEqual(result.alignment.characters, [...'Selam.']);
+  assert.equal(requested.length, 3);
+});
+
+test('isolated invalid v4 alignment is never repaired with fictitious text or speaker timing', async () => {
+  let paid = 0;
+  const { provider } = harness(url => {
+    if (url.pathname === '/v1/models') return catalog();
+    paid++;
+    if (url.pathname.includes('text-to-dialogue')) return {
+      ...nativeAudio(), voice_segments: [{ ...nativeAudio().voice_segments[0], character_end_index: 99 }]
+    };
+    return { audio_base64: Buffer.from('bytes').toString('base64'),
+      alignment: { characters: [...'Other words'], character_start_times_seconds: Array(11).fill(0),
+        character_end_times_seconds: Array(11).fill(.2) } };
+  });
+  await assert.rejects(provider.synthesizeDialogue([inputs[0]]), {
+    code: 'PROVIDER_DIALOGUE_ALIGNMENT_INVALID'
+  });
+  assert.equal(paid, 2);
+});
+
 test('unavailable model, missing Turkish or false capability prevents paid synthesis', async () => {
   for (const models of [[], catalog({ languages: [{ language_id: 'en' }] }),
     catalog({ can_do_text_to_speech: false }), catalog({ languages: undefined })]) {

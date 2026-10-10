@@ -368,6 +368,72 @@ test('repeat pipeline restores provider stages from real atomic disk cache', asy
   assert.ok(stats.cacheHits > 0);
 });
 
+test('corrupt eight-turn provider mapping splits only that batch and publishes every real dialogue turn', async t => {
+  const words = Array.from({ length: 8 }, (_, i) => ({
+    text: i === 0 ? 'Hello.' : 'Yes.', type: 'word',
+    start: .25 + i * 1.2, end: 1.05 + i * 1.2, speaker_id: `speaker_${i % 2}`
+  }));
+  const f = await fixture(t, { words });
+  const good = f.elevenLabs.synthesizeDialogue;
+  f.elevenLabs.synthesizeDialogue = async turns => {
+    if (turns.length > 2 && turns.some(turn => turn.text === 'Merhaba.')) {
+      f.calls.synthesize.push(structuredClone(turns));
+      throw new MediaError('PROVIDER_DIALOGUE_ALIGNMENT_INVALID',
+        'provider indexed dialogue text against the wrong voice');
+    }
+    return good(turns);
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(result.dubSegments.length, 8);
+  assert.equal(result.qualityReport.missingDubCount, 0);
+  assert.ok(f.calls.synthesize.some(batch => batch.length === 8));
+  assert.ok(f.calls.synthesize.some(batch => batch.length === 4));
+  assert.ok(f.calls.synthesize.some(batch => batch.length === 2));
+  assert.ok(f.calls.synthesize.every(batch => batch.length <= 8));
+  const costs = { synthesize: f.calls.synthesize.length, transcribe: f.calls.transcribe,
+    translation: f.calls.translate.length, alignment: f.calls.align.length };
+  const resumed = await f.pipeline({ ...f.input, directory: path.join(f.directory, 'replayed-work') });
+  assert.equal(resumed.dubSegments.length, 8);
+  assert.deepEqual({ synthesize: f.calls.synthesize.length, transcribe: f.calls.transcribe,
+    translation: f.calls.translate.length, alignment: f.calls.align.length }, costs,
+  'replaying finished work must not re-bill providers');
+});
+
+test('terminal invalid single turn isolates segment; retry regenerates only uncached voice', async t => {
+  const words = Array.from({ length: 8 }, (_, i) => ({
+    text: i === 0 ? 'Hello.' : 'Yes.', type: 'word',
+    start: .25 + i * 1.2, end: 1.05 + i * 1.2, speaker_id: `speaker_${i % 2}`
+  }));
+  const f = await fixture(t, { words });
+  const good = f.elevenLabs.synthesizeDialogue;
+  let failLast = true;
+  f.elevenLabs.synthesizeDialogue = async turns => {
+    if (failLast && turns.some(turn => String(turn.segmentId).endsWith('-000008'))) {
+      f.calls.synthesize.push(structuredClone(turns));
+      throw new MediaError('PROVIDER_DIALOGUE_ALIGNMENT_INVALID',
+        'provider timestamps contradict speaker index');
+    }
+    return good(turns);
+  };
+  await assert.rejects(f.pipeline(f.input), error =>
+    error?.code === 'PROVIDER_DIALOGUE_ALIGNMENT_INVALID' &&
+    error?.segmentIds?.length === 1 && error.segmentIds[0].endsWith('-000008'));
+  assert.equal(f.calls.mix.length, 0, 'unverified output cannot be published');
+  const priorFirstVoiceCalls = f.calls.synthesize.filter(turns =>
+    turns.length === 1 && turns[0].segmentId.endsWith('-000001')).length;
+  const sourceCalls = f.calls.transcribe;
+  const translationCalls = f.calls.translate.length;
+  failLast = false;
+  const result = await f.pipeline({ ...f.input, directory: path.join(f.directory, 'retry-work') });
+  assert.equal(result.dubSegments.length, 8);
+  assert.equal(f.calls.transcribe, sourceCalls);
+  assert.equal(f.calls.translate.length, translationCalls);
+  assert.equal(f.calls.synthesize.filter(turns =>
+    turns.length === 1 && turns[0].segmentId.endsWith('-000001')).length, priorFirstVoiceCalls,
+  'completed isolated turn must come from cached voice, never new paid generation');
+  assert.equal(f.calls.mix.length, 1);
+});
+
 test('failed alignment resumes from cached transcript, translation and generation without repeating synthesis', async t => {
   const f = await fixture(t, { failAlignmentOnce: true });
   await assert.rejects(f.pipeline(f.input), { code: 'PROVIDER_HTTP_503' });
