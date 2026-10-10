@@ -55,7 +55,7 @@ test('blocked storage property and removeItem failures do not stop startup clean
 });
 
 test('availability refreshes cannot reenable analysis during analysis or URL import', () => {
-  const f = fixture(section('function updateAnalyzeAvailability()', '\n[\n  els.qualityMode'), { updateAnalysisModesUI: () => true });
+  const f = fixture(section('function updateAnalyzeAvailability()', '\n[\n  els.deepAnalysisMode'), { updateAnalysisModesUI: () => true });
   f.scope.state.selectedFile = { name: 'clip.mp4' };
   for (const busy of ['analysisInProgress', 'urlResolutionInProgress', 'savedGameBusy']) {
     f.scope.state[busy] = true;
