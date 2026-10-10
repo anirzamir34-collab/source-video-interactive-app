@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
 import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
+import { analysisModelCandidates, analysisTierFromRequest } from '../lib/analysis-model-routing.js';
 import { createServerRevisionReader } from '../public/server-revision.js';
 import { createAnalysisResponseCache, analysisRequestKey } from '../public/analysis-response-cache.js';
 import { geminiQuotaFailure } from '../public/gemini-quota.js';
@@ -146,12 +147,13 @@ function serverHandler(generateContent) {
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
     storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,
+    analysisModelCandidates, analysisTierFromRequest,
     storyboardRequestCache: createAnalysisRequestCache(), GEMINI_DEFAULT_MODEL: 'gemini-3.8-flash', ANALYSIS_MODEL: 'gemini-3.1-pro-preview',
     generateStoryboardWithRetry: (load, options) => generateStoryboardWithRetry(load, { ...options, wait: async () => {} }),
     process: { env: {} }, console: { warn() {}, error() {}, info() {} }
   });
 }
-const serverRequest = () => ({ body: { duration: 120, chunkEnd: 120, timestamps: JSON.stringify(Array.from({ length: 20 }, (_, i) => i * 6)) },
+const serverRequest = () => ({ body: { analysisTier: 'deep', duration: 120, chunkEnd: 120, timestamps: JSON.stringify(Array.from({ length: 20 }, (_, i) => i * 6)) },
   files: Array.from({ length: 20 }, (_, i) => ({ buffer: Buffer.from(`frame-${i}`), mimetype: 'image/jpeg' })) });
 const serverResponse = () => ({ statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } });
 
