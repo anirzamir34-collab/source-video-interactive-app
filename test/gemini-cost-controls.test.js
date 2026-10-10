@@ -70,12 +70,15 @@ test('browser response cache survives a new connection without retaining or reco
   await afterReload.close();
 });
 
-test('browser cache identity invalidates changed revision, account, source dialogue and frames', async () => {
+test('browser cache identity preserves same evidence across credential rotation but invalidates source or model changes', async () => {
   const request = { revision: 'release-1', path: '/api/gemini-storyboard-analyze', headers: {}, form: form(), crypto: webcrypto };
   const key = await analysisRequestKey(request);
-  for (const patch of [{ revision: 'release-2' }, { headers: { 'x-gemini-api-key': 'other-account' } },
+  for (const patch of [{ revision: 'release-2' },
     { form: form('changed dialogue') }, { form: form('source dialogue', 'different frames') }])
     assert.notEqual(await analysisRequestKey({ ...request, ...patch }), key);
+  assert.equal(await analysisRequestKey({
+    ...request, headers: { 'x-gemini-api-key': 'new-provider-credential' }
+  }), key, 'rotating credentials must not invalidate the same verified scene input');
   assert.equal(await analysisRequestKey({ ...request, revision: null }), null);
 });
 

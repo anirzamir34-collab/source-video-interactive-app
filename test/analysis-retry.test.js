@@ -39,6 +39,7 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
     protagonistProfile: '', storyContextMemory: {}, failureBody: null, failedChunk: null, body: null, response: null,
     geminiRequestHeaders: () => ({}), recordAiUsage() {}, runContextualAnalysisChunks,
     canContinuePastChunkFailure, chunkGapResult, isCompleteChunkAnalysis,
+    checkpointPrefix: null, analysisResponseCache: { saveCheckpoint: async () => true },
     recoverVerifiedChunksOnCreditExhaustion,
     skippedFrameCount: 0, ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test',
     normalizeChunkActionTimes: actions => ({ actions, rebased: false }),

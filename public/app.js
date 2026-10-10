@@ -100,7 +100,7 @@ import { createTurkishMediaClient } from './turkish-media-client.js';
 import { sourceContextAdapter, sourceSpeechOverlaps } from './source-transcript.js';
 import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
-import { analysisRequestKey, createAnalysisResponseCache } from './analysis-response-cache.js';
+import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
@@ -1647,6 +1647,28 @@ els.analyzeBtn.addEventListener('click', async () => {
       session.protagonistProfile = '';
       session.storyContextMemory = null;
     }
+    // A key rotation (or reopening the same video after a browser refresh)
+    // must not re-bill the 15 already verified scene chapters. The persistent
+    // identity includes every actual storyboard image, its timing, and the
+    // source-context analysis settings; it never includes an API credential.
+    const checkpointPrefix = await analysisCheckpointKey({
+      sheets: storyboard.sheets, timestamps: storyboard.timestamps,
+      duration: storyboard.duration, mode: analysisModeKey
+    });
+    let restoredChapters = 0;
+    for (let index = 0; index < chunkCount; index++) {
+      if (session.chunkResults[index]?.available === true) continue;
+      const previous = await analysisResponseCache.readCheckpoint(checkpointPrefix, index);
+      if (previous?.available === true) {
+        session.chunkResults[index] = previous;
+        restoredChapters++;
+      }
+    }
+    if (restoredChapters) analysisProgress.update('analysis', {
+      loaded: session.chunkResults.filter(result => result?.available).length,
+      total: chunkCount, unit: 'bölüm',
+      detail: `${restoredChapters} doğrulanmış bölüm cihazdan geri alındı; tekrar Gemini'ye gönderilmeyecek.`
+    });
     const chunkResults = session.chunkResults;
     session.firstPassResults ||= {};
     let failureBody = null;
@@ -1855,6 +1877,9 @@ els.analyzeBtn.addEventListener('click', async () => {
             chunkResults[chunkIndex] = chunkBody;
             delete session.firstPassResults[chunkIndex];
             session.chunkResults = chunkResults;
+            // Each successful chapter has its own atomic local checkpoint.
+            // Concurrent chapters cannot overwrite one another's progress.
+            await analysisResponseCache.saveCheckpoint(checkpointPrefix, chunkIndex, chunkBody);
             chunkSucceeded = true;
             analysisProgress.update('analysis', { loaded: chunkResults.filter(result => result?.available).length,
               total: chunkCount, unit: 'bölüm', detail: 'Bölüm ' + (chunkIndex + 1) + ' analiz edildi ve doğrulandı.' });
@@ -2142,6 +2167,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     els.analysisOutput.textContent +=
       '\nTürkçe dublaj/çeviri, API kredisi yenilenene kadar ertelendi; kaynak ses korunuyor.';
   }
+  let sourceAudioOnly = false;
   if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
     analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
@@ -2154,20 +2180,34 @@ els.analyzeBtn.addEventListener('click', async () => {
     ].join('\n');
     // A successful media retry has already completed the paid stages. Reuse
     // its manifest while rebuilding the game from saved visual chapters.
-    const finalMedia = session.mediaManifest && session.mediaModeKey === mediaModeKey
-      ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
-        subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
-      : await mediaClient.start(file, {
-        outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) },
-        qualityMode: modes.dubQuality,
-        sceneContext: verifiedMediaSceneContext(),
-        speakerHints
-      });
-    session.mediaManifest = finalMedia;
-    recordAiUsage(finalMedia?.qualityReport?.geminiUsage);
-    session.mediaModeKey = mediaModeKey;
-    updateSourceTranscript(finalMedia.sourceTranscript);
-    renderMediaControls();
+    try {
+      const finalMedia = session.mediaManifest && session.mediaModeKey === mediaModeKey
+        ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
+          subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
+        : await mediaClient.start(file, {
+          outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) },
+          qualityMode: modes.dubQuality,
+          sceneContext: verifiedMediaSceneContext(),
+          speakerHints
+        });
+      session.mediaManifest = finalMedia;
+      recordAiUsage(finalMedia?.qualityReport?.geminiUsage);
+      session.mediaModeKey = mediaModeKey;
+      updateSourceTranscript(finalMedia.sourceTranscript);
+      renderMediaControls();
+    } catch (error) {
+      if (error?.code !== 'TRANSLATION_BLOCKED') throw error;
+      // This is a provider content restriction, NOT exhausted credits.
+      // Never route a blocked source transcript to another model or invent a
+      // replacement translation. The independently verified visual game
+      // remains playable with the source video's original soundtrack.
+      sourceAudioOnly = true;
+      session.mediaManifest = null;
+      mediaClient.reset({ cancelJob: false });
+      renderMediaControls();
+      analysisProgress.update('translation', { status: 'skipped',
+        detail: 'Gemini bu konuşmaların çevirisini engelledi; özgün kaynak ses korunuyor.' });
+    }
   }
 
   els.analysisState.textContent = body.partial ? 'PARTIAL_TIMELINE_READY' : 'TIMELINE_READY';
@@ -2186,7 +2226,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
     `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Eksik bölgelerden seçenek uydurulmadı.' : 'Oyun modu kullanıma hazır.',
-    creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : ''
+    creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : '',
+    sourceAudioOnly ? 'Türkçe dublaj üretilemedi: Gemini konuşma çevirisini engelledi. Bu bir kota sorunu değildir. Oyun özgün video sesiyle açıldı.' : ''
   ].join('\n');
   initializeInteractive(normalized);
   state.savedGameReady = true;

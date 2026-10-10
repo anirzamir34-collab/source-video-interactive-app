@@ -81,6 +81,8 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
     normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}),
     geminiRequestHeaders: () => ({}),
+    analysisCheckpointKey: async () => null,
+    analysisResponseCache: { readCheckpoint: async () => null, saveCheckpoint: async () => true },
     fetch: async (url, options) => {
       calls.visual.push({ url, options });
       if (visual) throw new DOMException('First request captured', 'AbortError');
