@@ -436,8 +436,9 @@ test('a verified standalone introduction plays in its own panel and earns Lust',
   await flush();
   assert.equal(f.state.activeAdultPreludeId, 'first-kiss',
     JSON.stringify({ choices: f.state.adultApproachChoices, cards: f.els.approachChoices.children.map(item => item.textContent) }));
+  assert.equal(f.currentAdultFlow(), 0, 'play() alone never earns a selection bonus');
   f.els.video.time = 93;
-  assert.equal(f.settleInteractionClipBoundary(93), true);
+  f.updateAdultPlayback(93000, 93);
   assert.ok(f.currentAdultFlow() > 0);
   assert.equal(f.state.adultUnlockedPositionIds.size, 0);
 });
@@ -736,6 +737,7 @@ for (const mode of ['error', 'blocked']) {
     const f = runtimeFixture();
     f.els.video.mode = mode;
     if (mode === 'error') f.state.adultScene.foreplay[0].startTime = 12;
+    f.els.video.time = mode === 'error' ? 12 : 0;
     f.playAdultPrelude('intro');
     await flush();
     assert.equal(f.state.femaleSceneProgress, 0);
@@ -743,6 +745,10 @@ for (const mode of ['error', 'blocked']) {
     f.els.video.mode = 'ready';
     f.els.panelPlaybackRecovery.querySelector('button').dispatchEvent(new Event('click'));
     await flush();
+    assert.equal(f.state.adultPreludePlayCounts.has('intro'), false,
+      'recovering playback must not immediately award the whole clip');
+    f.els.video.time = f.state.adultScene.foreplay[0].endTime;
+    f.updateAdultPlayback(15000, f.els.video.time);
     assert.equal(f.state.adultPreludePlayCounts.get('intro'), 1);
     assert.ok(f.state.femaleSceneProgress > 0);
     const progress = f.state.femaleSceneProgress;
