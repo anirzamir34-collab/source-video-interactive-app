@@ -246,3 +246,27 @@ test('verified provider display labels remain opaque and partner distinction is 
   assert.equal(sourceDisplayLabel({ ...group, sourceVerified: false }, 'Existing fallback'), 'Existing fallback');
   assert.equal(sourceDisplayLabel({ ...group, positionLabel: '' }, 'Existing fallback'), 'Existing fallback');
 });
+
+
+test('separate source action IDs at matching verified intensity become one multi-clip option', () => {
+  const specs = [
+    { id: 'fast-a', start: 10, end: 16, label: 'Hızlan', tempo: 'fast' },
+    { id: 'fast-b', start: 18.4, end: 24, label: 'Hızlı sürdür', tempo: 'fast' },
+    { id: 'fast-c', start: 26.4, end: 32, label: 'Hızlı hareket', tempo: 'fast' },
+    { id: 'intense-a', start: 34.4, end: 40, label: 'Yoğunlaştır', tempo: 'fast' }
+  ];
+  const clips = specs.map(spec => ({ id: spec.id, sourceActionId: spec.id,
+    sourceVerified: true, sourcePositionId: 'same-occurrence',
+    positionOccurrenceId: 'same-occurrence', actionType: 'movement',
+    movementType: spec.label, label: spec.label, movementTempo: spec.tempo,
+    startTime: spec.start, endTime: spec.end,
+    loopStartTime: spec.start, loopEndTime: spec.end }));
+  const parent = { id: 'position', occurrenceId: 'same-occurrence',
+    partnerTrackId: 'partner-a', startTime: 10, endTime: 40,
+    sourceRanges: specs.map(spec => ({ id: 'same-occurrence', startTime: spec.start, endTime: spec.end })) };
+  const cards = buildVerifiedMovementChoices(clips, 'Recorded activity', 5, parent);
+  assert.equal(cards.length, 2);
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
+    [['fast-a','fast-b','fast-c'],['intense-a']]);
+  assert.equal(new Set(cards.flatMap(card => card.variants.map(item => item.id))).size, 4);
+});
