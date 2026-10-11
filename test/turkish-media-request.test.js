@@ -177,3 +177,46 @@ test('missing, duplicate and invented translation IDs cannot authorize generated
       ['TRANSLATION_MISSING_SEGMENTS', 'TRANSLATION_SEGMENT_MISMATCH'].includes(error.code));
   }
 });
+
+test('Gemini 429 honors google.rpc.RetryInfo instead of retrying immediately', async () => {
+  const delays = [];
+  let calls = 0;
+  const request = createMediaRequest({ maxRetries: 1, sleep: async ms => delays.push(ms),
+    random: () => 0, fetchImpl: async () => {
+      calls++;
+      return calls === 1 ? Response.json({
+        error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded',
+          details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '48.5s' }] }
+      }, { status: 429 }) : Response.json({ success: true });
+    } });
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent';
+  assert.deepEqual(await request(url), { success: true });
+  assert.deepEqual(delays, [48500]);
+  assert.equal(calls, 2);
+});
+
+test('Gemini 429 without a retry hint waits one minute, not exponential subsecond retries', async () => {
+  const delays = [];
+  let calls = 0;
+  const request = createMediaRequest({ maxRetries: 1, sleep: async ms => delays.push(ms),
+    random: () => 0, fetchImpl: async () => {
+      calls++;
+      return calls === 1
+        ? Response.json({ error: { status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } }, { status: 429 })
+        : Response.json({ ready: true });
+    } });
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent';
+  assert.deepEqual(await request(url), { ready: true });
+  assert.deepEqual(delays, [60000]);
+});
+
+test('ElevenLabs 429 still honors its own retry header without Gemini cooldown', async () => {
+  const delays = [];
+  let n = 0;
+  const request = createMediaRequest({ maxRetries: 1, sleep: async ms => delays.push(ms), random: () => 0,
+    fetchImpl: async () => ++n === 1
+      ? new Response('overloaded', { status: 429, headers: { 'retry-after': '4' } })
+      : Response.json({ ok: true }) });
+  assert.deepEqual(await request('https://api.elevenlabs.io/v1/models'), { ok: true });
+  assert.deepEqual(delays, [4000]);
+});
