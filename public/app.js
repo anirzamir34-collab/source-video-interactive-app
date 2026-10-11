@@ -2917,12 +2917,15 @@ function prepareAdultScenes() {
   );
 
   const isIntroduction = action => {
-    // Speech is a story choice even when the provider gives the whole chapter
-    // the same adultSceneId and characters. A narrative bridge does not own the
-    // encounter's start time or earn approach progress.
+    // Keep narrative bridge evidence in the scene graph; it must NEVER set
+    // the playable phase's start or count as an approach selection.
+    const actionType = String(action.actionType || '').toLowerCase();
+    const dialogueBridge = action.choiceSurface === 'story' &&
+      (actionType === 'dialogue' || actionType === 'body_transition' ||
+        (state.sourceContext?.segments || []).some(segment => sourceSpeechOverlaps(action, segment)));
     const warmupFamily = String(playableAdultPanelFamily(action) || '').toLowerCase();
     const warmupCandidate = ['oral', 'manual'].includes(warmupFamily);
-    return (action.choiceSurface === 'approach' || warmupCandidate) &&
+    return (action.choiceSurface === 'approach' || dialogueBridge || warmupCandidate) &&
       (!traceByAction.get(action)?.sceneCandidate || warmupCandidate) &&
       !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
         !isAdultSocialRelationshipRole(action.relationshipRoleLabel));
@@ -2984,10 +2987,7 @@ function prepareAdultScenes() {
   }
 
   actions.filter(action =>
-    verifiedPositionSceneIds.has(sceneIdFor(action)) &&
-    // Ordinary dialogue is owned by the story graph, never by a broad source
-    // encounter envelope. This also prevents a too-early panel activation.
-    action.choiceSurface !== 'story'
+    verifiedPositionSceneIds.has(sceneIdFor(action))
   ).forEach((action, index) => {
     const sceneId = sceneIdFor(action);
     const traceRow = traceByAction.get(action);
@@ -3326,8 +3326,9 @@ function prepareAdultScenes() {
       const playableForeplay = foreplay.filter(item =>
         item.sourceVerified === true && sourceInterval(item.startTime, item.endTime) &&
         (item.endTime <= positionStart + 0.05 || item.startTime >= positionStart - 0.05));
-      const openingForeplay = initialWarmupBeforeFirstPosition(
-        [...playableForeplay, ...scene.dialogue], positions);
+      // The scene keeps its dialogue as story metadata, but its playable
+      // boundary begins at the first verified approach or position only.
+      const openingForeplay = initialWarmupBeforeFirstPosition(playableForeplay, positions);
       const interactionStart = openingForeplay.length
         ? Math.min(positionStart, ...openingForeplay.map(item => Number(item.startTime)))
         : positionStart;
