@@ -95,6 +95,13 @@ export function groupSourceChoiceCards(clips, {
     const declaredOrigin = text(clip.sourceActionId || clip.observedActionId ||
       clip.actionOriginId || clip.derivedFromVerifiedSegment);
     const stableContext = mergeWithinContext && occurrence;
+    // A verified temporal rhythm is the logical gameplay option within the
+    // same source occurrence. Different model action IDs are its clip variants,
+    // not separate one-clip buttons. Unknown rhythms retain distinct origins.
+    const sameObservedRhythm = stableContext &&
+      ['position', 'movement', 'tempo_change', 'rhythm'].includes(text(clip.actionType).toLowerCase()) &&
+      ['slow', 'fast', 'intense', 'deep', 'hard'].includes(text(profile.energyFlavor).toLowerCase()) &&
+      ['slow', 'moderate', 'fast'].includes(text(clip.movementTempo).toLowerCase());
     const key = JSON.stringify([
       choiceSurfaceKey(clip),
       occurrence || declaredScope,
@@ -106,11 +113,12 @@ export function groupSourceChoiceCards(clips, {
       stableContext ? '' : text(clip.receiverSupport), band,
       // Even a trusted display context cannot erase the provider's declared
       // action kind or the origin of parts split from one observed action.
-      hasScope && hasType ? actionType : label,
-      declaredOrigin,
+      sameObservedRhythm ? '' : (hasScope && hasType ? actionType : label),
+      sameObservedRhythm ? '' : declaredOrigin,
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);
-    if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence, packets: new Map() });
+    if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence,
+      semanticRhythm: Boolean(sameObservedRhythm), packets: new Map() });
     const group = groups.get(key);
     const origin = declaredOrigin || text(clip.id);
     if (!group.packets.has(origin)) group.packets.set(origin, []);
@@ -120,7 +128,10 @@ export function groupSourceChoiceCards(clips, {
   for (const group of groups.values()) {
     const groupSize = [...group.packets.values()].reduce((sum, packet) => sum + packet.length, 0);
     const proportionalCards = Math.max(1, Math.round(target * groupSize / Math.max(1, source.length)));
-    const capacity = groupSize <= 2 ? groupSize : Math.max(2, Math.min(5, Math.ceil(groupSize / proportionalCards)));
+    // A semantic option plays up to five verified source cuts in order. Beyond
+    // that, separate bounded cards keep every source clip reachable.
+    const capacity = group.semanticRhythm ? 5 :
+      groupSize <= 2 ? groupSize : Math.max(2, Math.min(5, Math.ceil(groupSize / proportionalCards)));
     let pending = [];
     const flush = () => {
       if (!pending.length) return;

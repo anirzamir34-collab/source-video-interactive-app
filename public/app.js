@@ -111,6 +111,7 @@ import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectVerifiedChoiceQueue } from './interaction-engine.js';
 import { interactionEntryClip, interactionEntryGuard, interactionFamilyViews } from './interaction-timeline.js';
 import { bindInteractionRuntimeViews } from './interaction-compat.js';
+import { assignVerifiedOpeningRoles } from './verified-scene-continuity.js';
 import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
   verifiedClipCompletionReady } from './interaction-completion.js';
 import { mountInteractionPanel, resetInteractionSelection,
@@ -2916,6 +2917,8 @@ function prepareAdultScenes() {
   );
 
   const isIntroduction = action => {
+    // Keep narrative bridge evidence in the scene graph; it must NEVER set
+    // the playable phase's start or count as an approach selection.
     const actionType = String(action.actionType || '').toLowerCase();
     const dialogueBridge = action.choiceSurface === 'story' &&
       (actionType === 'dialogue' || actionType === 'body_transition' ||
@@ -3323,8 +3326,9 @@ function prepareAdultScenes() {
       const playableForeplay = foreplay.filter(item =>
         item.sourceVerified === true && sourceInterval(item.startTime, item.endTime) &&
         (item.endTime <= positionStart + 0.05 || item.startTime >= positionStart - 0.05));
-      const openingForeplay = initialWarmupBeforeFirstPosition(
-        [...playableForeplay, ...scene.dialogue], positions);
+      // The scene keeps its dialogue as story metadata, but its playable
+      // boundary begins at the first verified approach or position only.
+      const openingForeplay = initialWarmupBeforeFirstPosition(playableForeplay, positions);
       const interactionStart = openingForeplay.length
         ? Math.min(positionStart, ...openingForeplay.map(item => Number(item.startTime)))
         : positionStart;
@@ -3363,28 +3367,10 @@ function prepareAdultScenes() {
     scene.positions = consolidateVerifiedPositions(scene.positions, {
       mergeDistantReturns: false
     });
-    // Only oral/manual occurrences that happen before the first verified
-    // non-warmup position belong to the opening approach. Returns later in the
-    // same encounter are core panel activities and must not disappear.
-    const firstPrimaryCoreStart = scene.positions
-      .filter(position => {
-        const family = String(position?.familyId || '').toLowerCase();
-        const category = String(position?.categoryId || '').toLowerCase();
-        return !['oral', 'manual'].includes(family) && !['oral', 'manual'].includes(category);
-      })
-      .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
-    scene.positions = scene.positions.map(position => {
-      const family = String(position?.familyId || '').toLowerCase();
-      const category = String(position?.categoryId || '').toLowerCase();
-      const activityOpening = ['oral', 'manual'].includes(family) ||
-        ['oral', 'manual'].includes(category);
-      const beforeFirstCore = !Number.isFinite(firstPrimaryCoreStart) ||
-        Number(position.startTime) < firstPrimaryCoreStart - 0.05;
-      return {
-        ...position,
-        progressionRole: activityOpening && beforeFirstCore ? 'foreplay' : 'core'
-      };
-    });
+    // Stage ownership comes from observed motion and temporal evidence,
+    // not from treating the first pose change as the first core position.
+    // The same rule applies to every video and to all providers.
+    scene.positions = assignVerifiedOpeningRoles(scene.positions);
     const firstCoreStart = scene.positions
       .filter(position => !isWarmupPosition(position))
       .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
@@ -3796,6 +3782,18 @@ function settleInteractionClipBoundary(mediaTime) {
     state.interactionPhaseOverride = null;
   }
   if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
+  // One verified scene transition owns the new unlocked position. Never jump
+  // across an unverified gap into a separate source chapter.
+  const earnedNextId = state.adultPendingAutoPositionId;
+  const earnedNext = state.adultScene?.positions?.find(item =>
+    item.id === earnedNextId && item.sourceVerified === true &&
+    !isWarmupPosition(item) && state.adultUnlockedPositionIds.has(item.id));
+  if (earnedNext && earnedNext.id !== position?.id) {
+    state.adultPendingAutoPositionId = null;
+    logEngineEvent('EARNED_POSITION_ENTERED', { positionId: earnedNext.id, afterClip: selected.id });
+    selectAdultPosition(earnedNext.id, true);
+    return true;
+  }
   renderAdultProgressiveUI(true);
   logEngineEvent('INTERACTION_CLIP_ENDED_AWAITING_SELECTION', {
     groupId: position?.id || null, occurrenceId: state.activeAdultOccurrenceId,
@@ -3870,6 +3868,9 @@ function unlockNextAdultPositionFromLust() {
   state.adultUnlockedPositionIds.add(next.id);
   state.adultRevealedPositionIds.add(next.id);
   state.adultSexUnlocked = true;
+  // Completion of the current verified clip, not the unlock event, transfers
+  // playback ownership to this newly earned source-backed destination.
+  state.adultPendingAutoPositionId = next.id;
   state.femaleSceneProgress = 0;
   state.adultUiSignature = '';
   logEngineEvent('LUST_POSITION_UNLOCKED', {
@@ -4144,6 +4145,7 @@ function resetAdultSceneGameplay() {
   state.interactionMeterNeedsReset = false;
   state.interactionPhaseOverride = null;
   state.adultPendingSelectionProgress = null;
+  state.adultPendingAutoPositionId = null;
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
   state.adultMaleOrgasmProgress = 0;
@@ -4317,10 +4319,8 @@ function renderAdultApproachChoices(scene, later = false) {
   els.approachChoices.innerHTML = '';
 
   const target = dialogueOnly ? els.choices : els.approachChoices;
-  if (dialogueOnly) {
-    els.foreplaySection?.classList.add('hidden');
-  } else {
-    els.foreplaySection?.classList.add('hidden');
+  els.foreplaySection?.classList.add('hidden');
+  if (!dialogueOnly) {
     const heading = document.createElement('div');
     heading.className = 'approach-overlay-heading';
     heading.innerHTML = `<span>YAKINLAŞMA</span><strong>Seçimini yap</strong><small>Lust ${Math.round(flow)}/100 · ${candidates.length} seçenek</small>`;
@@ -5125,7 +5125,10 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       ? !state.adultSexUnlocked : state.adultUnlockedPositionIds.has(position.id) }
   );
   if (!positionGuard.allowed) return;
-  if (shouldSeek) logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
+  if (shouldSeek) {
+    state.adultPendingAutoPositionId = null;
+    logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
+  }
   if (genericSelection) state.interactionRuntime = genericSelection.state;
 
   const selectionToken = shouldSeek

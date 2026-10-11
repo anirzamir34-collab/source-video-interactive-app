@@ -1,4 +1,5 @@
 import { groupSourceChoiceCards, sourceActionLabel, sourceIdentityLabel } from './choice-groups.js';
+import { sameVerifiedSourceRun } from './verified-scene-continuity.js';
 import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
 import { knownPositionId, verifiedBodyConfigurationFamily } from './classification-integrity.js';
 import { progressionPacing } from './interaction-engine.js';
@@ -135,11 +136,11 @@ export function positionOccurrenceGroups(position = {}) {
   const groups = [];
   for (const range of ranges) {
     const previous = groups[groups.length - 1];
-    // One provider occurrence can contain a brief sampling gap between two
-    // source-backed actions. Group its cards without filling the gap. A
-    // different occurrence id still needs the strict adjacency tolerance.
-    const sameSource = previous?.sourceRanges.at(-1)?.id === range.id;
-    if (previous && range.startTime <= previous.endTime + (sameSource ? 0.75 : 0.25)) {
+    // Keep evidence-identical cut-separated clips in one logical occurrence.
+    // Actual sourceRanges remain separate: gaps are never playable footage.
+    const last = previous?.sourceRanges.at(-1);
+    if (previous && (sameVerifiedSourceRun(last, range) ||
+        (last?.id !== range.id && range.startTime <= previous.endTime + 0.25))) {
       previous.endTime = Math.max(previous.endTime, range.endTime);
       if (!previous.sourcePositionIds.includes(range.id)) previous.sourcePositionIds.push(range.id);
       previous.sourceRanges.push(range);
@@ -1001,12 +1002,15 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     const explicitDeep = /\b(derin|deep)\b/u.test(text);
     const explicitHard = /\b(sert|hard|guclu)\b/u.test(text);
     const explicitFast = tempo === 'fast' || /\b(hizli|hizlan\w*|fast|thrust)\b/u.test(text);
-    const explicitIntense = /\b(yogun|zirve|intense)\b/u.test(text);
+    const explicitIntense = /\b(yogun\w*|zirve\w*|intense\w*)\b/u.test(text);
     const explicitRhythmic = /\b(ritmik|ritim|tempo|rhythmic|rhythm)\b/u.test(text);
+    // The provider's coarse movementTempo describes playback pace, not the
+    // observed energy flavor. Explicit intensity evidence must not be erased
+    // just because the same footage is also marked as fast.
     const energyFlavor = explicitDeep ? 'deep'
       : explicitHard ? 'hard'
-        : explicitFast ? 'fast'
-          : explicitIntense ? 'intense'
+        : explicitIntense ? 'intense'
+          : explicitFast ? 'fast'
             : explicitSlow ? 'slow' : 'steady';
     const resolvedTempo = tempo !== 'unclear' ? tempo
       : energyFlavor === 'slow' ? 'slow'
