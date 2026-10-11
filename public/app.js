@@ -749,7 +749,8 @@ function saveGeminiApiKey() {
   try { sessionStorage.setItem(GEMINI_SESSION_KEY, key); } catch {}
   renderGeminiApiKeyState();
   invalidateTurkishMediaCredentials(0, { preservePreparedMedia: true });
-  testGeminiApiKey();
+  // Saving a replacement credential must not burn another Gemini request.
+  // The dedicated "Test et" button remains available for an explicit test.
 }
 
 async function testGeminiApiKey() {
@@ -2412,7 +2413,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         ? 'Bu denemede kayda geçen en az ' + state.aiUsage.requests + ' başarılı Gemini isteği · ' +
           (state.aiUsage.totalTokens || 0) + ' raporlanmış token. Reddedilen istekler bu sayıya dahil değildir.'
         : ''
-    ].filter(Boolean).join('\\n');
+    ].filter(Boolean).join('\n');
     setGameState(error?.name === 'AbortError' ? 'IDLE' : 'ERROR');
     renderDebug({ analysisError: error?.message || String(error) });
   } finally {
