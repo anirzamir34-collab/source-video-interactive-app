@@ -2,7 +2,8 @@
 // A successful HTMLMediaElement.play() call means playback started, not that the
 // source interval was played. Progress/combo credit is awarded only after a
 // verified clip's end is reached with observed real playback coverage.
-const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
+const finite = value => value === null || value === undefined || value === ''
+  ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const intervalOf = pending => {
   const clip = pending?.kind === 'prelude' ? pending.item : pending?.movement;
   if (!clip || clip.sourceVerified !== true) return null;
