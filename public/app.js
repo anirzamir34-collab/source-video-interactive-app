@@ -212,6 +212,7 @@ const state = {
   adultUnlockedOutcomeIds: new Set(),
   adultRevealedPositionIds: new Set(),
   adultUiSignature: '',
+  activeInteractionSurface: 'none',
   adultLastUiPhase: 'foreplay',
   lastAdultFrameNow: null,
   adultFrameRequest: null,
@@ -3751,7 +3752,8 @@ function reconcileInteractionSeek(mediaTime) {
     state.adultMode = false;
     state.adultScene = null;
     syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-      approach: els.approachChoices, panelVisible: false, overlayVisible: true });
+      approach: els.approachChoices, surface: 'story' });
+    state.activeInteractionSurface = 'story';
     state.gameCursorTime = Math.max(0, Number(mediaTime) || 0);
     state.consumedActionIds = new Set((state.analysis?.actions || [])
       .filter(action => Number(action.endTime) <= mediaTime).map(action => action.actionId));
@@ -4311,10 +4313,8 @@ function renderAdultApproachChoices(scene, later = false) {
 
   const target = dialogueOnly ? els.choices : els.approachChoices;
   if (dialogueOnly) {
-    els.choices.classList.remove('hidden');
     els.foreplaySection?.classList.add('hidden');
   } else {
-    els.choices.classList.add('hidden');
     els.foreplaySection?.classList.add('hidden');
     const heading = document.createElement('div');
     heading.className = 'approach-overlay-heading';
@@ -4380,6 +4380,9 @@ function renderAdultApproachChoices(scene, later = false) {
   }
 
   refreshAdultCompactDock();
+  // Return the actual card destination. This is the ONLY source of truth for
+  // visibility; do not separately guess it from timestamps or scene metadata.
+  return dialogueOnly ? 'story' : 'approach';
 }
 
 function renderInteractionInterludeChoices(scene) {
@@ -4517,44 +4520,20 @@ function renderAdultProgressiveUI(force = false) {
   els.adultInteractionPanel.dataset.phase = phase;
   els.outcomeSection?.classList.add('hidden');
 
-  // Each phase owns exactly one surface: story, centered approach, or core panel.
-  const approachCursor = Math.max(videoTime, Number(state.adultTimelineFloor) || 0);
-  const nextApproachSurface = (phase === 'foreplay' || laterOverlay)
-    ? [
-        ...scenePreludeChoices(scene).map(item => ({
-          startTime: Number(item.startTime),
-          endTime: Number(item.endTime),
-          nonIntimate: item.nonIntimate === true || item.choiceSurface === 'story'
-        })),
-        ...(!laterOverlay ? (scene.positions || []).filter(isWarmupPosition).map(position => ({
-          startTime: Number(position.startTime),
-          endTime: Number(position.endTime),
-          nonIntimate: false
-        })) : [])
-      ]
-        .filter(item => Number.isFinite(item.startTime) && Number.isFinite(item.endTime) &&
-          item.endTime > approachCursor + 0.05)
-        .sort((a, b) => a.startTime - b.startTime)[0]
-    : null;
-  const firstIntimateStart = Math.min(...scenePreludeChoices(scene)
-    .filter(item => item.sourceVerified === true && item.nonIntimate !== true &&
-      (laterOverlay || Number(item.startTime) < Math.min(...(scene.positions || [])
-        .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)))))
-    .map(item => Number(item.startTime)));
-  const approachUsesDialogueOverlay = nextApproachSurface?.nonIntimate === true;
-  const progressivePanelVisible = phase !== 'foreplay' && !laterOverlay;
-  const progressiveOverlayVisible =
-    (phase === 'foreplay' || laterOverlay) && approachUsesDialogueOverlay;
-
-  // Visibility is repaired even when the cached UI signature is unchanged.
-  syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-    panelVisible: progressivePanelVisible,
-    overlayVisible: progressiveOverlayVisible,
-    approach: els.approachChoices,
-    approachVisible: (phase === 'foreplay' || laterOverlay) && !approachUsesDialogueOverlay });
-  state.interactionRuntime = { ...state.interactionRuntime, panelVisible: progressivePanelVisible };
-
-  if (!force && signature === state.adultUiSignature) return;
+  const setSurface = surface => {
+    state.activeInteractionSurface = surface;
+    const visible = syncInteractionSurfaces({
+      panel: els.adultInteractionPanel, overlay: els.choices,
+      approach: els.approachChoices, surface
+    });
+    state.interactionRuntime = { ...state.interactionRuntime, panelVisible: visible.panelVisible };
+  };
+  // An unchanged game signature still reasserts the currently owned surface
+  // after fullscreen/CSS changes, without rebuilding buttons or changing state.
+  if (!force && signature === state.adultUiSignature) {
+    setSurface(state.activeInteractionSurface);
+    return;
+  }
   state.adultUiSignature = signature;
   state.adultLastUiPhase = phase;
 
@@ -4568,7 +4547,8 @@ function renderAdultProgressiveUI(force = false) {
       : 'Bu bölümdeki doğrulanmış yakınlaşma seçenekleri Lust kazandırır.';
     els.discoveryGate?.classList.add('hidden');
     els.adultPanelToggleBtn?.classList.add('hidden');
-    renderAdultApproachChoices(scene, laterOverlay);
+    const selectedSurface = renderAdultApproachChoices(scene, laterOverlay);
+    setSurface(selectedSurface);
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');
@@ -4576,10 +4556,11 @@ function renderAdultProgressiveUI(force = false) {
     return;
   }
 
-  els.choices.classList.add('hidden');
+  // The core renderer owns the panel. A prior approach/story overlay cannot
+  // retain its cards or override its visibility after the phase transition.
   els.choices.innerHTML = '';
-  els.approachChoices?.classList.add('hidden');
-  els.adultInteractionPanel.classList.remove('hidden');
+  if (els.approachChoices) els.approachChoices.innerHTML = '';
+  setSurface('panel');
   els.adultPanelToggleBtn?.classList.remove('hidden');
 
   els.discoveryGate?.classList.add('hidden');
@@ -4671,7 +4652,8 @@ function renderAdultPanel(scene) {
       state.adultSexUnlocked = true;
     }
   }
-  els.adultInteractionPanel.classList.remove('hidden');
+  // Do not expose the panel here: renderAdultProgressiveUI decides whether
+  // the source is still in its approach phase or already in the core panel.
   setAdultPanelExpanded(previousSceneId !== scene.id ||
     !els.adultInteractionPanel.classList.contains('compact-collapsed'));
   els.adultPanelToggleBtn?.classList.remove('hidden');
@@ -6658,9 +6640,11 @@ function syncFullscreenInteraction() {
   keepGameVideoControlsHidden();
   syncAdultPanelPlacement(fullscreenStage);
   if (state.adultMode) {
-    revealFullscreenChoices({ document, stage: fullscreenStage,
-      panel: els.adultInteractionPanel, expand: () => setAdultPanelExpanded(true) });
     renderAdultProgressiveUI(true);
+    if (state.activeInteractionSurface === 'panel') {
+      revealFullscreenChoices({ document, stage: fullscreenStage,
+        panel: els.adultInteractionPanel, expand: () => setAdultPanelExpanded(true) });
+    }
   }
   updateFullscreenButton();
 }
