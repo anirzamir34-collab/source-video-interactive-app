@@ -13,6 +13,26 @@ const participants = action => {
   ].map(value => String(value || '').trim()).filter(Boolean))].sort();
 };
 
+// A missing partnerTrackId is not proof of a new character. Where the model
+// supplied a separate primaryCharacterId, accept it as a partner for grouping
+// only when the story context uniquely verifies that exact source track.
+// This helper never rewrites the source action or invents a participant.
+export function verifiedOpeningCast(action = {}, characters = []) {
+  if (action.sourceVerified !== true) return '';
+  const subject = String(action.subjectTrackId || '').trim();
+  let partner = String(action.partnerTrackId || '').trim();
+  if (!partner && action.groupScene !== true && action.identityResolution !== 'conflict') {
+    const candidate = String(action.primaryCharacterId || '').trim();
+    const matches = (Array.isArray(characters) ? characters : []).filter(character =>
+      String(character.participantTrackId || '').trim() === candidate &&
+      character.identityConflict !== true && character.evidenceLevel === 'fact');
+    if (candidate && candidate !== subject && matches.length === 1) partner = candidate;
+  }
+  if (!subject || !partner || subject === partner) return '';
+  return JSON.stringify([subject, partner,
+    action.groupScene === true ? [...(action.participantTrackIds || [])].sort() : []]);
+}
+
 // Link only existing, verified adjacent introductions for the same exact pair
 // or group. A dialogue, another cast, or a long gap is a boundary, not evidence
 // for widening a scene. Input records and their source times stay unchanged.
