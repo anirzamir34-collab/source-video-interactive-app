@@ -36,17 +36,21 @@ export function resetInteractionSelection(state, {
   }
 }
 
-export function syncInteractionSurfaces({ panel, overlay, approach, panelVisible = false,
-  overlayVisible = false, approachVisible = false } = {}) {
-  const showPanel = Boolean(panel && panelVisible);
-  // Dedicated controls and ordinary choices have a single visible owner. A
-  // repeated seek/pause render updates the same nodes instead of remounting.
-  const showOverlay = Boolean(overlay && overlayVisible && !showPanel);
-  const showApproach = Boolean(approach && approachVisible && !showPanel && !showOverlay);
-  panel?.classList.toggle('hidden', !showPanel);
-  overlay?.classList.toggle('hidden', !showOverlay);
-  approach?.classList.toggle('hidden', !showApproach);
-  return { panelVisible: showPanel, overlayVisible: showOverlay,
-    ...(approach ? { approachVisible: showApproach } : {}),
-    overlayCount: Number(showPanel) + Number(showOverlay) + Number(showApproach) };
+// Exactly one controller owns the visible gameplay surface. The renderer
+// selects a named surface after producing its cards; CSS and fullscreen never
+// guess a different phase or expose a stale, empty panel.
+export const INTERACTION_SURFACES = Object.freeze(['none', 'story', 'approach', 'panel']);
+
+export function syncInteractionSurfaces({ panel, overlay, approach, surface = 'none' } = {}) {
+  if (!INTERACTION_SURFACES.includes(surface)) throw new RangeError('UNKNOWN_INTERACTION_SURFACE');
+  const targets = { panel, story: overlay, approach };
+  const visible = surface !== 'none' && targets[surface] ? surface : 'none';
+  const panelVisible = visible === 'panel';
+  const overlayVisible = visible === 'story';
+  const approachVisible = visible === 'approach';
+  panel?.classList.toggle('hidden', !panelVisible);
+  overlay?.classList.toggle('hidden', !overlayVisible);
+  approach?.classList.toggle('hidden', !approachVisible);
+  return { surface: visible, panelVisible, overlayVisible, approachVisible,
+    overlayCount: Number(panelVisible) + Number(overlayVisible) + Number(approachVisible) };
 }
