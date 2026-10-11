@@ -8,7 +8,7 @@ export function isGeminiTranslationQuota(error) {
   // The media-job poller propagates its public MediaError.code, not Gemini's
   // original HTTP status. E.g. PROVIDER_HTTP_429 or only the Turkish message
   // "Gemini kota veya hız sınırına ulaştı." can reach this client.
-  if (/^(?:GEMINI_(?:CREDITS_EXHAUSTED|CREDITS_DEPLETED|QUOTA_OR_CREDITS|DAILY_LIMIT|RATE_LIMITED)|PROVIDER_HTTP_429)$/.test(code)) {
+  if (/^GEMINI_(?:CREDITS_EXHAUSTED|CREDITS_DEPLETED|QUOTA_OR_CREDITS|DAILY_LIMIT|RATE_LIMITED)$/.test(code)) {
     return true;
   }
   const mentionsGemini = /\bgemini\b/i.test(message);
