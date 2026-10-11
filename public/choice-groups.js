@@ -115,7 +115,8 @@ export function groupSourceChoiceCards(clips, {
       sameObservedRhythm ? '' : declaredOrigin,
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);
-    if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence, packets: new Map() });
+    if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence,
+      semanticRhythm: Boolean(sameObservedRhythm), packets: new Map() });
     const group = groups.get(key);
     const origin = declaredOrigin || text(clip.id);
     if (!group.packets.has(origin)) group.packets.set(origin, []);
@@ -125,7 +126,10 @@ export function groupSourceChoiceCards(clips, {
   for (const group of groups.values()) {
     const groupSize = [...group.packets.values()].reduce((sum, packet) => sum + packet.length, 0);
     const proportionalCards = Math.max(1, Math.round(target * groupSize / Math.max(1, source.length)));
-    const capacity = groupSize <= 2 ? groupSize : Math.max(2, Math.min(5, Math.ceil(groupSize / proportionalCards)));
+    // A semantic option plays up to five verified source cuts in order. Beyond
+    // that, separate bounded cards keep every source clip reachable.
+    const capacity = group.semanticRhythm ? 5 :
+      groupSize <= 2 ? groupSize : Math.max(2, Math.min(5, Math.ceil(groupSize / proportionalCards)));
     let pending = [];
     const flush = () => {
       if (!pending.length) return;
