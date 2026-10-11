@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mediaCredentialScopes } from '../lib/turkish-media/jobs.js';
 import { isGeminiTranslationQuota, canResumePreparedTurkishMedia } from '../public/media-stage-recovery.js';
 
 test('Gemini translation quota is distinct from ElevenLabs throttling and content restrictions', () => {
@@ -20,4 +21,17 @@ test('retry requires completed visual analysis, the same source and the same req
   assert.equal(canResumePreparedTurkishMedia({ ...context, mediaModeKey: 'subtitles-only' }), false);
   assert.equal(canResumePreparedTurkishMedia({ ...context, analysis: { actions: [] } }), false);
   assert.equal(canResumePreparedTurkishMedia({ ...context, session: { ...session, pendingTurkishMedia: null } }), false);
+});
+
+test('changing Gemini credential preserves completed ElevenLabs work but not unfinished translations', () => {
+  const initial = mediaCredentialScopes('eleven-labs-synthetic-A', 'gemini-synthetic-A');
+  const newGemini = mediaCredentialScopes('eleven-labs-synthetic-A', 'gemini-synthetic-B');
+  const newEleven = mediaCredentialScopes('eleven-labs-synthetic-B', 'gemini-synthetic-A');
+  assert.equal(initial.voiceCredentialScope, newGemini.voiceCredentialScope);
+  assert.notEqual(initial.translationCredentialScope, newGemini.translationCredentialScope);
+  assert.notEqual(initial.credentialScope, newGemini.credentialScope);
+  assert.equal(initial.translationCredentialScope, newEleven.translationCredentialScope);
+  assert.notEqual(initial.voiceCredentialScope, newEleven.voiceCredentialScope);
+  assert.equal(initial.voiceCredentialScope.length, 64);
+  assert.doesNotMatch(JSON.stringify(initial), /synthetic-A|synthetic-B/);
 });
