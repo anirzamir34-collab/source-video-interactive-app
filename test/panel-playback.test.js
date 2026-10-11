@@ -737,7 +737,7 @@ for (const mode of ['error', 'blocked']) {
     const f = runtimeFixture();
     f.els.video.mode = mode;
     if (mode === 'error') f.state.adultScene.foreplay[0].startTime = 12;
-    f.els.video.time = mode === 'error' ? 12 : 0;
+    f.els.video.time = mode === 'error' ? 10 : 0;
     f.playAdultPrelude('intro');
     await flush();
     assert.equal(f.state.femaleSceneProgress, 0);
@@ -750,7 +750,8 @@ for (const mode of ['error', 'blocked']) {
     f.els.video.time = f.state.adultScene.foreplay[0].endTime;
     f.updateAdultPlayback(15000, f.els.video.time);
     assert.equal(f.state.adultPreludePlayCounts.get('intro'), 1);
-    assert.ok(f.state.femaleSceneProgress > 0);
+    assert.ok(f.state.interactionRuntime?.progressObservations?.playedRanges?.length > 0,
+      'completed recovery must contain actual source playback observations');
     const progress = f.state.femaleSceneProgress;
     f.commitAdultSelectionProgress(f.state.adultSelectionToken);
     assert.equal(f.state.femaleSceneProgress, progress);
