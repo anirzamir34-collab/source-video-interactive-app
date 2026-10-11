@@ -11,6 +11,7 @@ import { sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups
 import { interactionEntryGuard, interactionClipGuard } from '../public/interaction-timeline.js';
 import { sourceSpeechOverlaps } from '../public/source-transcript.js';
 import { assignVerifiedOpeningRoles } from '../public/verified-scene-continuity.js';
+import { positionOccurrenceGroups, movementsForPositionOccurrence } from '../public/adult-gameplay.js';
 import { canonicalizeActionTrackIds } from '../public/character-identity.js';
 
 test('verified action time repairs zeroed position and loop metadata', () => {
@@ -665,4 +666,45 @@ test('unverified scene-tagged provider rows cannot bridge a standalone opening t
     assert.ok(state.adultAnalysisTrace.actions.slice(1, -1).every(item => item.route !== 'FOREPLAY'));
     assert.deepEqual(actions, original);
   }
+});
+
+
+test('one cut-heavy source encounter keeps normal dialogue in story, opening prep in approach, and motion variants together', () => {
+  const ids = { subjectTrackId: 'actor-1', partnerTrackId: 'actor-2' };
+  const source = (id, start, end, props) => action(id, start, end, {
+    ...ids, adultSceneId: 'encounter-a', adultSceneStartTime: 86, adultSceneEndTime: 290,
+    positionStartTime: start, positionEndTime: end,
+    loopStartTime: start, loopEndTime: end, ...props
+  });
+  const actions = [
+    source('narrative',86,208,{ actionType:'dialogue',positionId:'',positionLabel:'' }),
+    source('intro',211.158,220.756,{ actionType:'kiss',positionId:'',positionLabel:'' }),
+    source('pose',223.156,227.955,{ actionType:'position',positionId:'seated-facing',
+      positionLabel:'Pose',positionOccurrenceId:'entry-1',movementTempo:'unclear' }),
+    source('preparation',230.354,235.154,{ actionType:'position',positionId:'oral',
+      positionLabel:'Preparation',positionOccurrenceId:'entry-2',movementTempo:'moderate' }),
+    ...[[237.553,256.749,'moderate'],[259.149,275.945,'fast'],[278.345,287.943,'fast']]
+      .map(([start,end,tempo],index) => source('motion-'+index,start,end,{
+        actionType:'position',positionId:'rear',positionLabel:'Core',positionOccurrenceId:'entry-3',
+        movementType:'motion',movementTempo:tempo }))
+  ];
+  const prepared=prepare(actions,{
+    playableAdultPanelFamily: item => item.positionId || '',
+    canonicalAdultPosition: item => ({id:item.positionId,label:item.positionLabel}),
+    adultCategoryFor: item => ({id:item.positionId === 'oral' ? 'oral':'other',label:'Neutral'}),
+    isWarmupPosition: item => item.progressionRole === 'foreplay',
+    movementBelongsToVerifiedPosition: (item, family) => item.positionId === family,
+    mergeAdultSceneFragments: scenes => scenes
+  });
+  assert.equal(prepared.adultScenes.length,1);
+  const scene=prepared.adultScenes[0];
+  assert.equal(scene.startTime,211.158);
+  assert.deepEqual(Array.from(scene.dialogue, item=>item.id),['narrative']);
+  assert.deepEqual(scene.positions.map(p=>[p.familyId,p.progressionRole]),[
+    ['seated-facing','foreplay'],['oral','foreplay'],['rear','core']]);
+  const core=scene.positions.find(item=>item.familyId==='rear');
+  assert.equal(core.movements.length,3);
+  assert.equal(positionOccurrenceGroups(core).length,1);
+  assert.equal(movementsForPositionOccurrence(core,positionOccurrenceGroups(core)[0].id).length,3);
+  assert.equal(prepared.adultAnalysisTrace.actions.find(row=>row.actionId==='narrative').route,'DIALOGUE');
 });
