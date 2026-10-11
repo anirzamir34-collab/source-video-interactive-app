@@ -654,7 +654,7 @@ function invalidateTurkishMediaCredentials(refreshDelay = 0, { preservePreparedM
   els.voiceMappingRows?.replaceChildren?.();
   if (els.voiceMappingPanel) els.voiceMappingPanel.open = false;
   els.mediaJobStatus?.classList.add('hidden');
-  els.mediaJobRetryBtn?.classList.add('hidden');
+  els.mediaJobRetryBtn?.classList.toggle('hidden', !state.analysisSession?.pendingTurkishMedia);
   els.dubBufferStatus?.classList.add('hidden');
   renderMediaControls();
   renderElevenLabsApiKeyState();
@@ -749,7 +749,8 @@ function saveGeminiApiKey() {
   try { sessionStorage.setItem(GEMINI_SESSION_KEY, key); } catch {}
   renderGeminiApiKeyState();
   invalidateTurkishMediaCredentials(0, { preservePreparedMedia: true });
-  testGeminiApiKey();
+  // Saving a replacement credential must not burn another Gemini request.
+  // The dedicated "Test et" button remains available for an explicit test.
 }
 
 async function testGeminiApiKey() {
@@ -1762,17 +1763,27 @@ els.analyzeBtn.addEventListener('click', async () => {
     // must not re-bill the 15 already verified scene chapters. The persistent
     // identity includes every actual storyboard image, its timing, and the
     // source-context analysis settings; it never includes an API credential.
-    const checkpointPrefix = await analysisCheckpointKey({
+    const checkpointOptions = {
       sheets: storyboard.sheets, timestamps: storyboard.timestamps,
       duration: storyboard.duration, mode: analysisModeKey
-    });
+    };
+    // Key verified chapters by the original video's actual bytes, not by
+    // JPEG output that changes with mobile decoder/encoder initialization.
+    // The old JPEG checkpoint is also read once to recover pre-upgrade jobs.
+    const checkpointPrefix = await analysisCheckpointKey({ ...checkpointOptions, source: file });
+    const legacyCheckpointPrefix = await analysisCheckpointKey(checkpointOptions);
     let restoredChapters = 0;
     for (let index = 0; index < chunkCount; index++) {
       if (session.chunkResults[index]?.available === true) continue;
-      const previous = await analysisResponseCache.readCheckpoint(checkpointPrefix, index);
+      const previous = await analysisResponseCache.readCheckpoint(checkpointPrefix, index) ||
+        (legacyCheckpointPrefix !== checkpointPrefix
+          ? await analysisResponseCache.readCheckpoint(legacyCheckpointPrefix, index) : null);
       if (previous?.available === true) {
         session.chunkResults[index] = previous;
         restoredChapters++;
+        // Promote legacy checkpoints so subsequent retries do not need the
+        // old rendered JPEGs or another Gemini request.
+        await analysisResponseCache.saveCheckpoint(checkpointPrefix, index, previous);
       }
     }
     if (restoredChapters) analysisProgress.update('analysis', {
@@ -1794,10 +1805,18 @@ els.analyzeBtn.addEventListener('click', async () => {
       let chunkBody = null;
       let chunkFailure = null;
       analysisOwner.signal.throwIfAborted();
+      // A restored verified chapter requires NO uploads, Gemini calls or
+      // second-pass reviews. Do not misleadingly show 1/15 as a fresh run.
+      if (chunkResults[chunkIndex]?.available === true) {
+        analysisProgress.update('analysis', { status: 'reused',
+          loaded: chunkResults.filter(result => result?.available).length,
+          total: chunkCount, unit: 'bölüm',
+          detail: 'Bölüm ' + (chunkIndex + 1) + '/' + chunkCount + ' önceden doğrulandı; Gemini çağrılmadı.' });
+        return { chunkIndex, result: chunkResults[chunkIndex] };
+      }
       analysisProgress.update('analysis', { loaded: chunkResults.filter(result => result?.available).length,
-        total: chunkCount, unit: 'bölüm', detail: 'Bölüm ' + (chunkIndex + 1) + '/' + chunkCount + ' hazırlanıyor.' });
-      // Resume by index: completed later chapters survive a failure in the middle.
-      if (chunkResults[chunkIndex]?.available || chunkResults[chunkIndex]?.retryable === false)
+        total: chunkCount, unit: 'bölüm', detail: 'Eksik bölüm ' + (chunkIndex + 1) + '/' + chunkCount + ' hazırlanıyor.' });
+      if (chunkResults[chunkIndex]?.retryable === false)
         return { chunkIndex, result: chunkResults[chunkIndex] };
       const { firstSheet, sheetCount } = analysisPlan.chunks[chunkIndex];
       const chunkSheets = storyboard.sheets.slice(
@@ -2371,8 +2390,30 @@ els.analyzeBtn.addEventListener('click', async () => {
     els.analysisCard.dataset.compactError = 'true';
     els.analysisState.textContent = error?.name === 'AbortError' ? 'CANCELLED' : 'ANALYSIS_ERROR';
     els.analysisTitle.textContent = 'Analiz tamamlanamadı';
-    els.analysisOutput.textContent =
-      error?.message || 'Beklenmeyen bir analiz hatası oluştu.';
+    const finishedChunks = state.analysisSession?.chunkResults?.filter(row => row?.available === true).length || 0;
+    const quota = isGeminiTranslationQuota(error);
+    if (quota && state.analysis?.actions?.length &&
+        state.analysisSession?.sourceKey === analysisSourceKey(state.selectedFile, state.selectedRemoteVideo)) {
+      state.analysisSession.pendingTurkishMedia = {
+        modeKey: requestedTurkishMediaModeKey(selectedAnalysisModes())
+      };
+      state.savedGameReady = true;
+      els.mediaJobRetryBtn?.classList.remove('hidden');
+      els.analysisTitle.textContent = 'Oyun analizi hazır · Türkçe medya bekliyor';
+    }
+    els.analysisOutput.textContent = [
+      error?.message || 'Beklenmeyen bir analiz hatası oluştu.',
+      finishedChunks > 0
+        ? finishedChunks + ' doğrulanmış görsel bölüm korundu; yeni anahtarla yalnız eksikler yeniden denenebilir.'
+        : '',
+      quota && state.analysis?.actions?.length
+        ? 'Bu kota hatası video analizini geçersiz kılmaz. Yeniden dene ile yalnız Türkçe medyayı tamamla.'
+        : '',
+      state.aiUsage?.requests
+        ? 'Bu denemede kayda geçen en az ' + state.aiUsage.requests + ' başarılı Gemini isteği · ' +
+          (state.aiUsage.totalTokens || 0) + ' raporlanmış token. Reddedilen istekler bu sayıya dahil değildir.'
+        : ''
+    ].filter(Boolean).join('\n');
     setGameState(error?.name === 'AbortError' ? 'IDLE' : 'ERROR');
     renderDebug({ analysisError: error?.message || String(error) });
   } finally {

@@ -35,3 +35,17 @@ test('changing Gemini credential preserves completed ElevenLabs work but not unf
   assert.equal(initial.voiceCredentialScope.length, 64);
   assert.doesNotMatch(JSON.stringify(initial), /synthetic-A|synthetic-B/);
 });
+
+test('server media job quota messages remain recognizable after polling strips original HTTP status', () => {
+  assert.equal(isGeminiTranslationQuota({ code: 'PROVIDER_HTTP_429',
+    message: 'Gemini kota veya hız sınırına ulaştı.' }), true);
+  assert.equal(isGeminiTranslationQuota(new Error('Gemini kota veya hız sınırına ulaştı.')), true);
+  assert.equal(isGeminiTranslationQuota({ code: 'MEDIA_JOB_FAILED',
+    message: 'Gemini API günlük kotasına ulaştı.' }), true);
+  assert.equal(isGeminiTranslationQuota({ code: 'PROVIDER_HTTP_429',
+    message: 'Bu anahtar için sağlayıcı sınırı doldu.' }), false);
+  assert.equal(isGeminiTranslationQuota({ code: 'ELEVENLABS_RATE_LIMITED',
+    message: 'ElevenLabs kota doldu.' }), false);
+  assert.equal(isGeminiTranslationQuota({ code: 'TRANSLATION_BLOCKED',
+    message: 'Gemini içerik güvenlik kısıtlaması.' }), false);
+});
