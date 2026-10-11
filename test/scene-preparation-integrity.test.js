@@ -10,6 +10,7 @@ import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
 import { interactionEntryGuard, interactionClipGuard } from '../public/interaction-timeline.js';
 import { sourceSpeechOverlaps } from '../public/source-transcript.js';
+import { assignVerifiedOpeningRoles } from '../public/verified-scene-continuity.js';
 import { canonicalizeActionTrackIds } from '../public/character-identity.js';
 
 test('verified action time repairs zeroed position and loop metadata', () => {
@@ -51,7 +52,7 @@ const action = (id, start, end, extra = {}) => ({
 function prepare(actions, overrides = {}, sourceContext = null, storyContext = {}) {
   const state = { analysis: { actions, storyContext }, analysisFingerprint: 'test', sourceContext };
   const scope = vm.createContext({
-    ...gameplay, ...choiceRouting, state, ENGINE_VERSION: 'test', matchSceneIntroductions, verifiedOpeningCast, isAdultSocialRelationshipRole, sourceSpeechOverlaps,
+    ...gameplay, ...choiceRouting, assignVerifiedOpeningRoles, state, ENGINE_VERSION: 'test', matchSceneIntroductions, verifiedOpeningCast, isAdultSocialRelationshipRole, sourceSpeechOverlaps,
     canonicalizeActionTrackIds,
     sourceIdentityLabel, sourceDisplayLabel, interactionEntryGuard,
     bindActionCharacter: item => item,
@@ -97,7 +98,8 @@ test('distant verified intimacy remains a separate progressing panel with explic
   const [opening, positionScene] = state.adultScenes;
   assert.deepEqual(Array.from(opening.foreplay, item => item.id),
     ['approach-1', 'approach-2', 'approach-3']);
-  assert.deepEqual(Array.from(opening.dialogue, item => item.id), ['story-interlude']);
+  assert.deepEqual(Array.from(opening.dialogue, item => item.id), [],
+    'ordinary story dialogue stays outside the intimacy surface');
   assert.deepEqual([opening.startTime, opening.endTime, opening.positions.length], [84, 202, 0]);
   assert.equal(positionScene.startTime, 373);
   assert.deepEqual(Array.from(positionScene.positions[0].sourceRanges,
