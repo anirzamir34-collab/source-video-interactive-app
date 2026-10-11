@@ -111,6 +111,7 @@ import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectVerifiedChoiceQueue } from './interaction-engine.js';
 import { interactionEntryClip, interactionEntryGuard, interactionFamilyViews } from './interaction-timeline.js';
 import { bindInteractionRuntimeViews } from './interaction-compat.js';
+import { assignVerifiedOpeningRoles } from './verified-scene-continuity.js';
 import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
   verifiedClipCompletionReady } from './interaction-completion.js';
 import { mountInteractionPanel, resetInteractionSelection,
@@ -2916,13 +2917,12 @@ function prepareAdultScenes() {
   );
 
   const isIntroduction = action => {
-    const actionType = String(action.actionType || '').toLowerCase();
-    const dialogueBridge = action.choiceSurface === 'story' &&
-      (actionType === 'dialogue' || actionType === 'body_transition' ||
-        (state.sourceContext?.segments || []).some(segment => sourceSpeechOverlaps(action, segment)));
+    // Speech is a story choice even when the provider gives the whole chapter
+    // the same adultSceneId and characters. A narrative bridge does not own the
+    // encounter's start time or earn approach progress.
     const warmupFamily = String(playableAdultPanelFamily(action) || '').toLowerCase();
     const warmupCandidate = ['oral', 'manual'].includes(warmupFamily);
-    return (action.choiceSurface === 'approach' || dialogueBridge || warmupCandidate) &&
+    return (action.choiceSurface === 'approach' || warmupCandidate) &&
       (!traceByAction.get(action)?.sceneCandidate || warmupCandidate) &&
       !(action.relationshipResolution === 'verified' && action.relationshipRoleLabel &&
         !isAdultSocialRelationshipRole(action.relationshipRoleLabel));
@@ -2984,7 +2984,10 @@ function prepareAdultScenes() {
   }
 
   actions.filter(action =>
-    verifiedPositionSceneIds.has(sceneIdFor(action))
+    verifiedPositionSceneIds.has(sceneIdFor(action)) &&
+    // Ordinary dialogue is owned by the story graph, never by a broad source
+    // encounter envelope. This also prevents a too-early panel activation.
+    action.choiceSurface !== 'story'
   ).forEach((action, index) => {
     const sceneId = sceneIdFor(action);
     const traceRow = traceByAction.get(action);
@@ -3363,28 +3366,10 @@ function prepareAdultScenes() {
     scene.positions = consolidateVerifiedPositions(scene.positions, {
       mergeDistantReturns: false
     });
-    // Only oral/manual occurrences that happen before the first verified
-    // non-warmup position belong to the opening approach. Returns later in the
-    // same encounter are core panel activities and must not disappear.
-    const firstPrimaryCoreStart = scene.positions
-      .filter(position => {
-        const family = String(position?.familyId || '').toLowerCase();
-        const category = String(position?.categoryId || '').toLowerCase();
-        return !['oral', 'manual'].includes(family) && !['oral', 'manual'].includes(category);
-      })
-      .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
-    scene.positions = scene.positions.map(position => {
-      const family = String(position?.familyId || '').toLowerCase();
-      const category = String(position?.categoryId || '').toLowerCase();
-      const activityOpening = ['oral', 'manual'].includes(family) ||
-        ['oral', 'manual'].includes(category);
-      const beforeFirstCore = !Number.isFinite(firstPrimaryCoreStart) ||
-        Number(position.startTime) < firstPrimaryCoreStart - 0.05;
-      return {
-        ...position,
-        progressionRole: activityOpening && beforeFirstCore ? 'foreplay' : 'core'
-      };
-    });
+    // Stage ownership comes from observed motion and temporal evidence,
+    // not from treating the first pose change as the first core position.
+    // The same rule applies to every video and to all providers.
+    scene.positions = assignVerifiedOpeningRoles(scene.positions);
     const firstCoreStart = scene.positions
       .filter(position => !isWarmupPosition(position))
       .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
@@ -4317,10 +4302,8 @@ function renderAdultApproachChoices(scene, later = false) {
   els.approachChoices.innerHTML = '';
 
   const target = dialogueOnly ? els.choices : els.approachChoices;
-  if (dialogueOnly) {
-    els.foreplaySection?.classList.add('hidden');
-  } else {
-    els.foreplaySection?.classList.add('hidden');
+  els.foreplaySection?.classList.add('hidden');
+  if (!dialogueOnly) {
     const heading = document.createElement('div');
     heading.className = 'approach-overlay-heading';
     heading.innerHTML = `<span>YAKINLAŞMA</span><strong>Seçimini yap</strong><small>Lust ${Math.round(flow)}/100 · ${candidates.length} seçenek</small>`;
