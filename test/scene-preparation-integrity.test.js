@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
 import * as gameplay from '../public/adult-gameplay.js';
 import { sourceRangeForClip } from '../public/sequence-integrity.js';
-import { matchSceneIntroductions } from '../public/scene-entry.js';
+import { matchSceneIntroductions, verifiedOpeningCast } from '../public/scene-entry.js';
 import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
 import { interactionEntryGuard, interactionClipGuard } from '../public/interaction-timeline.js';
@@ -51,7 +51,7 @@ const action = (id, start, end, extra = {}) => ({
 function prepare(actions, overrides = {}, sourceContext = null, storyContext = {}) {
   const state = { analysis: { actions, storyContext }, analysisFingerprint: 'test', sourceContext };
   const scope = vm.createContext({
-    ...gameplay, ...choiceRouting, state, ENGINE_VERSION: 'test', matchSceneIntroductions, isAdultSocialRelationshipRole, sourceSpeechOverlaps,
+    ...gameplay, ...choiceRouting, state, ENGINE_VERSION: 'test', matchSceneIntroductions, verifiedOpeningCast, isAdultSocialRelationshipRole, sourceSpeechOverlaps,
     canonicalizeActionTrackIds,
     sourceIdentityLabel, sourceDisplayLabel, interactionEntryGuard,
     bindActionCharacter: item => item,
