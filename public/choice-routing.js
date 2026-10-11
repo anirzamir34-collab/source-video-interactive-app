@@ -28,7 +28,7 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
     String(action.choiceSurfaceEvidence || '').toLocaleLowerCase('tr-TR')
       .replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u'));
   if (approachTypes.has(type)) return (ordinaryContact && declaredEvidence) || speechOnly ? 'story' : 'approach';
-  if (storyTypes.has(type) || (text(action.choiceSurface) === 'story' && declaredEvidence)) return 'story';
+  if (text(action.choiceSurface) === 'story' && declaredEvidence) return 'story';
   if (text(action.choiceSurface) === 'approach' && declaredEvidence) return 'approach';
   return 'story';
 }
