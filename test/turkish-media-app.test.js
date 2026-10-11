@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createAnalysisProgress } from '../public/analysis-progress.js';
+import { isGeminiTranslationQuota } from '../public/media-stage-recovery.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
 
 const appSource = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -77,6 +78,7 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     analysisOwner: new AbortController(), analysisAbortController: null, analysisSucceeded: false,
     framesProgress() {}, onTurkishMediaStatus() {},
     state, els, sourceContextAdapter, Blob, FormData, AbortSignal,
+    isGeminiTranslationQuota,
     console: { error() {} }, videoUrlInput: new Element(), resolveUrlBtn: new Element(),
     renderDebug() {}, updateAnalyzeAvailability() {},
     adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
