@@ -236,8 +236,17 @@ export function playableAdultPanelFamily(action = {}) {
   // source-verified interval inside the encounter explicitly identifies a
   // canonical oral/manual activity, preserve it instead of demoting it merely
   // because the provider used a generic actionType such as "touch".
-  if (action.sourceVerified !== true || action.adultScene !== true) return '';
+  if (action.sourceVerified !== true) return '';
   const type = String(action.actionType || '').toLowerCase();
+  // The provider may omit the optional scene flag while supplying a directly
+  // verified position. Admit only explicit, high-confidence source evidence;
+  // ordinary touch, dialogue and speculative labels must not open this panel.
+  if (action.adultScene !== true && !(
+    ['position', 'movement', 'tempo_change', 'rhythm'].includes(type) &&
+    Number(action.confidence) >= 0.72 &&
+    (String(action.positionId || '').trim() || String(action.positionLabel || '').trim()) &&
+    (action.classificationReview === 'verified' || String(action.positionEvidence || '').trim())
+  )) return '';
   const family = verifiedAdultPositionFamily(action);
   if (!family) return '';
 
