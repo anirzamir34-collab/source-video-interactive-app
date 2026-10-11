@@ -95,6 +95,11 @@ export function groupSourceChoiceCards(clips, {
     const declaredOrigin = text(clip.sourceActionId || clip.observedActionId ||
       clip.actionOriginId || clip.derivedFromVerifiedSegment);
     const stableContext = mergeWithinContext && occurrence;
+    // A verified temporal rhythm is the logical gameplay option within the
+    // same source occurrence. Different model action IDs are its clip variants,
+    // not separate one-clip buttons. Unknown rhythms retain distinct origins.
+    const sameObservedRhythm = stableContext &&
+      ['slow', 'moderate', 'fast'].includes(text(clip.movementTempo).toLowerCase());
     const key = JSON.stringify([
       choiceSurfaceKey(clip),
       occurrence || declaredScope,
@@ -106,8 +111,8 @@ export function groupSourceChoiceCards(clips, {
       stableContext ? '' : text(clip.receiverSupport), band,
       // Even a trusted display context cannot erase the provider's declared
       // action kind or the origin of parts split from one observed action.
-      hasScope && hasType ? actionType : label,
-      declaredOrigin,
+      sameObservedRhythm ? '' : (hasScope && hasType ? actionType : label),
+      sameObservedRhythm ? '' : declaredOrigin,
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);
     if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence, packets: new Map() });
