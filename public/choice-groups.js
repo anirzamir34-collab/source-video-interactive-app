@@ -99,6 +99,8 @@ export function groupSourceChoiceCards(clips, {
     // same source occurrence. Different model action IDs are its clip variants,
     // not separate one-clip buttons. Unknown rhythms retain distinct origins.
     const sameObservedRhythm = stableContext &&
+      ['position', 'movement', 'tempo_change', 'rhythm'].includes(text(clip.actionType).toLowerCase()) &&
+      ['slow', 'fast', 'intense', 'deep', 'hard'].includes(text(profile.energyFlavor).toLowerCase()) &&
       ['slow', 'moderate', 'fast'].includes(text(clip.movementTempo).toLowerCase());
     const key = JSON.stringify([
       choiceSurfaceKey(clip),
