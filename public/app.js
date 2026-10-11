@@ -3782,6 +3782,18 @@ function settleInteractionClipBoundary(mediaTime) {
     state.interactionPhaseOverride = null;
   }
   if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
+  // One verified scene transition owns the new unlocked position. Never jump
+  // across an unverified gap into a separate source chapter.
+  const earnedNextId = state.adultPendingAutoPositionId;
+  const earnedNext = state.adultScene?.positions?.find(item =>
+    item.id === earnedNextId && item.sourceVerified === true &&
+    !isWarmupPosition(item) && state.adultUnlockedPositionIds.has(item.id));
+  if (earnedNext && earnedNext.id !== position?.id) {
+    state.adultPendingAutoPositionId = null;
+    logEngineEvent('EARNED_POSITION_ENTERED', { positionId: earnedNext.id, afterClip: selected.id });
+    selectAdultPosition(earnedNext.id, true);
+    return true;
+  }
   renderAdultProgressiveUI(true);
   logEngineEvent('INTERACTION_CLIP_ENDED_AWAITING_SELECTION', {
     groupId: position?.id || null, occurrenceId: state.activeAdultOccurrenceId,
@@ -3856,6 +3868,9 @@ function unlockNextAdultPositionFromLust() {
   state.adultUnlockedPositionIds.add(next.id);
   state.adultRevealedPositionIds.add(next.id);
   state.adultSexUnlocked = true;
+  // Completion of the current verified clip, not the unlock event, transfers
+  // playback ownership to this newly earned source-backed destination.
+  state.adultPendingAutoPositionId = next.id;
   state.femaleSceneProgress = 0;
   state.adultUiSignature = '';
   logEngineEvent('LUST_POSITION_UNLOCKED', {
@@ -4130,6 +4145,7 @@ function resetAdultSceneGameplay() {
   state.interactionMeterNeedsReset = false;
   state.interactionPhaseOverride = null;
   state.adultPendingSelectionProgress = null;
+  state.adultPendingAutoPositionId = null;
   state.maleSceneProgress = 0;
   state.femaleSceneProgress = 0;
   state.adultMaleOrgasmProgress = 0;
@@ -5109,7 +5125,10 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       ? !state.adultSexUnlocked : state.adultUnlockedPositionIds.has(position.id) }
   );
   if (!positionGuard.allowed) return;
-  if (shouldSeek) logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
+  if (shouldSeek) {
+    state.adultPendingAutoPositionId = null;
+    logEngineEvent('POSITION_SELECTED', { id: position.id, family: position.familyId });
+  }
   if (genericSelection) state.interactionRuntime = genericSelection.state;
 
   const selectionToken = shouldSeek
