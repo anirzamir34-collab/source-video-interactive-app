@@ -12,6 +12,7 @@ import * as interaction from '../public/interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
 import * as panel from '../public/interaction-panel.js';
 import * as compat from '../public/interaction-compat.js';
+import * as completion from '../public/interaction-completion.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -100,7 +101,7 @@ function fixture() {
   const els = new Proxy({ video, panelPlaybackRecovery: null }, {
     get(target, key) { return Object.hasOwn(target, key) ? target[key] : (target[key] = new Element()); }
   });
-  const scope = vm.createContext({ ...choiceRouting, state, els, AbortController, DOMException,
+  const scope = vm.createContext({ ...choiceRouting, ...completion, state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
