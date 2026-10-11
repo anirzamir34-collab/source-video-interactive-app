@@ -1004,10 +1004,13 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     const explicitFast = tempo === 'fast' || /\b(hizli|hizlan\w*|fast|thrust)\b/u.test(text);
     const explicitIntense = /\b(yogun|zirve|intense)\b/u.test(text);
     const explicitRhythmic = /\b(ritmik|ritim|tempo|rhythmic|rhythm)\b/u.test(text);
+    // The provider's coarse movementTempo describes playback pace, not the
+    // observed energy flavor. Explicit intensity evidence must not be erased
+    // just because the same footage is also marked as fast.
     const energyFlavor = explicitDeep ? 'deep'
       : explicitHard ? 'hard'
-        : explicitFast ? 'fast'
-          : explicitIntense ? 'intense'
+        : explicitIntense ? 'intense'
+          : explicitFast ? 'fast'
             : explicitSlow ? 'slow' : 'steady';
     const resolvedTempo = tempo !== 'unclear' ? tempo
       : energyFlavor === 'slow' ? 'slow'
