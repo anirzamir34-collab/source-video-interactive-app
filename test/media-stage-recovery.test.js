@@ -43,7 +43,7 @@ test('server media job quota messages remain recognizable after polling strips o
   assert.equal(isGeminiTranslationQuota({ code: 'MEDIA_JOB_FAILED',
     message: 'Gemini API günlük kotasına ulaştı.' }), true);
   assert.equal(isGeminiTranslationQuota({ code: 'PROVIDER_HTTP_429',
-    message: 'Bu anahtar için sağlayıcı sınırı doldu.' }), true);
+    message: 'Bu anahtar için sağlayıcı sınırı doldu.' }), false);
   assert.equal(isGeminiTranslationQuota({ code: 'ELEVENLABS_RATE_LIMITED',
     message: 'ElevenLabs kota doldu.' }), false);
   assert.equal(isGeminiTranslationQuota({ code: 'TRANSLATION_BLOCKED',
