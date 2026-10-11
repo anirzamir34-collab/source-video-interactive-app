@@ -4861,11 +4861,16 @@ function applyAdultPreludeProgress(item) {
 
   state.adultPreludePlayCounts.set(item.id, repeatCount + 1);
   const runtime = genericInteractionSnapshot();
-  if (runtime.progressBudget && !runtime.progressBudgetConsumed) {
-    state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
-      choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
-    if (!runtime.progressBudgetConsumed && state.interactionRuntime.progressBudgetConsumed)
-      state.interactionMeterNeedsReset = true;
+  if (runtime.progressBudget) {
+    if (!runtime.progressBudgetConsumed) {
+      state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
+        choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
+      if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
+    } else if (!state.interactionMeterNeedsReset) {
+      // The opening budget was already spent by actual playback. Never award
+      // this same completed clip a second time while the next stage resets.
+      addFemaleLust(delta.female * currentWarmupLustScale());
+    }
   } else addFemaleLust(delta.female * currentWarmupLustScale());
   renderAdultProgress();
 }
@@ -4922,12 +4927,17 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
     state.adultMovementPlayCounts.set(movement.id, repeatCount + 1);
   }
   const runtime = genericInteractionSnapshot();
-  if (isWarmupPosition(position) && runtime.progressBudget && !runtime.progressBudgetConsumed && movement) {
-    state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
-      choiceId: movement.id, startTime: Number(movement.loopStartTime),
-      endTime: Number(movement.loopEndTime), playing: true,
-      sourcePositionId: movement.sourcePositionId,
-      sourceOccurrenceId: positionOccurrenceForMovement(position, movement)?.id || '' });
+  if (isWarmupPosition(position) && runtime.progressBudget && movement) {
+    if (!runtime.progressBudgetConsumed) {
+      state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
+        choiceId: movement.id, startTime: Number(movement.loopStartTime),
+        endTime: Number(movement.loopEndTime), playing: true,
+        sourcePositionId: movement.sourcePositionId,
+        sourceOccurrenceId: positionOccurrenceForMovement(position, movement)?.id || '' });
+      if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
+    } else if (!state.interactionMeterNeedsReset) {
+      addFemaleLust(delta.female * currentWarmupLustScale());
+    }
   } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
   if (!isWarmupPosition(position)) {
     // Tapping a card never advances orgasm. Only verified core playback does.
@@ -5628,6 +5638,8 @@ function observeInteractionProgress(mediaTime) {
   const runtime = genericInteractionSnapshot();
   state.interactionRuntime = transitionInteraction(runtime, { type: 'playback', startTime: Number(previous), endTime,
     playing: true, seek: false });
+  if (!runtime.progressBudgetConsumed && state.interactionRuntime.progressBudgetConsumed)
+    state.interactionMeterNeedsReset = true;
 }
 
 function updateAdultPlayback(now, mediaTime) {
