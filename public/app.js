@@ -101,7 +101,7 @@ import { sourceContextAdapter, sourceSpeechOverlaps } from './source-transcript.
 import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
-import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
+import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices } from './choice-routing.js';
@@ -2941,10 +2941,8 @@ function prepareAdultScenes() {
   // instead of silently routing its actions through the ordinary story UI.
   // Never stretch this opening to a distant core position or across cast IDs.
   const standaloneOpenings = [];
-  const openingCast = action => String(action.subjectTrackId || '').trim() &&
-    String(action.partnerTrackId || '').trim()
-    ? JSON.stringify([action.subjectTrackId, action.partnerTrackId,
-      action.groupScene === true ? [...(action.participantTrackIds || [])].sort() : []]) : '';
+  const openingCast = action => verifiedOpeningCast(action,
+    state.analysis?.storyContext?.characters || []);
   const orphanApproaches = actions.filter(action =>
     action.choiceSurface === 'approach' && isIntroduction(action) &&
     action.sourceVerified === true && Number(action.confidence) >= 0.6 &&
