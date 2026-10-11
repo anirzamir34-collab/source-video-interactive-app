@@ -1548,7 +1548,10 @@ async function resumePreparedTurkishMedia() {
 els.analyzeBtn.addEventListener('click', async () => {
   if (state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
-  if (hasPendingTurkishMediaRecovery()) {
+  // Most starts have no media retry. Guard the recovery lookup so the
+  // ordinary entry path remains independently testable and never evaluates
+  // media-only state on a fresh analysis.
+  if (state.analysisSession?.pendingTurkishMedia && hasPendingTurkishMediaRecovery()) {
     await resumePreparedTurkishMedia();
     return;
   }
