@@ -4,17 +4,16 @@ import { createGeminiRequestPacer, isGeminiGenerationRequest } from '../lib/turk
 
 test('thirty-two concurrent Gemini requests reserve at least 6.5 seconds between starts', async () => {
   let now = 1000;
-  const delays = [], started = [];
+  const delays = [];
+  // Reservation is serialized inside the pacer. A synchronous fake clock can
+  // advance before unrelated promise continuations observe it, so compare the
+  // actual booked sleep slots, not callback completion timestamps.
   const pacer = createGeminiRequestPacer({ intervalMs: 6500, now: () => now,
     sleep: async ms => { delays.push(ms); now += ms; } });
-  await Promise.all(Array.from({ length: 32 }, async () => {
-    await pacer.beforeRequest();
-    started.push(now);
-  }));
-  assert.equal(started.length, 32);
-  assert.ok(started.every((time, i) => !i || time - started[i - 1] >= 6500));
-  assert.equal(started.at(-1) - started[0], 31 * 6500);
+  await Promise.all(Array.from({ length: 32 }, () => pacer.beforeRequest()));
   assert.equal(delays.length, 31);
+  assert.ok(delays.every(ms => ms >= 6500), 'each queued request reserves another full interval');
+  assert.equal(now, 1000 + 31 * 6500);
 });
 
 test('cancelling an enqueued request consumes no Gemini request slot', async () => {
