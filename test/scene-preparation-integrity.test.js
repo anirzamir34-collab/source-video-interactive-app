@@ -98,8 +98,8 @@ test('distant verified intimacy remains a separate progressing panel with explic
   const [opening, positionScene] = state.adultScenes;
   assert.deepEqual(Array.from(opening.foreplay, item => item.id),
     ['approach-1', 'approach-2', 'approach-3']);
-  assert.deepEqual(Array.from(opening.dialogue, item => item.id), [],
-    'ordinary story dialogue stays outside the intimacy surface');
+  assert.deepEqual(Array.from(opening.dialogue, item => item.id), ['story-interlude'],
+    'ordinary story metadata stays separate from approach choices');
   assert.deepEqual([opening.startTime, opening.endTime, opening.positions.length], [84, 202, 0]);
   assert.equal(positionScene.startTime, 373);
   assert.deepEqual(Array.from(positionScene.positions[0].sourceRanges,
@@ -131,7 +131,8 @@ test('ordinary observation and opening dialogue stay outside the panel', () => {
     playableAdultPanelFamily: gameplay.playableAdultPanelFamily
   });
   assert.equal(state.adultScenes.length, 1);
-  assert.equal(state.adultScenes[0].startTime, 332);
+  assert.equal(state.adultScenes[0].startTime, 344,
+    'pure dialogue must not activate the intimacy overlay');
   assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => item.id), ['kiss']);
   assert.deepEqual(Array.from(state.adultScenes[0].dialogue, item => item.id), ['talk', 'listen']);
   assert.equal(state.adultScenes[0].positions[0].startTime, 390);
@@ -242,7 +243,8 @@ test('the reported long opening joins the verified core without losing source mo
   });
   assert.equal(state.adultScenes.length, 1);
   const [scene] = state.adultScenes;
-  assert.equal(scene.startTime, 45);
+  assert.equal(scene.startTime, 78.5,
+    'the first verified approach, not the preceding dialogue, opens this chapter');
   assert.deepEqual(Array.from(scene.foreplay, item => item.id), ['contact', 'kiss', 'approach', 'last-contact']);
   assert.deepEqual(Array.from(scene.dialogue, item => item.id), ['talk', 'line', 'posture']);
   assert.deepEqual(scene.positions.map(position => position.familyId), ['rear', 'spoon']);
