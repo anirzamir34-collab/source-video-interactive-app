@@ -111,6 +111,8 @@ import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectVerifiedChoiceQueue } from './interaction-engine.js';
 import { interactionEntryClip, interactionEntryGuard, interactionFamilyViews } from './interaction-timeline.js';
 import { bindInteractionRuntimeViews } from './interaction-compat.js';
+import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
+  verifiedClipCompletionReady } from './interaction-completion.js';
 import { mountInteractionPanel, resetInteractionSelection,
   syncInteractionSurfaces } from './interaction-panel.js';
 
@@ -3774,10 +3776,13 @@ function settleInteractionClipBoundary(mediaTime) {
   // A delayed frame callback must settle the chosen clip before source phase
   // discovery or scene exit can take ownership of the playhead.
   els.video?.pause();
-  state.interactionRuntime = transitionInteraction(genericInteractionSnapshot(), {
-    type: 'selection-complete', choiceId: selected.id,
-    startTime: Number(selected.loopStartTime ?? selected.startTime), endTime: end
-  });
+  // Source observation is accounted for on actual played frames. A
+  // selection bonus is settled here, only after most verified footage played.
+  const pending = state.adultPendingSelectionProgress;
+  if (pending?.kind !== 'outcome' &&
+      (pending?.item?.id === selected.id || pending?.movement?.id === selected.id)) {
+    commitAdultSelectionProgress(state.adultSelectionToken, mediaTime);
+  }
   state.adultTimelineFloor = Math.max(Number(state.adultTimelineFloor) || 0, end);
   if (state.activeAdultEntryClip) state.activeAdultEntryClip = null;
   else if (prelude) state.activeAdultPreludeId = null;
@@ -4823,15 +4828,20 @@ function beginAdultSelection() {
   return state.adultSelectionToken;
 }
 
-function commitAdultSelectionProgress(selectionToken) {
+function commitAdultSelectionProgress(selectionToken, mediaTime = Number(els.video?.currentTime)) {
   const pending = state.adultPendingSelectionProgress;
-  if (!pending || pending.token !== selectionToken) return;
+  if (!pending || pending.token !== selectionToken) return false;
+  // Outcome playback has a separate started event. Progress-bearing choices
+  // require real coverage of their own verified interval.
+  if (pending.kind !== 'outcome' && !verifiedClipCompletionReady(pending,
+    { token: selectionToken, mediaTime })) return false;
   state.adultPendingSelectionProgress = null;
   if (pending.kind === 'prelude') applyAdultPreludeProgress(pending.item);
   else if (pending.kind === 'outcome') {
     state.adultPlayedOutcomeIds.add(pending.item.id);
     logEngineEvent('ORGASM_OUTCOME_STARTED', { outcomeId: pending.item.id });
   } else applyAdultSelectionProgress(pending.position, pending.movement, pending.meta);
+  return true;
 }
 
 function applyAdultPreludeProgress(item) {
@@ -5524,7 +5534,9 @@ async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
     await els.video.play();
     if (!state.adultMode || requestId !== state.adultSeekRequestId ||
         selectionToken !== state.adultSelectionToken) return false;
-    commitAdultSelectionProgress(selectionToken);
+    const pending = state.adultPendingSelectionProgress;
+    if (pending?.kind === 'outcome') commitAdultSelectionProgress(selectionToken);
+    else state.adultPendingSelectionProgress = beginVerifiedClipPlayback(pending, selectionToken);
     return true;
   } catch (error) {
     if (!state.adultMode || requestId !== state.adultSeekRequestId ||
@@ -5606,6 +5618,13 @@ function observeInteractionProgress(mediaTime) {
   // A passive video frame is not a user choice and must not earn Lust.
   if (!selected) return;
   const endTime = Math.min(Number(mediaTime), Number(selected.loopEndTime ?? selected.endTime));
+  const pending = state.adultPendingSelectionProgress;
+  const pendingClip = pending?.kind === 'prelude' ? pending.item : pending?.movement;
+  if (pending?.token === state.adultSelectionToken && pendingClip?.id === selected.id) {
+    state.adultPendingSelectionProgress = observeVerifiedClipPlayback(pending, {
+      startTime: Number(previous), endTime, playing: true, seek: false
+    });
+  }
   const runtime = genericInteractionSnapshot();
   state.interactionRuntime = transitionInteraction(runtime, { type: 'playback', startTime: Number(previous), endTime,
     playing: true, seek: false });
