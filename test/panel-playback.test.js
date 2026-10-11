@@ -12,6 +12,7 @@ import * as interaction from '../public/interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
 import * as panel from '../public/interaction-panel.js';
 import * as compat from '../public/interaction-compat.js';
+import * as completion from '../public/interaction-completion.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -100,7 +101,7 @@ function fixture() {
   const els = new Proxy({ video, panelPlaybackRecovery: null }, {
     get(target, key) { return Object.hasOwn(target, key) ? target[key] : (target[key] = new Element()); }
   });
-  const scope = vm.createContext({ ...choiceRouting, state, els, AbortController, DOMException,
+  const scope = vm.createContext({ ...choiceRouting, ...completion, state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
@@ -435,8 +436,9 @@ test('a verified standalone introduction plays in its own panel and earns Lust',
   await flush();
   assert.equal(f.state.activeAdultPreludeId, 'first-kiss',
     JSON.stringify({ choices: f.state.adultApproachChoices, cards: f.els.approachChoices.children.map(item => item.textContent) }));
+  assert.equal(f.currentAdultFlow(), 0, 'play() alone never earns a selection bonus');
   f.els.video.time = 93;
-  assert.equal(f.settleInteractionClipBoundary(93), true);
+  f.updateAdultPlayback(93000, 93);
   assert.ok(f.currentAdultFlow() > 0);
   assert.equal(f.state.adultUnlockedPositionIds.size, 0);
 });
@@ -735,6 +737,7 @@ for (const mode of ['error', 'blocked']) {
     const f = runtimeFixture();
     f.els.video.mode = mode;
     if (mode === 'error') f.state.adultScene.foreplay[0].startTime = 12;
+    f.els.video.time = mode === 'error' ? 10 : 0;
     f.playAdultPrelude('intro');
     await flush();
     assert.equal(f.state.femaleSceneProgress, 0);
@@ -742,8 +745,13 @@ for (const mode of ['error', 'blocked']) {
     f.els.video.mode = 'ready';
     f.els.panelPlaybackRecovery.querySelector('button').dispatchEvent(new Event('click'));
     await flush();
+    assert.equal(f.state.adultPreludePlayCounts.has('intro'), false,
+      'recovering playback must not immediately award the whole clip');
+    f.els.video.time = f.state.adultScene.foreplay[0].endTime;
+    f.updateAdultPlayback(15000, f.els.video.time);
     assert.equal(f.state.adultPreludePlayCounts.get('intro'), 1);
-    assert.ok(f.state.femaleSceneProgress > 0);
+    assert.ok(f.state.interactionRuntime?.progressObservations?.playedRanges?.length > 0,
+      'completed recovery must contain actual source playback observations');
     const progress = f.state.femaleSceneProgress;
     f.commitAdultSelectionProgress(f.state.adultSelectionToken);
     assert.equal(f.state.femaleSceneProgress, progress);

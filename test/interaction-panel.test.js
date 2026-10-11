@@ -99,45 +99,45 @@ test('adapter can clear existing engine state keys and creates independent rhyth
   assert.deepEqual(options.rhythmDefaults.inputTimes, []);
 });
 
-test('panel remains visible through selection, seek, pause, resume and clip completion', () => {
+test('panel remains the sole surface through selection, seek, pause, resume and clip completion', () => {
   const panel = new Element('interaction-panel');
   const overlay = new Element('ordinary-choices');
+  const approach = new Element('approach-choices');
   for (const event of ['selection', 'seeking', 'seeked', 'pause', 'resume', 'complete']) {
-    const snapshot = syncInteractionSurfaces({ panel, overlay,
-      panelVisible: true, overlayVisible: true });
+    const visible = syncInteractionSurfaces({ panel, overlay, approach, surface: 'panel' });
     assert.equal(panel.classes.has('hidden'), false, event);
     assert.equal(overlay.classes.has('hidden'), true, event);
-    assert.equal(snapshot.overlayCount, 1, event);
+    assert.equal(approach.classes.has('hidden'), true, event);
+    assert.equal(visible.surface, 'panel');
+    assert.equal(visible.overlayCount, 1, event);
   }
 });
 
-test('approach and core rendering share one visible interaction surface', () => {
-  const panel = new Element('interaction-panel');
-  const overlay = new Element('ordinary-choices');
-  assert.deepEqual(syncInteractionSurfaces({ panel, overlay, overlayVisible: true }),
-    { panelVisible: false, overlayVisible: true, overlayCount: 1 });
-  assert.deepEqual(syncInteractionSurfaces({ panel, overlay, panelVisible: true }),
-    { panelVisible: true, overlayVisible: false, overlayCount: 1 });
-  assert.deepEqual(syncInteractionSurfaces({ panel, overlay }),
-    { panelVisible: false, overlayVisible: false, overlayCount: 0 });
-});
-
-test('opening, story, and core phases never expose two choice surfaces together', () => {
+test('a single named surface exclusively owns approach, story, core and none', () => {
   const panel = new Element('core-panel');
   const overlay = new Element('story-overlay');
   const approach = new Element('approach-overlay');
-  for (const phase of ['approach', 'story', 'core', 'none']) {
-    const result = syncInteractionSurfaces({ panel, overlay, approach,
-      panelVisible: phase === 'core',
-      overlayVisible: phase === 'story',
-      approachVisible: phase === 'approach' });
-    const visible = [panel, overlay, approach].filter(node => !node.classes.has('hidden'));
-    assert.equal(visible.length, phase === 'none' ? 0 : 1, phase);
-    assert.equal(result.overlayCount, visible.length, phase);
+  for (const surface of ['approach', 'story', 'panel', 'none', 'story', 'approach', 'panel']) {
+    const visible = syncInteractionSurfaces({ panel, overlay, approach, surface });
+    const active = [panel, overlay, approach].filter(node => !node.classes.has('hidden'));
+    assert.equal(active.length, surface === 'none' ? 0 : 1, surface);
+    assert.equal(visible.overlayCount, active.length, surface);
+    assert.equal(visible.surface, surface);
+    assert.equal(visible.panelVisible, surface === 'panel');
+    assert.equal(visible.overlayVisible, surface === 'story');
+    assert.equal(visible.approachVisible, surface === 'approach');
   }
-  const collision = syncInteractionSurfaces({ panel, overlay, approach,
-    panelVisible: true, overlayVisible: true, approachVisible: true });
-  assert.equal(collision.overlayCount, 1);
-  assert.equal(panel.classes.has('hidden'), false);
-  assert.equal(approach.classes.has('hidden'), true);
+});
+
+test('missing target never leaves an old panel visible and invalid states fail loudly', () => {
+  const panel = new Element('panel');
+  const overlay = new Element('story');
+  const first = syncInteractionSurfaces({ panel, overlay, surface: 'panel' });
+  assert.equal(first.surface, 'panel');
+  const second = syncInteractionSurfaces({ panel, overlay, surface: 'approach' });
+  assert.equal(second.surface, 'none');
+  assert.equal(panel.classes.has('hidden'), true);
+  assert.equal(overlay.classes.has('hidden'), true);
+  assert.throws(() => syncInteractionSurfaces({ panel, overlay, surface: 'typo' }),
+    /UNKNOWN_INTERACTION_SURFACE/);
 });

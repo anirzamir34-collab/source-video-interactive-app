@@ -101,7 +101,7 @@ import { sourceContextAdapter, sourceSpeechOverlaps } from './source-transcript.
 import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
-import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget } from './scene-entry.js';
+import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices } from './choice-routing.js';
@@ -111,6 +111,8 @@ import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectVerifiedChoiceQueue } from './interaction-engine.js';
 import { interactionEntryClip, interactionEntryGuard, interactionFamilyViews } from './interaction-timeline.js';
 import { bindInteractionRuntimeViews } from './interaction-compat.js';
+import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
+  verifiedClipCompletionReady } from './interaction-completion.js';
 import { mountInteractionPanel, resetInteractionSelection,
   syncInteractionSurfaces } from './interaction-panel.js';
 
@@ -212,6 +214,7 @@ const state = {
   adultUnlockedOutcomeIds: new Set(),
   adultRevealedPositionIds: new Set(),
   adultUiSignature: '',
+  activeInteractionSurface: 'none',
   adultLastUiPhase: 'foreplay',
   lastAdultFrameNow: null,
   adultFrameRequest: null,
@@ -2941,10 +2944,8 @@ function prepareAdultScenes() {
   // instead of silently routing its actions through the ordinary story UI.
   // Never stretch this opening to a distant core position or across cast IDs.
   const standaloneOpenings = [];
-  const openingCast = action => String(action.subjectTrackId || '').trim() &&
-    String(action.partnerTrackId || '').trim()
-    ? JSON.stringify([action.subjectTrackId, action.partnerTrackId,
-      action.groupScene === true ? [...(action.participantTrackIds || [])].sort() : []]) : '';
+  const openingCast = action => verifiedOpeningCast(action,
+    state.analysis?.storyContext?.characters || []);
   const orphanApproaches = actions.filter(action =>
     action.choiceSurface === 'approach' && isIntroduction(action) &&
     action.sourceVerified === true && Number(action.confidence) >= 0.6 &&
@@ -3753,7 +3754,8 @@ function reconcileInteractionSeek(mediaTime) {
     state.adultMode = false;
     state.adultScene = null;
     syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-      approach: els.approachChoices, panelVisible: false, overlayVisible: true });
+      approach: els.approachChoices, surface: 'story' });
+    state.activeInteractionSurface = 'story';
     state.gameCursorTime = Math.max(0, Number(mediaTime) || 0);
     state.consumedActionIds = new Set((state.analysis?.actions || [])
       .filter(action => Number(action.endTime) <= mediaTime).map(action => action.actionId));
@@ -3774,10 +3776,13 @@ function settleInteractionClipBoundary(mediaTime) {
   // A delayed frame callback must settle the chosen clip before source phase
   // discovery or scene exit can take ownership of the playhead.
   els.video?.pause();
-  state.interactionRuntime = transitionInteraction(genericInteractionSnapshot(), {
-    type: 'selection-complete', choiceId: selected.id,
-    startTime: Number(selected.loopStartTime ?? selected.startTime), endTime: end
-  });
+  // Source observation is accounted for on actual played frames. A
+  // selection bonus is settled here, only after most verified footage played.
+  const pending = state.adultPendingSelectionProgress;
+  if (pending?.kind !== 'outcome' &&
+      (pending?.item?.id === selected.id || pending?.movement?.id === selected.id)) {
+    commitAdultSelectionProgress(state.adultSelectionToken, mediaTime);
+  }
   state.adultTimelineFloor = Math.max(Number(state.adultTimelineFloor) || 0, end);
   if (state.activeAdultEntryClip) state.activeAdultEntryClip = null;
   else if (prelude) state.activeAdultPreludeId = null;
@@ -4313,10 +4318,8 @@ function renderAdultApproachChoices(scene, later = false) {
 
   const target = dialogueOnly ? els.choices : els.approachChoices;
   if (dialogueOnly) {
-    els.choices.classList.remove('hidden');
     els.foreplaySection?.classList.add('hidden');
   } else {
-    els.choices.classList.add('hidden');
     els.foreplaySection?.classList.add('hidden');
     const heading = document.createElement('div');
     heading.className = 'approach-overlay-heading';
@@ -4382,6 +4385,9 @@ function renderAdultApproachChoices(scene, later = false) {
   }
 
   refreshAdultCompactDock();
+  // Return the actual card destination. This is the ONLY source of truth for
+  // visibility; do not separately guess it from timestamps or scene metadata.
+  return dialogueOnly ? 'story' : 'approach';
 }
 
 function renderInteractionInterludeChoices(scene) {
@@ -4519,44 +4525,20 @@ function renderAdultProgressiveUI(force = false) {
   els.adultInteractionPanel.dataset.phase = phase;
   els.outcomeSection?.classList.add('hidden');
 
-  // Each phase owns exactly one surface: story, centered approach, or core panel.
-  const approachCursor = Math.max(videoTime, Number(state.adultTimelineFloor) || 0);
-  const nextApproachSurface = (phase === 'foreplay' || laterOverlay)
-    ? [
-        ...scenePreludeChoices(scene).map(item => ({
-          startTime: Number(item.startTime),
-          endTime: Number(item.endTime),
-          nonIntimate: item.nonIntimate === true || item.choiceSurface === 'story'
-        })),
-        ...(!laterOverlay ? (scene.positions || []).filter(isWarmupPosition).map(position => ({
-          startTime: Number(position.startTime),
-          endTime: Number(position.endTime),
-          nonIntimate: false
-        })) : [])
-      ]
-        .filter(item => Number.isFinite(item.startTime) && Number.isFinite(item.endTime) &&
-          item.endTime > approachCursor + 0.05)
-        .sort((a, b) => a.startTime - b.startTime)[0]
-    : null;
-  const firstIntimateStart = Math.min(...scenePreludeChoices(scene)
-    .filter(item => item.sourceVerified === true && item.nonIntimate !== true &&
-      (laterOverlay || Number(item.startTime) < Math.min(...(scene.positions || [])
-        .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)))))
-    .map(item => Number(item.startTime)));
-  const approachUsesDialogueOverlay = nextApproachSurface?.nonIntimate === true;
-  const progressivePanelVisible = phase !== 'foreplay' && !laterOverlay;
-  const progressiveOverlayVisible =
-    (phase === 'foreplay' || laterOverlay) && approachUsesDialogueOverlay;
-
-  // Visibility is repaired even when the cached UI signature is unchanged.
-  syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-    panelVisible: progressivePanelVisible,
-    overlayVisible: progressiveOverlayVisible,
-    approach: els.approachChoices,
-    approachVisible: (phase === 'foreplay' || laterOverlay) && !approachUsesDialogueOverlay });
-  state.interactionRuntime = { ...state.interactionRuntime, panelVisible: progressivePanelVisible };
-
-  if (!force && signature === state.adultUiSignature) return;
+  const setSurface = surface => {
+    state.activeInteractionSurface = surface;
+    const visible = syncInteractionSurfaces({
+      panel: els.adultInteractionPanel, overlay: els.choices,
+      approach: els.approachChoices, surface
+    });
+    state.interactionRuntime = { ...state.interactionRuntime, panelVisible: visible.panelVisible };
+  };
+  // An unchanged game signature still reasserts the currently owned surface
+  // after fullscreen/CSS changes, without rebuilding buttons or changing state.
+  if (!force && signature === state.adultUiSignature) {
+    setSurface(state.activeInteractionSurface);
+    return;
+  }
   state.adultUiSignature = signature;
   state.adultLastUiPhase = phase;
 
@@ -4570,7 +4552,8 @@ function renderAdultProgressiveUI(force = false) {
       : 'Bu bölümdeki doğrulanmış yakınlaşma seçenekleri Lust kazandırır.';
     els.discoveryGate?.classList.add('hidden');
     els.adultPanelToggleBtn?.classList.add('hidden');
-    renderAdultApproachChoices(scene, laterOverlay);
+    const selectedSurface = renderAdultApproachChoices(scene, laterOverlay);
+    setSurface(selectedSurface);
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');
@@ -4578,10 +4561,11 @@ function renderAdultProgressiveUI(force = false) {
     return;
   }
 
-  els.choices.classList.add('hidden');
+  // The core renderer owns the panel. A prior approach/story overlay cannot
+  // retain its cards or override its visibility after the phase transition.
   els.choices.innerHTML = '';
-  els.approachChoices?.classList.add('hidden');
-  els.adultInteractionPanel.classList.remove('hidden');
+  if (els.approachChoices) els.approachChoices.innerHTML = '';
+  setSurface('panel');
   els.adultPanelToggleBtn?.classList.remove('hidden');
 
   els.discoveryGate?.classList.add('hidden');
@@ -4673,7 +4657,8 @@ function renderAdultPanel(scene) {
       state.adultSexUnlocked = true;
     }
   }
-  els.adultInteractionPanel.classList.remove('hidden');
+  // Do not expose the panel here: renderAdultProgressiveUI decides whether
+  // the source is still in its approach phase or already in the core panel.
   setAdultPanelExpanded(previousSceneId !== scene.id ||
     !els.adultInteractionPanel.classList.contains('compact-collapsed'));
   els.adultPanelToggleBtn?.classList.remove('hidden');
@@ -4843,15 +4828,20 @@ function beginAdultSelection() {
   return state.adultSelectionToken;
 }
 
-function commitAdultSelectionProgress(selectionToken) {
+function commitAdultSelectionProgress(selectionToken, mediaTime = Number(els.video?.currentTime)) {
   const pending = state.adultPendingSelectionProgress;
-  if (!pending || pending.token !== selectionToken) return;
+  if (!pending || pending.token !== selectionToken) return false;
+  // Outcome playback has a separate started event. Progress-bearing choices
+  // require real coverage of their own verified interval.
+  if (pending.kind !== 'outcome' && !verifiedClipCompletionReady(pending,
+    { token: selectionToken, mediaTime })) return false;
   state.adultPendingSelectionProgress = null;
   if (pending.kind === 'prelude') applyAdultPreludeProgress(pending.item);
   else if (pending.kind === 'outcome') {
     state.adultPlayedOutcomeIds.add(pending.item.id);
     logEngineEvent('ORGASM_OUTCOME_STARTED', { outcomeId: pending.item.id });
   } else applyAdultSelectionProgress(pending.position, pending.movement, pending.meta);
+  return true;
 }
 
 function applyAdultPreludeProgress(item) {
@@ -4871,11 +4861,16 @@ function applyAdultPreludeProgress(item) {
 
   state.adultPreludePlayCounts.set(item.id, repeatCount + 1);
   const runtime = genericInteractionSnapshot();
-  if (runtime.progressBudget && !runtime.progressBudgetConsumed) {
-    state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
-      choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
-    if (!runtime.progressBudgetConsumed && state.interactionRuntime.progressBudgetConsumed)
-      state.interactionMeterNeedsReset = true;
+  if (runtime.progressBudget) {
+    if (!runtime.progressBudgetConsumed) {
+      state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
+        choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
+      if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
+    } else if (!state.interactionMeterNeedsReset) {
+      // The opening budget was already spent by actual playback. Never award
+      // this same completed clip a second time while the next stage resets.
+      addFemaleLust(delta.female * currentWarmupLustScale());
+    }
   } else addFemaleLust(delta.female * currentWarmupLustScale());
   renderAdultProgress();
 }
@@ -4932,12 +4927,17 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
     state.adultMovementPlayCounts.set(movement.id, repeatCount + 1);
   }
   const runtime = genericInteractionSnapshot();
-  if (isWarmupPosition(position) && runtime.progressBudget && !runtime.progressBudgetConsumed && movement) {
-    state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
-      choiceId: movement.id, startTime: Number(movement.loopStartTime),
-      endTime: Number(movement.loopEndTime), playing: true,
-      sourcePositionId: movement.sourcePositionId,
-      sourceOccurrenceId: positionOccurrenceForMovement(position, movement)?.id || '' });
+  if (isWarmupPosition(position) && runtime.progressBudget && movement) {
+    if (!runtime.progressBudgetConsumed) {
+      state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
+        choiceId: movement.id, startTime: Number(movement.loopStartTime),
+        endTime: Number(movement.loopEndTime), playing: true,
+        sourcePositionId: movement.sourcePositionId,
+        sourceOccurrenceId: positionOccurrenceForMovement(position, movement)?.id || '' });
+      if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
+    } else if (!state.interactionMeterNeedsReset) {
+      addFemaleLust(delta.female * currentWarmupLustScale());
+    }
   } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
   if (!isWarmupPosition(position)) {
     // Tapping a card never advances orgasm. Only verified core playback does.
@@ -5544,7 +5544,9 @@ async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
     await els.video.play();
     if (!state.adultMode || requestId !== state.adultSeekRequestId ||
         selectionToken !== state.adultSelectionToken) return false;
-    commitAdultSelectionProgress(selectionToken);
+    const pending = state.adultPendingSelectionProgress;
+    if (pending?.kind === 'outcome') commitAdultSelectionProgress(selectionToken);
+    else state.adultPendingSelectionProgress = beginVerifiedClipPlayback(pending, selectionToken);
     return true;
   } catch (error) {
     if (!state.adultMode || requestId !== state.adultSeekRequestId ||
@@ -5626,9 +5628,18 @@ function observeInteractionProgress(mediaTime) {
   // A passive video frame is not a user choice and must not earn Lust.
   if (!selected) return;
   const endTime = Math.min(Number(mediaTime), Number(selected.loopEndTime ?? selected.endTime));
+  const pending = state.adultPendingSelectionProgress;
+  const pendingClip = pending?.kind === 'prelude' ? pending.item : pending?.movement;
+  if (pending?.token === state.adultSelectionToken && pendingClip?.id === selected.id) {
+    state.adultPendingSelectionProgress = observeVerifiedClipPlayback(pending, {
+      startTime: Number(previous), endTime, playing: true, seek: false
+    });
+  }
   const runtime = genericInteractionSnapshot();
   state.interactionRuntime = transitionInteraction(runtime, { type: 'playback', startTime: Number(previous), endTime,
     playing: true, seek: false });
+  if (!runtime.progressBudgetConsumed && state.interactionRuntime.progressBudgetConsumed)
+    state.interactionMeterNeedsReset = true;
 }
 
 function updateAdultPlayback(now, mediaTime) {
@@ -6660,9 +6671,11 @@ function syncFullscreenInteraction() {
   keepGameVideoControlsHidden();
   syncAdultPanelPlacement(fullscreenStage);
   if (state.adultMode) {
-    revealFullscreenChoices({ document, stage: fullscreenStage,
-      panel: els.adultInteractionPanel, expand: () => setAdultPanelExpanded(true) });
     renderAdultProgressiveUI(true);
+    if (state.activeInteractionSurface === 'panel') {
+      revealFullscreenChoices({ document, stage: fullscreenStage,
+        panel: els.adultInteractionPanel, expand: () => setAdultPanelExpanded(true) });
+    }
   }
   updateFullscreenButton();
 }

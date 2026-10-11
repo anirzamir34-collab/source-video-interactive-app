@@ -23,6 +23,9 @@ test('foreplay-only adult fragments survive until they can merge with the first 
 
 test('first intimate approach uses its own overlay instead of the core panel or dialogue choices', () => {
   assert.match(source, /const target = dialogueOnly \? els\.choices : els\.approachChoices/);
-  assert.match(source, /panelVisible: progressivePanelVisible/);
-  assert.match(source, /overlayVisible: progressiveOverlayVisible/);
+  // The card renderer, not a parallel timestamp guess, chooses the surface.
+  assert.match(source, /const selectedSurface = renderAdultApproachChoices\(scene, laterOverlay\)/);
+  assert.match(source, /setSurface\(selectedSurface\)/);
+  assert.match(source, /surface: 'story'/);
+  assert.doesNotMatch(source, /nextApproachSurface/);
 });
