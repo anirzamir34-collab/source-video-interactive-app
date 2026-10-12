@@ -22,7 +22,8 @@ function engage(state, id = availableChoices(state)[0]?.id, { finish = true, sec
 
 test('A: seven verified narrative observations survive encounter references as meaningful story decisions', () => {
   const actions = Array.from({ length: 7 }, (_, i) => observation(`story-${i}`, i * 5, {
-    phase: 'STORY', duration: 4, narrativeChoiceLabel: `Doğrulanmış niyet ${i}` }));
+    phase: 'STORY', duration: 4, storyEvidenceLevel: 'fact', storyConfidence: .95,
+    narrativeChoiceLabel: `Doğrulanmış niyet ${i}` }));
   const graph = createGameplayGraph(analysis(actions));
   const state = createGameplayState(graph);
   assert.equal(graph.choices.length, 7);

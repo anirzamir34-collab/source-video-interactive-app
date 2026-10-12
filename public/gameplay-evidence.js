@@ -65,16 +65,28 @@ export function createGameplayGraph(analysis = {}) {
     const origin = evidence?.sourceActionId || text(action.sourceActionId || action.observedActionId) || id;
     const specific = evidence?.action;
     const legacyLabel = text(action.label);
-    // Explicit mismatching headlines are replaced by the observation, never vice versa.
-    const label = specific?.label || (evidence ? '' : !generic.test(legacyLabel.toLocaleLowerCase('tr-TR')) ? legacyLabel : '');
+    // Dialogue may supply the meaning of a narrative choice, but never the
+    // observed physical action. These are separate evidence channels.
+    const groundedStoryLabel = surface === 'story' && action.storyEvidenceLevel === 'fact' &&
+      confidence(action.storyConfidence) >= .6
+      ? text(action.narrativeChoiceLabel || action.label) : '';
+    const label = specific?.label || groundedStoryLabel ||
+      (evidence ? '' : !generic.test(legacyLabel.toLocaleLowerCase('tr-TR')) ? legacyLabel : '');
     const factsBefore = evidence?.before?.facts || {}, factsAfter = evidence?.after?.facts || {};
     rows.push({ id, origin, start, end, phase, surface, cast, evidence,
-      chapterKey: evidence?.chapterId || (surface !== 'story' ? text(action.adultSceneId) : ''),
+      // A narrative beat inside an encounter belongs to that encounter; the
+      // choice surface must not create a separate chapter.
+      chapterKey: evidence?.chapterId || text(action.adultSceneId),
       occurrence: evidence?.occurrenceId || text(action.positionOccurrenceId),
       group: text(action.positionId),
       semantic: specific ? JSON.stringify([specific.key, specific.label]) : (label ? `${text(action.actionType)}:${label}` : id),
       label: label || `Kaynak kesiti · ${start.toFixed(1)}–${end.toFixed(1)} sn`,
-      abstained: !label, intent: evidence?.intent || text(action.narrativeChoiceLabel || action.narrativeReason),
+      abstained: !label,
+      // A verified story label can be an intent; an unsupported generic title
+      // cannot manufacture a narrative fork.
+      intent: evidence?.intent || (action.storyEvidenceLevel === 'fact' && confidence(action.storyConfidence) >= .6
+        ? text(action.narrativeChoiceLabel || action.narrativeReason) : ''),
+      positionLabel: text(action.positionLabel),
       decisionId: evidence?.decisionId || '', before: factsBefore, after: factsAfter,
       confidence: specific?.confidence || confidence(action.confidence),
       provenance: evidence?.provenance || 'legacy-source-analysis',
@@ -87,15 +99,18 @@ export function createGameplayGraph(analysis = {}) {
   let chapter, stage, prior;
   const seen = new Set(), groups = new Map();
   for (const row of rows) {
-    const chapterKey = JSON.stringify([row.chapterKey, row.cast, row.surface === 'story' ? 'story' : 'interaction']);
+    // The story/interaction surface is presentation, not a scene boundary.
+    // Only source encounter identity, cast or a proven temporal gap may split it.
+    const chapterKey = JSON.stringify([row.chapterKey, row.cast]);
     if (!chapter || chapter.key !== chapterKey || row.start - prior.end > 45) {
       chapter = { id: `chapter:${row.id}:${row.start}`, key: chapterKey, startTime: row.start, endTime: row.end,
         stageIds: [], cast: row.cast };
       chapters.push(chapter); stage = null;
     }
     chapter.endTime = Math.max(chapter.endTime, row.end);
-    const stageKey = JSON.stringify([row.phase, row.phase === 'CORE' ? [row.group, row.occurrence] : '',
-      row.phase === 'STORY' ? row.decisionId : '']);
+    // One core stage contains verified position families and their movement
+    // variants. Individual occurrences are nested choices, not new stages.
+    const stageKey = JSON.stringify([row.phase, row.phase === 'STORY' ? row.decisionId : '']);
     if (!stage || stage.key !== stageKey) {
       stage = { id: `stage:${row.id}:${row.start}`, key: stageKey, chapterId: chapter.id, phase: row.phase,
         surface: row.surface, choiceIds: [], startTime: row.start, endTime: row.end };
@@ -107,6 +122,10 @@ export function createGameplayGraph(analysis = {}) {
     seen.add(clipKey);
     const clip = { id: `clip:${clips.length}:${row.id}`, actionId: row.id, sourceActionId: row.origin,
       startTime: row.start, endTime: row.end, chapterId: chapter.id, stageId: stage.id, cast: row.cast,
+      // Source and playback clocks are distinct. A long source observation
+      // remains intact while its interactive preview has a bounded duration.
+      previewEndTime: row.end - row.start > (row.surface === 'story' ? 16 : 28)
+        ? Math.min(row.end, row.start + (row.surface === 'story' ? 12 : 14)) : row.end,
       before: row.before, after: row.after, confidence: row.confidence, provenance: row.provenance };
     clips.push(clip);
     // Missing occurrence/identity proof keeps records separate. Shared tempo is never proof.
@@ -115,6 +134,7 @@ export function createGameplayGraph(analysis = {}) {
     if (!choice) {
       choice = { id: `choice:${choices.length}:${row.id}`, chapterId: chapter.id, stageId: stage.id,
         phase: row.phase, surface: row.surface, label: row.label, intent: row.intent,
+        positionId: row.group, positionLabel: row.positionLabel, occurrenceId: row.occurrence,
         abstained: row.abstained, confidence: row.confidence, cast: row.cast,
         relationship: row.relationship, clipIds: [] };
       groups.set(key, choice); choices.push(choice); stage.choiceIds.push(choice.id);

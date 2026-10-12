@@ -44,6 +44,9 @@ export function availableChoices(state, graph = state.graph) {
       intents.add(intent); return true;
     });
   }
+  // Verified core actions and positions should be discoverable as a hierarchy,
+  // not hidden by an arbitrary first-three-card limit.
+  if (stage.phase === 'CORE') return choices;
   const discovered = Object.keys(progress.counts).length;
   const limit = stage.choiceIds.length <= 4 ? 4 : Math.min(stage.choiceIds.length, 3 + discovered);
   return choices.slice(0, limit);
@@ -60,8 +63,18 @@ export function progression(state) {
   const stage = stageOf(state), progress = state.stageProgress[stage?.id] || emptyProgress();
   const chapter = state.graph.chapters.find(row => row.id === state.chapterId);
   const next = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1] || null;
+  // Lust represents earned engagement across the full source encounter,
+  // not an individual stage clock that resets at every position change.
+  const interactiveStages = (chapter?.stageIds || []).map(id =>
+    state.graph.stages.find(row => row.id === id)).filter(row => row && row.phase !== 'STORY');
+  const lust = interactiveStages.length
+    ? clamp(interactiveStages.reduce((sum, row) =>
+      sum + (state.stageProgress[row.id]?.score || 0), 0) / interactiveStages.length) : 0;
+  const sceneEngagements = interactiveStages.reduce((sum, row) =>
+    sum + Object.keys(state.stageProgress[row.id]?.counts || {}).length, 0);
   return { stageId: state.stageId, phase: stage?.phase || 'STORY', value: clamp(progress.score),
-    completed: progress.completed, playedChoices: Object.keys(progress.counts).length,
+    lust, sceneEngagements, completed: progress.completed,
+    playedChoices: Object.keys(progress.counts).length,
     nextStageId: progress.completed ? next : null, characters: state.characters, relationships: state.relationships };
 }
 const stageReady = (state, progress) => {
@@ -71,6 +84,9 @@ const stageReady = (state, progress) => {
     stageProgress: { ...state.stageProgress, [stage.id]: progress } }).length;
   const counts = Object.keys(progress.counts);
   const remaining = availableChoices(state).filter(row => !progress.counts[row.id]);
+  // One sourced action may complete its stage, but never award 100% Lust
+  // simply because the analyzer returned only one choice.
+  if (stage.choiceIds.length === 1) return counts.length === 1;
   return progress.score >= 100 - .001 && counts.length >= Math.min(2, counts.length + remaining.length);
 };
 
@@ -80,7 +96,7 @@ function reward(state) {
   const choice = choiceOf(state, selection.choiceId), stage = stageOf(state);
   const previous = state.stageProgress[stage.id] || emptyProgress();
   const count = previous.counts[choice.id] || 0;
-  const base = 100 / Math.min(4, stage.choiceIds.length);
+  const base = 100 / Math.max(2, Math.min(4, stage.choiceIds.length));
   const gain = base * Math.pow(.5, Math.min(20, count));
   const progress = { ...previous, counts: { ...previous.counts, [choice.id]: count + 1 },
     score: clamp(previous.score + gain) };
@@ -157,9 +173,13 @@ export function gameplayReducer(state, event = {}) {
     }
     case 'CLIP_ENDED': {
       const sel = state.selection, clip = nextPlayableClip(state);
-      if (!sel || !clip || event.selectionId !== sel.id || !sel.started || !Number.isFinite(event.time) || event.time < clip.endTime - .04) return state;
+      const boundary = clip?.previewEndTime ?? clip?.endTime;
+      if (!sel || !clip || event.selectionId !== sel.id || !sel.started || !Number.isFinite(event.time) || event.time < boundary - .04) return state;
       let next = state;
-      if (sel.observed >= Math.min(3, (clip.endTime - clip.startTime) * .65) - .001) {
+      // A preview confirms engagement, not the unseen end-state of a long
+      // action. Clothing/posture after-facts require the actual source end.
+      if (event.time >= clip.endTime - .04 &&
+          sel.observed >= Math.min(3, (clip.endTime - clip.startTime) * .65) - .001) {
         next = observeFacts(next, clip, true);
         next = { ...next, observedClipIds: [...new Set([...next.observedClipIds, clip.id])] };
       }
@@ -186,11 +206,21 @@ export function gameplayReducer(state, event = {}) {
       if (!next || state.selection) return state;
       return { ...state, stageId: next, status: 'decision', error: null };
     }
+    case 'SKIP_STAGE': {
+      if (state.selection) return state;
+      const chapter = state.graph.chapters.find(row => row.id === state.chapterId);
+      const nextStageId = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1];
+      if (!nextStageId) return gameplayReducer(state, { type: 'NEXT_CHAPTER' });
+      const next = state.graph.stages.find(row => row.id === nextStageId);
+      return { ...state, stageId: nextStageId, cursor: next.startTime,
+        status: 'decision', error: null };
+    }
     case 'NEXT_CHAPTER': {
       if (state.selection) return state;
       const index = state.graph.chapters.findIndex(row => row.id === state.chapterId);
       const chapter = state.graph.chapters[index + 1];
       return { ...state, chapterId: chapter?.id || null, stageId: chapter?.stageIds[0] || null,
+        cursor: chapter ? chapter.startTime : state.cursor,
         completedChapterIds: [...new Set([...state.completedChapterIds, state.chapterId].filter(Boolean))],
         status: chapter || state.cursor < state.graph.duration - .05 ? 'decision' : 'ended', error: null };
     }
@@ -232,7 +262,7 @@ export function restoreGameplay(graph, snapshot) {
     const counts = Object.fromEntries(stage.choiceIds.filter(id => Number.isSafeInteger(saved.counts?.[id]) &&
       saved.counts[id] > 0 && saved.counts[id] <= 1000).map(id => [id, saved.counts[id]]));
     const maximum = Object.values(counts).reduce((sum, count) => sum +
-      100 / Math.min(4, stage.choiceIds.length) * 2 * (1 - Math.pow(.5, count)), 0);
+      100 / Math.max(2, Math.min(4, stage.choiceIds.length)) * 2 * (1 - Math.pow(.5, count)), 0);
     stageProgress[stage.id] = { counts, score: Math.min(clamp(saved.score), maximum), completed: false };
   }
   let restored = { ...fresh, stageProgress,

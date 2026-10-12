@@ -10,7 +10,8 @@ const load = async (page, actions) => {
 test('A/G: real app offers narrative cards and fullscreen fallback preserves choices on mobile', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await load(page, Array.from({ length: 7 }, (_, i) => observation(`story-${i}`, i * 3, {
-    phase: 'STORY', duration: 2, narrativeChoiceLabel: `Gözlenen karar ${i}` })));
+    phase: 'STORY', duration: 2, storyEvidenceLevel: 'fact', storyConfidence: .95,
+    narrativeChoiceLabel: `Gözlenen karar ${i}` })));
   await expect(page.locator('#choices .gameplay-choice')).toHaveCount(3);
   await expect(page.locator('#choices')).toBeVisible();
   await expect(page.locator('#approachChoices')).toBeHidden();
