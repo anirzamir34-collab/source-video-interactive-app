@@ -99,7 +99,9 @@ export function createGameplayGraph(analysis = {}) {
   let chapter, stage, prior;
   const seen = new Set(), groups = new Map();
   for (const row of rows) {
-    const chapterKey = JSON.stringify([row.chapterKey, row.cast, row.surface === 'story' ? 'story' : 'interaction']);
+    // The story/interaction surface is presentation, not a scene boundary.
+    // Only source encounter identity, cast or a proven temporal gap may split it.
+    const chapterKey = JSON.stringify([row.chapterKey, row.cast]);
     if (!chapter || chapter.key !== chapterKey || row.start - prior.end > 45) {
       chapter = { id: `chapter:${row.id}:${row.start}`, key: chapterKey, startTime: row.start, endTime: row.end,
         stageIds: [], cast: row.cast };
