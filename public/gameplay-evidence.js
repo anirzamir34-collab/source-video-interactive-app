@@ -65,8 +65,13 @@ export function createGameplayGraph(analysis = {}) {
     const origin = evidence?.sourceActionId || text(action.sourceActionId || action.observedActionId) || id;
     const specific = evidence?.action;
     const legacyLabel = text(action.label);
-    // Explicit mismatching headlines are replaced by the observation, never vice versa.
-    const label = specific?.label || (evidence ? '' : !generic.test(legacyLabel.toLocaleLowerCase('tr-TR')) ? legacyLabel : '');
+    // Dialogue may supply the meaning of a narrative choice, but never the
+    // observed physical action. These are separate evidence channels.
+    const groundedStoryLabel = surface === 'story' && action.storyEvidenceLevel === 'fact' &&
+      confidence(action.storyConfidence) >= .6
+      ? text(action.narrativeChoiceLabel || action.label) : '';
+    const label = specific?.label || groundedStoryLabel ||
+      (evidence ? '' : !generic.test(legacyLabel.toLocaleLowerCase('tr-TR')) ? legacyLabel : '');
     const factsBefore = evidence?.before?.facts || {}, factsAfter = evidence?.after?.facts || {};
     rows.push({ id, origin, start, end, phase, surface, cast, evidence,
       // A narrative beat inside an encounter belongs to that encounter; the
