@@ -72,3 +72,27 @@ test('G: rejected browser play keeps actionable retry and rotating mobile viewpo
   await page.getByRole('button', { name: 'Yeniden dene', exact: true }).click();
   await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeGreaterThan(.3);
 });
+
+test('v4: skip transitions synchronize the media clock and show a single compact panel', async ({ page }) => {
+  const errors=[]; page.on('pageerror', e=>errors.push(e.message));
+  await load(page,[
+    observation('story',0,{phase:'STORY',duration:2}),
+    observation('approach',3,{phase:'APPROACH',duration:2}),
+    observation('core',6,{phase:'CORE',duration:2,positionId:'seated-facing',positionLabel:'Kaynak duruşu'})
+  ]);
+  await page.getByRole('button',{name:'Bu aşamayı geç',exact:true}).click();
+  await expect(page.locator('#approachChoices')).toBeVisible();
+  await expect.poll(()=>page.locator('#video').evaluate(v=>v.currentTime)).toBeGreaterThan(2.95);
+  await page.getByRole('button',{name:'Bu aşamayı geç',exact:true}).click();
+  await expect(page.locator('#adultInteractionPanel')).toBeVisible();
+  await expect.poll(()=>page.locator('#video').evaluate(v=>v.currentTime)).toBeGreaterThan(5.95);
+  await expect(page.locator('#adultQuickChoices button')).toHaveCount(0);
+  const geometry=await page.evaluate(()=>{
+    const p=document.querySelector('#adultInteractionPanel').getBoundingClientRect();
+    const v=document.querySelector('.video-stage').getBoundingClientRect();
+    return {panelWidth:p.width,stageWidth:v.width,panelHeight:p.height,stageHeight:v.height};
+  });
+  expect(geometry.panelWidth).toBeLessThan(geometry.stageWidth*.46);
+  expect(geometry.panelHeight).toBeLessThan(geometry.stageHeight*.9);
+  expect(errors).toEqual([]);
+});
