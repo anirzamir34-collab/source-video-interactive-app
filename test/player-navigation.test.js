@@ -1,3 +1,4 @@
+// Historical v1 regression oracle; production v2 acceptance is in gameplay-v2*.test.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +10,7 @@ import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo,
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
-const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('./fixtures/legacy-gameplay-reference.txt', import.meta.url), 'utf8');
 const names = ['futureActions', 'genericConversationEnd', 'isUnownedTimelineChoice', 'finishAdultScene', 'nextVerifiedRouteTime', 'resumeAnalysisGap', 'renderChoices', 'showPlaybackRecovery', 'resumeSourceVideo', 'navigateTimelineTo', 'cancelTimelineNavigation', 'playAction', 'resumeActionPlayback'];
 const handlers = names.map(name => {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));

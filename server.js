@@ -1,3 +1,4 @@
+import { normalizeGameplayEvidence } from './public/gameplay-evidence.js';
 import { parseModelJson } from './public/model-json.js';
 import { GoogleGenAI } from "@google/genai";
 import express from 'express';
@@ -599,6 +600,10 @@ Rules:
 - playStartTime must equal introEndTime
 - MAIN and BONUS actions must reflect visible evidence
 - Turkish labels must be short and directly describe the male action
+- Optional gameplayEvidence v2 contract: {version:2, sourceActionId, chapterId, occurrenceId, decisionId, intent, action:{verified,key,label,evidence,confidence}, before:{verified,evidence,confidence,facts}, after:{verified,evidence,confidence,facts}, provenance}.
+- Supply action only when the exact observed action is supported by the supplied source frames. The action label must describe the observation; tempo/intensity alone is not an action. Preserve unknown fields as null/empty, never infer them from a requested option count.
+- Reuse sourceActionId and occurrenceId across edited cuts only with direct same-action/cast/occurrence evidence; different actions or returns need distinct IDs. decisionId/intent describe actual meaningful story decisions, never every dialogue sentence.
+- before/after facts may contain location, clothing:TRACK_ID, appearance:TRACK_ID, posture:TRACK_ID, sceneState. Include only directly verified visual facts, with evidence and confidence; omit unknown facts. Record state changes at their source times. Do not infer identity, clothing or state from a neighbouring chapter.
 - Every UI-facing string must be natural Turkish: label, narrativeChoiceLabel, sceneTitle, sceneGoal, positionLabel, movementType and outcomeLabel. Preserve proper names. Translate only what the supplied source evidence supports; never add meaning while translating.
 - Detect every verified adult scene boundary and mark adultScene true only inside that real scene.
 - Set one stable adultSceneId for every action belonging to the same adult scene.
@@ -946,6 +951,7 @@ Rules:
     const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
       .map((action, index) => ({
         ...action,
+        gameplayEvidence: normalizeGameplayEvidence(action.gameplayEvidence),
         actionId: String(action.actionId || `tl-${String(index + 1).padStart(3, '0')}`),
         sceneId: String(action.sceneId || `scene-${String(index + 1).padStart(3, '0')}`),
         actionLevel: action.actionLevel === 'bonus' ? 'bonus' : 'main',

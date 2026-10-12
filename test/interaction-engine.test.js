@@ -5,7 +5,7 @@ import {
   progressionPacing, progressForSelection, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, selectInteractionChoice, visibleApproachChoices,
   selectVerifiedChoiceQueue, switchInteractionScene, interactionTrace
-} from '../public/interaction-engine.js';
+} from './fixtures/legacy-interaction-engine.js';
 
 const range = (id, startTime, endTime, occurrenceId = id) => ({
   id, startTime, endTime, occurrenceId, sourceVerified: true

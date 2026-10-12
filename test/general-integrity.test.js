@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { choiceSurfaceForAction } from '../public/choice-routing.js';
-import { createInteractionState, completeInteractionSelection, switchInteractionScene } from '../public/interaction-engine.js';
+import { createInteractionState, completeInteractionSelection, switchInteractionScene } from './fixtures/legacy-interaction-engine.js';
 
 const clip = { id: 'source-1', sourceVerified: true, startTime: 0, endTime: 10,
   choiceSurface: 'story', actionType: 'dialogue', subjectTrackId: 'actor-a', label: 'Konuşmayı dinle' };

@@ -29,6 +29,7 @@ function sourcePayload(input) {
     'turkishText', 'start', 'end', 'startTime', 'endTime', 'gender', 'emotion', 'confidence', 'language', 'words', 'evidence'];
   return cleanJson({
     analysis: input?.analysis || null,
+    ...(input?.gameplay?.version === 2 ? { gameplay: input.gameplay } : {}),
     dialogue: dialogue ? {
       ...fields(dialogue, ['sourceLanguage', 'timestampUnit', 'summaryTr', 'warnings', 'coverageAudit',
         'timestampRepair', 'timingIntegrity', 'transcriptionEngine', 'translationEngine']),

@@ -8,7 +8,8 @@
     "postinstall": "node scripts/build-source-audio-codec.js",
     "build:audio": "node scripts/build-source-audio-codec.js",
     "check": "node scripts/check-syntax.js",
-    "test": "npm run check && node --test test/*.test.js"
+    "test": "npm run check && node --test test/*.test.js",
+    "test:browser": "playwright test"
   },
   "engines": {
     "node": ">=20.3.0"
@@ -24,6 +25,7 @@
     "youtube-dl-exec": "^3.1.15"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "fake-indexeddb": "^6.2.5"
   }
 }

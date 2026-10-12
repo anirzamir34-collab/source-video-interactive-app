@@ -1,3 +1,4 @@
+import { normalizeGameplayEvidence } from '../public/gameplay-evidence.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -255,7 +256,7 @@ test('real analysis normalization applies stable character mapping to main and e
   const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const begin = source.indexOf('function normalizeAnalysis(');
   const end = source.indexOf('\nfunction initializeInteractive(', begin);
-  const scope = vm.createContext({ bindActionCharacter, mergeStoryContexts, partitionProtagonistActions, mergeUnownedIntervals,
+  const scope = vm.createContext({ normalizeGameplayEvidence, bindActionCharacter, mergeStoryContexts, partitionProtagonistActions, mergeUnownedIntervals,
     assignPositionOccurrenceIds() {}, normalizeOutcomeUnlockProgress: () => 82,
     ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test' });
   vm.runInContext(source.slice(begin, end), scope);

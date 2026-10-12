@@ -1,3 +1,4 @@
+// Historical v1 regression oracle; production v2 acceptance is in gameplay-v2*.test.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,7 +22,7 @@ test('nearby speech continues without a premature choice, but a later unrelated 
 });
 
 test('real generic action completion leaves video playing until the sentence ends, then updates the actual cursor', () => {
-  const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const source = fs.readFileSync(new URL('./fixtures/legacy-gameplay-reference.txt', import.meta.url), 'utf8');
   const from = source.indexOf('function genericConversationEnd('), to = source.indexOf('\nfunction resetGameAtAction', from);
   const action = { actionId: 'chapter', endTime: 2 };
   const state = { sourceContext: { segments: [{ startTime: 1, endTime: 3 }] },

@@ -20,6 +20,28 @@ jobs:
       - run: npm ci
       - name: Complete test suite
         run: npm test
+  gameplay-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install synthetic video generator
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Desktop and Android gameplay acceptance
+        run: npm run test:browser
+      - name: Synthetic before/after metrics
+        run: node test/metrics/gameplay-v2.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: gameplay-browser-traces
+          path: work/browser/results
   production-health:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test

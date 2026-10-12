@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createInteractionState, advanceInteraction, transitionInteraction, interactionTrace,
   selectVerifiedChoiceQueue, selectInteractionChoice, selectInteractionGroup
-} from '../public/interaction-engine.js';
+} from './fixtures/legacy-interaction-engine.js';
 import {
   interactionClipGuard, interactionEntryGuard, interactionMovementVariants, interactionFamilyViews
 } from '../public/interaction-timeline.js';

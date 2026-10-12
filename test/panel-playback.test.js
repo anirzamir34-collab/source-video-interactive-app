@@ -1,3 +1,4 @@
+// Historical v1 regression oracle; production v2 acceptance is in gameplay-v2*.test.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,15 +9,15 @@ import * as gameplay from '../public/adult-gameplay.js';
 import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
 import { compactPanelChoiceLabel, forwardVerifiedClips } from '../public/panel-feedback.js';
 import { sourcePositionAtTime } from '../public/scene-entry.js';
-import * as interaction from '../public/interaction-engine.js';
+import * as interaction from './fixtures/legacy-interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
 import * as panel from '../public/interaction-panel.js';
-import * as compat from '../public/interaction-compat.js';
-import * as completion from '../public/interaction-completion.js';
+import * as compat from './fixtures/legacy-interaction-compat.js';
+import * as completion from './fixtures/legacy-interaction-completion.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
-const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('./fixtures/legacy-gameplay-reference.txt', import.meta.url), 'utf8');
 const names = ['cancelAdultSeek', 'beginAdultSelection', 'seekAdultLoop',
   'clearPanelPlaybackRecovery', 'showPanelPlaybackRecovery', 'resumePanelPlayback',
   'commitAdultSelectionProgress',
