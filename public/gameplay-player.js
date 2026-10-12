@@ -48,7 +48,7 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     if (!clip || state.status !== 'playing') return;
     dispatch({ type: 'PLAYBACK', selectionId, time, elapsed,
       rate: video.playbackRate || 1, playing: !video.paused, seeking: internalSeek || video.seeking });
-    if (time < clip.endTime - .03 || video.seeking || internalSeek) return;
+    if (time < (clip.previewEndTime ?? clip.endTime) - .03 || video.seeking || internalSeek) return;
     const stage = graph.stages.find(row => row.id === state.stageId);
     // Preserve existing source/dub sentence continuity for story decisions.
     if (stage?.surface === 'story' && !video.ended && conversationEndAt(time) > time + .03) return;
@@ -111,9 +111,26 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
         if (!controller.signal.aborted) lastWall = now();
       } catch { if (!controller.signal.aborted) dispatch({ type: 'FAIL', selectionId }); }
     },
-    advanceStage() { dispatch({ type: 'ADVANCE_STAGE' }); },
+    advanceStage() {
+      if (state.selection) return;
+      dispatch({ type: 'ADVANCE_STAGE' });
+      const stage = graph.stages.find(row => row.id === state.stageId);
+      if (stage && (video.currentTime < stage.startTime - .05 || video.currentTime > stage.endTime + .05))
+        void api.navigate(stage.startTime, { preserveState: true });
+    },
+    skipStage() {
+      cancelEffect(); freePlayback = false; video.pause();
+      dispatch({ type: 'CANCEL' }); dispatch({ type: 'SKIP_STAGE' });
+      const stage = graph.stages.find(row => row.id === state.stageId);
+      if (stage) void api.navigate(stage.startTime, { preserveState: true });
+      else if (state.chapterId === null && state.cursor < graph.duration - .05) void api.continueVideo();
+    },
     nextChapter() {
-      cancelEffect(); freePlayback = false; video.pause(); dispatch({ type: 'CANCEL' }); dispatch({ type: 'NEXT_CHAPTER' });
+      cancelEffect(); freePlayback = false; video.pause();
+      dispatch({ type: 'CANCEL' }); dispatch({ type: 'NEXT_CHAPTER' });
+      const chapter = graph.chapters.find(row => row.id === state.chapterId);
+      if (chapter) void api.navigate(chapter.startTime, { preserveState: true });
+      else if (state.cursor < graph.duration - .05) void api.continueVideo();
     },
     async navigate(time, { rewind = false, preserveState = false } = {}) {
       cancelEffect(); freePlayback = false; video.pause();
