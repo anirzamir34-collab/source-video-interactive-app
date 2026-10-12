@@ -80,6 +80,12 @@ test('v4: skip transitions synchronize the media clock and show a single compact
     observation('approach',3,{phase:'APPROACH',duration:2}),
     observation('core',6,{phase:'CORE',duration:2,positionId:'seated-facing',positionLabel:'Kaynak duruşu'})
   ]);
+  const firstUi=await page.evaluate(()=>({phase:__gameplayTest.state().stageId,
+    status:__gameplayTest.state().status,chapter:__gameplayTest.state().chapterId,
+    cursor:__gameplayTest.state().cursor,choices:[...document.querySelectorAll('#choices button')].map(x=>x.innerText),
+    approach:[...document.querySelectorAll('#approachChoices button')].map(x=>x.innerText),
+    displayed:document.querySelector('#choices')?.className}));
+  console.log('V4_BROWSER_DIAGNOSTIC',JSON.stringify(firstUi));
   await page.getByRole('button',{name:'Bu aşamayı geç',exact:true}).click();
   await expect(page.locator('#approachChoices')).toBeVisible();
   await expect.poll(()=>page.locator('#video').evaluate(v=>v.currentTime)).toBeGreaterThan(2.95);
