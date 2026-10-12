@@ -16,7 +16,8 @@ const extract = name => {
   return tail.slice(0, tail.slice(1).search(/\n(?:async )?function /) + 1);
 };
 const narrative = Array.from({ length: 7 }, (_, i) => observation(`story-${i}`, i * 4, {
-  duration: 3, phase: 'STORY', narrativeChoiceLabel: `Niyet ${i}` }));
+  duration: 3, phase: 'STORY', storyEvidenceLevel: 'fact', storyConfidence: .95,
+  narrativeChoiceLabel: `Niyet ${i}` }));
 const context = vm.createContext({ ...routing, selectDiverseStoryActions, playableAdultPanelFamily: () => '',
   state: { analysis: analysis(narrative), gameCursorTime: 0, consumedActionIds: new Set(),
     completedAdultSceneIds: new Set(), adultScenes: [{ id: 'ref', dialogue: narrative.map(row => ({
