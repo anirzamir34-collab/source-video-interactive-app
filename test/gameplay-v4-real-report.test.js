@@ -185,7 +185,7 @@ test('cinematic story keeps all source cards while playing and never shows durat
     'a selection does not collapse the other source cards to one');
   assert.ok(els.choices.children.filter(row=>row.tag==='button').every(row=>row.disabled));
 
-  state={...state,selection:null,status:'decision',cursor:170.366};
+  state={...state,selection:null,status:'decision',cursor:211.2};
   renderGameplay({state,player,els,document});
   assert.ok(labels().includes('Sonraki aşama'));
   assert.ok(!labels().includes('Sonraki sahne'),
