@@ -17,15 +17,34 @@ export async function analysisRequestKey({ revision, path, form, headers, crypto
   return digest(encode(JSON.stringify([VERSION, revision, path, fields])));
 }
 
-export async function analysisCheckpointKey({ sheets, timestamps, duration, mode, crypto = globalThis.crypto } = {}) {
+export async function analysisCheckpointKey({ sheets, timestamps, duration, mode,
+  source = null, crypto = globalThis.crypto } = {}) {
   if (!crypto?.subtle || !Array.isArray(sheets) || !sheets.length ||
       !Array.isArray(timestamps) || !Number.isFinite(Number(duration)) || !mode) return null;
   const digest = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', value)))
     .map(byte => byte.toString(16).padStart(2, '0')).join('');
+  // The same verified source can produce byte-different JPEG sheets when
+  // the mobile video decoder or encoder is initialized a second time. A
+  // chapter cache based only on those JPEG bytes then wrongly sends all 15
+  // sections back to Gemini after a credential change. Source-video bytes
+  // remain stable. Hash the ENTIRE original file in bounded 4 MiB pieces;
+  // never accept name/size/date metadata as evidence identity.
+  if (source instanceof Blob && source.size > 0) {
+    const blocks = [];
+    const blockSize = 4 * 1024 * 1024;
+    for (let offset = 0; offset < source.size; offset += blockSize) {
+      blocks.push(await crypto.subtle.digest('SHA-256',
+        await source.slice(offset, offset + blockSize).arrayBuffer()));
+    }
+    const sourceFingerprint = await digest(await new Blob(blocks).arrayBuffer());
+    return digest(new TextEncoder().encode(JSON.stringify([
+      'verified-chunk-v2-source-content', source.size, sourceFingerprint,
+      Number(duration), timestamps, mode
+    ])));
+  }
   const proofs = [];
-  // Hash all actual storyboard image bytes, not just a filename, URL or
-  // claimed video duration. Re-selecting a different video cannot import
-  // another video's game even if its superficial file metadata matches.
+  // Legacy fingerprint only for reading checkpoints made before source-content
+  // fingerprints were introduced, or for callers without source Blob access.
   for (const sheet of sheets) {
     if (!(sheet instanceof Blob) || sheet.size === 0) return null;
     proofs.push(await digest(await sheet.arrayBuffer()));
