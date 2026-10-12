@@ -75,7 +75,8 @@ test('G: rejected browser play keeps actionable retry and rotating mobile viewpo
 test('v4: skip transitions synchronize the media clock and show a single compact panel', async ({ page }) => {
   const errors=[]; page.on('pageerror', e=>errors.push(e.message));
   await load(page,[
-    observation('story',0,{phase:'STORY',duration:2}),
+    observation('story',0,{phase:'STORY',duration:2,storyEvidenceLevel:'fact',
+      storyConfidence:.95,narrativeChoiceLabel:'Kaynakta görülen başlangıç'}),
     observation('approach',3,{phase:'APPROACH',duration:2}),
     observation('core',6,{phase:'CORE',duration:2,positionId:'seated-facing',positionLabel:'Kaynak duruşu'})
   ]);
