@@ -201,6 +201,9 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       if (destroyed || state.selection || freePlayback) return;
       const index = graph.chapters.findIndex(row => row.id === state.chapterId);
       const current = graph.chapters[index], upcoming = graph.chapters[index + 1];
+      // Never bypass known intermediate approach/story stages through a
+      // chapter-level API call. The UI should expose only the next stage.
+      if (current && current.stageIds.indexOf(state.stageId) < current.stageIds.length - 1) return;
       // A source-analysis gap is not a verified skip. Previously NEXT_CHAPTER
       // sought straight across it, silently deleting real unanalysed footage.
       // Play the original video between chapters before exposing the next
