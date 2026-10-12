@@ -39,7 +39,10 @@ export function availableChoices(state, graph = state.graph) {
     // did not return a formal fork/intent. Collapsing every blank intent to
     // "chronological-source" made an entire scene appear as one button.
     // These are navigable recorded events, NOT invented branching outcomes.
-    const labelledEvents = choices.filter(choice => !choice.abstained && String(choice.label || '').trim());
+    const labelledEvents = choices.filter(choice => {
+      const label = String(choice.label || '').trim();
+      return !choice.abstained && label && !label.startsWith('Gözlenen kaynak olayı ');
+    });
     if (!labelledEvents.length && !choices.some(choice => choice.intent)) {
       choices = choices.slice(0, 1); // no supported meaning, only raw timestamps
     } else {
