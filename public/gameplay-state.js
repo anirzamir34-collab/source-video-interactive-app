@@ -201,6 +201,14 @@ export function gameplayReducer(state, event = {}) {
         selection: { ...state.selection, observed: 0, lastTime: null, started: false } } : state;
     case 'CANCEL':
       return { ...state, status: 'decision', selection: null, error: null };
+    case 'SKIP_CURRENT_CLIP': {
+      const clip = nextPlayableClip(state);
+      if (!state.selection || !clip || clip.id !== event.clipId) return state;
+      // Skipping only advances the source cursor. It does not create visual
+      // facts, grant a completion reward, or jump over the entire story.
+      return { ...state, cursor: Math.max(state.cursor, clip.endTime),
+        selection: null, status: 'decision', error: null };
+    }
     case 'ADVANCE_STAGE': {
       const next = progression(state).nextStageId;
       if (!next || state.selection) return state;
