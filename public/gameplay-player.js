@@ -31,7 +31,10 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     }
     // Do not auto-select alternative witnessed intentions: those require
     // a human decision and remain visible.
-    if (choices.length !== 1 || choices[0].intent) return;
+    // Source-labelled events are meaningful navigation choices even if the
+    // provider omitted a formal intent. Auto-play only an unattributed raw
+    // chronological observation, never a named story action.
+    if (choices.length !== 1 || choices[0].intent || !choices[0].abstained) return;
     dispatch({ type: 'SELECT', choiceId: choices[0].id });
     if (state.selection) await playSelected();
   }
@@ -146,6 +149,13 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       if (!clip) return;
       cancelEffect(); freePlayback = false; video.pause();
       dispatch({ type: 'SKIP_CURRENT_CLIP', clipId: clip.id });
+      const next = availableChoices(state)[0];
+      if (next) {
+        const nextClip = graph.clips.find(row => row.id === next.clipIds[0]);
+        if (nextClip) await api.navigate(nextClip.startTime, { preserveState: true });
+      } else if (progression(state).nextStageId) {
+        api.advanceStage();
+      }
       await continueChronologicalStory();
     },
     skipStage() {

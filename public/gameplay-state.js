@@ -35,18 +35,30 @@ export function availableChoices(state, graph = state.graph) {
   if (stage.phase === 'STORY') {
     choices = choices.filter(choice => !progress.counts[choice.id] &&
       playableChoiceClips(state, choice).some(clip => clip.endTime > state.cursor + .03));
-    // Source snippets are observations, not invented branches. Offer distinct
-    // meaningful intents; unidentified dialogue remains one chronological route.
-    const intents = new Set();
-    choices = choices.filter(choice => {
-      const intent = choice.intent || 'chronological-source';
-      if (intents.has(intent)) return false;
-      intents.add(intent); return true;
+    // Preserve source-backed narrative actions even when a language model
+    // did not return a formal fork/intent. Collapsing every blank intent to
+    // "chronological-source" made an entire scene appear as one button.
+    // These are navigable recorded events, NOT invented branching outcomes.
+    const labelledEvents = choices.filter(choice => {
+      const label = String(choice.label || '').trim();
+      return !choice.abstained && label && !label.startsWith('Gözlenen kaynak olayı ');
     });
+    if (!labelledEvents.length && !choices.some(choice => choice.intent)) {
+      choices = choices.slice(0, 1); // no supported meaning, only raw timestamps
+    } else {
+      const seenIntents = new Set();
+      choices = choices.filter(choice => {
+        if (!choice.intent) return true; // distinct sourced event, no fictional fork
+        if (seenIntents.has(choice.intent)) return false;
+        seenIntents.add(choice.intent);
+        return true;
+      });
+    }
   }
-  // Verified core actions and positions should be discoverable as a hierarchy,
-  // not hidden by an arbitrary first-three-card limit.
-  if (stage.phase === 'CORE') return choices;
+  // All source-backed story events and categorized interaction actions must
+  // remain addressable. The view handles layout/pagination, never deletes
+  // choices or hides the fourth action simply because three cards were shown.
+  if (stage.phase === 'CORE' || stage.phase === 'STORY') return choices;
   const discovered = Object.keys(progress.counts).length;
   const limit = stage.choiceIds.length <= 4 ? 4 : Math.min(stage.choiceIds.length, 3 + discovered);
   return choices.slice(0, limit);

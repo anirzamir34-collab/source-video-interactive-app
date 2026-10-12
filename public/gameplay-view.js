@@ -3,8 +3,7 @@ import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-pa
 
 const rendered = new WeakMap();
 const selectedPosition = new WeakMap();
-const positionKey = choice => choice.positionId
-  ? JSON.stringify([choice.positionId, choice.occurrenceId || '']) : '';
+const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
 export function renderGameplay({ state, player, els, document = globalThis.document }) {
@@ -23,7 +22,9 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     ? saved.key : positions[0]?.key || '';
   // While source footage is playing, the surface is a minimal playback
   // control, not another interactive decision superimposed on the shot.
-  const visibleChoices = state.selection ? [] : activePosition
+  const selectedChoice = state.selection
+    ? state.graph.choices.find(choice => choice.id === state.selection.choiceId) : null;
+  const visibleChoices = selectedChoice ? [selectedChoice] : activePosition
     ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
     state.selection?.index, progress, choices.map(row => row.id), activePosition]);
@@ -103,13 +104,14 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (els.positionCount) els.positionCount.textContent = `${positions.length} pozisyon`;
 
   for (const choice of visibleChoices) {
-    const storyIsObservation = surface === 'story' && choices.length === 1 && !choice.intent;
+    const storyIsObservation = surface === 'story' && choices.length === 1 && choice.abstained;
     const repeatingPositionLabel = surface === 'panel' && choice.positionLabel &&
       choice.label.trim().toLocaleLowerCase('tr-TR') === choice.positionLabel.trim().toLocaleLowerCase('tr-TR');
     const label = storyIsObservation ? 'Hikâyeyi oynat' :
       repeatingPositionLabel ? 'Kaynak kesitini oynat' : choice.label;
     const card = makeButton(root, label, () => void player.select(choice.id),
       'choice story-choice gameplay-choice gameplay-choice-card');
+    card.disabled = Boolean(state.selection);
     card.dataset.choiceId = choice.id;
     card.dataset.choiceSurface = surface;
     card.setAttribute('aria-pressed', String(state.selection?.choiceId === choice.id));

@@ -26,7 +26,7 @@ vm.runInContext(extract('isUnownedTimelineChoice') + '\n' + extract('futureActio
 const narrativeBefore = context.futureActions().length;
 const storyGraph = createGameplayGraph(analysis(narrative));
 const narrativeAfter = availableChoices(createGameplayState(storyGraph)).length;
-assert.equal(narrativeBefore, 0); assert.equal(narrativeAfter, 3);
+assert.equal(narrativeBefore, 0); assert.equal(narrativeAfter, 7);
 
 const actions = Array.from({ length: 5 }, (_, i) => observation(`action-${i}`, i * 8, {
   phase: 'CORE', duration: 6, gameplayEvidence: evidence(`action-${i}`) }));

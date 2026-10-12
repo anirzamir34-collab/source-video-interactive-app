@@ -96,7 +96,7 @@ test('v3: a genuine story decision needs fact-level intent evidence', () => {
   const graph = createGameplayGraph(analysis(actions));
   assert.equal(availableChoices(createGameplayState(graph)).length, 3);
   const notVerified = actions.map(row => ({ ...row, storyEvidenceLevel: 'unknown', storyConfidence: 0 }));
-  assert.equal(availableChoices(createGameplayState(createGameplayGraph(analysis(notVerified)))).length, 1);
+  assert.equal(availableChoices(createGameplayState(createGameplayGraph(analysis(notVerified)))).length, 3);
 });
 
 test('v3: source encounter continues across dialogue, approach and core', () => {
