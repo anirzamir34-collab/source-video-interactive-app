@@ -70,7 +70,7 @@ test('C: eight choices reveal progressively and verified visual changes retire i
     gameplayEvidence: evidence(`a${i}`, { before: visual({ clothing: i < 2 ? 'coat' : 'shirt' }),
       after: visual({ clothing: i < 1 ? 'coat' : 'shirt' }) }) }));
   let state = createGameplayState(createGameplayGraph(analysis(actions)));
-  assert.equal(availableChoices(state).length, 7);
+  assert.equal(availableChoices(state).length, 3);
   const first = availableChoices(state)[0].id;
   state = engage(state, availableChoices(state)[1].id);
   assert.equal(state.visual.clothing, 'shirt');
