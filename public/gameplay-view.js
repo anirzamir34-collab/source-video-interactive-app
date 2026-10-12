@@ -134,7 +134,10 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     if (state.cursor < state.graph.duration - .05)
       makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   }
-  if (choices.length && (state.selection || !progress.completed))
+  if (state.selection && progress.phase === 'STORY')
+    makeButton(root, 'Sonraki hikâye olayına geç', () => void player.skipCurrentClip(),
+      'choice gameplay-skip gameplay-choice-card');
+  else if (choices.length && (state.selection || !progress.completed))
     makeButton(root, 'Bu aşamayı geç', () => player.skipStage(),
       'choice gameplay-skip gameplay-choice-card');
 
@@ -146,7 +149,10 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (els.adultDockTitle) els.adultDockTitle.textContent = phaseLabel;
   for (const key of ['adultDockPhase', 'adultPhaseBadge', 'adultPhaseTitle'])
     if (els[key]) els[key].textContent = phaseLabel;
-  if (els.adultPhaseHint) els.adultPhaseHint.textContent = 'Gerçek görüntü kanıtı olan seçenekleri keşfet.';
+  if (els.adultPhaseHint) els.adultPhaseHint.textContent =
+    state.graph.clips.some(row => row.visualVerified !== true)
+      ? 'Bazı olaylar kaynak analizinde bağımsız görüntü kanıtı olmadan raporlanmış.'
+      : 'Görüntüyle doğrulanmış kaynak seçenekleri.';
   if (els.adultFlowStatus) els.adultFlowStatus.textContent =
     `Lust %${Math.round(progress.lust)} · ${progress.sceneEngagements} seçim`;
   if (els.adultDockLustValue) els.adultDockLustValue.textContent = Math.round(progress.lust);
