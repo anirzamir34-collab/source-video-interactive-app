@@ -140,6 +140,14 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       if (stage && (video.currentTime < stage.startTime - .05 || video.currentTime > stage.endTime + .05))
         void api.navigate(stage.startTime, { preserveState: true });
     },
+    async skipCurrentClip() {
+      if (!state.selection) return;
+      const clip = nextPlayableClip(state);
+      if (!clip) return;
+      cancelEffect(); freePlayback = false; video.pause();
+      dispatch({ type: 'SKIP_CURRENT_CLIP', clipId: clip.id });
+      await continueChronologicalStory();
+    },
     skipStage() {
       cancelEffect(); freePlayback = false; video.pause();
       dispatch({ type: 'CANCEL' }); dispatch({ type: 'SKIP_STAGE' });
