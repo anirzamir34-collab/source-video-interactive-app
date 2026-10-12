@@ -39,11 +39,9 @@ export function availableChoices(state, graph = state.graph) {
     // did not return a formal fork/intent. Collapsing every blank intent to
     // "chronological-source" made an entire scene appear as one button.
     // These are navigable recorded events, NOT invented branching outcomes.
-    const labelledEvents = new Set(choices.filter(choice => !choice.abstained)
-      .map(choice => String(choice.label || '').trim().toLocaleLowerCase('tr-TR'))
-      .filter(Boolean));
-    if (labelledEvents.size < 2 && !choices.some(choice => choice.intent)) {
-      choices = choices.slice(0, 1); // genuinely undifferentiated observations
+    const labelledEvents = choices.filter(choice => !choice.abstained && String(choice.label || '').trim());
+    if (!labelledEvents.length && !choices.some(choice => choice.intent)) {
+      choices = choices.slice(0, 1); // no supported meaning, only raw timestamps
     } else {
       const seenIntents = new Set();
       choices = choices.filter(choice => {
