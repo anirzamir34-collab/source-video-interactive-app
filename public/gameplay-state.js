@@ -63,8 +63,18 @@ export function progression(state) {
   const stage = stageOf(state), progress = state.stageProgress[stage?.id] || emptyProgress();
   const chapter = state.graph.chapters.find(row => row.id === state.chapterId);
   const next = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1] || null;
+  // Lust represents earned engagement across the full source encounter,
+  // not an individual stage clock that resets at every position change.
+  const interactiveStages = (chapter?.stageIds || []).map(id =>
+    state.graph.stages.find(row => row.id === id)).filter(row => row && row.phase !== 'STORY');
+  const lust = interactiveStages.length
+    ? clamp(interactiveStages.reduce((sum, row) =>
+      sum + (state.stageProgress[row.id]?.score || 0), 0) / interactiveStages.length) : 0;
+  const sceneEngagements = interactiveStages.reduce((sum, row) =>
+    sum + Object.keys(state.stageProgress[row.id]?.counts || {}).length, 0);
   return { stageId: state.stageId, phase: stage?.phase || 'STORY', value: clamp(progress.score),
-    completed: progress.completed, playedChoices: Object.keys(progress.counts).length,
+    lust, sceneEngagements, completed: progress.completed,
+    playedChoices: Object.keys(progress.counts).length,
     nextStageId: progress.completed ? next : null, characters: state.characters, relationships: state.relationships };
 }
 const stageReady = (state, progress) => {
