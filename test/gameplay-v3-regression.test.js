@@ -36,7 +36,7 @@ test('v3: position families remain choices under one core stage', () => {
   assert.deepEqual(graph.choices.map(c => c.positionId), ['seated-facing', 'seated-facing', 'rear']);
 });
 
-test('v3: preview stops early but does not claim unseen visual after-state', () => {
+test('v4: never cut source at an invented preview boundary', () => {
   const graph = createGameplayGraph(analysis([observation('long', 0, {
     duration: 38, gameplayEvidence: evidence('long', {
       before: visual({ clothing: 'coat' }), after: visual({ clothing: 'removed' })
@@ -44,7 +44,7 @@ test('v3: preview stops early but does not claim unseen visual after-state', () 
   })]));
   const clip = graph.clips[0];
   assert.equal(clip.endTime, 38);
-  assert.equal(clip.previewEndTime, 14);
+  assert.equal(clip.previewEndTime, 38);
   let state = createGameplayState(graph);
   state = gameplayReducer(state, { type: 'SELECT', choiceId: graph.choices[0].id });
   const selectionId = state.selection.id;
@@ -59,6 +59,7 @@ test('v3: preview stops early but does not claim unseen visual after-state', () 
   assert.equal(progression(state).value, 50);
   assert.equal(state.visual.clothing, 'coat');
   assert.deepEqual(state.observedClipIds, []);
+  assert.ok(state.selection, 'selection remains open until verified source end');
 });
 
 test('v3: skipping a stage reaches next observed stage without awarding credit', () => {
@@ -78,13 +79,13 @@ test('v3: skipping a stage reaches next observed stage without awarding credit',
 test('v3: next chapter updates cursor to the source chapter', () => {
   const graph = createGameplayGraph(analysis([
     observation('one', 0, { adultSceneId: 'one' }),
-    observation('two', 50, { adultSceneId: 'two' })
+    observation('two', 80, { adultSceneId: 'two' })
   ]));
   assert.equal(graph.chapters.length, 2);
   let state = createGameplayState(graph);
   state = gameplayReducer(state, { type: 'NEXT_CHAPTER' });
   assert.equal(state.stageId, graph.chapters[1].stageIds[0]);
-  assert.equal(state.cursor, 50);
+  assert.equal(state.cursor, 80);
   assert.equal(progression(state).value, 0);
 });
 
