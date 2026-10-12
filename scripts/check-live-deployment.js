@@ -1,4 +1,4 @@
-const base = 'https://source-video-interactive-app-kyim.onrender.com';
+const base = String(process.env.VIDEOQUEST_PRODUCTION_URL || 'https://videoquest-kadir.onrender.com').replace(/\/$/, '');
 const expected = process.env.GITHUB_SHA;
 if (!/^[a-f0-9]{40}$/.test(expected || '')) throw new Error('A concrete production commit SHA is required.');
 const deadline = Date.now() + 10 * 60 * 1000;
