@@ -111,3 +111,18 @@ test('G: restore preserves stage boundary and does not replay already earned cre
   assert.deepEqual(other.player.getState().stageProgress, snapshot.stageProgress);
   assert.equal(other.video.paused, true);
 });
+
+
+test('story speech continuation cannot swallow the next observed source event', async t => {
+  const f = fixture([
+    observation('first', 0, { phase: 'STORY', duration: 2 }),
+    observation('second', 2, { phase: 'STORY', duration: 4 })
+  ], { conversationEndAt: time => time + 20 });
+  t.after(() => f.player.destroy());
+  const first = choices(f)[0];
+  await f.player.select(first.id);
+  await f.tick(2);
+  assert.notEqual(f.player.getState().selection?.choiceId, first.id,
+    'first story action must stop at the next verified source boundary');
+  assert.ok(f.video.currentTime >= 2);
+});
