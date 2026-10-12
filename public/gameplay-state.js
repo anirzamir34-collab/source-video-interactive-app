@@ -44,6 +44,9 @@ export function availableChoices(state, graph = state.graph) {
       intents.add(intent); return true;
     });
   }
+  // Verified core actions and positions should be discoverable as a hierarchy,
+  // not hidden by an arbitrary first-three-card limit.
+  if (stage.phase === 'CORE') return choices;
   const discovered = Object.keys(progress.counts).length;
   const limit = stage.choiceIds.length <= 4 ? 4 : Math.min(stage.choiceIds.length, 3 + discovered);
   return choices.slice(0, limit);
