@@ -152,7 +152,9 @@ test('timeline arrows step through actual source events rather than jumping chap
 
 test('cinematic story keeps all source cards while playing and never shows durations',()=>{
   const labelled={...source,actions:source.actions.map((a,index)=>({
-    ...a,label:index<5 ? 'Kaynak olayı '+(index+1) : a.label
+    ...a,label:index<5 ? 'Kaynak olayı '+(index+1) : a.label,
+    ...(index<5 ? {storyEvidenceLevel:'fact',storyConfidence:.95,
+      narrativeChoiceLabel:'Kaynak olayı '+(index+1)} : {})
   }))};
   const graph=createGameplayGraph(labelled);
   const makeElement=tag=>({
