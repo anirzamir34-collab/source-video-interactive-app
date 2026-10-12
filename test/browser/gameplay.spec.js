@@ -80,18 +80,6 @@ test('v4: skip transitions synchronize the media clock and show a single compact
     observation('approach',3,{phase:'APPROACH',duration:2}),
     observation('core',6,{phase:'CORE',duration:2,positionId:'seated-facing',positionLabel:'Kaynak duruşu'})
   ]);
-  const firstUi=await page.evaluate(()=>({phase:__gameplayTest.state().stageId,
-    status:__gameplayTest.state().status,chapter:__gameplayTest.state().chapterId,
-    cursor:__gameplayTest.state().cursor,choices:[...document.querySelectorAll('#choices button')].map(x=>x.innerText),
-    approach:[...document.querySelectorAll('#approachChoices button')].map(x=>x.innerText),
-    displayed:document.querySelector('#choices')?.className,
-    visibility:(()=>{const b=document.querySelector('#choices .gameplay-skip'),root=document.querySelector('#choices');
-      const parents=[];let element=b;while(element&&parents.length<7){const st=getComputedStyle(element);
-        parents.push({name:element.tagName,id:element.id,cl:element.className,
-          display:st.display,visibility:st.visibility,opacity:st.opacity,
-          rect:element.getBoundingClientRect().toJSON(),ariaHidden:element.getAttribute('aria-hidden')});
-        element=element.parentElement;}return {parents,rootHidden:root?.hidden};})()}));
-  console.log('V4_BROWSER_DIAGNOSTIC',JSON.stringify(firstUi));
   await expect(page.getByRole('button',{name:'Bu aşamayı geç',exact:true})).toBeVisible({timeout:3000});
   await page.getByRole('button',{name:'Bu aşamayı geç',exact:true}).click();
   await expect(page.locator('#approachChoices')).toBeVisible();
@@ -103,9 +91,16 @@ test('v4: skip transitions synchronize the media clock and show a single compact
   const geometry=await page.evaluate(()=>{
     const p=document.querySelector('#adultInteractionPanel').getBoundingClientRect();
     const v=document.querySelector('.video-stage').getBoundingClientRect();
-    return {panelWidth:p.width,stageWidth:v.width,panelHeight:p.height,stageHeight:v.height};
+    return {panelWidth:p.width,stageWidth:v.width,panelHeight:p.height,stageHeight:v.height,
+      portrait:innerHeight>innerWidth};
   });
-  expect(geometry.panelWidth).toBeLessThan(geometry.stageWidth*.46);
-  expect(geometry.panelHeight).toBeLessThan(geometry.stageHeight*.9);
+  if (geometry.portrait) {
+    // Portrait uses a shallow bottom sheet: width alone is not the obstruction metric.
+    expect(geometry.panelWidth).toBeLessThan(geometry.stageWidth*1.02);
+    expect(geometry.panelHeight).toBeLessThan(geometry.stageHeight*.52);
+  } else {
+    expect(geometry.panelWidth).toBeLessThan(geometry.stageWidth*.46);
+    expect(geometry.panelHeight).toBeLessThan(geometry.stageHeight*.9);
+  }
   expect(errors).toEqual([]);
 });
