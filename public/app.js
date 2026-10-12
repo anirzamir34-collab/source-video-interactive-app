@@ -3503,11 +3503,8 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
 }
 
 function jumpChoice(direction) {
-  const runtime = state.gameplayPlayer?.getState();
-  if (!runtime) return;
-  const index = runtime.graph.chapters.findIndex(chapter => chapter.id === runtime.chapterId);
-  const next = runtime.graph.chapters[Math.max(0, Math.min(runtime.graph.chapters.length - 1, index + direction))];
-  if (next) void state.gameplayPlayer.navigate(next.startTime, { rewind: direction < 0 });
+  // Left/right navigation is one verified source event, never a whole chapter.
+  state.gameplayPlayer?.stepSourceEvent(direction);
 }
 
 function renderTimeline() {
