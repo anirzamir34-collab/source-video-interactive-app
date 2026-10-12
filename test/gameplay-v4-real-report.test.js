@@ -112,3 +112,16 @@ test('selected source footage cannot be completed before its verified end',()=>{
   assert.equal(state.stageId,graph.stages[0].id);
   assert.equal(state.cursor,0);
 });
+
+test('skipping the current long story observation keeps later story events playable', async t=>{
+  const graph=createGameplayGraph(source);
+  const video=new Media();const player=createGameplayPlayer({graph,video,seek:fakeSeek,play:fakePlay});
+  t.after(()=>player.destroy());
+  await player.select(availableChoices(player.getState())[0].id);
+  assert.equal(video.currentTime,7.2);
+  await player.skipCurrentClip();
+  assert.equal(video.currentTime,86.383);
+  assert.equal(player.getState().selection?.choiceId,graph.choices[1].id);
+  assert.equal(player.getState().stageId,graph.stages[0].id);
+  assert.equal(progression(player.getState()).value,0);
+});
