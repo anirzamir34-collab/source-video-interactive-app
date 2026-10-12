@@ -12,13 +12,13 @@ test('A/G: real app offers narrative cards and fullscreen fallback preserves cho
   await load(page, Array.from({ length: 7 }, (_, i) => observation(`story-${i}`, i * 3, {
     phase: 'STORY', duration: 2, storyEvidenceLevel: 'fact', storyConfidence: .95,
     narrativeChoiceLabel: `Gözlenen karar ${i}` })));
-  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(3);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(7);
   await expect(page.locator('#choices')).toBeVisible();
   await expect(page.locator('#approachChoices')).toBeHidden();
   await page.evaluate(() => { document.querySelector('.video-stage').requestFullscreen = () => Promise.reject(new Error('fixture denial')); });
   await page.locator('#fullscreenBtn').click();
   await expect(page.locator('#fullscreenStatus')).toContainText('Tam ekran açılamadı');
-  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(3);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(7);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(errors).toEqual([]);
 });
