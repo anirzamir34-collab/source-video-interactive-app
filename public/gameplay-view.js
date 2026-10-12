@@ -24,8 +24,15 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   // control, not another interactive decision superimposed on the shot.
   const selectedChoice = state.selection
     ? state.graph.choices.find(choice => choice.id === state.selection.choiceId) : null;
-  const visibleChoices = selectedChoice ? [selectedChoice] : activePosition
-    ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
+  // Keep the source-backed story navigation visible during playback.
+  // The selected action is highlighted and all cards are disabled until it ends.
+  const storyStage = surface === 'story' && state.selection
+    ? state.graph.stages.find(row => row.id === state.stageId) : null;
+  const storyStageChoices = storyStage?.choiceIds
+    .map(id => state.graph.choices.find(row => row.id === id))
+    .filter(Boolean);
+  const visibleChoices = storyStageChoices || (selectedChoice ? [selectedChoice] : activePosition
+    ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices);
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
     state.selection?.index, progress, choices.map(row => row.id), activePosition]);
   if (els.cursorText) els.cursorText.textContent = `${state.cursor.toFixed(1)} sn`;
@@ -115,13 +122,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     card.dataset.choiceId = choice.id;
     card.dataset.choiceSurface = surface;
     card.setAttribute('aria-pressed', String(state.selection?.choiceId === choice.id));
-    const clips = choice.clipIds.map(id => state.graph.clips.find(row => row.id === id)).filter(Boolean);
-    const detail = document.createElement('small');
-    detail.className = 'gameplay-source-meta';
-    const duration = clips.reduce((sum, clip) => sum +
-      ((clip.previewEndTime ?? clip.endTime) - clip.startTime), 0);
-    detail.textContent = `${clips.length} kaynak kesiti · ${Math.round(duration)} sn`;
-    card.appendChild(detail);
+    // Source timestamps belong in the owner timeline/debug report, not in
+    // cinematic choice buttons. Show the action itself, without duration.
   }
 
   // One selection surface only. The former secondary quick-action dock
@@ -132,9 +134,14 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (state.error && !state.selection && choices.length)
     makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   if (state.status === 'paused') makeButton(root, 'Oynatmaya devam et', () => void player.resume());
+  const remainingStageIds = chapter?.stageIds.slice(chapter.stageIds.indexOf(state.stageId) + 1) || [];
   if (progress.nextStageId && !state.selection)
     makeButton(root, 'Sonraki aşama', () => player.advanceStage());
-  if (!state.selection && ((progress.completed && !progress.nextStageId) || !choices.length)) {
+  else if (!state.selection && !choices.length && remainingStageIds.length)
+    makeButton(root, 'Sonraki aşama', () => player.skipStage());
+  // An exhausted stage is NOT the end of the chapter if there are still
+  // observed intermediate stages; never offer a shortcut over them.
+  if (!state.selection && !remainingStageIds.length && (progress.completed || !choices.length)) {
     if (state.chapterId) makeButton(root, 'Sonraki sahne', () => player.nextChapter());
     if (state.cursor < state.graph.duration - .05)
       makeButton(root, 'Videoya devam et', () => void player.continueVideo());

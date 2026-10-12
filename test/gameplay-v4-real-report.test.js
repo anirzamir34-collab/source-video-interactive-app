@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGameplayGraph } from '../public/gameplay-evidence.js';
-import { createGameplayState, availableChoices, progression } from '../public/gameplay-state.js';
+import { createGameplayState, availableChoices, progression, gameplayReducer } from '../public/gameplay-state.js';
+import { renderGameplay } from '../public/gameplay-view.js';
 import { createGameplayPlayer } from '../public/gameplay-player.js';
 
 // Distilled from the user's 2026-10-12 real analysis diagnostic, not synthetic
@@ -124,4 +125,71 @@ test('skipping the current long story observation keeps later story events playa
   assert.equal(player.getState().selection?.choiceId,graph.choices[1].id);
   assert.equal(player.getState().stageId,graph.stages[0].id);
   assert.equal(progression(player.getState()).value,0);
+});
+
+
+test('timeline arrows step through actual source events rather than jumping chapters',async t=>{
+  const graph=createGameplayGraph(source);
+  const video=new Media();
+  const player=createGameplayPlayer({graph,video,seek:fakeSeek,play:fakePlay});
+  t.after(()=>player.destroy());
+  player.stepSourceEvent(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,7.2);
+  player.stepSourceEvent(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,86.383);
+  assert.equal(player.getState().chapterId,graph.chapters[0].id);
+  player.stepSourceEvent(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,103.18);
+  player.stepSourceEvent(-1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,86.383);
+  assert.ok(!video.seeks.includes(374.326), 'arrows must not skip to a later chapter');
+});
+
+
+test('cinematic story keeps all source cards while playing and never shows durations',()=>{
+  const labelled={...source,actions:source.actions.map((a,index)=>({
+    ...a,label:index<5 ? 'Kaynak olayı '+(index+1) : a.label,
+    ...(index<5 ? {storyEvidenceLevel:'fact',storyConfidence:.95,
+      narrativeChoiceLabel:'Kaynak olayı '+(index+1)} : {})
+  }))};
+  const graph=createGameplayGraph(labelled);
+  const makeElement=tag=>({
+    tag,children:[],attributes:{},dataset:{},style:{},textContent:'',
+    classList:{add(){},remove(){},toggle(){}},
+    appendChild(child){this.children.push(child);child.parentElement=this;return child;},
+    replaceChildren(...children){this.children=children;},
+    setAttribute(key,value){this.attributes[key]=String(value);},
+    addEventListener(){},
+  });
+  const document={createElement:makeElement,querySelectorAll:()=>[]};
+  const stage=makeElement('stage');stage.ownerDocument=document;
+  const video={closest:()=>stage};
+  const els={video,adultInteractionPanel:makeElement('panel'),
+    choices:makeElement('choices'),approachChoices:makeElement('approach'),
+    movementChoices:makeElement('movement'),positionTabs:makeElement('tabs')};
+  const player={select(){},advanceStage(){},skipStage(){},nextChapter(){},
+    continueVideo(){},skipCurrentClip(){}};
+  let state=createGameplayState(graph);
+  assert.equal(availableChoices(state).length,5);
+  renderGameplay({state,player,els,document});
+  const labels=()=>els.choices.children.filter(row=>row.tag==='button').map(row=>row.textContent);
+  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,5);
+  assert.ok(!labels().includes('Sonraki sahne'));
+  assert.ok(!els.choices.children.some(row=>row.className==='gameplay-source-meta'));
+
+  state=gameplayReducer(state,{type:'SELECT',choiceId:graph.choices[0].id});
+  renderGameplay({state,player,els,document});
+  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,5,
+    'a selection does not collapse the other source cards to one');
+  assert.ok(els.choices.children.filter(row=>row.tag==='button').every(row=>row.disabled));
+
+  state={...state,selection:null,status:'decision',cursor:211.2};
+  renderGameplay({state,player,els,document});
+  assert.ok(labels().includes('Sonraki aşama'));
+  assert.ok(!labels().includes('Sonraki sahne'),
+    'an empty story stage cannot bypass the later stages in its chapter');
 });
