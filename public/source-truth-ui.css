@@ -129,7 +129,9 @@
     width: min(340px, 84vw) !important;
     inline-size: min(340px, 84vw) !important;
     max-width: min(340px, 84vw) !important;
-    max-height: min(43dvh, 380px) !important;
+    /* Preserve the source video: a portrait sheet never covers more than
+       42% of the video stage, with its own internal scrolling. */
+    max-height: min(42%, 240px, 43dvh) !important;
   }
 }
 /* The playback UI must not compete with the video image while running. */
