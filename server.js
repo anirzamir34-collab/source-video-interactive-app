@@ -382,6 +382,20 @@ Detected visual scene boundaries for this chunk: ${sceneBoundaries}
 - Prefer starting or ending an action near a boundary only when the adjacent frames visibly confirm the change.
 Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
 ${reviewInstructions}
+TWO INDEPENDENT EVIDENCE CHANNELS:
+1. VISUAL CHANNEL: identify visible people, configurations, contact, physical
+   actions, location/clothing/posture and exactly bounded source intervals using
+   frames ONLY. Never use dialogue, audio, or narrative expectation to verify
+   physical action.
+2. DIALOGUE CHANNEL: determine speakers, spoken content, explicit relationships
+   and actual narrative intentions from time-aligned speech ONLY. A spoken
+   invitation is not proof that the corresponding action occurred.
+3. FUSION: merge only by time overlap and validated participant track IDs.
+   When the channels disagree, the disputed claim remains unknown.
+   Do not turn ordinary dialogue into fake branching decisions.
+Write visual conclusions in gameplayEvidence and narrative conclusions in
+storyEvidence, preserving their distinct provenance.
+
 DIALOGUE AND SCENE CONTEXT:
 Quality mode: ${qualityMode}
 Time-aligned dialogue segments:
@@ -472,8 +486,8 @@ TWO-LEVEL DEEP ANALYSIS:
 - BONUS actions are meaningful visible changes inside the same main scene: pace/rhythm change, acceleration, slowing, pause, kiss, touch, hand placement, posture, body transition, clothing removal or another clearly visible male action.
 - Do not represent a several-minute scene with one broad action when meaningful changes occur inside it.
 - Keep the same sceneId for BONUS actions until a new MAIN action begins.
-- Target ${targetActionCount} distinct, visible MAIN_MALE actions in this chunk when evidence supports them.
-- Prefer approximately one meaningful action every 8-18 seconds.
+- ${targetActionCount} is an upper detail budget, not a target to fill.
+- Extract only verified changes. Short meaningful actions remain short; never stretch timestamps to manufacture longer gameplay.
 - Split long continuous scenes whenever pose, direction, contact, position, tempo, partner interaction or camera relationship visibly changes.
 - Do not invent actions merely to reach the target.
 - Actions must be chronological, forward-moving and non-overlapping.
@@ -568,7 +582,25 @@ Return ONLY valid JSON with this exact shape:
       "posture": "string",
       "contactPoint": "string",
       "interaction": "string",
-      "sourceVerified": true,
+      "gameplayEvidence": {
+        "version": 2,
+        "sourceActionId": "stable identity for a visually verified action",
+        "chapterId": "stable source encounter identity",
+        "occurrenceId": "same action occurrence across proven edits",
+        "decisionId": "shared narrative decision identity if a real fork exists, otherwise empty",
+        "intent": "specific evidenced story choice intent, otherwise empty",
+        "action": {
+          "verified": false,
+          "key": "stable action semantic key",
+          "label": "short grounded Turkish description",
+          "evidence": "observed source frame timestamps and visual facts",
+          "confidence": 0.0
+        },
+        "before": { "verified": false, "evidence": "", "confidence": 0.0, "facts": {} },
+        "after": { "verified": false, "evidence": "", "confidence": 0.0, "facts": {} },
+        "provenance": "visual-storyboard"
+      },
+      "sourceVerified": false,
       "confidence": number
     }
   ],
@@ -600,7 +632,11 @@ Rules:
 - playStartTime must equal introEndTime
 - MAIN and BONUS actions must reflect visible evidence
 - Turkish labels must be short and directly describe the male action
-- Optional gameplayEvidence v2 contract: {version:2, sourceActionId, chapterId, occurrenceId, decisionId, intent, action:{verified,key,label,evidence,confidence}, before:{verified,evidence,confidence,facts}, after:{verified,evidence,confidence,facts}, provenance}.
+- gameplayEvidence v2 is REQUIRED for every emitted source action, including ordinary story events. Always return version 2; never silently omit this field.
+- Set gameplayEvidence.action.verified=true ONLY if the actual frames prove the action. Unverified actions require null/empty fields and must never be promoted by confident dialogue.
+- sourceVerified is a separate interval check, not proof of a specific body configuration; never set every confidence to 1.0 by default.
+- Reuse sourceActionId and occurrenceId across edited cuts ONLY for the same visual action and cast. Different actions must have different origin IDs.
+- Assign decisionId and intent only for real narrative decisions supported by different observed consequences. For ordinary sequential speech, leave them empty.
 - Supply action only when the exact observed action is supported by the supplied source frames. The action label must describe the observation; tempo/intensity alone is not an action. Preserve unknown fields as null/empty, never infer them from a requested option count.
 - Reuse sourceActionId and occurrenceId across edited cuts only with direct same-action/cast/occurrence evidence; different actions or returns need distinct IDs. decisionId/intent describe actual meaningful story decisions, never every dialogue sentence.
 - before/after facts may contain location, clothing:TRACK_ID, appearance:TRACK_ID, posture:TRACK_ID, sceneState. Include only directly verified visual facts, with evidence and confidence; omit unknown facts. Record state changes at their source times. Do not infer identity, clothing or state from a neighbouring chapter.
@@ -676,7 +712,7 @@ Rules:
 - Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.
 - Do not split tiny repetitions into fake choices and do not merge genuinely different changes.
 - loopStartTime and loopEndTime must define a naturally repeatable real interval inside the action and position.
-- A position and every selectable movement loop must each be at least 10.0 seconds long; omit anything shorter. It may be extended only across visibly continuous footage of the same movement and position; otherwise omit that internal choice.
+- Preserve natural action boundaries, including brief but meaningful visual changes. For replayable movements prefer at least 3 seconds of directly observed continuity where available; never extend an interval to satisfy a fixed minimum.
 - Never return one-frame, frozen-frame, transition, cut, camera-change or seek-unstable loops.
 - adultSceneStartTime and adultSceneEndTime must cover the real scene; postSceneTime must point to its first real continuation.
 - maleProgressRate and femaleProgressRate are game pacing weights from 0.25 to 2.5 based on visible motion intensity and duration.
