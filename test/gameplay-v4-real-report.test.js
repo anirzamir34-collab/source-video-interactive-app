@@ -86,21 +86,42 @@ test('one narrative start plays all five chronological observations without five
   assert.equal(progression(player.getState()).value,0);
 });
 
-test('stage skips and next chapter seek the actual destination time rather than an old cursor',async t=>{
-  const graph=createGameplayGraph(source);
-  const video=new Media();
-  const player=createGameplayPlayer({graph,video,seek:fakeSeek,play:fakePlay});
-  t.after(()=>player.destroy());
+test('stage navigation preserves intermediate actions and bridges an unanalysed chapter gap', async t => {
+  const graph = createGameplayGraph(source);
+  const video = new Media();
+  const player = createGameplayPlayer({ graph, video, seek: fakeSeek, play: fakePlay });
+  t.after(() => player.destroy());
+
   player.skipStage();
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(player.getState().stageId,graph.stages[1].id);
-  assert.equal(video.currentTime,211.158);
-  assert.equal(video.seeks.at(-1),211.158);
-  player.nextChapter();
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(video.currentTime,374.326);
-  assert.equal(video.seeks.at(-1),374.326);
-  assert.equal(progression(player.getState()).value,0);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(player.getState().stageId, graph.stages[1].id);
+  assert.equal(video.currentTime, 211.158);
+
+  await player.nextChapter();
+  assert.equal(player.getState().stageId, graph.stages[1].id,
+    'nextChapter must not bypass the remaining core stage');
+
+  player.skipStage();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(player.getState().stageId, graph.stages[2].id);
+
+  player.skipStage();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(player.getState().status, 'continuing');
+  assert.equal(player.getState().chapterId, graph.chapters[0].id);
+  assert.equal(video.currentTime, graph.chapters[0].endTime,
+    'the unknown gap must play from the final observed source boundary');
+  assert.equal(video.seeks.at(-1), graph.chapters[0].endTime);
+  assert.equal(progression(player.getState()).value, 0,
+    'source-only playback never awards progress');
+
+  video.currentTime = graph.chapters[1].startTime + 0.31;
+  await player.sample();
+  assert.equal(video.currentTime, graph.chapters[1].startTime,
+    'arrival must seek back to the exact verified event boundary');
+  assert.equal(player.getState().chapterId, graph.chapters[1].id);
+  assert.equal(player.getState().status, 'decision');
+  assert.equal(progression(player.getState()).value, 0);
 });
 
 test('selected source footage cannot be completed before its verified end',()=>{
