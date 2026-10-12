@@ -187,3 +187,88 @@
     max-height: min(calc(100dvh - 72px), calc(100% - 16px)) !important;
   }
 }
+
+/* VideoQuest v3: accessible, high-contrast hierarchical interaction surface.
+   This final layer intentionally supersedes legacy compact 11px declarations. */
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded:not(.hidden),
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded:not(.hidden) {
+  width: min(420px, 44vw, calc(100% - 20px)) !important;
+  inline-size: min(420px, 44vw, calc(100% - 20px)) !important;
+  max-width: min(420px, 44vw, calc(100% - 20px)) !important;
+  background: rgba(5, 13, 17, .91) !important;
+  border-color: rgba(190, 245, 224, .4) !important;
+  padding: 12px !important;
+  backdrop-filter: blur(7px) !important;
+  -webkit-backdrop-filter: blur(7px) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.gameplay-choice-card, .gameplay-position-tab, .gameplay-quick-choice),
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.gameplay-choice-card, .gameplay-position-tab, .gameplay-quick-choice) {
+  width: 100% !important;
+  min-height: 48px !important;
+  padding: 11px 13px !important;
+  font-size: 14px !important;
+  line-height: 1.4 !important;
+  font-weight: 650 !important;
+  text-align: left !important;
+  color: #f8fffc !important;
+  background: rgba(9, 29, 28, .92) !important;
+  border: 1px solid rgba(138, 231, 194, .42) !important;
+  border-radius: 11px !important;
+  text-shadow: none !important;
+  overflow-wrap: anywhere !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .gameplay-position-tab.active {
+  color: #ffffff !important;
+  background: rgba(28, 106, 81, .93) !important;
+  border-color: #73e7bd !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.gameplay-source-meta, .gameplay-status, .gameplay-relationship, .gameplay-choice-card small) {
+  display: block !important;
+  color: #d3e8e0 !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+  margin-top: 4px !important;
+  text-shadow: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .gameplay-position-tab,
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .gameplay-quick-choice {
+  flex: 1 1 110px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #positionTabs {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 7px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #movementChoices {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 8px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #adultQuickChoices {
+  display: grid !important;
+  gap: 7px !important;
+  width: 100% !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .gameplay-choice-card,
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices > .gameplay-choice-card {
+  color: #ffffff !important;
+  font-size: 14px !important;
+  line-height: 1.4 !important;
+  text-shadow: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices) .gameplay-source-meta {
+  display: block;
+  color: #c6e5d8 !important;
+  font-size: 12px !important;
+  margin-top: 4px !important;
+}
+@media (max-width: 760px) {
+  #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded:not(.hidden),
+  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded:not(.hidden) {
+    width: min(400px, 86vw) !important;
+    inline-size: min(400px, 86vw) !important;
+    max-width: min(400px, 86vw) !important;
+    max-height: min(64dvh, calc(100% - 16px)) !important;
+    right: max(8px, env(safe-area-inset-right)) !important;
+  }
+}
