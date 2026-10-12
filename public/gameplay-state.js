@@ -212,7 +212,7 @@ export function gameplayReducer(state, event = {}) {
       const nextStageId = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1];
       if (!nextStageId) return gameplayReducer(state, { type: 'NEXT_CHAPTER' });
       const next = state.graph.stages.find(row => row.id === nextStageId);
-      return { ...state, stageId: nextStageId, cursor: Math.max(state.cursor, next.startTime),
+      return { ...state, stageId: nextStageId, cursor: next.startTime,
         status: 'decision', error: null };
     }
     case 'NEXT_CHAPTER': {
@@ -220,7 +220,7 @@ export function gameplayReducer(state, event = {}) {
       const index = state.graph.chapters.findIndex(row => row.id === state.chapterId);
       const chapter = state.graph.chapters[index + 1];
       return { ...state, chapterId: chapter?.id || null, stageId: chapter?.stageIds[0] || null,
-        cursor: chapter ? Math.max(state.cursor, chapter.startTime) : state.cursor,
+        cursor: chapter ? chapter.startTime : state.cursor,
         completedChapterIds: [...new Set([...state.completedChapterIds, state.chapterId].filter(Boolean))],
         status: chapter || state.cursor < state.graph.duration - .05 ? 'decision' : 'ended', error: null };
     }
