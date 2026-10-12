@@ -136,3 +136,17 @@
 #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:has(#movementChoices > .gameplay-skip:only-child) {
   max-height: 110px !important;
 }
+
+/* Generated CSS numbering never becomes visible or accessibility text for
+   semantic gameplay cards. Avoid fading controls back to opacity zero after
+   frequent re-renders / device rotation. */
+#playerSection .video-stage.scene-player.cinematic-ui #choices:not(.hidden),
+#playerSection .video-stage.scene-player.cinematic-ui #choices .gameplay-choice-card,
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .gameplay-choice-card {
+  animation: none !important;
+  opacity: 1 !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices .gameplay-choice-card::before,
+#playerSection .video-stage.scene-player.cinematic-ui #choices .gameplay-choice-card::after {
+  content: none !important;
+}
