@@ -1,4 +1,5 @@
-import { createGameplayState, gameplayReducer, nextPlayableClip, restoreGameplay, captureGameplay } from './gameplay-state.js';
+import { createGameplayState, gameplayReducer, nextPlayableClip, restoreGameplay, captureGameplay,
+  availableChoices, progression } from './gameplay-state.js';
 import { seekMediaTo, playMedia } from './playback-logic.js';
 
 /** Media effect owner. All game decisions are reducer events; observers may
@@ -14,6 +15,26 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     state = gameplayReducer(state, event); onChange(state); return state;
   };
   const cancelEffect = () => { operation?.abort(); operation = null; internalSeek = false; boundaryBusy = false; };
+  // Story observations are continuous source playback, not successive
+  // one-button decisions. Stop only at a genuine choice-bearing phase.
+  async function continueChronologicalStory() {
+    if (destroyed || state.selection) return;
+    let stage = graph.stages.find(row => row.id === state.stageId);
+    if (stage?.phase !== 'STORY') return;
+    let choices = availableChoices(state);
+    if (!choices.length && progression(state).completed) {
+      if (progression(state).nextStageId) dispatch({ type: 'ADVANCE_STAGE' });
+      else dispatch({ type: 'NEXT_CHAPTER' });
+      stage = graph.stages.find(row => row.id === state.stageId);
+      if (stage?.phase !== 'STORY') return;
+      choices = availableChoices(state);
+    }
+    // Do not auto-select alternative witnessed intentions: those require
+    // a human decision and remain visible.
+    if (choices.length !== 1 || choices[0].intent) return;
+    dispatch({ type: 'SELECT', choiceId: choices[0].id });
+    if (state.selection) await playSelected();
+  }
   async function playSelected() {
     cancelEffect(); freePlayback = false;
     const clip = nextPlayableClip(state), selectionId = state.selection?.id;
@@ -56,6 +77,7 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     video.pause();
     dispatch({ type: 'CLIP_ENDED', selectionId, time });
     if (state.selection && state.status === 'seeking') await playSelected();
+    else if (!state.selection) await continueChronologicalStory();
     boundaryBusy = false;
   }
   const onTime = () => { void sample(); };
@@ -137,7 +159,9 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       if (!preserveState) dispatch({ type: 'SEEK', time, rewind });
       if (state.error) return;
       const controller = new AbortController(); operation = controller; internalSeek = true;
-      try { await seek(video, state.cursor, { signal: controller.signal }); }
+      // The requested destination, not the previous selection cursor,
+      // owns the physical player clock on every transition.
+      try { await seek(video, time, { signal: controller.signal }); }
       catch (error) { if (!controller.signal.aborted) dispatch({ type: 'MEDIA_FAILURE', message: error.message }); }
       finally { if (operation === controller) { operation = null; internalSeek = false; } }
     },
