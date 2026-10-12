@@ -165,6 +165,21 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       if (stage) void api.navigate(stage.startTime, { preserveState: true });
       else if (state.chapterId === null && state.cursor < graph.duration - .05) void api.continueVideo();
     },
+    stepSourceEvent(direction) {
+      // Timeline arrows navigate the next *observed source action*, not a
+      // chapter boundary. Chapter-level jumps dropped intermediate scenes.
+      if (state.selection) {
+        cancelEffect();
+        dispatch({ type: 'CANCEL' });
+      }
+      const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : state.cursor;
+      const chronological = [...graph.clips].sort((a, b) =>
+        a.startTime - b.startTime || a.endTime - b.endTime);
+      const next = direction > 0
+        ? chronological.find(clip => clip.startTime > currentTime + .35)
+        : chronological.reverse().find(clip => clip.startTime < currentTime - .35);
+      if (next) void api.navigate(next.startTime, { rewind: direction < 0 });
+    },
     nextChapter() {
       cancelEffect(); freePlayback = false; video.pause();
       dispatch({ type: 'CANCEL' }); dispatch({ type: 'NEXT_CHAPTER' });
