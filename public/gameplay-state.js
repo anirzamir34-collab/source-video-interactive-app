@@ -202,6 +202,10 @@ export function gameplayReducer(state, event = {}) {
       }
       return finishSelection(next);
     }
+    case 'CONTINUE_SOURCE':
+      // Source-only playback across an unanalysed gap. No choice is selected,
+      // and its elapsed time never awards narrative or relationship progress.
+      return { ...state, selection: null, status: 'continuing', error: null };
     case 'MEDIA_FAILURE':
       return state.selection ? state : { ...state, status: 'decision', error: String(event.message || 'Video oynatılamadı.') };
     case 'FAIL':
