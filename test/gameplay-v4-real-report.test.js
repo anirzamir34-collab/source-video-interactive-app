@@ -125,3 +125,25 @@ test('skipping the current long story observation keeps later story events playa
   assert.equal(player.getState().stageId,graph.stages[0].id);
   assert.equal(progression(player.getState()).value,0);
 });
+
+
+test('timeline arrows step through actual source events rather than jumping chapters',async t=>{
+  const graph=createGameplayGraph(source);
+  const video=new Media();
+  const player=createGameplayPlayer({graph,video,seek:fakeSeek,play:fakePlay});
+  t.after(()=>player.destroy());
+  player.stepSourceEvent(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,7.2);
+  player.stepSourceEvent(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,86.383);
+  assert.equal(player.getState().chapterId,graph.chapters[0].id);
+  player.stepSourceEvent(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,103.18);
+  player.stepSourceEvent(-1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(video.currentTime,86.383);
+  assert.ok(!video.seeks.includes(374.326), 'arrows must not skip to a later chapter');
+});
