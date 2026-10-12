@@ -84,8 +84,15 @@ test('v4: skip transitions synchronize the media clock and show a single compact
     status:__gameplayTest.state().status,chapter:__gameplayTest.state().chapterId,
     cursor:__gameplayTest.state().cursor,choices:[...document.querySelectorAll('#choices button')].map(x=>x.innerText),
     approach:[...document.querySelectorAll('#approachChoices button')].map(x=>x.innerText),
-    displayed:document.querySelector('#choices')?.className}));
+    displayed:document.querySelector('#choices')?.className,
+    visibility:(()=>{const b=document.querySelector('#choices .gameplay-skip'),root=document.querySelector('#choices');
+      const parents=[];let element=b;while(element&&parents.length<7){const st=getComputedStyle(element);
+        parents.push({name:element.tagName,id:element.id,cl:element.className,
+          display:st.display,visibility:st.visibility,opacity:st.opacity,
+          rect:element.getBoundingClientRect().toJSON(),ariaHidden:element.getAttribute('aria-hidden')});
+        element=element.parentElement;}return {parents,rootHidden:root?.hidden};})()}));
   console.log('V4_BROWSER_DIAGNOSTIC',JSON.stringify(firstUi));
+  await expect(page.getByRole('button',{name:'Bu aşamayı geç',exact:true})).toBeVisible({timeout:3000});
   await page.getByRole('button',{name:'Bu aşamayı geç',exact:true}).click();
   await expect(page.locator('#approachChoices')).toBeVisible();
   await expect.poll(()=>page.locator('#video').evaluate(v=>v.currentTime)).toBeGreaterThan(2.95);
