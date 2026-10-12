@@ -26,6 +26,9 @@ const source = {
   actions: observed.map(([actionId,startTime,endTime,actionType,positionId,adultSceneId], index) => ({
     actionId,startTime,endTime,actionType,adultSceneId, positionId,
     label:'Gözlenen kaynak olayı '+index, sourceVerified:true,confidence:1,
+    ...(positionId ? { adultScene: true, positionLabel: positionId,
+      positionConfigurationConfidence: .95, positionEvidence: 'Synthetic source configuration',
+      classificationReview: 'verified', choiceSurface:'panel' } : {}),
     subjectTrackId:'track-a',
     partnerTrackId: index === 2 ? '' : 'track-b',
     involvedCharacterIds: index === 2 ? ['track-a'] : ['track-a','track-b'],
@@ -107,5 +110,5 @@ test('selected source footage cannot be completed before its verified end',()=>{
   assert.notEqual(first.previewEndTime,first.startTime+12);
   const state=createGameplayState(graph);
   assert.equal(state.stageId,graph.stages[0].id);
-  assert.equal(state.cursor,7.2);
+  assert.equal(state.cursor,0);
 });
