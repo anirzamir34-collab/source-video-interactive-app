@@ -28,14 +28,14 @@ test('A: seven verified narrative observations survive encounter references as m
   const state = createGameplayState(graph);
   assert.equal(graph.choices.length, 7);
   assert.equal(activeSurface(state), 'story');
-  assert.equal(availableChoices(state).length, 3);
+  assert.equal(availableChoices(state).length, 7);
   assert.ok(availableChoices(state).every(choice => choice.label !== 'Videoya devam et'));
   assert.ok(Object.isFrozen(graph.clips[0]));
 });
 
-test('A: dialogue snippets without meaningful fork evidence remain one chronological route', () => {
+test('A: labelled dialogue source events remain selectable without claiming unseen branches', () => {
   const graph = createGameplayGraph(analysis([observation('a', 0, { phase: 'STORY' }), observation('b', 8, { phase: 'STORY' })]));
-  assert.equal(availableChoices(createGameplayState(graph)).length, 1);
+  assert.equal(availableChoices(createGameplayState(graph)).length, 2);
 });
 
 test('B: two 7.2 second choices cannot exhaust a stage from one choice or wall-clock coverage', () => {
@@ -70,7 +70,7 @@ test('C: eight choices reveal progressively and verified visual changes retire i
     gameplayEvidence: evidence(`a${i}`, { before: visual({ clothing: i < 2 ? 'coat' : 'shirt' }),
       after: visual({ clothing: i < 1 ? 'coat' : 'shirt' }) }) }));
   let state = createGameplayState(createGameplayGraph(analysis(actions)));
-  assert.equal(availableChoices(state).length, 3);
+  assert.equal(availableChoices(state).length, 7);
   const first = availableChoices(state)[0].id;
   state = engage(state, availableChoices(state)[1].id);
   assert.equal(state.visual.clothing, 'shirt');
