@@ -1,3 +1,4 @@
+// Historical v1 model for regression comparisons, never loaded by production.
 // Legacy controls are views of one runtime. No source labels or roles are
 // inferred here; bindings only adapt field names and numeric units.
 export function bindInteractionRuntimeViews(host, {

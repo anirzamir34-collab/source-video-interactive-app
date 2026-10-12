@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindInteractionRuntimeViews } from '../public/interaction-compat.js';
+import { bindInteractionRuntimeViews } from './fixtures/legacy-interaction-compat.js';
 
 function fixture() {
   const host = { progress: 0, unlocked: new Set(), revealed: new Set(), active: null,

@@ -5,7 +5,7 @@ import {
   observeInteractionPlayback, completeInteractionSelection, transitionInteraction,
   normalizeInteractionRuntime, selectVerifiedChoiceQueue, selectInteractionChoice,
   selectInteractionGroup, advanceInteraction, unlockNextCoreGroup
-} from '../public/interaction-engine.js';
+} from './fixtures/legacy-interaction-engine.js';
 
 const range = (id, startTime, endTime, occurrenceId = id) => ({
   id, startTime, endTime, occurrenceId, sourceVerified: true

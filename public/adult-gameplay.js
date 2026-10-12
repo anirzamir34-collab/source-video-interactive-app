@@ -2,7 +2,7 @@ import { groupSourceChoiceCards, sourceActionLabel, sourceIdentityLabel } from '
 import { sameVerifiedSourceRun } from './verified-scene-continuity.js';
 import { clipRange, normalizedSourceRanges, sourceRangeForClip, timelineRange } from './sequence-integrity.js';
 import { knownPositionId, verifiedBodyConfigurationFamily } from './classification-integrity.js';
-import { progressionPacing } from './interaction-engine.js';
+import { progressionPacing } from './progression-pacing.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
 

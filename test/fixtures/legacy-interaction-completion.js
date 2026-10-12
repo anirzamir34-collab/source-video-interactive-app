@@ -1,3 +1,4 @@
+// Historical v1 model for regression comparisons, never loaded by production.
 // Authoritative completion accounting for one source-verified gameplay clip.
 // A successful HTMLMediaElement.play() call means playback started, not that the
 // source interval was played. Progress/combo credit is awarded only after a

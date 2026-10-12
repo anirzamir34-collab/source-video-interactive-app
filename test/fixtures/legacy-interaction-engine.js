@@ -1,4 +1,5 @@
-import { verifiedOccurrenceRanges, interactionClipGuard, interactionEntryClip, interactionEntryGuard } from './interaction-timeline.js';
+// Historical v1 model for regression comparisons, never loaded by production.
+import { verifiedOccurrenceRanges, interactionClipGuard, interactionEntryClip, interactionEntryGuard } from '../../public/interaction-timeline.js';
 
 export const INTERACTION_PHASES = Object.freeze(['APPROACH', 'CORE', 'OUTCOME', 'AFTERMATH']);
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
-  verifiedClipCompletionReady } from '../public/interaction-completion.js';
+  verifiedClipCompletionReady } from './fixtures/legacy-interaction-completion.js';
 
 const selection = (overrides = {}) => ({ token: 4, kind: 'prelude',
   item: { id: 'intro-a', sourceVerified: true, startTime: 10, endTime: 20 }, ...overrides });

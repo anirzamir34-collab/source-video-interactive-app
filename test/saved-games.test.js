@@ -386,3 +386,26 @@ databaseTest('v1 database upgrade leaves disk rows intact, returns source-only d
   inspect.close();
   await store.close();
 });
+
+databaseTest('v2 gameplay survives database, export and import alongside unchanged media and old-save fallback', async t => {
+  const { createGameplayGraph } = await import('../public/gameplay-evidence.js');
+  const { createGameplayState, captureGameplay, restoreGameplay } = await import('../public/gameplay-state.js');
+  const { observation, analysis } = await import('./fixtures/gameplay-v2.js');
+  const graph = createGameplayGraph(analysis([observation('a', 0)]));
+  const gameplay = captureGameplay(createGameplayState(graph));
+  const input = fixture(); input.payload.gameplay = gameplay;
+  const store = createGameStore({ indexedDB: new IDBFactory(), database: 'saved-v2-gameplay' });
+  t.after(() => store.close());
+  const saved = await store.save(input);
+  const loaded = await store.load(saved.id);
+  assert.deepEqual(loaded.payload.gameplay, gameplay);
+  assert.deepEqual(loaded.turkishMedia, input.turkishMedia);
+  assert.deepEqual(await bytes(loaded.video), await bytes(input.video));
+  assert.deepEqual(await bytes(loaded.dubAudio), await bytes(input.dubAudio));
+  const imported = await importGame(exportGame(loaded));
+  assert.deepEqual(imported.payload.gameplay, gameplay);
+  assert.equal(restoreGameplay(graph, imported.payload.gameplay).selection, null);
+  const legacy = prepareGame(fixture());
+  assert.equal(legacy.payload.gameplay, undefined);
+  assert.equal(restoreGameplay(graph, legacy.payload.gameplay).version, 2);
+});
