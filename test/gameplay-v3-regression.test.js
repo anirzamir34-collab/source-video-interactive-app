@@ -97,3 +97,17 @@ test('v3: a genuine story decision needs fact-level intent evidence', () => {
   const notVerified = actions.map(row => ({ ...row, storyEvidenceLevel: 'unknown', storyConfidence: 0 }));
   assert.equal(availableChoices(createGameplayState(createGameplayGraph(analysis(notVerified)))).length, 1);
 });
+
+test('v3: source encounter continues across dialogue, approach and core', () => {
+  const graph = createGameplayGraph(analysis([
+    observation('talk', 0, { phase: 'STORY', adultSceneId: 'single-encounter' }),
+    observation('approach', 8, { phase: 'APPROACH', adultSceneId: 'single-encounter' }),
+    observation('core', 16, { phase: 'CORE', adultSceneId: 'single-encounter' })
+  ]));
+  assert.equal(graph.chapters.length, 1);
+  assert.deepEqual(graph.stages.map(stage => stage.phase), ['STORY', 'APPROACH', 'CORE']);
+  let state = createGameplayState(graph);
+  state = gameplayReducer(state, { type: 'SKIP_STAGE' });
+  assert.equal(state.chapterId, graph.chapters[0].id);
+  assert.equal(state.stageId, graph.stages[1].id);
+});
