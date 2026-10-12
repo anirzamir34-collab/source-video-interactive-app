@@ -171,11 +171,16 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       await continueChronologicalStory();
     },
     skipStage() {
+      if (destroyed || freePlayback) return;
+      const chapter = graph.chapters.find(row => row.id === state.chapterId);
+      const followingStage = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1];
+      // Skipping the last stage must not bypass an unanalysed interval just
+      // because the next recorded source event belongs to another chapter.
+      if (!followingStage) { void api.nextChapter(); return; }
       cancelEffect(); freePlayback = false; video.pause();
       dispatch({ type: 'CANCEL' }); dispatch({ type: 'SKIP_STAGE' });
       const stage = graph.stages.find(row => row.id === state.stageId);
       if (stage) void api.navigate(stage.startTime, { preserveState: true });
-      else if (state.chapterId === null && state.cursor < graph.duration - .05) void api.continueVideo();
     },
     stepSourceEvent(direction) {
       // Timeline arrows navigate the next *observed source action*, not a
