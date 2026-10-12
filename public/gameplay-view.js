@@ -60,7 +60,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   const info = document.createElement('div');
   info.className = 'meta gameplay-status';
   info.textContent = state.status === 'ended' ? 'Video tamamlandı.' : state.error ||
-    `${phaseLabel} · ${surface === 'story' ? 'İlerleme' : 'Lust'} %${Math.round(progress.value)}`;
+    `${phaseLabel} · ${surface === 'story' ? 'İlerleme' : 'Lust'} %${Math.round(surface === 'story' ? progress.value : progress.lust)}`;
   root.appendChild(info);
   const relationshipRows = Object.values(state.relationships).filter(row =>
     cast.includes(row.from) && cast.includes(row.to) && row.label);
@@ -145,8 +145,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     if (els[key]) els[key].textContent = phaseLabel;
   if (els.adultPhaseHint) els.adultPhaseHint.textContent = 'Gerçek görüntü kanıtı olan seçenekleri keşfet.';
   if (els.adultFlowStatus) els.adultFlowStatus.textContent =
-    `Lust %${Math.round(progress.value)} · ${progress.playedChoices} seçim`;
-  if (els.adultDockLustValue) els.adultDockLustValue.textContent = Math.round(progress.value);
+    `Lust %${Math.round(progress.lust)} · ${progress.sceneEngagements} seçim`;
+  if (els.adultDockLustValue) els.adultDockLustValue.textContent = Math.round(progress.lust);
   if (els.adultDockMaleValue) els.adultDockMaleValue.textContent = Math.round(characterProgress);
   if (els.maleProgressText) els.maleProgressText.textContent = `%${Math.round(characterProgress)}`;
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${characterProgress}%`;
@@ -155,6 +155,6 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (els.movementCount) els.movementCount.textContent = `${visibleChoices.length} seçenek`;
   if (els.movementHeading) els.movementHeading.textContent = positions.length
     ? 'Gözlenen hareketler' : 'Gözlenen eylemler';
-  if (els.femaleProgressText) els.femaleProgressText.textContent = `%${Math.round(progress.value)}`;
-  if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${progress.value}%`;
+  if (els.femaleProgressText) els.femaleProgressText.textContent = `%${Math.round(progress.lust)}`;
+  if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${progress.lust}%`;
 }
