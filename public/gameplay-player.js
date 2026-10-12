@@ -176,7 +176,12 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       const followingStage = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1];
       // Skipping the last stage must not bypass an unanalysed interval just
       // because the next recorded source event belongs to another chapter.
-      if (!followingStage) { void api.nextChapter(); return; }
+      if (!followingStage) {
+        cancelEffect(); freePlayback = false; video.pause();
+        dispatch({ type: 'CANCEL' });
+        void api.nextChapter();
+        return;
+      }
       cancelEffect(); freePlayback = false; video.pause();
       dispatch({ type: 'CANCEL' }); dispatch({ type: 'SKIP_STAGE' });
       const stage = graph.stages.find(row => row.id === state.stageId);
