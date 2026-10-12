@@ -23,7 +23,7 @@ test('A/G: real app offers narrative cards and fullscreen fallback preserves cho
   expect(errors).toEqual([]);
 });
 
-test('B/F/G: real video playback earns bounded engagement and reveals next stage without auto-seek', async ({ page }) => {
+test('B/F/G: real video playback earns bounded engagement and seeks to next stage source start', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await load(page, [observation('a', 0, { duration: 2 }), observation('b', 3, { duration: 2 }),
     observation('ending', 6, { duration: 2, phase: 'CORE' })]);
@@ -33,13 +33,12 @@ test('B/F/G: real video playback earns bounded engagement and reveals next stage
   expect(await page.evaluate(() => Object.values(__gameplayTest.state().stageProgress)[0].score)).toBe(50);
   await page.locator('#approachChoices .gameplay-choice').nth(1).click();
   await expect(page.getByRole('button', { name: 'Sonraki aşama', exact: true })).toBeVisible();
-  const time = await page.locator('#video').evaluate(video => video.currentTime);
   await page.getByRole('button', { name: 'Sonraki aşama', exact: true }).click();
   await expect(page.locator('#adultInteractionPanel')).toBeVisible();
   await expect(page.locator('#movementChoices .gameplay-choice')).toBeVisible();
   await expect(page.locator('#adultPhaseTitle')).toHaveText('Etkileşim');
   await expect(page.locator('#approachChoices')).toBeHidden();
-  expect(await page.locator('#video').evaluate(video => video.currentTime)).toBeCloseTo(time, 1);
+  expect(await page.locator('#video').evaluate(video => video.currentTime)).toBeCloseTo(6, 1);
   expect(errors).toEqual([]);
 });
 
