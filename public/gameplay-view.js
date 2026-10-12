@@ -50,6 +50,9 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     button.type = 'button';
     button.className = className;
     button.textContent = label;
+    // Explicit accessible names must not include CSS-generated list numerals
+    // and chevrons (which broke voice control and role-based navigation).
+    button.setAttribute('aria-label', label);
     button.disabled = state.status === 'seeking';
     button.addEventListener('click', action);
     parent.appendChild(button);
