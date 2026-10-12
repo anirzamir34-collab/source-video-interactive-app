@@ -74,8 +74,17 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       rate: video.playbackRate || 1, playing: !video.paused, seeking: internalSeek || video.seeking });
     if (time < (clip.previewEndTime ?? clip.endTime) - .03 || video.seeking || internalSeek) return;
     const stage = graph.stages.find(row => row.id === state.stageId);
-    // Preserve existing source/dub sentence continuity for story decisions.
-    if (stage?.surface === 'story' && !video.ended && conversationEndAt(time) > time + .03) return;
+    // Preserve a trailing sentence only until the next observed source event.
+    // Without a cap, adjacent dialogue can keep one selection playing across
+    // multiple unrelated source events and silently retire their choices.
+    const nextSourceStart = graph.clips.reduce((next, row) =>
+      row.id !== clip.id && row.startTime > clip.startTime + .03 &&
+      row.startTime >= clip.endTime - .05
+        ? Math.min(next, row.startTime) : next, Infinity);
+    const mayContinueSentence = !Number.isFinite(nextSourceStart) ||
+      time < nextSourceStart - .03;
+    if (stage?.surface === 'story' && !video.ended && mayContinueSentence &&
+        conversationEndAt(time) > time + .03) return;
     boundaryBusy = true;
     video.pause();
     dispatch({ type: 'CLIP_ENDED', selectionId, time });
