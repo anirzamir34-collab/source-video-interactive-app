@@ -13,4 +13,3 @@ export function progressionPacing({
   const scale = expectedProgress > 0 ? Math.min(1, Math.max(0, Number(target) || 0) / expectedProgress) : 1;
   return { scale, openingDuration: duration, verifiedChoiceCount: count };
 }
-

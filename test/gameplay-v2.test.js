@@ -196,3 +196,12 @@ test('out-of-order video frame callbacks cannot replay already observed seconds'
   assert.equal(state.selection.observed, 1.5);
   assert.equal(progression(state).value, 0);
 });
+
+test('a source range referenced on another surface cannot consume its narrative observation', () => {
+  const shared = evidence('same', { action: { ...evidence('same').action, label: 'Doğrulanmış kaynak kesiti' } });
+  const graph = createGameplayGraph(analysis([observation('story-reference', 0, { phase: 'STORY', gameplayEvidence: shared }),
+    observation('panel-reference', 0, { phase: 'CORE', gameplayEvidence: shared })]));
+  assert.equal(graph.choices.length, 2);
+  assert.deepEqual(new Set(graph.choices.map(row => row.surface)), new Set(['story', 'panel']));
+  assert.ok(graph.stages.every(stage => stage.choiceIds.length > 0));
+});

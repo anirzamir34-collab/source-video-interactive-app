@@ -9,9 +9,39 @@ import { isGeminiTranslationQuota, canResumePreparedTurkishMedia } from './media
 import { repairSavedAudio } from './saved-audio.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import { createServerRevisionReader } from './server-revision.js';
-import { adultPositionFamily, assignAdultSceneOccurrenceIds, buildVerifiedMovementChoices, splitSparseMovementChoiceCards, consolidateVerifiedPositions, expandVerifiedMovementVariants, exclusiveControlClipIds, isPlayableVerifiedPositionDuration, initialWarmupBeforeFirstPosition, positionOccurrenceGroups, normalizeSourceActionTimes, playableAdultPanelFamily, movementBelongsToVerifiedPosition, normalizeOutcomeUnlockProgress, positionUnlockProgress, resolveVerifiedAdultPosition, summarizeAdultSceneGraph, verifiedAdultPositionFamily, verifiedPartnerTransition } from './adult-gameplay.js';
+import {
+  adultPositionFamily,
+  assignAdultSceneOccurrenceIds,
+  buildVerifiedMovementChoices,
+  splitSparseMovementChoiceCards,
+  consolidateVerifiedPositions,
+  expandVerifiedMovementVariants,
+  exclusiveControlClipIds,
+  isPlayableVerifiedPositionDuration,
+  initialWarmupBeforeFirstPosition,
+  positionOccurrenceGroups,
+  normalizeSourceActionTimes,
+  playableAdultPanelFamily,
+  movementBelongsToVerifiedPosition,
+  normalizeOutcomeUnlockProgress,
+  positionUnlockProgress,
+  resolveVerifiedAdultPosition,
+  summarizeAdultSceneGraph,
+  verifiedAdultPositionFamily,
+  verifiedPartnerTransition
+} from './adult-gameplay.js';
 import { isCompleteChunkAnalysis } from './playback-logic.js';
-import { ANALYSIS_SCHEMA_VERSION, ENGINE_VERSION, activityOccurrenceNamespace, analysisFingerprint, appendEngineEvent, mergeSecondPassReview, normalizeChunkActionTimes, reviewAndHardenAnalysis, secondPassReviewCandidates } from './engine-hardening.js';
+import {
+  ANALYSIS_SCHEMA_VERSION,
+  ENGINE_VERSION,
+  activityOccurrenceNamespace,
+  analysisFingerprint,
+  appendEngineEvent,
+  mergeSecondPassReview,
+  normalizeChunkActionTimes,
+  reviewAndHardenAnalysis,
+  secondPassReviewCandidates
+} from './engine-hardening.js';
 import { mergeStoryContexts, normalizeStoryContext, storyChoiceLabelForAction } from './story-engine.js';
 import { bindActionCharacter, canonicalizeActionTrackIds } from './character-identity.js';
 import { adaptiveAnalysisChunkPlan, extractStoryboard } from './storyboard.js';

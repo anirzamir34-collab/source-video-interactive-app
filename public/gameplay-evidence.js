@@ -102,7 +102,7 @@ export function createGameplayGraph(analysis = {}) {
       chapter.stageIds.push(stage.id); stages.push(stage);
     }
     stage.endTime = Math.max(stage.endTime, row.end);
-    const clipKey = JSON.stringify([row.origin, row.start, row.end, row.cast, row.semantic, row.before, row.after]);
+    const clipKey = JSON.stringify([chapter.id, stage.id, row.phase, row.occurrence, row.origin, row.start, row.end, row.cast, row.semantic, row.before, row.after]);
     if (seen.has(clipKey)) { prior = row; continue; }
     seen.add(clipKey);
     const clip = { id: `clip:${clips.length}:${row.id}`, actionId: row.id, sourceActionId: row.origin,
