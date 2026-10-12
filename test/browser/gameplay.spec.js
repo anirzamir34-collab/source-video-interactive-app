@@ -23,7 +23,7 @@ test('A/G: real app offers narrative cards and fullscreen fallback preserves cho
   expect(errors).toEqual([]);
 });
 
-test('B/F/G: real video playback earns bounded engagement and reveals next stage without auto-seek', async ({ page }) => {
+test('B/F/G: real video playback earns bounded engagement and seeks to next stage source start', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await load(page, [observation('a', 0, { duration: 2 }), observation('b', 3, { duration: 2 }),
     observation('ending', 6, { duration: 2, phase: 'CORE' })]);
@@ -33,13 +33,12 @@ test('B/F/G: real video playback earns bounded engagement and reveals next stage
   expect(await page.evaluate(() => Object.values(__gameplayTest.state().stageProgress)[0].score)).toBe(50);
   await page.locator('#approachChoices .gameplay-choice').nth(1).click();
   await expect(page.getByRole('button', { name: 'Sonraki aşama', exact: true })).toBeVisible();
-  const time = await page.locator('#video').evaluate(video => video.currentTime);
   await page.getByRole('button', { name: 'Sonraki aşama', exact: true }).click();
   await expect(page.locator('#adultInteractionPanel')).toBeVisible();
   await expect(page.locator('#movementChoices .gameplay-choice')).toBeVisible();
   await expect(page.locator('#adultPhaseTitle')).toHaveText('Etkileşim');
   await expect(page.locator('#approachChoices')).toBeHidden();
-  expect(await page.locator('#video').evaluate(video => video.currentTime)).toBeCloseTo(time, 1);
+  expect(await page.locator('#video').evaluate(video => video.currentTime)).toBeCloseTo(6, 1);
   expect(errors).toEqual([]);
 });
 
@@ -71,4 +70,37 @@ test('G: rejected browser play keeps actionable retry and rotating mobile viewpo
   await expect(page.locator('#adultInteractionPanel')).toBeHidden();
   await page.getByRole('button', { name: 'Yeniden dene', exact: true }).click();
   await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeGreaterThan(.3);
+});
+
+test('v4: skip transitions synchronize the media clock and show a single compact panel', async ({ page }) => {
+  const errors=[]; page.on('pageerror', e=>errors.push(e.message));
+  await load(page,[
+    observation('story',0,{phase:'STORY',duration:2,storyEvidenceLevel:'fact',
+      storyConfidence:.95,narrativeChoiceLabel:'Kaynakta görülen başlangıç'}),
+    observation('approach',3,{phase:'APPROACH',duration:2}),
+    observation('core',6,{phase:'CORE',duration:2,positionId:'seated-facing',positionLabel:'Kaynak duruşu'})
+  ]);
+  await expect(page.getByRole('button',{name:'Bu aşamayı geç',exact:true})).toBeVisible({timeout:3000});
+  await page.getByRole('button',{name:'Bu aşamayı geç',exact:true}).click();
+  await expect(page.locator('#approachChoices')).toBeVisible();
+  await expect.poll(()=>page.locator('#video').evaluate(v=>v.currentTime)).toBeGreaterThan(2.95);
+  await page.getByRole('button',{name:'Bu aşamayı geç',exact:true}).click();
+  await expect(page.locator('#adultInteractionPanel')).toBeVisible();
+  await expect.poll(()=>page.locator('#video').evaluate(v=>v.currentTime)).toBeGreaterThan(5.95);
+  await expect(page.locator('#adultQuickChoices button')).toHaveCount(0);
+  const geometry=await page.evaluate(()=>{
+    const p=document.querySelector('#adultInteractionPanel').getBoundingClientRect();
+    const v=document.querySelector('.video-stage').getBoundingClientRect();
+    return {panelWidth:p.width,stageWidth:v.width,panelHeight:p.height,stageHeight:v.height,
+      portrait:innerHeight>innerWidth};
+  });
+  if (geometry.portrait) {
+    // Portrait uses a shallow bottom sheet: width alone is not the obstruction metric.
+    expect(geometry.panelWidth).toBeLessThan(geometry.stageWidth*1.02);
+    expect(geometry.panelHeight).toBeLessThan(geometry.stageHeight*.52);
+  } else {
+    expect(geometry.panelWidth).toBeLessThan(geometry.stageWidth*.46);
+    expect(geometry.panelHeight).toBeLessThan(geometry.stageHeight*.9);
+  }
+  expect(errors).toEqual([]);
 });

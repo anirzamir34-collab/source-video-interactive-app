@@ -372,7 +372,18 @@ export function mergeSecondPassReview(firstPass = {}, reviewPass = {}, candidate
     if (!candidateIds.has(id) || seen.has(id) || !isVerifiedReviewWithinSource(action, originals.get(id))) return false;
     seen.add(id);
     return true;
-  }).map(action => ({ ...action, classificationReview: 'verified' }));
+  }).map(action => {
+    const original = originals.get(String(action.actionId || '')) || {};
+    // Visual-only review is not authorized to overwrite transcript-derived
+    // story facts. It may correct the observed action, timing and pose only.
+    const narrative = {};
+    for (const key of ['narrativeChoiceLabel', 'narrativeReason', 'sceneTitle',
+      'sceneGoal', 'relationshipContext', 'storyEvidenceLevel',
+      'storyConfidence', 'storyEvidence']) {
+      if (Object.prototype.hasOwnProperty.call(original, key)) narrative[key] = original[key];
+    }
+    return { ...action, ...narrative, classificationReview: 'verified' };
+  });
   const actions = [...untouched, ...verified]
     .sort((a, b) => numberOr(a.startTime) - numberOr(b.startTime));
   const rejectedIds = [...candidateIds].filter(id => !seen.has(id));
@@ -385,7 +396,9 @@ export function mergeSecondPassReview(firstPass = {}, reviewPass = {}, candidate
   return {
     ...firstPass,
     ...reviewPass,
-    storyContext: mergeStoryContexts([firstPass, reviewPass]),
+    // The second pass sees no dialogue or story memory. Keep the dialogue
+    // channel as compiled in the first pass without visual-review revisions.
+    storyContext: firstPass.storyContext || {},
     actions,
     warnings,
     secondPassReviewed: true,

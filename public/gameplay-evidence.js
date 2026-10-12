@@ -74,8 +74,8 @@ export function createGameplayGraph(analysis = {}) {
       (evidence ? '' : !generic.test(legacyLabel.toLocaleLowerCase('tr-TR')) ? legacyLabel : '');
     const factsBefore = evidence?.before?.facts || {}, factsAfter = evidence?.after?.facts || {};
     rows.push({ id, origin, start, end, phase, surface, cast, evidence,
-      // A narrative beat inside an encounter belongs to that encounter; the
-      // choice surface must not create a separate chapter.
+      // Source labels are not reliable scene boundaries. Only verified
+      // continuous timeline topology is allowed to split a chapter.
       chapterKey: evidence?.chapterId || text(action.adultSceneId),
       occurrence: evidence?.occurrenceId || text(action.positionOccurrenceId),
       group: text(action.positionId),
@@ -99,10 +99,13 @@ export function createGameplayGraph(analysis = {}) {
   let chapter, stage, prior;
   const seen = new Set(), groups = new Map();
   for (const row of rows) {
-    // The story/interaction surface is presentation, not a scene boundary.
-    // Only source encounter identity, cast or a proven temporal gap may split it.
-    const chapterKey = JSON.stringify([row.chapterKey, row.cast]);
-    if (!chapter || chapter.key !== chapterKey || row.start - prior.end > 45) {
+    // Camera cuts, chapter aliases, missing partner tracks, and speaker-only
+    // observations never manufacture new chapters. A large unobserved source
+    // interval is the only automatic split; future verified scene-boundary
+    // records may also split explicitly.
+    const chapterKey = 'continuous-source';
+    const disconnected = prior && row.start - prior.end > 45;
+    if (!chapter || disconnected) {
       chapter = { id: `chapter:${row.id}:${row.start}`, key: chapterKey, startTime: row.start, endTime: row.end,
         stageIds: [], cast: row.cast };
       chapters.push(chapter); stage = null;
@@ -122,14 +125,18 @@ export function createGameplayGraph(analysis = {}) {
     seen.add(clipKey);
     const clip = { id: `clip:${clips.length}:${row.id}`, actionId: row.id, sourceActionId: row.origin,
       startTime: row.start, endTime: row.end, chapterId: chapter.id, stageId: stage.id, cast: row.cast,
-      // Source and playback clocks are distinct. A long source observation
-      // remains intact while its interactive preview has a bounded duration.
-      previewEndTime: row.end - row.start > (row.surface === 'story' ? 16 : 28)
-        ? Math.min(row.end, row.start + (row.surface === 'story' ? 12 : 14)) : row.end,
+      // Never invent 12/14-second cut points. Completing a source observation
+      // means reaching its actual validated end, unless a later verified
+      // boundary is provided by the analysis.
+      previewEndTime: row.end, visualVerified: Boolean(row.evidence?.action?.verified),
       before: row.before, after: row.after, confidence: row.confidence, provenance: row.provenance };
     clips.push(clip);
     // Missing occurrence/identity proof keeps records separate. Shared tempo is never proof.
-    const key = JSON.stringify([stage.id, row.origin, row.occurrence || clip.id, row.cast, row.semantic, row.before, row.after]);
+    // A matching sourceActionId alone cannot join different cuts: require
+    // actual visual action evidence and a stable occurrence identity.
+    const canMerge = Boolean(row.evidence?.action?.verified && row.evidence?.sourceActionId && row.occurrence);
+    const key = JSON.stringify([stage.id, canMerge ? row.origin : clip.id,
+      canMerge ? row.occurrence : clip.id, row.cast, row.semantic, row.before, row.after]);
     let choice = groups.get(key);
     if (!choice) {
       choice = { id: `choice:${choices.length}:${row.id}`, chapterId: chapter.id, stageId: stage.id,

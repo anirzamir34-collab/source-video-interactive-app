@@ -21,7 +21,9 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   const saved = selectedPosition.get(els);
   const activePosition = saved?.stageId === state.stageId && grouped.has(saved.key)
     ? saved.key : positions[0]?.key || '';
-  const visibleChoices = activePosition
+  // While source footage is playing, the surface is a minimal playback
+  // control, not another interactive decision superimposed on the shot.
+  const visibleChoices = state.selection ? [] : activePosition
     ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
     state.selection?.index, progress, choices.map(row => row.id), activePosition]);
@@ -35,8 +37,10 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     'outcomeSection', 'orgasmDecision', 'rhythmControl', 'nextVariantBtn', 'finishAdultSceneBtn']) {
     els[key]?.classList.add('hidden');
   }
+  els.adultInteractionPanel?.classList.add('compact-expanded');
+  els.adultInteractionPanel?.classList.remove('compact-collapsed');
   els.movementSection?.classList.toggle('hidden', surface !== 'panel');
-  els.positionSection?.classList.toggle('hidden', !positions.length);
+  els.positionSection?.classList.toggle('hidden', !positions.length || Boolean(state.selection));
 
   const root = targets[surface] || els.choices;
   if (!root) return;
@@ -46,6 +50,9 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     button.type = 'button';
     button.className = className;
     button.textContent = label;
+    // Explicit accessible names must not include CSS-generated list numerals
+    // and chevrons (which broke voice control and role-based navigation).
+    button.setAttribute('aria-label', label);
     button.disabled = state.status === 'seeking';
     button.addEventListener('click', action);
     parent.appendChild(button);
@@ -74,7 +81,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
 
   // Position -> occurrence -> observed movement. A camera cut stays inside its
   // parent action; a different position/occurrence gets its own navigation tab.
-  if (els.positionTabs && positions.length) {
+  if (els.positionTabs && positions.length && !state.selection) {
     const familyOccurrences = new Map();
     for (const row of positions) familyOccurrences.set(row.positionId,
       (familyOccurrences.get(row.positionId) || 0) + 1);
@@ -97,7 +104,10 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
 
   for (const choice of visibleChoices) {
     const storyIsObservation = surface === 'story' && choices.length === 1 && !choice.intent;
-    const label = storyIsObservation ? 'Sahneyi izle' : choice.label;
+    const repeatingPositionLabel = surface === 'panel' && choice.positionLabel &&
+      choice.label.trim().toLocaleLowerCase('tr-TR') === choice.positionLabel.trim().toLocaleLowerCase('tr-TR');
+    const label = storyIsObservation ? 'Hikâyeyi oynat' :
+      repeatingPositionLabel ? 'Kaynak kesitini oynat' : choice.label;
     const card = makeButton(root, label, () => void player.select(choice.id),
       'choice story-choice gameplay-choice gameplay-choice-card');
     card.dataset.choiceId = choice.id;
@@ -108,18 +118,13 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     detail.className = 'gameplay-source-meta';
     const duration = clips.reduce((sum, clip) => sum +
       ((clip.previewEndTime ?? clip.endTime) - clip.startTime), 0);
-    detail.textContent = `${clips.length} kaynak kesiti · ${Math.round(duration)} sn oynatım`;
+    detail.textContent = `${clips.length} kaynak kesiti · ${Math.round(duration)} sn`;
     card.appendChild(detail);
   }
 
-  // The collapsed cinematic dock needs working controls, not an empty panel.
-  if (surface === 'panel' && els.adultQuickChoices) {
-    for (const choice of visibleChoices.slice(0, 3)) {
-      const quick = makeButton(els.adultQuickChoices, choice.label,
-        () => void player.select(choice.id), 'gameplay-quick-choice');
-      quick.dataset.choiceId = choice.id;
-    }
-  }
+  // One selection surface only. The former secondary quick-action dock
+  // mirrored the same cards and caused stacked/duplicated controls.
+  els.adultQuickChoices?.replaceChildren();
 
   if (state.status === 'error') makeButton(root, 'Yeniden dene', () => void player.retry());
   if (state.error && !state.selection && choices.length)
@@ -132,8 +137,12 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     if (state.cursor < state.graph.duration - .05)
       makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   }
-  if (choices.length) makeButton(root, 'Bu aşamayı geç', () => player.skipStage(),
-    'choice gameplay-skip gameplay-choice-card');
+  if (state.selection && progress.phase === 'STORY')
+    makeButton(root, 'Sonraki hikâye olayına geç', () => void player.skipCurrentClip(),
+      'choice gameplay-skip gameplay-choice-card');
+  else if (choices.length && (state.selection || !progress.completed))
+    makeButton(root, 'Bu aşamayı geç', () => player.skipStage(),
+      'choice gameplay-skip gameplay-choice-card');
 
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
     approach: els.approachChoices, surface });
@@ -143,7 +152,10 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (els.adultDockTitle) els.adultDockTitle.textContent = phaseLabel;
   for (const key of ['adultDockPhase', 'adultPhaseBadge', 'adultPhaseTitle'])
     if (els[key]) els[key].textContent = phaseLabel;
-  if (els.adultPhaseHint) els.adultPhaseHint.textContent = 'Gerçek görüntü kanıtı olan seçenekleri keşfet.';
+  if (els.adultPhaseHint) els.adultPhaseHint.textContent =
+    state.graph.clips.some(row => row.visualVerified !== true)
+      ? 'Bazı olaylar kaynak analizinde bağımsız görüntü kanıtı olmadan raporlanmış.'
+      : 'Görüntüyle doğrulanmış kaynak seçenekleri.';
   if (els.adultFlowStatus) els.adultFlowStatus.textContent =
     `Lust %${Math.round(progress.lust)} · ${progress.sceneEngagements} seçim`;
   if (els.adultDockLustValue) els.adultDockLustValue.textContent = Math.round(progress.lust);
