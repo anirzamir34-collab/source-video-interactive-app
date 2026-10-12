@@ -65,6 +65,9 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       const next = graph.chapters.find(row => row.startTime > state.cursor + .05);
       if (next && time >= next.startTime - .03) {
         freePlayback = false; video.pause(); dispatch({ type: 'SEEK', time: next.startTime });
+        // The reducer cursor and physical video clock must agree at the
+        // next verified boundary, even if timeupdate arrived slightly late.
+        await api.navigate(next.startTime, { preserveState: true });
       }
       return;
     }
@@ -168,11 +171,21 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       await continueChronologicalStory();
     },
     skipStage() {
+      if (destroyed || freePlayback) return;
+      const chapter = graph.chapters.find(row => row.id === state.chapterId);
+      const followingStage = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1];
+      // Skipping the last stage must not bypass an unanalysed interval just
+      // because the next recorded source event belongs to another chapter.
+      if (!followingStage) {
+        cancelEffect(); freePlayback = false; video.pause();
+        dispatch({ type: 'CANCEL' });
+        void api.nextChapter();
+        return;
+      }
       cancelEffect(); freePlayback = false; video.pause();
       dispatch({ type: 'CANCEL' }); dispatch({ type: 'SKIP_STAGE' });
       const stage = graph.stages.find(row => row.id === state.stageId);
       if (stage) void api.navigate(stage.startTime, { preserveState: true });
-      else if (state.chapterId === null && state.cursor < graph.duration - .05) void api.continueVideo();
     },
     stepSourceEvent(direction) {
       // Timeline arrows navigate the next *observed source action*, not a
@@ -189,12 +202,32 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
         : chronological.reverse().find(clip => clip.startTime < currentTime - .35);
       if (next) void api.navigate(next.startTime, { rewind: direction < 0 });
     },
-    nextChapter() {
+    async nextChapter() {
+      if (destroyed || state.selection || freePlayback) return;
+      const index = graph.chapters.findIndex(row => row.id === state.chapterId);
+      const current = graph.chapters[index], upcoming = graph.chapters[index + 1];
+      // Never bypass known intermediate approach/story stages through a
+      // chapter-level API call. The UI should expose only the next stage.
+      if (current && current.stageIds.indexOf(state.stageId) < current.stageIds.length - 1) return;
+      // A source-analysis gap is not a verified skip. Previously NEXT_CHAPTER
+      // sought straight across it, silently deleting real unanalysed footage.
+      // Play the original video between chapters before exposing the next
+      // observed action. Never mint completion rewards for this footage.
+      if (current && upcoming) {
+        const start = Math.max(current.endTime,
+          Number.isFinite(video.currentTime) ? video.currentTime : current.endTime);
+        if (upcoming.startTime - start > .05) {
+          await api.navigate(start, { preserveState: true });
+          if (destroyed || state.error) return;
+          await api.continueVideo();
+          return;
+        }
+      }
       cancelEffect(); freePlayback = false; video.pause();
       dispatch({ type: 'CANCEL' }); dispatch({ type: 'NEXT_CHAPTER' });
       const chapter = graph.chapters.find(row => row.id === state.chapterId);
-      if (chapter) void api.navigate(chapter.startTime, { preserveState: true });
-      else if (state.cursor < graph.duration - .05) void api.continueVideo();
+      if (chapter) await api.navigate(chapter.startTime, { preserveState: true });
+      else if (state.cursor < graph.duration - .05) await api.continueVideo();
     },
     async navigate(time, { rewind = false, preserveState = false } = {}) {
       cancelEffect(); freePlayback = false; video.pause();
@@ -209,7 +242,7 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     },
     async continueVideo() {
       if (destroyed) return;
-      cancelEffect(); dispatch({ type: 'CANCEL' }); freePlayback = true;
+      cancelEffect(); freePlayback = true; dispatch({ type: 'CONTINUE_SOURCE' });
       const controller = new AbortController(); operation = controller;
       try { await play(video, { signal: controller.signal }); }
       catch {

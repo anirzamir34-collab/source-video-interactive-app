@@ -77,6 +77,12 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   info.textContent = state.status === 'ended' ? 'Video tamamlandı.' : state.error ||
     `${phaseLabel} · ${surface === 'story' ? 'İlerleme' : 'Lust'} %${Math.round(surface === 'story' ? progress.value : progress.lust)}`;
   root.appendChild(info);
+  if (state.status === 'continuing') {
+    // Never show stale choices over source footage between verified chapters.
+    syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
+      approach: els.approachChoices, surface: 'none' });
+    return;
+  }
   const relationshipRows = Object.values(state.relationships).filter(row =>
     cast.includes(row.from) && cast.includes(row.to) && row.label);
   if (relationshipRows.length) {
