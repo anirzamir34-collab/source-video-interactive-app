@@ -318,19 +318,26 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const protagonistProfile = String(
     req.body?.protagonistProfile || ''
   ).trim();
-  const dialogueContext = String(req.body?.dialogueContext || '[]');
-  const dialogueSpeakerContext = String(req.body?.dialogueSpeakerContext || '[]').slice(0, 16000);
-  const sensoryAudioContext = String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
+  // The independent second pass must never see transcript, speaker profiles
+  // or remembered story facts. It can certify only facts visible in frames.
+  const reviewMode = String(req.body?.reviewMode || '') === '1';
+  const dialogueContext = reviewMode ? '[]' : String(req.body?.dialogueContext || '[]');
+  const dialogueSpeakerContext = reviewMode ? '[]' :
+    String(req.body?.dialogueSpeakerContext || '[]').slice(0, 16000);
+  const sensoryAudioContext = reviewMode ? '[]' :
+    String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
   // Detailed storyboard coverage is fixed; only the selected model changes.
   const qualityMode = 'ultra';
   const analysisTier = analysisTierFromRequest(req.body?.analysisTier);
-  const reviewMode = String(req.body?.reviewMode || '') === '1';
   let reviewCandidates;
   try { reviewCandidates = serializeReviewCandidates(req.body?.reviewCandidates || '[]'); }
   catch { return res.status(400).json({ available: false, retryable: false, reason: 'INVALID_REVIEW_CANDIDATES', message: 'Doğrulama adayları okunamadı; geçerli analiz verisi gerekli.' }); }
-  const storyContextMemory = String(req.body?.storyContextMemory || '{}').slice(0, 24000);
+  const storyContextMemory = reviewMode ? '{}' :
+    String(req.body?.storyContextMemory || '{}').slice(0, 24000);
   const reviewInstructions = reviewMode ? `
 SECOND PASS VISUAL REVIEW MODE:
+- You have NO transcript, NO speaker profiles, NO remembered story context and NO non-speech-audio context. This is a deliberately independent, image-only channel.
+- Inspect only physical image claims. Do not infer spoken motives, relationship labels, off-screen actions or alternative story paths.
 - Treat all candidate labels, confidence scores and evidence descriptions as untrusted proposals. Independently read the supplied frames before comparing them to the candidate text.
 - A camera/viewpoint change, partial occlusion, surface contact or tempo change alone does not establish a different configuration. Verify continuity between adjacent intervals. Do not force a single label when a real configuration change is visible.
 - Use only the declared canonical IDs. Never invent a canonical name. Leave uncertain classifications out and explain the uncertainty in warnings.
@@ -347,7 +354,7 @@ ${reviewCandidates}
 - Body position never proves route: missionary, cowgirl, rear, standing-rear, spoon and similar configurations can be vaginal or anal.
 - Return vaginal or anal only when the visible contact/penetration location is directly distinguishable and consistent at the candidate start, midpoint and end. Otherwise return activityType other with low activityTypeConfidence, or omit the candidate.
 - Never default an ambiguous penetrative candidate to vaginal. Correct activityType, activityTypeConfidence, activityEvidence and the Turkish label together so they cannot contradict one another.
-- Re-check narrativeChoiceLabel, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence for supplied candidates. Preserve them only when the same frames/dialogue still support them; otherwise downgrade to neutral wording.
+- Do not decide, invent, or rewrite narrativeChoiceLabel, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence or storyEvidence: those belong to the separate dialogue channel and are preserved from first-pass observations.
 - For groupScene, partnerSwitch or partner_transition candidates, independently re-identify every visible adult using stable neutral track IDs. Preserve a partner change only when the source frames visibly prove MAIN_MALE changes from one adult partner to another; otherwise omit it.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
