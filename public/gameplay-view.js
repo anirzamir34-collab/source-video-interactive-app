@@ -3,8 +3,7 @@ import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-pa
 
 const rendered = new WeakMap();
 const selectedPosition = new WeakMap();
-const positionKey = choice => choice.positionId
-  ? JSON.stringify([choice.positionId, choice.occurrenceId || '']) : '';
+const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
 export function renderGameplay({ state, player, els, document = globalThis.document }) {
