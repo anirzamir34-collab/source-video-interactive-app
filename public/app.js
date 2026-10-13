@@ -1,5 +1,6 @@
 import { toggleFullscreen, revealFullscreenChoices } from './fullscreen.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
+import { normalizeProtagonistSurvey, surveySheetIndices } from './protagonist-survey.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
 import { requestWithUploadProgress } from './progress-request.js';
@@ -1497,7 +1498,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   const reusableSession = state.analysisSession?.sourceKey === sourceKey;
   const session = reusableSession ? state.analysisSession : {
     sourceKey, file: file || null, sourceTranscript: null, mediaManifest: null, storyboard: null,
-    analysisModeKey: '', chunkResults: [], protagonistProfile: '', storyContextMemory: null
+    analysisModeKey: '', chunkResults: [], protagonistProfile: '', protagonistSurvey: null, storyContextMemory: null
   };
   state.analysisSession = session;
 
@@ -1644,7 +1645,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
     ].join('|');
     analysisModeKey = JSON.stringify({
-      pipelineVersion: 'canonical-source-context-4',
+      pipelineVersion: 'video-wide-protagonist-context-5',
       analysisTier: modes.analysisTier,
       chunks: analysisPlan.chunks,
       motion: modes.motion,
@@ -1661,6 +1662,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       session.chunkResults = [];
       session.firstPassResults = {};
       session.protagonistProfile = '';
+      session.protagonistSurvey = null;
       session.storyContextMemory = null;
     }
     // A key rotation (or reopening the same video after a browser refresh)
@@ -1691,7 +1693,44 @@ els.analyzeBtn.addEventListener('click', async () => {
     let failedChunk = null;
     let body = null;
 
-    let protagonistProfile = session.protagonistProfile || requestedProtagonist;
+    // A single first-chapter close-up must not determine who the protagonist
+    // is in a video whose male lead appears later. Survey already prepared
+    // contact sheets from widely separated source times before chunk analysis.
+    if (!session.protagonistSurvey) {
+      const sheets = surveySheetIndices(storyboard.sheets.length, 8);
+      const surveyForm = new FormData();
+      surveyForm.append('identitySurvey', '1');
+      surveyForm.append('duration', String(storyboard.duration));
+      surveyForm.append('chunkStart', '0');
+      surveyForm.append('chunkEnd', String(storyboard.duration));
+      surveyForm.append('protagonistHint', requestedProtagonist);
+      surveyForm.append('timestamps', JSON.stringify(sheets.map(index =>
+        storyboard.timestamps.slice(index * framesPerSheet, (index + 1) * framesPerSheet))));
+      for (const index of sheets) {
+        surveyForm.append('storyboards', storyboard.sheets[index],
+          `identity-survey-sheet-${index + 1}.jpg`);
+      }
+      try {
+        analysisOwner.signal.throwIfAborted();
+        analysisProgress.update('analysis', { detail: 'Video genelinde karakter devamlılığı denetleniyor.' });
+        const surveyResponse = await postAnalysisForm('/api/gemini-storyboard-analyze', surveyForm,
+          { timeoutMs: 180000, stage: 'analysis', label: 'Video geneli karakter taraması' });
+        const surveyBody = await surveyResponse.json().catch(() => ({}));
+        session.protagonistSurvey = surveyResponse.ok
+          ? normalizeProtagonistSurvey(surveyBody)
+          : { resolved: false, reason: String(surveyBody?.reason || 'SURVEY_FAILED') };
+      } catch (error) {
+        if (analysisOwner.signal.aborted || error?.name === 'AbortError') throw error;
+        console.warn('Character survey unavailable:', String(error?.message || error));
+        session.protagonistSurvey = { resolved: false, reason: 'SURVEY_UNAVAILABLE' };
+      }
+      if (!session.protagonistSurvey.resolved) {
+        logEngineEvent('PROTAGONIST_SURVEY_UNRESOLVED', {
+          reason: session.protagonistSurvey.reason });
+      }
+    }
+    let protagonistProfile = session.protagonistSurvey.resolved
+      ? session.protagonistSurvey.profile : '';
     let storyContextMemory = session.storyContextMemory || normalizeStoryContext({});
 
   const analyzeChunk = async (chunkIndex, contextSnapshot) => {
@@ -1951,8 +1990,10 @@ els.analyzeBtn.addEventListener('click', async () => {
       analyze: analyzeChunk,
       afterBatch: results => {
         storyContextMemory = mergeStoryContexts(chunkResults.filter(result => result?.available));
-        protagonistProfile = [...results].reverse().find(item => item.result?.protagonistProfile)
-          ?.result.protagonistProfile || protagonistProfile;
+        // An identified full-video protagonist cannot be replaced by the most
+        // prominent man in one later scene or an unrelated local chunk label.
+        if (!session.protagonistSurvey?.resolved) protagonistProfile = [...results].reverse()
+          .find(item => item.result?.protagonistProfile)?.result.protagonistProfile || protagonistProfile;
         session.storyContextMemory = storyContextMemory;
         session.protagonistProfile = protagonistProfile;
         session.chunkResults = chunkResults;
