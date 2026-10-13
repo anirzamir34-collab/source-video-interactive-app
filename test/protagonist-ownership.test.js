@@ -34,3 +34,58 @@ test('overlapping excluded source intervals form a single watchable chapter', ()
     { startTime: 40, endTime: 48 }
   ]), [{ startTime: 10, endTime: 24 }, { startTime: 40, endTime: 48 }]);
 });
+
+test('verified main-character conversation stays playable with another male on screen', () => {
+  const context = { characters: [
+    { id: 'hero', participantTrackId: 'MAIN_MALE' },
+    { id: 'guest', participantTrackId: 'OTHER_MALE' },
+    { id: 'friend', participantTrackId: 'FRIEND' }
+  ] };
+  const actions = [
+    { actionId: 'greeting', sourceVerified: true, subjectTrackId: 'hero',
+      actionType: 'dialogue', choiceSurface: 'story',
+      participantTrackIds: ['hero', 'guest', 'friend'] },
+    { actionId: 'question', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'story', involvedCharacterIds: ['hero', 'guest'] },
+    { actionId: 'other-replies', sourceVerified: true, subjectTrackId: 'guest',
+      actionType: 'dialogue', involvedCharacterIds: ['hero', 'guest'] }
+  ];
+  const result = partitionProtagonistActions(actions, context);
+  assert.deepEqual(result.playable.map(item => item.actionId), ['greeting', 'question']);
+  assert.deepEqual(result.excluded.map(item => item.actionId), ['other-replies']);
+});
+
+test('unknown protagonist or intimate source keeps the existing ownership barrier', () => {
+  const cast = ['MAIN_MALE', 'OTHER_MALE'];
+  const actions = [
+    { actionId: 'no-actor', sourceVerified: true, actionType: 'dialogue',
+      involvedCharacterIds: cast },
+    { actionId: 'unverified', sourceVerified: false, subjectTrackId: 'MAIN_MALE',
+      actionType: 'dialogue', involvedCharacterIds: cast },
+    { actionId: 'intimate', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'story', adultScene: true, involvedCharacterIds: cast },
+    { actionId: 'position', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'position', positionId: 'scene-position', involvedCharacterIds: cast },
+    { actionId: 'explicit', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'dialogue', activityType: 'anal', involvedCharacterIds: cast },
+    { actionId: 'outcome', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'story', outcomeType: 'climax', involvedCharacterIds: cast },
+    { actionId: 'verified-story', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'dialogue', involvedCharacterIds: cast }
+  ];
+  const result = partitionProtagonistActions(actions);
+  assert.deepEqual(result.playable.map(item => item.actionId), ['verified-story']);
+  assert.deepEqual(result.excluded.map(item => item.actionId),
+    ['no-actor', 'unverified', 'intimate', 'position', 'explicit', 'outcome']);
+});
+
+test('ordinary choice with no other male is unaffected even with sparse metadata', () => {
+  const actions = [
+    { actionId: 'legacy', subjectTrackId: 'MAIN_MALE', actionType: 'other' },
+    { actionId: 'modern', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'dialogue', involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A'] }
+  ];
+  const result = partitionProtagonistActions(actions);
+  assert.deepEqual(result.playable.map(item => item.actionId), ['legacy', 'modern']);
+  assert.deepEqual(result.excluded, []);
+});
