@@ -173,7 +173,7 @@ test('timeline arrows step through actual source events rather than jumping chap
 });
 
 
-test('cinematic story offers the current local source card behind a collapsed playback menu',()=>{
+test('cinematic story owns its local choices and hides all cards during source playback',()=>{
   const labelled={...source,actions:source.actions.map((a,index)=>({
     ...a,label:index<5 ? 'Kaynak olayı '+(index+1) : a.label,
     ...(index<5 ? {storyEvidenceLevel:'fact',storyConfidence:.95,
@@ -206,9 +206,10 @@ test('cinematic story offers the current local source card behind a collapsed pl
 
   state=gameplayReducer(state,{type:'SELECT',choiceId:graph.choices[0].id});
   renderGameplay({state,player,els,document});
-  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,1,
-    'a selection keeps its current source card accessible');
-  assert.ok(els.choices.children.filter(row=>row.tag==='button').every(row=>!row.disabled));
+  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,0,
+    'source playback must not overlay a duplicate decision card');
+  assert.ok(!labels().includes('Duraklat') && !labels().includes('Yeniden oynat'),
+    'playback commands must not be mixed into story choices');
 
   state=gameplayReducer(state,{type:'SEEK',time:211.2});
   renderGameplay({state,player,els,document});
