@@ -2,16 +2,37 @@ import { availableChoices, activeSurface, progression } from './gameplay-state.j
 import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-panel.js';
 
 const rendered = new WeakMap();
-const selectedPosition = new WeakMap();
 const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
 const movementName = value => ({ rhythmic: 'Ritmik hareket', slow: 'Yavaş hareket',
   moderate: 'Dengeli hareket', fast: 'Hızlı hareket' })[String(value || '').trim().toLowerCase()] || value;
+
+// Presentation-only collection. One recorded STORY action per graph stage must
+// not become one lonely button. Only consecutive source-backed events in the
+// same chapter and phase are gathered; any phase boundary or meaningful gap
+// ends the local choice window. No new clips, outcomes or source times appear.
+export function phaseVisibleChoices(state) {
+  const stage = state.graph.stages.find(row => row.id === state.stageId);
+  if (!stage || stage.phase !== 'STORY') return availableChoices(state);
+  const stages = [...state.graph.stages].sort((a, b) =>
+    a.startTime - b.startTime || a.endTime - b.endTime);
+  const index = stages.findIndex(row => row.id === stage.id);
+  const adjacent = (a, b) => a && b && a.chapterId === b.chapterId &&
+    a.phase === 'STORY' && b.phase === 'STORY' &&
+    b.startTime <= a.endTime + .25;
+  let first = index, last = index;
+  while (first > 0 && adjacent(stages[first - 1], stages[first])) first--;
+  while (last < stages.length - 1 && adjacent(stages[last], stages[last + 1])) last++;
+  const choiceById = new Map(state.graph.choices.map(choice => [choice.id, choice]));
+  return stages.slice(first, last + 1)
+    .flatMap(row => row.choiceIds.map(id => choiceById.get(id)))
+    .filter(Boolean);
+}
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
 export function renderGameplay({ state, player, els, document = globalThis.document }) {
   const progress = progression(state);
   const surface = activeSurface(state);
-  const choices = availableChoices(state);
+  const choices = phaseVisibleChoices(state);
   const grouped = new Map();
   if (surface === 'panel') for (const choice of choices) {
     const key = positionKey(choice);
@@ -20,22 +41,18 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       positionId: choice.positionId, occurrenceId: choice.occurrenceId });
   }
   const positions = [...grouped.values()];
-  const saved = selectedPosition.get(els);
-  const activePosition = saved?.stageId === state.stageId && grouped.has(saved.key)
-    ? saved.key : positions[0]?.key || '';
-  // While source footage is playing, the surface is a minimal playback
-  // control, not another interactive decision superimposed on the shot.
-  // Hide selection cards while the source video is actually playing.
-  const visibleChoices = state.selection ? [] : activePosition
-    ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
+  // Tabs name source-backed positions but never filter the other alternatives.
+  const visibleChoices = choices;
+  const stageElement = els.video?.closest('.video-stage');
+  const fullscreen = Boolean(stageElement && (document?.fullscreenElement === stageElement ||
+    document?.webkitFullscreenElement === stageElement));
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
-    state.selection?.index, progress, choices.map(row => row.id), activePosition]);
+    state.selection?.index, progress, choices.map(row => row.id), fullscreen]);
   if (els.cursorText) els.cursorText.textContent = `${state.cursor.toFixed(1)} sn`;
   if (rendered.get(els) === signature) return;
   rendered.set(els, signature);
   const targets = { story: els.choices, approach: els.approachChoices, panel: els.movementChoices };
   mountInteractionPanel(els.video?.closest('.video-stage'), els.adultInteractionPanel);
-  const stageElement = els.video?.closest('.video-stage');
   // Remove the old duplicate/source-explorer overlays from the movie canvas.
   stageElement?.querySelector?.('.gameplay-menu-toggle')?.remove?.();
   stageElement?.querySelector?.('.gameplay-source-navigator')?.remove?.();
@@ -47,7 +64,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   els.adultInteractionPanel?.classList.add('compact-expanded');
   els.adultInteractionPanel?.classList.remove('compact-collapsed');
   els.movementSection?.classList.toggle('hidden', surface !== 'panel');
-  els.positionSection?.classList.toggle('hidden', !positions.length || Boolean(state.selection));
+  els.positionSection?.classList.toggle('hidden', !positions.length);
 
 
   const root = targets[surface] || els.choices;
@@ -65,6 +82,10 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     button.addEventListener('click', action);
     parent.appendChild(button);
     return button;
+  };
+  const selectChoice = choice => {
+    if (choice.stageId === state.stageId) void player.select(choice.id);
+    else if (choice.clipIds?.length) void player.selectSourceEvent(choice.clipIds[0]);
   };
   const phaseLabel = { STORY: 'Hikâye', APPROACH: 'Yakınlaşma', CORE: 'Etkileşim',
     OUTCOME: 'Sonuç', AFTERMATH: 'Sahne sonrası' }[progress.phase] || 'Hikâye';
@@ -96,7 +117,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
 
   // Position -> occurrence -> observed movement. A camera cut stays inside its
   // parent action; a different position/occurrence gets its own navigation tab.
-  if (els.positionTabs && positions.length && !state.selection) {
+  if (els.positionTabs && positions.length > 1) {
     const familyOccurrences = new Map();
     for (const row of positions) familyOccurrences.set(row.positionId,
       (familyOccurrences.get(row.positionId) || 0) + 1);
@@ -105,14 +126,14 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       const index = (ordinal.get(row.positionId) || 0) + 1;
       ordinal.set(row.positionId, index);
       const label = familyOccurrences.get(row.positionId) > 1 ? `${row.label} · ${index}` : row.label;
+      const targetChoice = visibleChoices.find(choice => positionKey(choice) === row.key);
       const tab = makeButton(els.positionTabs, label, () => {
-        selectedPosition.set(els, { stageId: state.stageId, key: row.key });
-        rendered.delete(els);
-        renderGameplay({ state, player, els, document });
+        if (targetChoice) selectChoice(targetChoice);
       }, 'position-tab gameplay-position-tab');
       tab.setAttribute('role', 'tab');
-      tab.setAttribute('aria-selected', String(activePosition === row.key));
-      tab.classList.toggle('active', activePosition === row.key);
+      const selected = targetChoice?.id === state.selection?.choiceId;
+      tab.setAttribute('aria-selected', String(Boolean(selected)));
+      tab.classList.toggle('active', Boolean(selected));
     }
   }
   if (els.positionCount) els.positionCount.textContent = `${positions.length} pozisyon`;
@@ -123,9 +144,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       choice.label.trim().toLocaleLowerCase('tr-TR') === choice.positionLabel.trim().toLocaleLowerCase('tr-TR');
     const label = storyIsObservation ? 'Hikâyeyi oynat' :
       repeatingPositionLabel ? movementName(choice.movementLabel) || choice.label : choice.label;
-    const card = makeButton(root, label, () => {
-      void player.select(choice.id);
-    },
+    const card = makeButton(root, label, () => selectChoice(choice),
       'choice story-choice gameplay-choice gameplay-choice-card');
     card.disabled = false;
     card.dataset.choiceId = choice.id;
@@ -144,20 +163,21 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (state.error && !state.selection && choices.length)
     makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   if (state.status === 'paused') makeButton(root, 'Oynatmaya devam et', () => void player.resume());
+  // Stage navigation has its own edge arrows. Do not intermix transport commands
+  // with populated choice menus (the original fullscreen UX regression).
   const remainingStageIds = chapter?.stageIds.slice(chapter.stageIds.indexOf(state.stageId) + 1) || [];
-  if (progress.nextStageId && !state.selection)
-    makeButton(root, 'Sonraki aşama', () => player.advanceStage());
-  else if (!state.selection && !choices.length && remainingStageIds.length)
-    makeButton(root, 'Sonraki aşama', () => player.skipStage());
-  // An exhausted stage is NOT the end of the chapter if there are still
-  // observed intermediate stages; never offer a shortcut over them.
-  if (!state.selection && !remainingStageIds.length && (progress.completed || !choices.length)) {
-    if (state.chapterId) makeButton(root, 'Sonraki sahne', () => player.nextChapter());
-    if (state.cursor < state.graph.duration - .05)
-      makeButton(root, 'Videoya devam et', () => void player.continueVideo());
+  if (!state.selection && !visibleChoices.length) {
+    if (progress.nextStageId) makeButton(root, 'Sonraki aşama', () => player.advanceStage());
+    else if (remainingStageIds.length) makeButton(root, 'Sonraki aşama', () => player.skipStage());
+    else if (progress.completed || !choices.length) {
+      if (state.chapterId) makeButton(root, 'Sonraki sahne', () => player.nextChapter());
+      if (state.cursor < state.graph.duration - .05)
+        makeButton(root, 'Videoya devam et', () => void player.continueVideo());
+    }
   }
+  // Keep choices visible during verified playback and across fullscreen changes.
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-    approach: els.approachChoices, surface: state.selection && state.status !== 'paused' && state.status !== 'error' ? 'none' : surface });
+    approach: els.approachChoices, surface });
   if (els.adultSceneTitle) els.adultSceneTitle.textContent = 'Doğrulanmış seçimler';
   if (els.adultDockTitle) els.adultDockTitle.textContent = phaseLabel;
   for (const key of ['adultDockPhase', 'adultPhaseBadge', 'adultPhaseTitle'])
