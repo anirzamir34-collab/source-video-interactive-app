@@ -280,7 +280,7 @@
 }
 #playerSection .video-stage .gameplay-menu-toggle[hidden] { display: none !important; }
 #playerSection .video-stage .gameplay-event-map {
-  position: absolute; left: 5rem; bottom: .75rem; z-index: 59;
+  position: absolute; left: 5rem; top: .75rem; z-index: 59;
   max-width: min(22rem, 70vw); max-height: 54vh; overflow: auto;
   padding: .55rem .75rem; border-radius: .8rem;
   background: rgba(8,19,24,.88); color: white;
