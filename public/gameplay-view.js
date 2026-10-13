@@ -27,8 +27,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     ? state.graph.choices.find(choice => choice.id === state.selection.choiceId) : null;
   const visibleChoices = state.selection ? choices : activePosition
     ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
-  const open = openedDuringPlayback.get(els)?.selectionId === state.selection?.id &&
-    openedDuringPlayback.get(els)?.open;
+  const open = state.status === 'error' || (openedDuringPlayback.get(els)?.selectionId === state.selection?.id &&
+    openedDuringPlayback.get(els)?.open);
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
     state.selection?.index, progress, choices.map(row => row.id), activePosition, open]);
   if (els.cursorText) els.cursorText.textContent = `${state.cursor.toFixed(1)} sn`;
@@ -161,7 +161,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       if (!choice) continue;
       makeButton(map, choice.label, () => {
         openedDuringPlayback.delete(els); void player.selectSourceEvent(clip.id);
-      });
+      }, 'gameplay-event-link');
     }
     root.appendChild(map);
   }
