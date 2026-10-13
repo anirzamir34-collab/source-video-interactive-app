@@ -23,10 +23,11 @@ test('existing verified action kinds have one surface even when their source con
   assert.equal(choiceSurfaceForAction(action({ sourceVerified: false, actionType: 'kiss' })), 'unverified');
 });
 
-test('a money offer remains story and a verified scene movement cannot leak into story', () => {
-  assert.equal(choiceSurfaceForAction(action({ actionType: 'other', movementType: 'para teklifi',
-    choiceSurface: 'approach', choiceSurfaceEvidence: 'A banknote is offered.',
-    choiceSurfaceConfidence: 1 })), 'story');
+test('untyped events cannot enter the opening solely by provider tag; sourced scene movement stays in core', () => {
+  for (const movementType of ['para teklifi', 'ordinary gesture', 'unclassified action'])
+    assert.equal(choiceSurfaceForAction(action({ actionType: 'other', movementType,
+      choiceSurface: 'approach', choiceSurfaceEvidence: 'A visible source event.',
+      choiceSurfaceConfidence: 1 })), 'story');
   assert.equal(choiceSurfaceForAction(action({ actionType: 'tempo_change', adultScene: true,
     choiceSurface: 'story', choiceSurfaceEvidence: 'Visible movement in source frames.',
     choiceSurfaceConfidence: 1 })), 'panel');

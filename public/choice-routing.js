@@ -10,10 +10,6 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   // A verified dialogue range keeps its own category even when a broad parent
   // carries unrelated outcome metadata. Speech is not a performed event.
   if (storyTypes.has(type)) return 'story';
-  // A transaction is a narrative decision even if a provider marks the
-  // visible banknote as an approach action. It cannot earn Lust.
-  if (type === 'other' && /(?:para teklifi|money offer|offer money)/iu.test(
-    `${action.movementType || ''} ${action.narrativeChoiceLabel || ''} ${action.label || ''}`)) return 'story';
   if (panelFamily ||
       ['partner_transition', 'outcome', 'aftermath'].includes(type) ||
       ['climax', 'aftermath'].includes(text(action.outcomeType))) return 'panel';
@@ -37,7 +33,11 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
     return 'panel';
   if (approachTypes.has(type)) return (ordinaryContact && declaredEvidence) || speechOnly ? 'story' : 'approach';
   if (text(action.choiceSurface) === 'story' && declaredEvidence) return 'story';
-  if (text(action.choiceSurface) === 'approach' && declaredEvidence) return 'approach';
+  // A provider's approach tag on an untyped event is insufficient: a visible
+  // object, a transaction or ordinary dialogue is not verified intimacy.
+  // A sourced body transition may still enter the opening explicitly.
+  if (type === 'body_transition' && text(action.choiceSurface) === 'approach' &&
+      declaredEvidence && !speechOnly) return 'approach';
   return 'story';
 }
 
