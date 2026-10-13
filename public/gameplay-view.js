@@ -1,9 +1,10 @@
-import { availableChoices, activeSurface, progression, nextPlayableClip } from './gameplay-state.js';
+import { availableChoices, activeSurface, progression } from './gameplay-state.js';
 import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-panel.js';
 
 const rendered = new WeakMap();
 const selectedPosition = new WeakMap();
 const openedDuringPlayback = new WeakMap();
+const eventMaps = new WeakMap();
 const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
@@ -23,8 +24,6 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     ? saved.key : positions[0]?.key || '';
   // While source footage is playing, the surface is a minimal playback
   // control, not another interactive decision superimposed on the shot.
-  const selectedChoice = state.selection
-    ? state.graph.choices.find(choice => choice.id === state.selection.choiceId) : null;
   const visibleChoices = state.selection ? choices : activePosition
     ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
   const open = state.status === 'error' || (openedDuringPlayback.get(els)?.selectionId === state.selection?.id &&
@@ -131,7 +130,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     const repeatingPositionLabel = surface === 'panel' && choice.positionLabel &&
       choice.label.trim().toLocaleLowerCase('tr-TR') === choice.positionLabel.trim().toLocaleLowerCase('tr-TR');
     const label = storyIsObservation ? 'Hikâyeyi oynat' :
-      repeatingPositionLabel ? 'Kaynak kesitini oynat' : choice.label;
+      repeatingPositionLabel ? choice.movementLabel || choice.label : choice.label;
     const card = makeButton(root, label, () => {
       openedDuringPlayback.delete(els); void player.select(choice.id);
     },
@@ -154,17 +153,35 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     makeButton(root, 'Yeniden oynat', () => { openedDuringPlayback.delete(els); void player.replay(); },
       'gameplay-playback-control');
   }
-  if (!state.selection || open) {
-    const map = document.createElement('details'); map.className = 'gameplay-event-map';
-    const heading = document.createElement('summary'); heading.textContent = 'Olay haritası'; map.appendChild(heading);
-    for (const clip of state.graph.clips) {
-      const choice = state.graph.choices.find(row => row.clipIds.includes(clip.id));
-      if (!choice) continue;
-      makeButton(map, choice.label, () => {
-        openedDuringPlayback.delete(els); void player.selectSourceEvent(clip.id);
-      }, 'gameplay-event-link');
+  // Global source navigation belongs beside the video, never inside a story,
+  // approach or position choice list. Closed by default on every new game.
+  if (stageElement) {
+    let map = eventMaps.get(els);
+    if (!map || map.parentElement !== stageElement) {
+      map = document.createElement('details'); map.className = 'gameplay-event-map';
+      stageElement.appendChild(map); eventMaps.set(els, map);
     }
-    root.appendChild(map);
+    if (map.dataset.graphFingerprint !== state.fingerprint) {
+      map.open = false; map.dataset.graphFingerprint = state.fingerprint;
+    }
+    map.replaceChildren();
+    const heading = document.createElement('summary'); heading.textContent = 'Olay haritası'; map.appendChild(heading);
+    for (const phase of ['STORY', 'APPROACH', 'CORE', 'OUTCOME', 'AFTERMATH']) {
+      const clips = state.graph.clips.filter(row =>
+        state.graph.stages.find(stage => stage.id === row.stageId)?.phase === phase);
+      if (!clips.length) continue;
+      const label = document.createElement('strong');
+      label.textContent = { STORY: 'Hikâye', APPROACH: 'Yakınlaşma', CORE: 'Pozisyonlar',
+        OUTCOME: 'Sonuç', AFTERMATH: 'Sahne sonrası' }[phase];
+      map.appendChild(label);
+      for (const clip of clips) {
+        const choice = state.graph.choices.find(row => row.clipIds.includes(clip.id));
+        if (!choice) continue;
+        makeButton(map, choice.label, () => {
+          map.open = false; openedDuringPlayback.delete(els); void player.selectSourceEvent(clip.id);
+        }, 'gameplay-event-link');
+      }
+    }
   }
 
   if (state.status === 'error') makeButton(root, 'Yeniden dene', () => void player.retry());
@@ -192,7 +209,6 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
 
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
     approach: els.approachChoices, surface: state.selection && !open ? 'none' : surface });
-  const clip = nextPlayableClip(state);
   if (els.adultSceneTitle) els.adultSceneTitle.textContent = 'Doğrulanmış seçimler';
   if (els.adultDockTitle) els.adultDockTitle.textContent = phaseLabel;
   for (const key of ['adultDockPhase', 'adultPhaseBadge', 'adultPhaseTitle'])

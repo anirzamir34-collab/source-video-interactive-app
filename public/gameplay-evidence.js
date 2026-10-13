@@ -90,6 +90,7 @@ export function createGameplayGraph(analysis = {}) {
       intent: evidence?.intent || (action.storyEvidenceLevel === 'fact' && confidence(action.storyConfidence) >= .6
         ? text(action.narrativeChoiceLabel || action.narrativeReason) : ''),
       positionLabel: text(action.positionLabel),
+      movementLabel: text(action.movementType),
       decisionId: evidence?.decisionId || '', before: factsBefore, after: factsAfter,
       confidence: specific?.confidence || confidence(action.confidence),
       provenance: evidence?.provenance || 'legacy-source-analysis',
@@ -147,7 +148,8 @@ export function createGameplayGraph(analysis = {}) {
     if (!choice) {
       choice = { id: `choice:${choices.length}:${row.id}`, chapterId: chapter.id, stageId: stage.id,
         phase: row.phase, surface: row.surface, label: row.label, intent: row.intent,
-        positionId: row.group, positionLabel: row.positionLabel, occurrenceId: row.occurrence,
+        positionId: row.group, positionLabel: row.positionLabel,
+        movementLabel: row.movementLabel, occurrenceId: row.occurrence,
         abstained: row.abstained, confidence: row.confidence, cast: row.cast,
         kind: row.decisionId ? 'candidate_decision' : 'source_event',
         sourceActionId: row.origin, classificationReview: row.classificationReview,
