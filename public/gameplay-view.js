@@ -150,8 +150,9 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
 
   if (state.selection && open) {
     makeButton(root, state.status === 'paused' ? 'Sürdür' : 'Duraklat',
-      () => state.status === 'paused' ? void player.resume() : player.pause());
-    makeButton(root, 'Yeniden oynat', () => { openedDuringPlayback.delete(els); void player.replay(); });
+      () => state.status === 'paused' ? void player.resume() : player.pause(), 'gameplay-playback-control');
+    makeButton(root, 'Yeniden oynat', () => { openedDuringPlayback.delete(els); void player.replay(); },
+      'gameplay-playback-control');
   }
   if (!state.selection || open) {
     const map = document.createElement('details'); map.className = 'gameplay-event-map';
