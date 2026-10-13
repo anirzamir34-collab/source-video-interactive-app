@@ -352,11 +352,6 @@ ${reviewCandidates}
 - For groupScene, partnerSwitch or partner_transition candidates, independently re-identify every visible adult using stable neutral track IDs. Preserve a partner change only when the source frames visibly prove MAIN_MALE changes from one adult partner to another; otherwise omit it.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
-  const targetActionCount = Math.max(
-    5,
-    Math.min(22, Math.round(chunkDuration / 12))
-  );
-
     const prompt = `
 SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
 
@@ -499,16 +494,18 @@ TWO-LEVEL DEEP ANALYSIS:
 - BONUS actions are meaningful visible changes inside the same main scene: pace/rhythm change, acceleration, slowing, pause, kiss, touch, hand placement, posture, body transition, clothing removal or another clearly visible male action.
 - Do not represent a several-minute scene with one broad action when meaningful changes occur inside it.
 - Keep the same sceneId for BONUS actions until a new MAIN action begins.
-- Target ${targetActionCount} distinct, visible MAIN_MALE actions in this chunk when evidence supports them.
-- Prefer approximately one meaningful action every 8-18 seconds.
-- Split long continuous scenes whenever pose, direction, contact, position, tempo, partner interaction or camera relationship visibly changes.
-- Do not invent actions merely to reach the target.
+- Determine each action boundary only from observed changes in visible movement, context, speaker or interaction.
+- Continuous unchanging footage is one action regardless of length. A change is a new action only if it is observable, not because enough time passed.
+- Use independently verified changes in posture, direction, contact, position, tempo, cast or camera continuity to split a long scene.
+- Do not divide intervals into evenly spaced clips and never duplicate the same action just to increase choices.
 - Actions must be chronological, forward-moving and non-overlapping.
 
 INTRO:
-- Detect logos, title cards, advertisements, previews, static openings and other non-story material.
-- introEndTime is the first real main scene.
-- Create no action before introEndTime.
+- Inspect the opening source frames and timestamped dialogue for logos, title cards, advertisements, previews and other non-story material.
+- Only the contiguous non-story material preceding the first verified narrative event may be excluded. Once narrative action/dialogue begins, later titles are scene transitions, not a new intro.
+- introEndTime is the first verified narrative frame. If no distinct opening non-story material is demonstrated, report 0 and preserve the source opening.
+- Do not classify character introductions or genuine dialogue as advertisements merely because they occur early.
+- Create no action before a positively detected introEndTime; preserve the source timestamps of every subsequent verified action.
 - playStartTime must equal introEndTime.
 
 CAMERA:
