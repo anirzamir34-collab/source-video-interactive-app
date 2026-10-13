@@ -1810,6 +1810,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     form.append('qualityMode', 'ultra');
     form.append('analysisTier', modes.analysisTier);
       form.append('protagonistProfile', contextSnapshot.protagonistProfile);
+      form.append('protagonistHint', requestedProtagonist);
       form.append('storyContextMemory', JSON.stringify(contextSnapshot.storyContextMemory));
 
       const freshChunkForm = () => {
