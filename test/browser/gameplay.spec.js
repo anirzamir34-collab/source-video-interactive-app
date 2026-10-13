@@ -189,9 +189,9 @@ test('fullscreen keeps all local source choices visible, including during playba
       narrativeChoiceLabel: 'Hikâye seçeneği ' + i })),
     observation('opening', 9, { phase: 'APPROACH', duration: 2 }),
     observation('core-a', 12, { phase: 'CORE', duration: 2,
-      positionId: 'position-a', positionLabel: 'Pozisyon A' }),
+      positionId: 'rear', positionLabel: 'Doggy Style' }),
     observation('core-b', 14, { phase: 'CORE', duration: 2,
-      positionId: 'position-b', positionLabel: 'Pozisyon B' })
+      positionId: 'missionary', positionLabel: 'Misyoner Pozisyonu' })
   ];
   await load(page, actions);
   await expect(page.locator('#choices .gameplay-choice')).toHaveCount(4);
