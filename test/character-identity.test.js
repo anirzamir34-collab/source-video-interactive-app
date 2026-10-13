@@ -408,3 +408,32 @@ test('ordinary mother choices recover the same relation in main and bonus option
     assert.equal(storyChoiceLabelForAction(action), 'Kızıyla konuş');
   }
 });
+
+test('actor and distinct addressee do not become an identity conflict in ordinary dialogue', () => {
+  const action = bindActionCharacter({
+    actionId: 'listen', actionType: 'dialogue', adultScene: false,
+    label: 'Kadının sözlerini dinle', subjectTrackId: 'MAIN_MALE',
+    primaryCharacterId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A'],
+    participantTrackIds: ['MAIN_MALE', 'PARTNER_A'],
+    sourceVerified: true, startTime: 30, endTime: 38
+  }, cast);
+  assert.equal(action.identityResolution, 'verified');
+  assert.equal(action.primaryCharacterId, 'PARTNER_A');
+  assert.equal(action.primaryCharacterLabel, 'Meral');
+  assert.equal(action.partnerLabel, 'Meral');
+  assert.deepEqual([action.startTime, action.endTime], [30, 38]);
+});
+
+test('different documented addressee and partner IDs are not inherently contradictory', () => {
+  const result = bindActionCharacter({
+    actionId: 'group-dialogue', label: 'Soruyu dinle', actionType: 'dialogue',
+    subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'PARTNER_B',
+    partnerTrackId: 'PARTNER_A',
+    involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A', 'PARTNER_B'],
+    sourceVerified: true, startTime: 2, endTime: 9
+  }, cast);
+  assert.equal(result.identityResolution, 'verified');
+  assert.equal(result.primaryCharacterId, 'PARTNER_B');
+  assert.equal(result.primaryCharacterLabel, 'Deniz');
+});
