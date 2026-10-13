@@ -440,10 +440,13 @@ ${storyContextMemory}
 PROTAGONIST IDENTITY LOCK:
 Current locked profile:
 ${protagonistProfile || "NOT_LOCKED. The protagonist may first appear in a later chapter. Do not promote an unobserved person to MAIN_MALE; retain neutral character facts and allow later chapters to identify him."}
+Optional user-provided *visual description* (not identity proof): ${JSON.stringify(protagonistHint)}
 
 - Use MAIN_MALE only when an adult male is actually present and identifiable in this chapter.
 - The opening chapter may contain only women; that is NOT proof that the
   video lacks a male protagonist, and does not justify inventing one.
+- If no video-wide profile is verified, a user visual description can guide
+  matching only when the source frames actually support it.
 - If a verified video-wide profile exists, match the same person across
   clothing, pose, distance, and camera changes. A contradictory source frame
   must stay unresolved rather than being relabeled.
