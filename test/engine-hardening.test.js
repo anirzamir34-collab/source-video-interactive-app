@@ -428,3 +428,19 @@ test('leaves already absolute chunk times unchanged', () => {
   assert.equal(result.rebased, false);
   assert.strictEqual(result.actions, actions);
 });
+
+test('small uncertainty in source-backed ordinary dialogue does not erase the clip', () => {
+  const action = { actionId: 'story', actionType: 'dialogue', adultScene: false,
+    label: 'Soruyu yanıtla', sourceVerified: true,
+    storyEvidenceLevel: 'fact', storyEvidence: 'Karelerle eşzamanlı diyalog.',
+    confidence: .48, startTime: 2, endTime: 8 };
+  const reviewed = reviewAndHardenAnalysis({ videoDuration: 20, actions: [action] });
+  assert.equal(reviewed.analysis.actions.length, 1);
+  assert.ok(reviewed.integrity.issues.some(x => x.code === 'GROUNDED_STORY_CONFIDENCE_MARGIN'));
+  const notGrounded = reviewAndHardenAnalysis({ videoDuration: 20,
+    actions: [{ ...action, storyEvidence: '' }] });
+  assert.equal(notGrounded.analysis.actions.length, 0);
+  const intimate = reviewAndHardenAnalysis({ videoDuration: 20,
+    actions: [{ ...action, adultScene: true, actionType: 'touch' }] });
+  assert.equal(intimate.analysis.actions.length, 0);
+});
