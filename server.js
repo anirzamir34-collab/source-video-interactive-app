@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
-import { loadMediaConfig, GEMINI_DEFAULT_MODEL } from './lib/turkish-media/config.js';
+import { loadMediaConfig } from './lib/turkish-media/config.js';
 import { createMediaCache } from './lib/turkish-media/cache.js';
 import { createLimiter } from './lib/turkish-media/limiter.js';
 import { createAudioService } from './lib/turkish-media/audio.js';
