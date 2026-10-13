@@ -19,6 +19,7 @@ import {
   summarizeMovementChoiceCoverage,
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
+  coreLustPacingScale,
   computeWarmupSelectionDelta,
   warmupLustScale,
   expandVerifiedMovementVariants,
@@ -3924,6 +3925,15 @@ function unlockNextAdultPositionFromLust() {
   return next;
 }
 
+function currentCoreLustScale(position) {
+  if (!position || isWarmupPosition(position)) return 1;
+  const hasLockedNextCore = orderedLockedAdultPositions().some(next =>
+    next.id !== position.id && !isBonusPosition(next));
+  return coreLustPacingScale(position, {
+    hasLockedNextCore, unlockPoints: ADULT_LUST_UNLOCK_THRESHOLD
+  });
+}
+
 function addFemaleLust(amount) {
   if (state.adultOrgasmDecision) return null;
   if (state.interactionMeterNeedsReset) {
@@ -4981,7 +4991,7 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
     } else if (!state.interactionMeterNeedsReset) {
       addFemaleLust(delta.female * currentWarmupLustScale());
     }
-  } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
+  } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : currentCoreLustScale(position)));
   if (!isWarmupPosition(position)) {
     // Tapping a card never advances orgasm. Only verified core playback does.
     const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
@@ -5878,7 +5888,7 @@ function updateAdultPlayback(now, mediaTime) {
     warmup: warmupMovement
   });
   if (!warmupMovement || !genericInteractionSnapshot().progressBudget)
-    addFemaleLust(progress.lust * (warmupMovement ? currentWarmupLustScale() : 1));
+    addFemaleLust(progress.lust * (warmupMovement ? currentWarmupLustScale() : currentCoreLustScale(position)));
   if (!warmupMovement) {
     const movementRate = averageAdultProgress(
       Number(movement.maleProgressRate || 1),
