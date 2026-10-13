@@ -105,6 +105,15 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
         link.className = 'gameplay-source-event';
         link.textContent = choice.abstained ? 'Kaynak olayını oynat' : choice.label;
         link.setAttribute('aria-label', link.textContent);
+        // The explorer is source navigation, not a bypass for earned
+        // core-stage unlocks. When an observed opening precedes the first
+        // core event, that opening must earn its real watched progress.
+        const openingBeforeCore = phase === 'CORE' && state.graph.stages.some(row =>
+          row.phase === 'APPROACH' && row.startTime < clip.startTime &&
+          row.endTime <= clip.startTime + .05 &&
+          clip.startTime - row.endTime <= 180);
+        link.disabled = Boolean(openingBeforeCore && progress.lust < 100);
+        if (link.disabled) link.title = 'Önce doğrulanmış yakınlaşma eylemlerini oynat.';
         link.dataset.clipId = clip.id;
         link.setAttribute('aria-current', String(state.selection?.clipIds?.includes(clip.id) || false));
         link.addEventListener('click', () => {
