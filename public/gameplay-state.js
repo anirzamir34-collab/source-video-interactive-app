@@ -93,7 +93,10 @@ export function availableChoices(state, graph = state.graph) {
   return choices.slice(0, limit);
 }
 export function activeSurface(state) {
-  return stageOf(state)?.surface || 'story';
+  const stage = stageOf(state);
+  // Once a verified core scene ends, follow-up decisions use the story overlay.
+  // The underlying graph stays immutable so saved progress and source times match.
+  return stage?.phase === 'AFTERMATH' ? 'story' : stage?.surface || 'story';
 }
 export function nextPlayableClip(state, selection = state.selection) {
   if (!selection) return null;
