@@ -60,6 +60,25 @@ test('scene ownership gathers approach and core alternatives around an interveni
   assert.deepEqual(availableChoices(state).map(row => row.positionId), ['oral']);
 });
 
+test('a continuous opening with missing scene id joins its next core without merging conflicted cast', () => {
+  const graph = createGameplayGraph(analysis([
+    observation('opening-a', 0, { duration: 3, adultScene: false, adultSceneId: '',
+      subjectTrackId: 'speaker-a', partnerTrackId: 'voice-b',
+      participantTrackIds: ['speaker-a', 'voice-b'] }),
+    observation('dialogue', 3, { phase: 'STORY', duration: 3 }),
+    observation('opening-b', 6, { adultScene: true, adultSceneId: 'scene-1', duration: 3,
+      subjectTrackId: 'speaker-a', partnerTrackId: 'visual-b',
+      participantTrackIds: ['speaker-a', 'visual-b'] }),
+    observation('position', 9, { phase: 'CORE', adultScene: true, adultSceneId: 'scene-1',
+      positionId: 'seated-facing', duration: 3, subjectTrackId: 'speaker-a',
+      partnerTrackId: 'visual-b', participantTrackIds: ['speaker-a', 'visual-b'] })]));
+  const first = createGameplayState(graph);
+  assert.deepEqual(availableChoices(first).map(row => row.sourceActionId), ['opening-a', 'opening-b']);
+  assert.notDeepEqual(graph.choices[0].cast, graph.choices[2].cast);
+  assert.deepEqual(availableChoices(gameplayReducer(first, { type: 'SEEK', time: 3.1, rewind: true }))
+    .map(row => row.sourceActionId), ['dialogue']);
+});
+
 test('core tabs retain all positions while movement cards follow the selected position', () => {
   const graph = createGameplayGraph(analysis([
     observation('rear', 0, { phase: 'CORE', positionId: 'rear', positionLabel: 'Rear' }),

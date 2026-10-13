@@ -109,6 +109,30 @@ export function createGameplayGraph(analysis = {}) {
             label: text(action.relationshipRoleLabel) } : null });
   }
   rows.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+  // Some analyses omit an opening's scene id while keeping its source
+  // observations continuous up to a verified core scene. Give those opening
+  // choices that scene's menu owner without equating conflicting character
+  // tracks or changing their source intervals. A gap or earlier core is a
+  // hard boundary; an explicitly different scene id is never overwritten.
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    if (row.phase !== 'APPROACH' || row.sceneId) continue;
+    for (let next = index + 1; next < rows.length; next++) {
+      const candidate = rows[next];
+      if (candidate.start - rows[next - 1].end > 45 || candidate.phase === 'CORE' && !candidate.sceneId)
+        break;
+      if (candidate.phase !== 'CORE') continue;
+      const otherScene = rows.slice(index + 1, next).some(between =>
+        between.sceneId && between.sceneId !== candidate.sceneId);
+      const distinctVerifiedCast = row.identityResolution === 'verified' &&
+        candidate.identityResolution === 'verified' && row.cast.length >= 2 && candidate.cast.length >= 2 &&
+        row.cast.some(id => !candidate.cast.includes(id)) && candidate.cast.some(id => !row.cast.includes(id));
+      if (!otherScene && !distinctVerifiedCast && candidate.start - row.end <= 180 &&
+          candidate.cast.some(id => row.cast.includes(id)))
+        row.sceneId = candidate.sceneId;
+      break;
+    }
+  }
   const chapters = [], choices = [], clips = [], stages = [];
   let chapter, stage, prior;
   const seen = new Set(), groups = new Map();

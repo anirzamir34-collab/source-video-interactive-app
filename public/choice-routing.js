@@ -27,9 +27,17 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   const speechOnly = /\b(?:only spoken words|speech only|dialogue only|only dialogue|only speech|sadece konusma|yalnizca konusma|yalnizca soz)\b/iu.test(
     String(action.choiceSurfaceEvidence || '').toLocaleLowerCase('tr-TR')
       .replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u'));
+  // A sourced physical tempo change stays in the scene panel even when the
+  // provider mislabels its surface as STORY. Do not infer a position from it.
+  if (type === 'tempo_change' && action.adultScene === true && declaredEvidence && !speechOnly)
+    return 'panel';
   if (approachTypes.has(type)) return (ordinaryContact && declaredEvidence) || speechOnly ? 'story' : 'approach';
   if (text(action.choiceSurface) === 'story' && declaredEvidence) return 'story';
-  if (text(action.choiceSurface) === 'approach' && declaredEvidence) return 'approach';
+  // A provider's approach tag on an untyped event is insufficient: a visible
+  // object, a transaction or ordinary dialogue is not verified intimacy.
+  // A sourced body transition may still enter the opening explicitly.
+  if (type === 'body_transition' && text(action.choiceSurface) === 'approach' &&
+      declaredEvidence && !speechOnly) return 'approach';
   return 'story';
 }
 
