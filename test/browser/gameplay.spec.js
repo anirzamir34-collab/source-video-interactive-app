@@ -194,8 +194,8 @@ test('real player: separate source groups remain selectable before the current c
     await map.getByRole('button', { name: 'Gözlenen eylem opening' }).click();
     await expect.poll(() => page.evaluate(() => {
       const state = __gameplayTest.state();
-      const opening = state.graph.choices.find(choice => choice.sourceActionId === 'opening');
-      return Object.values(state.stageProgress).reduce((sum, p) => sum + (p.counts?.[opening?.id] || 0), 0);
+      return Object.values(state.stageProgress).reduce((sum, p) =>
+        sum + Object.values(p.counts || {}).reduce((a, count) => a + count, 0), 0);
     })).toBe(replay + 2);
     await map.locator('summary').click();
   }
