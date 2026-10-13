@@ -189,6 +189,16 @@ test('real player: separate source groups remain selectable before the current c
     const state = __gameplayTest.state();
     return Object.values(state.stageProgress).some(value => Object.values(value.counts || {}).some(count => count > 0));
   })).toBe(true);
+  // One available opening needs repeated, actually watched engagement.
+  for (let replay = 0; replay < 2; replay++) {
+    await map.getByRole('button', { name: 'Gözlenen eylem opening' }).click();
+    await expect.poll(() => page.evaluate(() => {
+      const state = __gameplayTest.state();
+      const opening = state.graph.choices.find(choice => choice.sourceActionId === 'opening');
+      return Object.values(state.stageProgress).reduce((sum, p) => sum + (p.counts?.[opening?.id] || 0), 0);
+    })).toBe(replay + 2);
+    await map.locator('summary').click();
+  }
   await expect(core).toBeEnabled();
   await core.click();
   await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(20);
