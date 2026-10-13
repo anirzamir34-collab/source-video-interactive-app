@@ -170,9 +170,18 @@ export function bindActionCharacter(action, context = {}) {
   const partnerInScene = partnerCandidate && (!declared.length || present.includes(partnerCandidate));
   const resolvedTarget = primaryIsActor && partnerIsDistinct && partnerInScene
     ? partnerCandidate : (candidate || partnerCandidate);
-  // A truly impossible target (not among explicitly named scene participants)
-  // remains unresolved; never rewrite it to some other nearby character.
-  const mismatch = Boolean(resolvedTarget && declared.length && !present.includes(resolvedTarget)) ||
+  // If two different people are both asserted as the addressee in a
+  // group scene, the target remains ambiguous. The ONE exception is a provider
+  // duplicating the known actor in primaryCharacterId and correctly naming
+  // a different witnessed partner; this is not a two-target contradiction.
+  const conflictingTargets = Boolean(action.primaryCharacterId && action.partnerTrackId &&
+    (!candidate || !partnerCandidate ||
+      (canonicalCharacterId(candidate) !== canonicalCharacterId(partnerCandidate) &&
+       !primaryIsActor)));
+  // An impossible target (not among the explicitly observed scene people)
+  // remains unresolved; never rewrite it to someone merely nearby.
+  const mismatch = conflictingTargets ||
+    Boolean(resolvedTarget && declared.length && !present.includes(resolvedTarget)) ||
     Boolean(targetId && !candidate && !partnerCandidate);
   const target = mismatch ? null : resolvedTarget;
   const result = { ...action,
