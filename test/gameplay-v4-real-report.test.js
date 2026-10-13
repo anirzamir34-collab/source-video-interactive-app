@@ -262,9 +262,9 @@ test('13-action real report topology exposes four opening story cards and both d
     [0,14.4,'story'],[14.4,40.8,'story'],[40.8,86.383,'story'],
     [86.383,103.18,'dialogue'],[112.778,172.766,'dialogue'],
     [134.373,136.773,'touch'],[172.766,211.158,'dialogue'],
-    [211.158,227.955,'position','first'],[227.955,287.943,'position','second'],
+    [211.158,227.955,'position','rear'],[227.955,287.943,'position','missionary'],
     [325.376,327.53,'body_transition'],[374.326,388.723,'touch'],
-    [391.123,431.915,'position','third'],[441.513,451.111,'position','fourth']
+    [391.123,431.915,'position','rear'],[441.513,451.111,'position','missionary']
   ];
   const actions = events.map(([startTime,endTime,actionType,positionId],index) => ({
     actionId: 'event-'+index, sourceActionId:'source-'+index, startTime,endTime,actionType,
@@ -283,5 +283,5 @@ test('13-action real report topology exposes four opening story cards and both d
   assert.ok(coreStage);
   const core = { ...story, stageId:coreStage.id,chapterId:coreStage.chapterId };
   assert.equal(phaseVisibleChoices(core).length,2, 'two verified position families must remain selectable');
-  assert.deepEqual(phaseVisibleChoices(core).map(row=>row.positionId),['first','second']);
+  assert.deepEqual(phaseVisibleChoices(core).map(row=>row.positionId),['rear','missionary']);
 });
