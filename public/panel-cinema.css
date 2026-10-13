@@ -552,3 +552,107 @@
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
 }
+
+/* THREE-PHASE PLAYER: distinct compact story, approach and core surfaces.
+   These remain separate DOM owners; never resize or obstruct the video. */
+#playerSection .video-stage.scene-player.cinematic-ui #choices:not(.hidden) {
+  top: auto !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  left: max(14px, env(safe-area-inset-left)) !important;
+  right: auto !important;
+  transform: none !important;
+  width: min(320px, 32vw) !important;
+  max-width: calc(100% - 28px) !important;
+  max-height: min(60dvh, calc(100% - 52px)) !important;
+  padding: 8px !important;
+  gap: 6px !important;
+  border: 1px solid rgba(200, 220, 236, .23) !important;
+  border-radius: 12px !important;
+  background: rgba(10, 16, 23, .74) !important;
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+  top: auto !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  left: max(14px, env(safe-area-inset-left)) !important;
+  right: auto !important;
+  transform: none !important;
+  width: min(310px, 32vw) !important;
+  max-width: calc(100% - 28px) !important;
+  max-height: min(60dvh, calc(100% - 52px)) !important;
+  padding: 8px !important;
+  gap: 6px !important;
+  border: 1px solid rgba(250, 210, 182, .30) !important;
+  border-radius: 12px !important;
+  background: rgba(31, 18, 24, .75) !important;
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+  pointer-events: auto !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices:not(.hidden) :is(.gameplay-choice, .gameplay-playback-control),
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) .gameplay-choice {
+  display: block !important;
+  min-height: 38px !important;
+  width: 100% !important;
+  padding: 9px 11px !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(213, 233, 232, .24) !important;
+  background: rgba(7, 14, 20, .70) !important;
+  color: #f5f8fc !important;
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+  font-weight: 650 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) .gameplay-choice {
+  border-color: rgba(255, 217, 192, .32) !important;
+  background: rgba(40, 21, 25, .70) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices) .gameplay-status {
+  padding: 1px 2px !important;
+  margin: 0 !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  color: #cad4de !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:not(.hidden) {
+  top: auto !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  right: max(14px, env(safe-area-inset-right)) !important;
+  left: auto !important;
+  transform: none !important;
+  width: min(300px, 31vw) !important;
+  max-width: min(300px, 31vw) !important;
+  max-height: min(72dvh, calc(100% - 28px)) !important;
+  padding: 10px !important;
+  border: 1px solid rgba(177, 236, 221, .28) !important;
+  border-radius: 12px !important;
+  background: rgba(6, 20, 22, .78) !important;
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:not(.hidden) #movementChoices .gameplay-choice {
+  min-height: 38px !important;
+  padding: 9px 10px !important;
+  margin: 2px 0 !important;
+  border: 1px solid rgba(177, 236, 221, .25) !important;
+  border-radius: 8px !important;
+  background: rgba(11, 38, 37, .72) !important;
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+  color: #f0f9f6 !important;
+  text-shadow: none !important;
+}
+@media (orientation: portrait) {
+  #playerSection .video-stage.scene-player.cinematic-ui #choices:not(.hidden),
+  #playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+    width: min(320px, calc(100vw - 28px)) !important;
+  }
+  #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel:not(.hidden) {
+    width: min(320px, calc(100vw - 28px)) !important;
+    max-width: min(320px, calc(100vw - 28px)) !important;
+    max-height: min(55dvh, calc(100% - 22px)) !important;
+  }
+}

@@ -3,15 +3,16 @@ import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-pa
 
 const rendered = new WeakMap();
 const selectedPosition = new WeakMap();
-const openedDuringPlayback = new WeakMap();
-const sourceNavigators = new WeakMap();
 const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
 const movementName = value => ({ rhythmic: 'Ritmik hareket', slow: 'Yavaş hareket',
   moderate: 'Dengeli hareket', fast: 'Hızlı hareket' })[String(value || '').trim().toLowerCase()] || value;
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
 export function renderGameplay({ state, player, els, document = globalThis.document }) {
-  const surface = activeSurface(state), progress = progression(state);
+  const progress = progression(state);
+  // Post-scene choices belong to the narrative overlay, not the core position panel.
+  const active = activeSurface(state);
+  const surface = progress.phase === 'AFTERMATH' && active === 'panel' ? 'story' : active;
   const choices = availableChoices(state);
   const grouped = new Map();
   if (surface === 'panel') for (const choice of choices) {
@@ -26,31 +27,20 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     ? saved.key : positions[0]?.key || '';
   // While source footage is playing, the surface is a minimal playback
   // control, not another interactive decision superimposed on the shot.
-  const visibleChoices = state.selection ? choices : activePosition
+  // Hide selection cards while the source video is actually playing.
+  const visibleChoices = state.selection ? [] : activePosition
     ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
-  const open = state.status === 'error' || (openedDuringPlayback.get(els)?.selectionId === state.selection?.id &&
-    openedDuringPlayback.get(els)?.open);
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
-    state.selection?.index, progress, choices.map(row => row.id), activePosition, open]);
+    state.selection?.index, progress, choices.map(row => row.id), activePosition]);
   if (els.cursorText) els.cursorText.textContent = `${state.cursor.toFixed(1)} sn`;
   if (rendered.get(els) === signature) return;
   rendered.set(els, signature);
   const targets = { story: els.choices, approach: els.approachChoices, panel: els.movementChoices };
   mountInteractionPanel(els.video?.closest('.video-stage'), els.adultInteractionPanel);
   const stageElement = els.video?.closest('.video-stage');
-  let toggle = stageElement?.querySelector?.('.gameplay-menu-toggle');
-  if (stageElement && !toggle) {
-    toggle = document.createElement('button'); toggle.type = 'button';
-    toggle.className = 'gameplay-menu-toggle'; stageElement.appendChild(toggle);
-  }
-  if (toggle) {
-    toggle.hidden = !state.selection;
-    toggle.textContent = open ? 'Seçenekleri kapat' : 'Seçenekler';
-    toggle.onclick = () => {
-      openedDuringPlayback.set(els, { selectionId: state.selection?.id, open: !open });
-      rendered.delete(els); renderGameplay({ state, player, els, document });
-    };
-  }
+  // Remove the old duplicate/source-explorer overlays from the movie canvas.
+  stageElement?.querySelector?.('.gameplay-menu-toggle')?.remove?.();
+  stageElement?.querySelector?.('.gameplay-source-navigator')?.remove?.();
   for (const target of [...Object.values(targets), els.positionTabs, els.adultQuickChoices]) target?.replaceChildren();
   for (const key of ['foreplaySection', 'categorySection', 'groupPartnerSection',
     'outcomeSection', 'orgasmDecision', 'rhythmControl', 'nextVariantBtn', 'finishAdultSceneBtn']) {
@@ -61,71 +51,6 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   els.movementSection?.classList.toggle('hidden', surface !== 'panel');
   els.positionSection?.classList.toggle('hidden', !positions.length || Boolean(state.selection));
 
-
-  // The chapter's current choices and the source explorer are distinct.
-  // The explorer remains usable DURING playback and never invents branches.
-  // It also keeps STORY/APPROACH/CORE observations in separate categories.
-  if (stageElement) {
-    let navigator = sourceNavigators.get(els);
-    if (!navigator || navigator.parentElement !== stageElement) {
-      navigator = document.createElement('details');
-      navigator.className = 'gameplay-source-navigator';
-      stageElement.appendChild(navigator);
-      sourceNavigators.set(els, navigator);
-    }
-    if (navigator.dataset.graphFingerprint !== state.fingerprint) {
-      navigator.open = false;
-      navigator.dataset.graphFingerprint = state.fingerprint;
-    }
-    navigator.replaceChildren();
-    const heading = document.createElement('summary');
-    heading.textContent = 'Sahneler ve seçenekler';
-    navigator.appendChild(heading);
-    const labels = {
-      STORY: 'Konuşmalar ve hikâye',
-      APPROACH: 'Yakınlaşma',
-      CORE: 'Ana etkileşimler',
-      AFTERMATH: 'Sahne sonrası',
-      OUTCOME: 'Sonuç'
-    };
-    for (const phase of ['STORY', 'APPROACH', 'CORE', 'AFTERMATH', 'OUTCOME']) {
-      const phaseClips = state.graph.clips.filter(clip =>
-        state.graph.stages.some(stage => stage.id === clip.stageId && stage.phase === phase));
-      if (!phaseClips.length) continue;
-      const group = document.createElement('section');
-      group.className = 'gameplay-source-group';
-      const title = document.createElement('strong');
-      title.textContent = labels[phase];
-      group.appendChild(title);
-      for (const clip of phaseClips) {
-        const choice = state.graph.choices.find(row => row.stageId === clip.stageId && row.clipIds.includes(clip.id));
-        if (!choice) continue;
-        const link = document.createElement('button');
-        link.type = 'button';
-        link.className = 'gameplay-source-event';
-        link.textContent = choice.abstained ? 'Kaynak olayını oynat' : choice.label;
-        link.setAttribute('aria-label', link.textContent);
-        // The explorer is source navigation, not a bypass for earned
-        // core-stage unlocks. When an observed opening precedes the first
-        // core event, that opening must earn its real watched progress.
-        const openingBeforeCore = phase === 'CORE' && state.graph.stages.some(row =>
-          row.phase === 'APPROACH' && row.startTime < clip.startTime &&
-          row.endTime <= clip.startTime + .05 &&
-          clip.startTime - row.endTime <= 180);
-        link.disabled = Boolean(openingBeforeCore && progress.lust < 100);
-        if (link.disabled) link.title = 'Önce doğrulanmış yakınlaşma eylemlerini oynat.';
-        link.dataset.clipId = clip.id;
-        link.setAttribute('aria-current', String(state.selection?.clipIds?.includes(clip.id) || false));
-        link.addEventListener('click', () => {
-          navigator.open = false;
-          openedDuringPlayback.delete(els);
-          void player.selectSourceEvent(clip.id);
-        });
-        group.appendChild(link);
-      }
-      navigator.appendChild(group);
-    }
-  }
 
   const root = targets[surface] || els.choices;
   if (!root) return;
@@ -200,7 +125,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     const label = storyIsObservation ? 'Hikâyeyi oynat' :
       repeatingPositionLabel ? movementName(choice.movementLabel) || choice.label : choice.label;
     const card = makeButton(root, label, () => {
-      openedDuringPlayback.delete(els); void player.select(choice.id);
+      void player.select(choice.id);
     },
       'choice story-choice gameplay-choice gameplay-choice-card');
     card.disabled = false;
@@ -215,13 +140,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   // mirrored the same cards and caused stacked/duplicated controls.
   els.adultQuickChoices?.replaceChildren();
 
-  if (state.selection && open) {
-    makeButton(root, state.status === 'paused' ? 'Sürdür' : 'Duraklat',
-      () => state.status === 'paused' ? void player.resume() : player.pause(), 'gameplay-playback-control');
-    makeButton(root, 'Yeniden oynat', () => { openedDuringPlayback.delete(els); void player.replay(); },
-      'gameplay-playback-control');
-  }
-  if (state.status === 'error') makeButton(root, 'Yeniden dene', () => void player.retry());
+  if (state.status === 'error')
+    makeButton(root, 'Yeniden dene', () => void player.retry());
   if (state.error && !state.selection && choices.length)
     makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   if (state.status === 'paused') makeButton(root, 'Oynatmaya devam et', () => void player.resume());
@@ -237,15 +157,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     if (state.cursor < state.graph.duration - .05)
       makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   }
-  if (state.selection && progress.phase === 'STORY')
-    makeButton(root, 'Sonraki hikâye olayına geç', () => void player.skipCurrentClip(),
-      'choice gameplay-skip gameplay-choice-card');
-  else if (choices.length && (state.selection || !progress.completed))
-    makeButton(root, 'Bu aşamayı geç', () => player.skipStage(),
-      'choice gameplay-skip gameplay-choice-card');
-
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-    approach: els.approachChoices, surface: state.selection && !open ? 'none' : surface });
+    approach: els.approachChoices, surface: state.selection && state.status !== 'paused' && state.status !== 'error' ? 'none' : surface });
   if (els.adultSceneTitle) els.adultSceneTitle.textContent = 'Doğrulanmış seçimler';
   if (els.adultDockTitle) els.adultDockTitle.textContent = phaseLabel;
   for (const key of ['adultDockPhase', 'adultPhaseBadge', 'adultPhaseTitle'])
