@@ -45,6 +45,8 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
     normalizeChunkActionTimes: actions => ({ actions, rebased: false }),
     secondPassReviewCandidates: () => review ? [{ actionId: 'walk' }] : [],
     mergeSecondPassReview: body => body, mergeStoryContexts: () => ({}),
+    runAutoSecondPass: async ({actions})=>({actions,stats:{requests:0}}),
+    analysisProgress:{update(){},done(){}}, storyboardSource:null, file:null, logEngineEvent(){},
     setTimeout: (callback, delay) => { delays.push(delay); callback(); },
     fetch: async (_url, options) => {
       const request = {

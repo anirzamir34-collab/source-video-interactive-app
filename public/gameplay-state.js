@@ -100,12 +100,41 @@ export function nextPlayableClip(state, selection = state.selection) {
   const clip = clipOf(state, selection.clipIds[selection.index]);
   return clipIsContinuous(state, clip) ? clip : null;
 }
+// Earn Lust from actual watched opening interactions. A lone click is never enough.
+const LUST_MIN_MASS = 3, LUST_REPLAY_BONUS = .5, LUST_REPLAY_CAP = 2;
+const undressing = /soyun|çıkar|cikar|clothing|undress|kıyafet|giysi/iu;
+export function lustWeight(choice) {
+  const description = String(choice?.movementLabel || '') + ' ' + String(choice?.label || '');
+  return undressing.test(description) ? 1.5 : 1;
+}
+export function lustOf(state, opening) {
+  if (!opening.length) return {lust:0, earned:0};
+  let credit=0, distinctMass=0, earned=0;
+  for (const {id,stageId} of opening) {
+    const weight=lustWeight(choiceOf(state,id));
+    const count=state.stageProgress[stageId]?.counts?.[id] || 0;
+    distinctMass += weight;
+    if (count > 0) {
+      earned++;
+      credit += weight * Math.min(LUST_REPLAY_CAP,1+LUST_REPLAY_BONUS*(count-1));
+    }
+  }
+  // Two separately observed actions should unlock together; one isolated
+  // action requires three real watched plays. No repeated single choice can
+  // bypass a second available and unplayed action.
+  const required = opening.length >= 2 ? Math.min(LUST_MIN_MASS,distinctMass)
+    : distinctMass * LUST_REPLAY_CAP;
+  const raw = clamp(100*credit/required);
+  const lust = opening.length > 1 && earned < 2 ? Math.min(raw,75) : raw;
+  return {lust,earned};
+}
 export function progression(state) {
   const stage = stageOf(state), progress = state.stageProgress[stage?.id] || emptyProgress();
   const next = followingStage(state);
   const opening = openingChoices(state);
-  const earned = opening.filter(row => state.stageProgress[row.stageId]?.counts?.[row.id] > 0).length;
-  const lust = opening.length ? clamp(100 * earned / opening.length) : 0;
+  const {lust: openingLust, earned} = lustOf(state, opening);
+  const lust = opening.length ? openingLust :
+    ['CORE', 'AFTERMATH', 'OUTCOME'].includes(stage?.phase) ? 100 : 0;
   const sceneEngagements = opening.length ? earned : 0;
   return { stageId: state.stageId, phase: stage?.phase || 'STORY', value: clamp(progress.score),
     lust, sceneEngagements, completed: progress.completed,

@@ -233,7 +233,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal, o
     const times = [];
     if (repairRange) {
       const gapInterval = Math.max(0.75, (rangeEnd - rangeStart) / Math.min(48,
-        Math.max(12, Math.ceil((rangeEnd - rangeStart) / 3))));
+        Math.max(12, Math.ceil((rangeEnd - rangeStart) / 1.5))));
       for (let time = rangeStart; time < rangeEnd - 0.05; time += gapInterval) times.push(time);
       if (!times.length) times.push(rangeStart);
     } else {

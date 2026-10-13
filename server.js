@@ -334,6 +334,31 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   catch { return res.status(400).json({ available: false, retryable: false, reason: 'INVALID_REVIEW_CANDIDATES', message: 'Doğrulama adayları okunamadı; geçerli analiz verisi gerekli.' }); }
   const storyContextMemory = reviewMode ? '{}' :
     String(req.body?.storyContextMemory || '{}').slice(0, 24000);
+  // Narrow a single repair request without relaxing original visual evidence rules.
+  let repairFocus = null;
+  try {
+    const candidate = JSON.parse(String(req.body?.repairFocus || 'null'));
+    if (candidate && ['SILENT_GAP', 'LONG_POSITION'].includes(candidate.kind)) {
+      repairFocus = {kind:candidate.kind,
+        positionId:String(candidate.positionId || '').slice(0,60),
+        positionLabel:String(candidate.positionLabel || '').slice(0,80),
+        positionOccurrenceId:String(candidate.positionOccurrenceId || '').slice(0,80)};
+    }
+  } catch { repairFocus=null; }
+  const repairInstructions = !repairFocus ? '' : repairFocus.kind === 'SILENT_GAP' ? `
+TARGETED RE-ANALYSIS OF AN UNOBSERVED SOURCE INTERVAL:
+- The first pass reported no source-verified action from ${chunkStart.toFixed(1)} to ${chunkEnd.toFixed(1)} seconds. Examine the supplied dense video frames independently.
+- List independently visible, distinct chronological source events with exact bounded timestamps, including ordinary conversations, transitions, verified approach gestures, and later interaction phases where supported.
+- Do not invent an event just because there is a gap. Audio statements are not independent proof of visual movements.
+- Set sourceVerified false for uncertain events and include an explicit warning for unresolved source intervals.
+` : `
+TARGETED MOVEMENT REVIEW OF ONE LONG OBSERVED CONFIGURATION:
+- Original interval: ${chunkStart.toFixed(1)} to ${chunkEnd.toFixed(1)} seconds. Parent configuration ${repairFocus.positionLabel || repairFocus.positionId}.
+- Do not guess different physical configurations from camera angles. Split only independently distinguishable visible source actions into precise time-bounded rows. Repeated cuts of the same action must retain a shared gameplayEvidence.sourceActionId, occurrenceId and action.key.
+- Every returned row requires gameplayEvidence.version 2, action.verified true, action.confidence >= 0.6, explicit visual timestamp evidence, and the same positionId ${repairFocus.positionId}. Do not promote sourceVerified merely because another row is labelled verified.
+- Different visible actions get different semantic keys; repeated cuts of one verified action keep the same key. If only one action is substantiated, return one with a warning.
+- Never fabricate two to six choices or divide the interval into arbitrary equal-duration clips.
+`;
   const reviewInstructions = reviewMode ? `
 SECOND PASS VISUAL REVIEW MODE:
 - You have NO transcript, NO speaker profiles, NO remembered story context and NO non-speech-audio context. This is a deliberately independent, image-only channel.
@@ -388,7 +413,7 @@ Detected visual scene boundaries for this chunk: ${sceneBoundaries}
 - Treat boundary timestamps as navigation hints, not proof of an action.
 - Prefer starting or ending an action near a boundary only when the adjacent frames visibly confirm the change.
 Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
-${reviewInstructions}
+${reviewInstructions}${repairInstructions}
 TWO INDEPENDENT EVIDENCE CHANNELS:
 1. VISUAL CHANNEL: identify visible people, configurations, contact, physical
    actions, location/clothing/posture and exactly bounded source intervals using
