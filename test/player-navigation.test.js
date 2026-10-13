@@ -569,3 +569,21 @@ test('distinct simultaneous story questions show together without exposing later
   assert.deepEqual(Array.from(f.futureActions(), action => action.actionId), ['question-a', 'question-b']);
   assert.equal(f.els.choices.children.length, 2);
 });
+
+test('late source frame does not consume a following normal decision', async () => {
+  const f = fixture(); useRealCompletion(f);
+  const first = { actionId: 'first', label: 'İlk konuşma', actionType: 'dialogue',
+    startTime: 10, endTime: 15, sourceVerified: true };
+  const second = { actionId: 'second', label: 'İkinci konuşma', actionType: 'dialogue',
+    startTime: 15, endTime: 23, sourceVerified: true };
+  f.state.analysis.actions = [first, second];
+  await f.playAction(first);
+  f.els.video.time = 25;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameCursorTime, 15);
+  assert.equal(f.state.consumedActionIds.has('first'), true);
+  assert.equal(f.state.consumedActionIds.has('second'), false);
+  assert.equal(f.futureActions()[0].actionId, 'second');
+  await f.playAction(second);
+  assert.equal(f.els.video.currentTime, 15);
+});
