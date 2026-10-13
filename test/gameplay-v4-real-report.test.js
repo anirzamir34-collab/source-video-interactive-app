@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGameplayGraph } from '../public/gameplay-evidence.js';
-import { createGameplayState, availableChoices, progression, gameplayReducer } from '../public/gameplay-state.js';
+import { createGameplayState, availableChoices, activeSurface, progression, gameplayReducer } from '../public/gameplay-state.js';
 import { renderGameplay } from '../public/gameplay-view.js';
 import { createGameplayPlayer } from '../public/gameplay-player.js';
 
@@ -216,4 +216,40 @@ test('cinematic story owns its local choices and hides all cards during source p
   assert.ok(els.approachChoices.children.some(row=>row.tag==='button'));
   assert.ok(!labels().includes('Sonraki sahne'),
     'an empty story stage cannot bypass the later stages in its chapter');
+});
+
+test('after-scene choices use the narrative overlay without moving or rewriting verified source ranges', () => {
+  const graph = createGameplayGraph(source);
+  const after = graph.stages.find(row => row.phase === 'AFTERMATH');
+  assert.ok(after, 'the observed aftermath remains a distinct chronological stage');
+  assert.equal(after.surface, 'panel', 'existing graph and saved-game fingerprint stay unchanged');
+
+  const state = gameplayReducer(createGameplayState(graph), { type: 'SEEK', time: 444 });
+  assert.equal(state.stageId, after.id);
+  assert.equal(activeSurface(state), 'story', 'runtime surface owns the correct overlay');
+  assert.ok(availableChoices(state).length, 'the after-scene selection remains playable');
+  assert.equal(graph.clips.at(-1).startTime, 443.912);
+
+  const makeElement = name => {
+    const classes = new Set();
+    return { name, children: [], dataset: {}, style: {}, classList: {
+      add(cls) { classes.add(cls); }, remove(cls) { classes.delete(cls); },
+      contains(cls) { return classes.has(cls); },
+      toggle(cls, force) { if (force === undefined ? !classes.has(cls) : force) classes.add(cls); else classes.delete(cls); },
+    }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; },
+    replaceChildren(...children) { this.children = children; },
+    setAttribute() {}, addEventListener() {},
+    };
+  };
+  const document = { createElement: makeElement, querySelectorAll: () => [] };
+  const stage = makeElement('stage'); stage.ownerDocument = document;
+  const els = { video: { closest: () => stage }, adultInteractionPanel: makeElement('panel'),
+    choices: makeElement('story'), approachChoices: makeElement('approach'),
+    movementChoices: makeElement('movements'), positionTabs: makeElement('tabs') };
+  renderGameplay({ state, els, document, player: { select() {}, nextChapter() {}, continueVideo() {} } });
+  assert.equal(els.choices.classList.contains('hidden'), false);
+  assert.equal(els.adultInteractionPanel.classList.contains('hidden'), true);
+  assert.equal(els.approachChoices.classList.contains('hidden'), true);
+  assert.ok(els.choices.children.some(row => row.textContent === 'Sahne sonrası · Seçimler'));
+  assert.ok(!els.choices.children.some(row => String(row.textContent || '').includes('Lust %')));
 });
