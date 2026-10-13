@@ -75,13 +75,18 @@ export function progression(state) {
   const stage = stageOf(state), progress = state.stageProgress[stage?.id] || emptyProgress();
   const chapter = state.graph.chapters.find(row => row.id === state.chapterId);
   const next = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1] || null;
-  // Lust represents earned engagement across the full source encounter,
-  // not an individual stage clock that resets at every position change.
   const interactiveStages = (chapter?.stageIds || []).map(id =>
     state.graph.stages.find(row => row.id === id)).filter(row => row && row.phase !== 'STORY');
-  const lust = interactiveStages.length
-    ? clamp(interactiveStages.reduce((sum, row) =>
-      sum + (state.stageProgress[row.id]?.score || 0), 0) / interactiveStages.length) : 0;
+  // The opening meter is earned from distinct, watched approach actions.
+  // Counting CORE/AFTERMATH in its denominator made it change after unlock
+  // and prevented a sparse but genuinely observed opening from filling.
+  const firstCore = interactiveStages.find(row => row.phase === 'CORE');
+  const approachStages = interactiveStages.filter(row => row.phase === 'APPROACH' &&
+    (!firstCore || row.startTime < firstCore.startTime));
+  const approachIds = approachStages.flatMap(row => row.choiceIds);
+  const earnedApproaches = approachStages.reduce((sum, row) => sum +
+    row.choiceIds.filter(id => state.stageProgress[row.id]?.counts?.[id] > 0).length, 0);
+  const lust = approachIds.length ? clamp(100 * earnedApproaches / approachIds.length) : 0;
   const sceneEngagements = interactiveStages.reduce((sum, row) =>
     sum + Object.keys(state.stageProgress[row.id]?.counts || {}).length, 0);
   return { stageId: state.stageId, phase: stage?.phase || 'STORY', value: clamp(progress.score),

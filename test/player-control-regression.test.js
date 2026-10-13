@@ -28,6 +28,32 @@ test('uploaded analysis: overlapping source event remains independently reachabl
   assert.equal(stage, graph.clips.find(row => row.startTime === 134.373).stageId);
 });
 
+test('uploaded analysis: story, approach and core stay separate and opening progress reaches its verified boundary', { skip: !existsSync(realReport) }, () => {
+  const report = JSON.parse(readFileSync(realReport));
+  const graph = createGameplayGraph({ videoDuration: report.graph.duration,
+    actions: report.actions.map(row => ({ ...row.input, actionId: row.actionId, label: row.label,
+      startTime: row.startTime, endTime: row.endTime, sourceVerified: true, confidence: row.confidence })) });
+  assert.deepEqual(graph.stages.map(stage => stage.phase),
+    ['STORY', 'APPROACH', 'STORY', 'APPROACH', 'CORE', 'APPROACH', 'CORE', 'AFTERMATH']);
+  assert.equal(graph.clips.filter(clip => clip.stageId === graph.stages[4].id).length, 1);
+  assert.equal(graph.choices.find(row => row.stageId === graph.stages[4].id).movementLabel, 'ritmik hareket');
+  let state = createGameplayState(graph);
+  const earn = time => {
+    state = gameplayReducer(state, { type: 'SEEK', time, rewind: true });
+    const choice = availableChoices(state)[0];
+    state = gameplayReducer(state, { type: 'SELECT', choiceId: choice.id });
+    const selectionId = state.selection.id;
+    state = gameplayReducer(state, { type: 'PLAYING', selectionId });
+    for (let t = time + .5; t <= time + 3.5; t += .5) {
+      state = gameplayReducer(state, { type: 'PLAYBACK', selectionId, time: t, elapsed: .5, playing: true });
+    }
+  };
+  earn(134.373);
+  assert.equal(progression(state).lust, 50);
+  earn(211.158);
+  assert.equal(progression(state).lust, 100);
+});
+
 test('new selection interrupts seeking and stale completion cannot award progress', () => {
   const graph = createGameplayGraph(analysis([observation('a', 0, { duration: 30 }), observation('b', 31)]));
   let state = createGameplayState(graph);

@@ -43,6 +43,21 @@ test('player owns the clock: switch and navigate before a long clip finishes', a
   await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeLessThan(15);
 });
 
+test('phase panels keep source navigation separate from local choices', async ({ page }) => {
+  await load(page, [observation('dialogue', 0, { phase: 'STORY', duration: 2,
+    storyEvidenceLevel: 'fact', storyConfidence: .95, narrativeChoiceLabel: 'Kaynak konuşması' }),
+    observation('approach', 3, { duration: 2 }),
+    observation('core', 6, { phase: 'CORE', duration: 2,
+      positionId: 'seated-facing', positionLabel: 'Kaynak duruşu' })]);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(1);
+  await expect(page.locator('#choices .gameplay-event-map')).toHaveCount(0);
+  await expect(page.locator('.video-stage > .gameplay-event-map')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Bu aşamayı geç', exact: true }).click();
+  await expect(page.locator('#approachChoices .gameplay-choice')).toHaveCount(1);
+  await expect(page.locator('#choices')).toBeHidden();
+  await expect(page.locator('#adultInteractionPanel')).toBeHidden();
+});
+
 test('B/F/G: real video playback earns bounded engagement and seeks to next stage source start', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await load(page, [observation('a', 0, { duration: 2 }), observation('b', 3, { duration: 2 }),
