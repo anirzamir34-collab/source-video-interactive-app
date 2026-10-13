@@ -118,12 +118,12 @@ test('D: changed cast, occurrence or observed semantics forbids cut merging', ()
 test('core: independently evidenced source actions remain six choices; repeated cuts play as one ordered sequence', () => {
   const actions = Array.from({ length: 6 }, (_, i) => observation(`core-${i}`, i * 8, {
     phase: 'CORE', duration: 4,
-    positionId: 'neutral-pose', positionLabel: 'Doğrulanan duruş',
+    positionId: 'seated-facing', positionLabel: 'Doğrulanan duruş',
     positionOccurrenceId: 'same-continuous-configuration',
     gameplayEvidence: evidence(`atomic-${i}`, { occurrenceId: 'same-continuous-configuration' })
   }));
   actions.push(observation('core-zero-return', 49, {
-    phase: 'CORE', duration: 4, positionId: 'neutral-pose',
+    phase: 'CORE', duration: 4, positionId: 'seated-facing',
     positionLabel: 'Doğrulanan duruş', positionOccurrenceId: 'same-continuous-configuration',
     gameplayEvidence: evidence('atomic-0', { occurrenceId: 'same-continuous-configuration' })
   }));
