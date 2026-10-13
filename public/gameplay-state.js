@@ -109,17 +109,24 @@ export function lustWeight(choice) {
 }
 export function lustOf(state, opening) {
   if (!opening.length) return {lust:0, earned:0};
-  let credit=0, mass=0, earned=0;
+  let credit=0, distinctMass=0, earned=0;
   for (const {id,stageId} of opening) {
     const weight=lustWeight(choiceOf(state,id));
     const count=state.stageProgress[stageId]?.counts?.[id] || 0;
-    mass += weight * LUST_REPLAY_CAP;
+    distinctMass += weight;
     if (count > 0) {
       earned++;
       credit += weight * Math.min(LUST_REPLAY_CAP,1+LUST_REPLAY_BONUS*(count-1));
     }
   }
-  return {lust:clamp(100*credit/Math.min(LUST_MIN_MASS,mass)),earned};
+  // Two separately observed actions should unlock together; one isolated
+  // action requires three real watched plays. No repeated single choice can
+  // bypass a second available and unplayed action.
+  const required = opening.length >= 2 ? Math.min(LUST_MIN_MASS,distinctMass)
+    : distinctMass * LUST_REPLAY_CAP;
+  const raw = clamp(100*credit/required);
+  const lust = opening.length > 1 && earned < 2 ? Math.min(raw,75) : raw;
+  return {lust,earned};
 }
 export function progression(state) {
   const stage = stageOf(state), progress = state.stageProgress[stage?.id] || emptyProgress();
