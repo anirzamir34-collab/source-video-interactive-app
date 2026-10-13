@@ -23,8 +23,19 @@ export function partitionProtagonistActions(actions = [], context = {}, mainTrac
     const subject = canonical(action.subjectTrackId);
     const participants = [action.subjectTrackId, action.primaryCharacterId, action.partnerTrackId,
       ...(action.involvedCharacterIds || []), ...(action.participantTrackIds || [])].map(canonical).filter(Boolean);
-    if ((subject && subject !== protagonist) ||
-        participants.some(id => id !== protagonist && (otherMaleTracks.has(id) || otherMaleTrack(id)))) excluded.push(action);
+    // A verified conversation or story event belongs to its observed actor,
+    // not to every person in the same frame. Another male may listen, answer,
+    // or stand nearby without transferring the player's agency to him.
+    // Keep the stronger cast ownership barrier for intimate/core scenes.
+    const ordinaryStory = action.sourceVerified === true && subject === protagonist &&
+      ['dialogue', 'story', 'scene_transition', 'camera_transition'].includes(String(action.actionType || '').toLowerCase()) &&
+      action.adultScene !== true && !action.positionId && !action.positionLabel &&
+      !['oral', 'manual', 'vaginal', 'anal'].includes(String(action.activityType || '').toLowerCase()) &&
+      !['climax', 'aftermath'].includes(String(action.outcomeType || '').toLowerCase());
+    const foreignActor = Boolean(subject && subject !== protagonist);
+    const ambiguousCast = participants.some(id =>
+      id !== protagonist && (otherMaleTracks.has(id) || otherMaleTrack(id)));
+    if (foreignActor || (ambiguousCast && !ordinaryStory)) excluded.push(action);
     else playable.push(action);
   }
   return { playable, excluded };
