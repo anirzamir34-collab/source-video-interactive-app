@@ -37,7 +37,7 @@ const cut=(id,start,end,key,more={})=>row(id,start,end,{
   ...more
 });
 test('long core event is considered for review, not automatically cut',()=>{
-  assert.deepEqual(findLongPositionRows([parent,row('short',0,7,{...parent,actionId:'short'})])
+  assert.deepEqual(findLongPositionRows([parent,row('short',0,7,{...parent,actionId:'short',startTime:0,endTime:7})])
     .map(r=>r.actionId),['parent']);
   assert.equal(refinePositionRow([parent],parent,{actions:[cut('a',392,400,'one')]}).replaced,false);
 });
