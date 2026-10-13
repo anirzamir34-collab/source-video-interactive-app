@@ -24,16 +24,18 @@ test('A/G: chronological narrative cards stay local and fullscreen preserves the
   expect(errors).toEqual([]);
 });
 
-test('player owns the clock and hides choices while playing; source arrows remain usable', async ({ page }) => {
+test('player owns the clock and keeps phase choices accessible during playback', async ({ page }) => {
   await load(page, [observation('first', 0, { duration: 9 }),
     observation('second', 12, { duration: 9 })]);
   await page.locator('#approachChoices .gameplay-choice').first().click();
   await expect(page.locator('.gameplay-menu-toggle')).toHaveCount(0);
   await expect(page.locator('.gameplay-source-navigator')).toHaveCount(0);
-  await expect(page.locator('#approachChoices')).toBeHidden();
+  await expect(page.locator('#approachChoices')).toBeVisible();
+  await expect(page.locator('#approachChoices .gameplay-choice')).toHaveCount(2);
   await page.locator('#nextChoiceBtn').click();
   await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(12);
   expect(await page.evaluate(() => __gameplayTest.state().selection?.choiceId)).toContain('second');
+  await expect(page.locator('#approachChoices')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Duraklat', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Yeniden oynat', exact: true })).toHaveCount(0);
 });
@@ -177,4 +179,42 @@ test('global source navigator and playback menu are absent; phase source arrows 
   await expect(page.locator('#choices')).toBeHidden();
   await expect(page.locator('#adultInteractionPanel')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Duraklat', exact: true })).toHaveCount(0);
+});
+
+test('fullscreen keeps all local source choices visible, including during playback and core switches', async ({ page }) => {
+  const errors = []; page.on('pageerror', err => errors.push(err.message));
+  const actions = [
+    ...Array.from({ length: 4 }, (_, i) => observation('narrative-' + i, i * 2, {
+      phase: 'STORY', duration: 2, storyEvidenceLevel: 'fact', storyConfidence: .95,
+      narrativeChoiceLabel: 'Hikâye seçeneği ' + i })),
+    observation('opening', 9, { phase: 'APPROACH', duration: 2 }),
+    observation('core-a', 12, { phase: 'CORE', duration: 2,
+      positionId: 'position-a', positionLabel: 'Pozisyon A' }),
+    observation('core-b', 14, { phase: 'CORE', duration: 2,
+      positionId: 'position-b', positionLabel: 'Pozisyon B' })
+  ];
+  await load(page, actions);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(4);
+  await page.locator('#fullscreenBtn').click();
+  await expect.poll(() => page.evaluate(() =>
+    document.fullscreenElement === document.querySelector('.video-stage'))).toBe(true);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(4);
+  await expect(page.locator('#choices')).toBeVisible();
+  await page.locator('#choices .gameplay-choice').last().click();
+  await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(6);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(4);
+  await expect(page.locator('#choices')).toBeVisible();
+  await page.locator('#nextChoiceBtn').click();
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().stageId)).toContain('opening');
+  await expect(page.locator('#approachChoices')).toBeVisible();
+  await expect(page.locator('#choices')).toBeHidden();
+  await page.locator('#nextChoiceBtn').click();
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().stageId)).toContain('core-a');
+  await expect(page.locator('#adultInteractionPanel')).toBeVisible();
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(2);
+  await expect(page.locator('#positionTabs .position-tab')).toHaveCount(2);
+  await page.locator('#movementChoices .gameplay-choice').last().click();
+  await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(14);
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(2);
+  expect(errors).toEqual([]);
 });
