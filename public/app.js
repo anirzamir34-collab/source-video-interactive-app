@@ -6051,11 +6051,13 @@ async function resumeAnalysisGap(target) {
     els.video.pause();
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
-    // A delayed timeupdate can arrive after the exact verified boundary.
-    // Preserve that boundary as the decision cursor; the selected action will
-    // seek to its own source timestamp instead of skipping a choice.
-    state.gameCursorTime = Math.min(bridgeTarget,
-      Number(els.video.duration) || Number(state.analysis?.videoDuration) || bridgeTarget);
+    // Anchor a verified decision at its source timestamp even if a delayed
+    // timeupdate arrives after it. An ordinary speech/gap bridge with no
+    // verified route still advances to the actual observed media time.
+    state.gameCursorTime = Math.min(
+      verifiedRouteAtBoundary ? bridgeTarget : Math.max(bridgeTarget, now),
+      Number(els.video.duration) || Number(state.analysis?.videoDuration) || bridgeTarget
+    );
     logEngineEvent('ANALYSIS_GAP_PLAYBACK_COMPLETED', { at: state.gameCursorTime });
     setGameState('DECISION_PENDING');
     renderChoices();
