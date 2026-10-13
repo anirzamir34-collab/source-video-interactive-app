@@ -48,7 +48,8 @@ import { adaptiveAnalysisChunkPlan, extractStoryboard } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 import { recoverVerifiedChunksOnCreditExhaustion } from './partial-analysis-recovery.js';
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
-import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
+import { repairableAnalysisGaps, mergeRepairedAnalysis, findSilentGaps, findLongPositionRows,
+  mergeSilentGapActions, refinePositionRow, MAX_AUTO_REPAIR_REQUESTS } from './analysis-gap-repair.js';
 
 
 import { mountSavedGames } from './saved-games-ui.js';
@@ -1984,6 +1985,24 @@ els.analyzeBtn.addEventListener('click', async () => {
         .map(result => String(result.videoPrompt || '').trim())
         .filter(Boolean);
       const mergedStoryContext = mergeStoryContexts(completedResults);
+
+
+      // Repair omissions and long generic observations after the first pass.
+      // Never replace first-pass data when the targeted request is unsuccessful.
+      analysisProgress.update('analysis', {loaded: chunkCount, total: chunkCount, unit:'bölüm',
+        detail:'Eksik video aralıkları ve uzun eylemler kontrol ediliyor.'});
+      const secondPass = await runAutoSecondPass({
+        source: storyboardSource || session.file || file, actions:mergedActions,
+        duration:storyboard.duration,storyContext:mergedStoryContext,
+        onProgress: detail => { els.analysisOutput.textContent = detail; }
+      });
+      if (secondPass.stats.requests) {
+        logEngineEvent('AUTO_SECOND_PASS', secondPass.stats);
+        mergedActions.splice(0, mergedActions.length, ...secondPass.actions.map((action,index) => ({
+          ...action,actionId:'tl-'+String(index+1).padStart(3,'0'),
+          sceneId:action.sceneId || 'scene-'+String(index+1).padStart(3,'0')
+        })));
+      }
 
       const firstResult = chunkResults[0] || {};
 
@@ -4019,6 +4038,94 @@ async function openSavedGame(game) {
   els.analysisOutput.textContent = 'Kayıtlı video ve analiz açıldı. Yeni analiz veya video indirmesi yapılmadı.';
   renderDebug();
   els.playerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Dense, focused Gemini analysis for one observed source interval.
+async function analyzeSourceInterval(source, interval, {
+  duration,storyContext,focus,index,count,idPrefix
+} = {}) {
+  try {
+    const storyboard = await extractStoryboard(source,()=>{},undefined,{timeRange:interval});
+    const form = new FormData();
+    storyboard.sheets.forEach((sheet,i)=>form.append('storyboards',sheet,
+      'auto-'+(index+1)+'-'+(i+1)+'.jpg'));
+    form.append('duration',String(duration));
+    form.append('timestamps',JSON.stringify(storyboard.timestamps));
+    form.append('motionProfile',JSON.stringify(storyboard.motionProfile));
+    form.append('sceneBoundaries',JSON.stringify(storyboard.sceneBoundaries));
+    form.append('chunkStart',String(interval.startTime));
+    form.append('chunkEnd',String(interval.endTime));
+    form.append('chunkIndex',String(index));
+    form.append('chunkCount',String(count));
+    form.append('qualityMode','ultra');
+    form.append('repairFocus',JSON.stringify(focus));
+    form.append('storyContextMemory',JSON.stringify(storyContext || {}));
+    const segments = state.sourceContext?.segments || [];
+    form.append('dialogueContext',JSON.stringify(segments.filter(item =>
+      Number(item.endTime) > interval.startTime && Number(item.startTime) < interval.endTime)));
+    form.append('dialogueSpeakerContext',JSON.stringify(state.sourceContext?.speakers || []));
+    form.append('sensoryAudioContext',JSON.stringify((state.sourceContext?.nonSpeechEvents || []).filter(item =>
+      Number(item.endTime) > interval.startTime && Number(item.startTime) < interval.endTime)));
+    const response = await fetch('/api/gemini-storyboard-analyze',{
+      method:'POST',headers:geminiRequestHeaders(),body:form,signal:AbortSignal.timeout(240000)
+    });
+    const result=await response.json();
+    recordAiUsage(result?.aiUsage);
+    if (!response.ok || !result?.available) return {available:false,reason:result?.reason};
+    const corrected=normalizeChunkActionTimes(result.actions,interval.startTime,interval.endTime);
+    const normalized=normalizeAnalysis({...result,actions:corrected.actions,
+      storyContext:mergeStoryContexts([{storyContext},result]),videoDuration:duration});
+    return {...result,actions:normalized.actions.map((action,i)=>({...action,
+      actionId:idPrefix+'-'+Math.round(interval.startTime*1000)+'-'+(i+1)}))};
+  } catch(error) {
+    return {available:false,message:error?.message || 'Yeniden analiz bağlantı hatası'};
+  }
+}
+
+async function runAutoSecondPass({
+  source,actions,duration,storyContext,onProgress=()=>{}
+} = {}) {
+  const stats={requests:0,failed:0,gapActionsAdded:0,refinedPositions:0,sequences:0,gapCount:0};
+  if (!(source instanceof Blob) || !Array.isArray(actions) || !(duration>0))
+    return {actions,stats};
+  let rows=actions;
+  const gaps=findSilentGaps(rows,duration).slice(0,MAX_AUTO_REPAIR_REQUESTS);
+  stats.gapCount=gaps.length;
+  const repairs=[];
+  for (const [index,gap] of gaps.entries()) {
+    onProgress('Boş aralık '+gap.startTime.toFixed(0)+'–'+gap.endTime.toFixed(0)+
+      ' saniye yeniden inceleniyor ('+(index+1)+'/'+gaps.length+')…');
+    stats.requests++;
+    const result=await analyzeSourceInterval(source,gap,{duration,storyContext,index,
+      count:gaps.length,idPrefix:'gap',focus:{kind:'SILENT_GAP'}});
+    if (!result.available) stats.failed++;
+    repairs.push({gap,result});
+  }
+  if (repairs.length) {
+    const merged=mergeSilentGapActions(rows,repairs);
+    stats.gapActionsAdded=merged.added;
+    rows=merged.actions;
+  }
+  const budget=Math.max(0,MAX_AUTO_REPAIR_REQUESTS-stats.requests);
+  const longRows=findLongPositionRows(rows).sort((a,b)=>
+    (b.endTime-b.startTime)-(a.endTime-a.startTime)).slice(0,budget);
+  for (const [index,item] of longRows.entries()) {
+    const parent=rows.find(row=>String(row.actionId)===item.actionId);
+    if (!parent) continue;
+    onProgress((item.positionLabel || 'Uzun eylem')+
+      ' yeniden inceleniyor ('+(index+1)+'/'+longRows.length+')…');
+    stats.requests++;
+    const result=await analyzeSourceInterval(source,item,{duration,storyContext,index,
+      count:longRows.length,idPrefix:'move',focus:{kind:'LONG_POSITION',
+        positionId:item.positionId,positionLabel:item.positionLabel,
+        positionOccurrenceId:item.positionOccurrenceId}});
+    if (!result.available) {stats.failed++;continue;}
+    const refined=refinePositionRow(rows,parent,result);
+    if (refined.replaced) {
+      rows=refined.actions; stats.refinedPositions++;stats.sequences+=refined.sequences;
+    }
+  }
+  return {actions:rows,stats};
 }
 
 async function repairSavedGame(game, onProgress = () => {}) {
