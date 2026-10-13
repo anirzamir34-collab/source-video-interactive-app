@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { conversationEnd } from '../public/conversation-timing.js';
+import { nextVerifiedActionBoundary } from '../public/playback-logic.js';
 
 test('a decision waits for original speech and the longer audible dub, with a short breathing gap', () => {
   const source = [{ startTime: 1, endTime: 3 }];
@@ -31,7 +32,7 @@ test('real generic action completion leaves video playing until the sentence end
   const video = { currentTime: 2, duration: 10, ended: false, pause: () => pauses++, removeEventListener() {} };
   const scope = { state, els: { video, choices: { classList: { add() {} } } },
     mediaClient: { conversationEndAt: (time, rows, duration) => conversationEnd(time, rows, [{ start: 1, end: 4 }], { dubEnabled: true, duration }) },
-    conversationEnd, setGameState() {}, persistRuntimeSnapshot() {}, renderChoices: () => choices++ };
+    conversationEnd, nextVerifiedActionBoundary, setGameState() {}, persistRuntimeSnapshot() {}, renderChoices: () => choices++ };
   vm.runInNewContext(source.slice(from, to) + '\nglobalThis.finish = finishAction;', scope);
   scope.finish(action);
   assert.equal(pauses, 0); assert.equal(choices, 0); assert.equal(state.activeAction, action);
