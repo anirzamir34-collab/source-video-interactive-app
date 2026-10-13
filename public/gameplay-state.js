@@ -8,8 +8,25 @@ const emptyProgress = () => ({ score: 0, counts: {}, completed: false });
 const orderedStages = graph => [...graph.stages].sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
 const followingStage = state => {
   const stages = orderedStages(state.graph);
-  return stages[stages.findIndex(row => row.id === state.stageId) + 1] || null;
+  const current = stageOf(state);
+  const group = current?.phase === 'STORY'
+    ? current.choiceIds.map(id => choiceOf(state, id)).find(row => row?.kind === 'story_decision')?.choiceGroupId : null;
+  return stages.slice(stages.findIndex(row => row.id === state.stageId) + 1)
+    .find(row => !group || !row.choiceIds.some(id => choiceOf(state, id)?.choiceGroupId === group)) || null;
 };
+const stageChoices = (state, stage) => {
+  const owned = stage.choiceIds.map(id => choiceOf(state, id)).filter(Boolean);
+  const group = owned[0]?.choiceGroupId;
+  return group ? state.graph.choices.filter(row => row.chapterId === stage.chapterId &&
+    row.surface === stage.surface && row.choiceGroupId === group) : owned;
+};
+const progressStageId = (state, stage) => {
+  if (!stage) return null;
+  const group = stageChoices(state, stage)[0]?.choiceGroupId;
+  return group ? state.graph.stages.find(row => row.chapterId === stage.chapterId &&
+    row.surface === stage.surface && row.choiceIds.some(id => choiceOf(state, id)?.choiceGroupId === group))?.id || stage.id : stage.id;
+};
+const progressFor = (state, stage) => state.stageProgress[progressStageId(state, stage)] || emptyProgress();
 
 // The opening belongs to the next observed position, even when an unanalysed
 // source gap caused the graph to split it into another chapter. A previous
@@ -40,6 +57,7 @@ export function createGameplayState(graph, { currentTime = 0 } = {}) {
   return { version: GAMEPLAY_VERSION, graph, fingerprint: graph.fingerprint,
     chapterId: chapter?.id || null, stageId: chapter?.stageIds[0] || null,
     cursor: clamp(currentTime, graph.duration), status: 'decision', selection: null,
+    focusedPositionId: null,
     serial: 0, stageProgress: {}, characters: {}, relationships: {}, visual: {},
     visualTime: 0, visualHistory: [], observedClipIds: [], completedChapterIds: [], error: null };
 }
@@ -59,11 +77,14 @@ export function availableChoices(state, graph = state.graph) {
   if (graph.fingerprint !== state.fingerprint) return [];
   const stage = stageOf(state);
   if (!stage) return [];
-  const progress = state.stageProgress[stage.id] || emptyProgress();
-  let choices = stage.choiceIds.map(id => choiceOf(state, id)).filter(choice => playableChoiceClips(state, choice).length);
+  const progress = progressFor(state, stage);
+  let choices = stageChoices(state, stage).filter(choice => playableChoiceClips(state, choice).length);
+  if (stage.phase === 'STORY' && progress.completed && !state.selection &&
+      choices.some(row => row.kind === 'story_decision')) return [];
   if (stage.phase === 'STORY' && !state.selection) {
     choices = choices.filter(choice => !progress.counts[choice.id] &&
-      playableChoiceClips(state, choice).some(clip => clip.endTime > state.cursor + .03));
+      (choice.kind === 'story_decision' || playableChoiceClips(state, choice)
+        .some(clip => clip.endTime > state.cursor + .03)));
     // Preserve source-backed narrative actions even when a language model
     // did not return a formal fork/intent. Collapsing every blank intent to
     // "chronological-source" made an entire scene appear as one button.
@@ -88,9 +109,7 @@ export function availableChoices(state, graph = state.graph) {
   // remain addressable. The view handles layout/pagination, never deletes
   // choices or hides the fourth action simply because three cards were shown.
   if (stage.phase === 'CORE' || stage.phase === 'STORY') return choices;
-  const discovered = Object.keys(progress.counts).length;
-  const limit = stage.choiceIds.length <= 4 ? 4 : Math.min(stage.choiceIds.length, 3 + discovered);
-  return choices.slice(0, limit);
+  return choices;
 }
 export function activeSurface(state) {
   const stage = stageOf(state);
@@ -103,7 +122,8 @@ export function nextPlayableClip(state, selection = state.selection) {
   const clip = clipOf(state, selection.clipIds[selection.index]);
   return clipIsContinuous(state, clip) ? clip : null;
 }
-// Earn Lust from actual watched opening interactions. A lone click is never enough.
+// Replays have a hard cap. A single verified opening requires more than one
+// watched engagement; repeated taps without playback never grant credit.
 const LUST_MIN_MASS = 3, LUST_REPLAY_BONUS = .5, LUST_REPLAY_CAP = 2;
 const undressing = /soyun|çıkar|cikar|clothing|undress|kıyafet|giysi/iu;
 export function lustWeight(choice) {
@@ -115,7 +135,7 @@ export function lustOf(state, opening) {
   let credit=0, distinctMass=0, earned=0;
   for (const {id,stageId} of opening) {
     const weight=lustWeight(choiceOf(state,id));
-    const count=state.stageProgress[stageId]?.counts?.[id] || 0;
+    const count=progressFor(state, state.graph.stages.find(row => row.id === stageId)).counts[id] || 0;
     distinctMass += weight;
     if (count > 0) {
       earned++;
@@ -132,7 +152,7 @@ export function lustOf(state, opening) {
   return {lust,earned};
 }
 export function progression(state) {
-  const stage = stageOf(state), progress = state.stageProgress[stage?.id] || emptyProgress();
+  const stage = stageOf(state), progress = progressFor(state, stage);
   const next = followingStage(state);
   const opening = openingChoices(state);
   const {lust: openingLust, earned} = lustOf(state, opening);
@@ -148,13 +168,16 @@ export function progression(state) {
 const stageReady = (state, progress) => {
   const stage = stageOf(state);
   if (!stage) return false;
+  if (stage.phase === 'STORY' && stageChoices(state, stage).some(row => row.kind === 'story_decision'))
+    return stageChoices(state, stage).some(row => progress.counts[row.id] > 0);
   if (stage.phase === 'STORY') return !availableChoices({ ...state,
-    selection: null, stageProgress: { ...state.stageProgress, [stage.id]: progress } }).length;
+    selection: null, stageProgress: { ...state.stageProgress, [progressStageId(state, stage)]: progress } }).length;
   const counts = Object.keys(progress.counts);
-  const remaining = availableChoices(state).filter(row => !progress.counts[row.id]);
+  const owned = stageChoices(state, stage);
+  const remaining = owned.filter(row => !progress.counts[row.id]);
   // One sourced action may complete its stage, but never award 100% Lust
   // simply because the analyzer returned only one choice.
-  if (stage.choiceIds.length === 1) return counts.length === 1;
+  if (owned.length === 1) return counts.length === 1;
   return progress.score >= 100 - .001 && counts.length >= Math.min(2, counts.length + remaining.length);
 };
 
@@ -162,14 +185,16 @@ function reward(state) {
   const selection = state.selection;
   if (!selection || selection.rewarded) return state;
   const choice = choiceOf(state, selection.choiceId), stage = stageOf(state);
-  const previous = state.stageProgress[stage.id] || emptyProgress();
+  const owner = progressStageId(state, stage);
+  const previous = progressFor(state, stage);
   const count = previous.counts[choice.id] || 0;
-  const base = 100 / Math.max(2, Math.min(4, stage.choiceIds.length));
+  const owned = stageChoices(state, stage);
+  const base = 100 / Math.max(2, Math.min(4, owned.length));
   const gain = base * Math.pow(.5, Math.min(20, count));
   const progress = { ...previous, counts: { ...previous.counts, [choice.id]: count + 1 },
     score: clamp(previous.score + gain) };
   // Meaningful alternatives cannot be exhausted by repeating one brief clip.
-  if (Object.keys(progress.counts).length === 1 && stage.choiceIds.length > 1 &&
+  if (Object.keys(progress.counts).length === 1 && owned.length > 1 &&
       availableChoices(state).some(row => row.id !== choice.id)) progress.score = Math.min(75, progress.score);
   progress.completed = previous.completed || stageReady(state, progress);
   const characters = { ...state.characters }, relationships = { ...state.relationships };
@@ -179,7 +204,7 @@ function reward(state) {
     const key = JSON.stringify([choice.relationship.from, choice.relationship.to]);
     relationships[key] = { ...choice.relationship, progress: clamp((relationships[key]?.progress || 0) + gain / 4) };
   }
-  return { ...state, stageProgress: { ...state.stageProgress, [stage.id]: progress }, characters, relationships,
+  return { ...state, stageProgress: { ...state.stageProgress, [owner]: progress }, characters, relationships,
     selection: { ...selection, rewarded: true } };
 }
 function observeFacts(state, clip, completed = false) {
@@ -192,10 +217,11 @@ function observeFacts(state, clip, completed = false) {
 }
 function finishSelection(state) {
   const stage = stageOf(state);
-  let progress = state.stageProgress[stage.id] || emptyProgress();
+  const owner = progressStageId(state, stage);
+  let progress = progressFor(state, stage);
   progress = { ...progress, completed: progress.completed || stageReady(state, progress) };
   let next = { ...state, selection: null, status: 'decision', error: null,
-    stageProgress: { ...state.stageProgress, [stage.id]: progress } };
+    stageProgress: { ...state.stageProgress, [owner]: progress } };
   const following = followingStage(next);
   if (stage.phase === 'APPROACH' && progress.completed && following?.phase === 'CORE' &&
       progression(next).lust >= 100) {
@@ -214,7 +240,9 @@ export function gameplayReducer(state, event = {}) {
       if (!choice) return state;
       const clipIds = playableChoiceClips(state, choice).map(row => row.id);
       if (!clipIds.length) return state;
-      return { ...state, serial: state.serial + 1, status: 'seeking', error: null,
+      return { ...state, stageId: choice.stageId, chapterId: choice.chapterId,
+        focusedPositionId: choice.phase === 'CORE' ? choice.positionId || null : null,
+        serial: state.serial + 1, status: 'seeking', error: null,
         selection: { id: state.serial + 1, choiceId: choice.id, clipIds, index: 0,
           observed: 0, lastTime: null, rewarded: false, started: false } };
     }
@@ -288,16 +316,17 @@ export function gameplayReducer(state, event = {}) {
       // facts, grant a completion reward, or jump over the entire story.
       const next = { ...state, cursor: Math.max(state.cursor, clip.endTime),
         selection: null, status: 'decision', error: null };
-      const stage = stageOf(next), previous = next.stageProgress[stage.id] || emptyProgress();
+      const stage = stageOf(next), previous = progressFor(next, stage);
       if (stage.phase !== 'STORY') return next;
       return { ...next, stageProgress: { ...next.stageProgress,
-        [stage.id]: { ...previous, completed: stageReady(next, previous) } } };
+        [progressStageId(next, stage)]: { ...previous, completed: stageReady(next, previous) } } };
     }
     case 'ADVANCE_STAGE': {
       const next = progression(state).nextStageId;
       if (!next || state.selection) return state;
       const stage = state.graph.stages.find(row => row.id === next);
-      return { ...state, stageId: next, chapterId: stage.chapterId, status: 'decision', error: null };
+      return { ...state, stageId: next, chapterId: stage.chapterId,
+        focusedPositionId: null, status: 'decision', error: null };
     }
     case 'SKIP_STAGE': {
       if (state.selection) return state;
@@ -305,7 +334,7 @@ export function gameplayReducer(state, event = {}) {
       const nextStageId = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1];
       if (!nextStageId) return gameplayReducer(state, { type: 'NEXT_CHAPTER' });
       const next = state.graph.stages.find(row => row.id === nextStageId);
-      return { ...state, stageId: nextStageId, cursor: next.startTime,
+      return { ...state, stageId: nextStageId, cursor: next.startTime, focusedPositionId: null,
         status: 'decision', error: null };
     }
     case 'NEXT_CHAPTER': {
@@ -313,6 +342,7 @@ export function gameplayReducer(state, event = {}) {
       const index = state.graph.chapters.findIndex(row => row.id === state.chapterId);
       const chapter = state.graph.chapters[index + 1];
       return { ...state, chapterId: chapter?.id || null, stageId: chapter?.stageIds[0] || null,
+        focusedPositionId: null,
         cursor: chapter ? chapter.startTime : state.cursor,
         completedChapterIds: [...new Set([...state.completedChapterIds, state.chapterId].filter(Boolean))],
         status: chapter || state.cursor < state.graph.duration - .05 ? 'decision' : 'ended', error: null };
@@ -325,10 +355,12 @@ export function gameplayReducer(state, event = {}) {
       const chapter = state.graph.chapters.find(row => row.startTime <= cursor + .03 && row.endTime > cursor);
       // Overlapping source events are separate playable layers. At their
       // start, select the most specific later event, not an enclosing monologue.
-      const stage = chapter && state.graph.stages.filter(row => row.chapterId === chapter.id &&
+      const observed = chapter && state.graph.clips.filter(row => row.chapterId === chapter.id &&
         row.startTime <= cursor + .03 && row.endTime > cursor)
         .sort((a, b) => b.startTime - a.startTime || a.endTime - b.endTime)[0];
+      const stage = observed && state.graph.stages.find(row => row.id === observed.stageId);
       let next = { ...state, cursor, chapterId: chapter?.id || null, stageId: stage?.id || null,
+        focusedPositionId: stage?.id === state.stageId ? state.focusedPositionId : null,
         status: chapter ? 'decision' : 'ended', selection: null, error: null };
       if (event.rewind === true) {
         next = { ...next, visual: {}, visualTime: 0, visualHistory: [] };
@@ -371,13 +403,16 @@ export function restoreGameplay(graph, snapshot) {
       savedCounts[id] = Math.max(savedCounts[id] || 0, count);
   }
   for (const stage of graph.stages) {
+    const owner = progressStageId({ graph }, stage);
+    if (owner !== stage.id) continue;
+    const members = stageChoices({ graph }, stage);
     const saved = snapshot.stageProgress?.[stage.id];
-    if (!saved && !stage.choiceIds.some(id => savedCounts[id])) continue;
+    if (!saved && !members.some(row => savedCounts[row.id])) continue;
     const source = migrating ? savedCounts : saved.counts;
-    const counts = Object.fromEntries(stage.choiceIds.filter(id => Number.isSafeInteger(source?.[id]) &&
+    const counts = Object.fromEntries(members.map(row => row.id).filter(id => Number.isSafeInteger(source?.[id]) &&
       source[id] > 0 && source[id] <= 1000).map(id => [id, source[id]]));
     const maximum = Object.values(counts).reduce((sum, count) => sum +
-      100 / Math.max(2, Math.min(4, stage.choiceIds.length)) * 2 * (1 - Math.pow(.5, count)), 0);
+      100 / Math.max(2, Math.min(4, members.length)) * 2 * (1 - Math.pow(.5, count)), 0);
     stageProgress[stage.id] = { counts, score: migrating ? clamp(maximum) : Math.min(clamp(saved.score), maximum), completed: false };
   }
   let restored = { ...fresh, stageProgress,
@@ -389,8 +424,10 @@ export function restoreGameplay(graph, snapshot) {
     if (clip && typeof row.completed === 'boolean') restored = observeFacts(restored, clip, row.completed);
   }
   const stages = orderedStages(graph);
+  const sourceAtCursor = graph.clips.filter(row => row.startTime <= restored.cursor + .03 && row.endTime > restored.cursor)
+    .sort((a, b) => b.startTime - a.startTime || a.endTime - b.endTime)[0];
   const target = migrating
-    ? stages.find(row => row.startTime <= restored.cursor + .03 && row.endTime > restored.cursor) ||
+    ? stages.find(row => row.id === sourceAtCursor?.stageId) ||
       stages.find(row => row.startTime > restored.cursor) || stages.find(row => row.id === snapshot.stageId)
     : stages.find(row => row.id === snapshot.stageId);
   if (target) restored = { ...restored, chapterId: target.chapterId, stageId: target.id };
@@ -401,6 +438,9 @@ export function restoreGameplay(graph, snapshot) {
     const progress = stageProgress[stage.id];
     if (progress) progress.completed = stageReady({ ...restored, stageId: stage.id, chapterId: stage.chapterId }, progress);
   }
+  if (target?.phase === 'CORE' && graph.choices.some(row => row.choiceGroupId ===
+      stageChoices(restored, target)[0]?.choiceGroupId && row.positionId === snapshot.focusedPositionId))
+    restored = { ...restored, focusedPositionId: snapshot.focusedPositionId };
   const characterIds = new Set(graph.choices.flatMap(row => row.cast));
   const characters = {};
   for (const id of characterIds) {

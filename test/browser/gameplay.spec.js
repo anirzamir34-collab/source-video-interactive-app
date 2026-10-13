@@ -181,12 +181,15 @@ test('global source navigator and playback menu are absent; phase source arrows 
   await expect(page.getByRole('button', { name: 'Duraklat', exact: true })).toHaveCount(0);
 });
 
-test('fullscreen keeps all local source choices visible, including during playback and core switches', async ({ page }) => {
+test('fullscreen keeps all local source choices visible, including during playback and core switches', async ({ page }, testInfo) => {
   const errors = []; page.on('pageerror', err => errors.push(err.message));
+  if (testInfo.project.name === 'android') await page.setViewportSize({ width: 915, height: 412 });
   const actions = [
     ...Array.from({ length: 4 }, (_, i) => observation('narrative-' + i, i * 2, {
       phase: 'STORY', duration: 2, storyEvidenceLevel: 'fact', storyConfidence: .95,
-      narrativeChoiceLabel: 'Hikâye seçeneği ' + i })),
+      narrativeChoiceLabel: 'Hikâye seçeneği ' + i,
+      gameplayEvidence: evidence('narrative-' + i, {
+        decisionId: 'opening-fork', intent: 'alternative-' + i }) })),
     observation('opening', 9, { phase: 'APPROACH', duration: 2 }),
     observation('core-a', 12, { phase: 'CORE', duration: 2,
       positionId: 'rear', positionLabel: 'Doggy Style' }),
@@ -211,10 +214,13 @@ test('fullscreen keeps all local source choices visible, including during playba
   await page.locator('#nextChoiceBtn').click();
   await expect.poll(() => page.evaluate(() => __gameplayTest.state().stageId)).toContain('core-a');
   await expect(page.locator('#adultInteractionPanel')).toBeVisible();
-  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(2);
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(1);
   await expect(page.locator('#positionTabs .position-tab')).toHaveCount(2);
-  await page.locator('#movementChoices .gameplay-choice').last().click();
-  await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(14);
-  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(2);
+  await page.locator('#positionTabs .position-tab').last().click();
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().focusedPositionId)).toBe('missionary');
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveAttribute('data-choice-id', /core-b/);
+  await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(13.95);
+  await expect(page.locator('#positionTabs .position-tab')).toHaveCount(2);
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(1);
   expect(errors).toEqual([]);
 });

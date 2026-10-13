@@ -56,9 +56,16 @@ export function createGameplayGraph(analysis = {}) {
       rejected.push({ id: text(action.actionId), reason: 'UNVERIFIED_SOURCE_INTERVAL' }); continue;
     }
     const evidence = normalizeGameplayEvidence(action.gameplayEvidence);
-    const surface = choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) });
+    const routed = choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) });
+    // The legacy scene preparer may use a transition as an approach entry.
+    // In this graph an explicitly STORY-labelled observed body transition is
+    // a separate panel interlude, never a narrative dialogue choice.
+    const surface = action.actionType === 'body_transition' && routed === 'story' &&
+      String(action.choiceSurfaceEvidence || '').trim() && Number(action.choiceSurfaceConfidence) >= .6
+      ? 'panel' : routed;
     const phase = surface === 'story' ? 'STORY' : surface === 'approach' ? 'APPROACH'
-      : action.actionType === 'aftermath' ? 'AFTERMATH' : action.actionType === 'outcome' ? 'OUTCOME' : 'CORE';
+      : action.actionType === 'aftermath' ? 'AFTERMATH' : action.actionType === 'outcome' ? 'OUTCOME'
+        : action.actionType === 'body_transition' ? 'INTERLUDE' : 'CORE';
     const cast = strings([action.subjectTrackId, action.partnerTrackId, ...(action.participantTrackIds || []),
       ...(action.involvedCharacterIds || [])]);
     const id = text(action.actionId || action.id) || `source-${index}`;
@@ -80,6 +87,8 @@ export function createGameplayGraph(analysis = {}) {
       // Source labels are not reliable scene boundaries. Only verified
       // continuous timeline topology is allowed to split a chapter.
       chapterKey: evidence?.chapterId || text(action.adultSceneId),
+      sceneId: action.adultScene === true
+        ? (evidence?.chapterId || text(action.adultSceneId)).replace(/^adult-(?=scene-)/i, '') : '',
       occurrence: evidence?.occurrenceId || text(action.positionOccurrenceId),
       group: text(action.positionId),
       semantic: specific ? JSON.stringify([specific.key, specific.label]) : (label ? `${text(action.actionType)}:${label}` : id),
@@ -124,7 +133,7 @@ export function createGameplayGraph(analysis = {}) {
     const storyPoint = row.decisionId && prior?.decisionId === row.decisionId &&
       Math.abs(row.start - prior.start) < 2 ? prior.storyPoint : row.id;
     row.storyPoint = storyPoint;
-    const stageKey = JSON.stringify([row.phase, row.phase === 'STORY' ? storyPoint : '']);
+    const stageKey = JSON.stringify([row.phase, row.phase === 'STORY' ? storyPoint : row.sceneId]);
     if (!stage || stage.key !== stageKey) {
       stage = { id: `stage:${row.id}:${row.start}`, key: stageKey, chapterId: chapter.id, phase: row.phase,
         surface: row.surface, choiceIds: [], startTime: row.start, endTime: row.end };
@@ -154,6 +163,13 @@ export function createGameplayGraph(analysis = {}) {
     if (!choice) {
       choice = { id: `choice:${choices.length}:${row.id}`, chapterId: chapter.id, stageId: stage.id,
         phase: row.phase, surface: row.surface, label: row.label, intent: row.intent,
+        decisionId: row.decisionId,
+        // Source time locates footage; a verified decision or scene owns the
+        // menu. Keep a local stage as the fallback when ownership is absent.
+        choiceGroupId: row.phase === 'STORY' && row.decisionId
+          ? JSON.stringify(['story', chapter.id, row.decisionId])
+          : ['APPROACH', 'CORE'].includes(row.phase) && row.sceneId
+            ? JSON.stringify([row.surface, chapter.id, row.sceneId]) : stage.id,
         positionId: row.group, positionLabel: row.positionLabel,
         movementLabel: row.movementLabel, occurrenceId: row.occurrence,
         abstained: row.abstained, confidence: row.confidence, cast: row.cast,
@@ -166,14 +182,13 @@ export function createGameplayGraph(analysis = {}) {
   }
   const decisionGroups = new Map();
   for (const choice of choices.filter(row => row.kind === 'candidate_decision')) {
-    const id = rows.find(row => row.origin === choice.sourceActionId)?.decisionId;
-    if (id) decisionGroups.set(id, [...(decisionGroups.get(id) || []), choice]);
+    const id = choice.decisionId;
+    if (id) decisionGroups.set(choice.choiceGroupId,
+      { id, options: [...(decisionGroups.get(choice.choiceGroupId)?.options || []), choice] });
   }
-  const decisions = [...decisionGroups].filter(([, options]) => options.length > 1 &&
-    options.every(row => row.stageId === options[0].stageId &&
-      Math.abs(clips.find(clip => clip.id === row.clipIds[0]).startTime -
-        clips.find(clip => clip.id === options[0].clipIds[0]).startTime) < 2))
-    .map(([id, options]) => ({ id, choiceIds: options.map(row => row.id), stageId: options[0].stageId }));
+  const decisions = [...decisionGroups.values()].filter(({ options }) => options.length > 1 &&
+    options.every(row => row.choiceGroupId === options[0].choiceGroupId))
+    .map(({ id, options }) => ({ id, choiceIds: options.map(row => row.id), stageId: options[0].stageId }));
   const decisionChoices = new Set(decisions.flatMap(row => row.choiceIds));
   for (const choice of choices) choice.kind = decisionChoices.has(choice.id) ? 'story_decision' : 'source_event';
   const sourceEvents = clips.map(clip => ({ clipId: clip.id, sourceActionId: clip.sourceActionId,
