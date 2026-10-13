@@ -180,9 +180,17 @@ test('real player: separate source groups remain selectable before the current c
   await map.getByRole('button', { name: 'Gözlenen eylem opening' }).click();
   await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(12);
   await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection?.choiceId)).toContain('opening');
-  // A further source jump is also immediately available during the second clip.
+  // The core phase is initially locked, then real watched opening seconds
+  // earn eligibility without waiting for the opening clip to finish.
   await map.locator('summary').click();
-  await map.getByRole('button', { name: 'Gözlenen eylem core' }).click();
+  const core = map.getByRole('button', { name: 'Gözlenen eylem core' });
+  await expect(core).toBeDisabled();
+  await expect.poll(() => page.evaluate(() => {
+    const state = __gameplayTest.state();
+    return Object.values(state.stageProgress).some(value => Object.values(value.counts || {}).some(count => count > 0));
+  })).toBe(true);
+  await expect(core).toBeEnabled();
+  await core.click();
   await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(20);
   await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection?.choiceId)).toContain('core');
   await expect(page.locator('#adultInteractionPanel')).toBeHidden();
