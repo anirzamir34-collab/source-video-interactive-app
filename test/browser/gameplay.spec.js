@@ -181,8 +181,9 @@ test('global source navigator and playback menu are absent; phase source arrows 
   await expect(page.getByRole('button', { name: 'Duraklat', exact: true })).toHaveCount(0);
 });
 
-test('fullscreen keeps all local source choices visible, including during playback and core switches', async ({ page }) => {
+test('fullscreen keeps all local source choices visible, including during playback and core switches', async ({ page }, testInfo) => {
   const errors = []; page.on('pageerror', err => errors.push(err.message));
+  if (testInfo.project.name === 'android') await page.setViewportSize({ width: 915, height: 412 });
   const actions = [
     ...Array.from({ length: 4 }, (_, i) => observation('narrative-' + i, i * 2, {
       phase: 'STORY', duration: 2, storyEvidenceLevel: 'fact', storyConfidence: .95,
