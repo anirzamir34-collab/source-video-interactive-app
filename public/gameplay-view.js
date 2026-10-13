@@ -163,17 +163,17 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (state.error && !state.selection && choices.length)
     makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   if (state.status === 'paused') makeButton(root, 'Oynatmaya devam et', () => void player.resume());
+  // Stage navigation has its own edge arrows. Do not intermix transport commands
+  // with populated choice menus (the original fullscreen UX regression).
   const remainingStageIds = chapter?.stageIds.slice(chapter.stageIds.indexOf(state.stageId) + 1) || [];
-  if (progress.nextStageId && !state.selection)
-    makeButton(root, 'Sonraki aşama', () => player.advanceStage());
-  else if (!state.selection && !choices.length && remainingStageIds.length)
-    makeButton(root, 'Sonraki aşama', () => player.skipStage());
-  // An exhausted stage is NOT the end of the chapter if there are still
-  // observed intermediate stages; never offer a shortcut over them.
-  if (!state.selection && !remainingStageIds.length && (progress.completed || !choices.length)) {
-    if (state.chapterId) makeButton(root, 'Sonraki sahne', () => player.nextChapter());
-    if (state.cursor < state.graph.duration - .05)
-      makeButton(root, 'Videoya devam et', () => void player.continueVideo());
+  if (!state.selection && !visibleChoices.length) {
+    if (progress.nextStageId) makeButton(root, 'Sonraki aşama', () => player.advanceStage());
+    else if (remainingStageIds.length) makeButton(root, 'Sonraki aşama', () => player.skipStage());
+    else if (progress.completed || !choices.length) {
+      if (state.chapterId) makeButton(root, 'Sonraki sahne', () => player.nextChapter());
+      if (state.cursor < state.graph.duration - .05)
+        makeButton(root, 'Videoya devam et', () => void player.continueVideo());
+    }
   }
   // Keep choices visible during verified playback and across fullscreen changes.
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
