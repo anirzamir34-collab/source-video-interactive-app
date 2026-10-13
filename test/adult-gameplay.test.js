@@ -1,3 +1,4 @@
+import { collapseConsecutiveEquivalentCards } from '../public/choice-groups.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sourceRangeForClip } from '../public/sequence-integrity.js';
@@ -1186,4 +1187,53 @@ test('ordinary source actions ignore conflicting parent activity metadata', () =
     assert.equal(playableAdultPanelFamily(source), '');
   }
   assert.equal(adultPositionFamily('Yan pozisyonda arkadan'), 'spoon');
+});
+
+
+test('seven indistinguishable adjacent source clips show one control but retain all verified time ranges', () => {
+  const original = Array.from({ length: 7 }, (_, i) => {
+    const startTime = 275.526 + i * 9.84;
+    const clip = {
+      id: `source-${i + 1}`, sourceVerified: true,
+      sourcePositionId: 'one-occurrence', sourceOccurrenceId: 'occ-001',
+      subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+      actionType: 'position', movementType: 'ritmik hareket', movementTempo: 'moderate',
+      loopStartTime: startTime, loopEndTime: startTime + 9.84
+    };
+    return { id: `card-${i + 1}`, label: 'Aynı hareket',
+      energyFlavor: 'steady', intensityBand: 'steady', tempo: 'moderate',
+      sourcePositionId: 'one-occurrence', occurrenceId: 'occ-001', variants: [clip] };
+  });
+  const result = collapseConsecutiveEquivalentCards(original);
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0].variants.map(clip => clip.id), original.map(card => card.variants[0].id));
+  assert.equal(result[0].variants[0].loopStartTime, original[0].variants[0].loopStartTime);
+  assert.equal(result[0].variants.at(-1).loopEndTime, original.at(-1).variants[0].loopEndTime);
+  assert.equal(original[0].variants.length, 1, 'source data is not mutated');
+});
+
+test('semantic grouping never hides a changed action, tempo, source occurrence or separated cut', () => {
+  const base = {
+    id: 'card-a', label: 'Aynı hareket',
+    energyFlavor: 'steady', intensityBand: 'steady', tempo: 'moderate',
+    sourcePositionId: 'source-a', occurrenceId: 'occ-a',
+    variants: [{
+      id: 'a', sourceVerified: true, sourcePositionId: 'source-a',
+      sourceOccurrenceId: 'occ-a', actionType: 'position',
+      movementType: 'ritmik hareket', movementTempo: 'moderate',
+      subjectTrackId: 'MALE', partnerTrackId: 'PARTNER_A',
+      loopStartTime: 10, loopEndTime: 20
+    }]
+  };
+  const next = (id, overrides = {}, variant = {}) => ({
+    ...base, id, ...overrides, variants: [{
+      ...base.variants[0], id, loopStartTime: 20, loopEndTime: 30, ...variant
+    }]
+  });
+  assert.equal(collapseConsecutiveEquivalentCards([base, next('b', { label: 'Başka hareket' })]).length, 2);
+  assert.equal(collapseConsecutiveEquivalentCards([base, next('b', { energyFlavor: 'fast' })]).length, 2);
+  assert.equal(collapseConsecutiveEquivalentCards([base, next('b', { occurrenceId: 'occ-b' })]).length, 2);
+  assert.equal(collapseConsecutiveEquivalentCards([base, next('b', {}, { loopStartTime: 21 })]).length, 2);
+  assert.equal(collapseConsecutiveEquivalentCards([base, next('b', {}, { partnerTrackId: 'PARTNER_B' })]).length, 2);
+  assert.equal(collapseConsecutiveEquivalentCards([base, next('b')]).length, 1);
 });

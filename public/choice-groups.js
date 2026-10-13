@@ -164,3 +164,48 @@ export function groupSourceChoiceCards(clips, {
   return cards.sort((a, b) => clipRange(a.variants[0]).startTime - clipRange(b.variants[0]).startTime)
     .map((card, index) => ({ ...card, displayIndex: index + 1 }));
 }
+
+
+/**
+ * Presentation-only grouping: neighbouring source cuts that have exactly the
+ * same observable action, participant, occurrence and tempo should not appear
+ * as many indistinguishable buttons. Every verified cut remains a selectable
+ * variant, with its exact source timestamps. No source ranges are enlarged.
+ */
+export function collapseConsecutiveEquivalentCards(cards = [], { maxGapSeconds = 0.3 } = {}) {
+  const items = Array.isArray(cards) ? cards : [];
+  const maxGap = Math.max(0, Math.min(0.5, Number(maxGapSeconds) || 0));
+  const clean = value => text(value).toLocaleLowerCase('tr-TR').replace(/\\s+/g, ' ');
+  const identity = card => {
+    const variants = Array.isArray(card?.variants) ? card.variants : [];
+    const first = variants[0];
+    if (!first || !variants.length || first.sourceVerified !== true ||
+        !text(card.sourcePositionId) || !text(card.occurrenceId)) return null;
+    return JSON.stringify([
+      clean(card.label), clean(card.energyFlavor), clean(card.intensityBand),
+      clean(card.tempo), text(card.sourcePositionId), text(card.occurrenceId),
+      text(first.sourcePositionId), text(first.sourceOccurrenceId || first.positionOccurrenceId || first.occurrenceId),
+      text(first.subjectTrackId), text(first.partnerTrackId),
+      text(first.actionType), clean(first.movementType), clean(first.movementTempo),
+      text(first.routeNamespace)
+    ]);
+  };
+  const grouped = [];
+  for (const card of items) {
+    const first = card?.variants?.[0];
+    const current = identity(card);
+    const previous = grouped.at(-1);
+    const prior = previous?.variants?.at(-1);
+    const priorIdentity = identity(previous);
+    const a = prior ? clipRange(prior) : null;
+    const b = first ? clipRange(first) : null;
+    const gap = a && b ? b.startTime - a.endTime : Infinity;
+    if (current && current === priorIdentity && a && b &&
+        gap >= -0.05 && gap <= maxGap + 1e-6) {
+      previous.variants.push(...card.variants);
+      continue;
+    }
+    grouped.push({ ...card, variants: [...(card?.variants || [])] });
+  }
+  return grouped.map((card, index) => ({ ...card, displayIndex: index + 1 }));
+}

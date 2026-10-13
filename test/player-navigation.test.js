@@ -511,3 +511,26 @@ test('source ended completes an active general choice without needing one last t
   assert.equal(f.state.gameState, 'ENDED');
   assert.equal(f.state.consumedActionIds.has('last'), true);
 });
+
+
+test('gap playback stops at the earliest verified story choice even when speech continues past it', async () => {
+  const f = fixture();
+  f.els.video.duration = 630;
+  f.state.analysis = { videoDuration: 630, partial: true,
+    analysisGaps: [{ startTime: 0, endTime: 78.722 }],
+    actions: [
+      { actionId: 'first-dialogue', label: 'Teklifi konuş', sourceVerified: true,
+        actionType: 'dialogue', startTime: 157.443, endTime: 172.08 },
+      { actionId: 'next-dialogue', label: 'Sonraki kararı konuş', sourceVerified: true,
+        actionType: 'dialogue', startTime: 200.08, endTime: 209.93 }
+    ] };
+  f.state.sourceContext = { segments: [{ startTime: 150, endTime: 190 }] };
+  await f.resumeAnalysisGap(157.443);
+  f.els.video.time = 157.45;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.els.video.paused, true);
+  assert.ok(f.state.gameCursorTime >= 157.443 && f.state.gameCursorTime < 158);
+  assert.equal(f.state.consumedActionIds.has('first-dialogue'), false);
+  assert.equal(f.futureActions()[0].actionId, 'first-dialogue');
+  assert.equal(f.els.choices.children.length, 1);
+});

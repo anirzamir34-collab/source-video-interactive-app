@@ -104,7 +104,7 @@ import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
-import { sourceIdentityLabel, sourceDisplayLabel } from './choice-groups.js';
+import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
@@ -3461,12 +3461,12 @@ function prepareAdultScenes() {
         ...position,
         ...linkedEntry,
         controlClipIds: [...controlClipIds],
-        movementChoices: splitSparseMovementChoiceCards(buildVerifiedMovementChoices(
+        movementChoices: collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(buildVerifiedMovementChoices(
           position.movements,
           position.label,
           8,
           position
-        ), 8)
+        ), 8))
       };
     });
 
@@ -5201,9 +5201,9 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   // contextual control is an alternate way to advance among them, not a
   // reason to hide them from the panel.
   const movementPool = verifiedMovements;
-  const movementChoices = splitSparseMovementChoiceCards(
+  const movementChoices = collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
     buildVerifiedMovementChoices(movementPool, position.label, 8, position), 8
-  );
+  ));
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
@@ -6048,7 +6048,18 @@ async function resumeAnalysisGap(target) {
   state.stopListener = () => {
     if (generation !== state.playbackGeneration || state.stopListener !== stop || Number(els.video.currentTime) < bridgeTarget - 0.04) return;
     const now = Number(els.video.currentTime) || 0;
-    if (!els.video.ended && genericConversationEnd(now) > now + .03) return;
+    // A verified choice/scene onset outranks trailing dialogue in a gap.
+    // Otherwise the sentence can continue straight across the only normal
+    // decision and leave the player seeing a later scene instead.
+    const verifiedRouteAtBoundary = (state.analysis?.actions || []).some(action =>
+      action?.sourceVerified === true &&
+      !state.consumedActionIds.has(action.actionId) &&
+      Math.abs(Number(action.startTime) - bridgeTarget) <= 0.15) ||
+      (state.adultScenes || []).some(scene =>
+        !state.completedAdultSceneIds?.has(scene.id) &&
+        Math.abs(Number(scene.startTime) - bridgeTarget) <= 0.15);
+    if (!verifiedRouteAtBoundary && !els.video.ended &&
+        genericConversationEnd(now) > now + .03) return;
     els.video.pause();
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
