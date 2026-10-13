@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createGameplayGraph } from '../public/gameplay-evidence.js';
 import { createGameplayState, gameplayReducer, availableChoices, progression, restoreGameplay, captureGameplay } from '../public/gameplay-state.js';
 import { createGameplayPlayer } from '../public/gameplay-player.js';
+import { normalizeStoryContext } from '../public/story-engine.js';
 import { observation, analysis } from './fixtures/gameplay-v2.js';
 
 const realReport = new URL('../../upload/videoquest-sex-analysis-1791867671268.json', import.meta.url);
@@ -20,6 +21,9 @@ test('uploaded analysis: overlapping source event remains independently reachabl
   assert.ok(graph.chapters.some(row => row.endTime === 285.544));
   assert.ok(graph.chapters.some(row => row.startTime === 374.326));
   assert.ok(graph.clips.every(row => row.classificationReview === 'needs_review'));
+  const story = normalizeStoryContext(report.storyContext);
+  assert.ok(story.facts.every(row => row.text !== '[object Object]'));
+  assert.ok(story.facts.some(row => row.text === report.storyContext.facts[0].evidence));
   const stage = gameplayReducer(createGameplayState(graph), { type: 'SEEK', time: 134.373 }).stageId;
   assert.equal(stage, graph.clips.find(row => row.startTime === 134.373).stageId);
 });
