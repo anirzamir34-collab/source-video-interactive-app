@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
-import { selectDiverseStoryActions } from '../public/story-engine.js';
+import { selectDiverseStoryActions, selectSameMomentStoryActions } from '../public/story-engine.js';
 import { conversationEnd } from '../public/conversation-timing.js';
 import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo, playMedia } from '../public/playback-logic.js';
 
@@ -75,7 +75,7 @@ function fixture() {
     setGameState: value => { state.gameState = value; },
     setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, clearInteractionSelection() {}, persistRuntimeSnapshot() {}, renderDebug() {},
     orderedLockedAdultPositions: () => [], findAdultSceneAt: () => null,
-    selectDiverseStoryActions, findAdultSceneForTimeline: () => null,
+    selectDiverseStoryActions, selectSameMomentStoryActions, findAdultSceneForTimeline: () => null,
     verifiedAdultPositionFamily: () => null, storyChoiceLabelForAction: action => action.label,
     playableAdultPanelFamily: () => '',
     escapeHtml: value => String(value)
