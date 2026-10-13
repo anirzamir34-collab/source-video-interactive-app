@@ -157,3 +157,33 @@ test('v4: skip transitions synchronize the media clock and show a single compact
   }
   expect(errors).toEqual([]);
 });
+
+
+test('real player: separate source groups remain selectable before the current clip ends', async ({ page }) => {
+  await load(page, [
+    observation('talk', 0, { phase: 'STORY', duration: 9,
+      storyEvidenceLevel: 'fact', storyConfidence: .95, narrativeChoiceLabel: 'Konuşma' }),
+    observation('opening', 12, { phase: 'APPROACH', duration: 6 }),
+    observation('core', 20, { phase: 'CORE', duration: 2 })
+  ]);
+  const map = page.locator('.gameplay-source-navigator');
+  await expect(map).toHaveCount(1);
+  await map.locator('summary').click();
+  await expect(map.locator('.gameplay-source-group')).toHaveCount(3);
+  await expect(map.locator('.gameplay-source-group').nth(0)).toContainText('Konuşmalar ve hikâye');
+  await expect(map.locator('.gameplay-source-group').nth(1)).toContainText('Yakınlaşma');
+  await expect(map.locator('.gameplay-source-group').nth(2)).toContainText('Ana etkileşimler');
+  await map.getByRole('button', { name: 'Konuşma' }).click();
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection?.choiceId)).toContain('talk');
+  // No need to wait for the nine-second conversation to end.
+  await map.locator('summary').click();
+  await map.getByRole('button', { name: 'Gözlenen eylem opening' }).click();
+  await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(12);
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection?.choiceId)).toContain('opening');
+  // A further source jump is also immediately available during the second clip.
+  await map.locator('summary').click();
+  await map.getByRole('button', { name: 'Gözlenen eylem core' }).click();
+  await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(20);
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection?.choiceId)).toContain('core');
+  await expect(page.locator('#adultInteractionPanel')).toBeHidden();
+});
