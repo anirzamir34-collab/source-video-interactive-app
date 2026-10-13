@@ -425,7 +425,7 @@ test('actor and distinct addressee do not become an identity conflict in ordinar
   assert.deepEqual([action.startTime, action.endTime], [30, 38]);
 });
 
-test('different documented addressee and partner IDs are not inherently contradictory', () => {
+test('different addressee and partner assertions in a group stay unresolved rather than guessing', () => {
   const result = bindActionCharacter({
     actionId: 'group-dialogue', label: 'Soruyu dinle', actionType: 'dialogue',
     subjectTrackId: 'MAIN_MALE', primaryCharacterId: 'PARTNER_B',
@@ -433,7 +433,6 @@ test('different documented addressee and partner IDs are not inherently contradi
     involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A', 'PARTNER_B'],
     sourceVerified: true, startTime: 2, endTime: 9
   }, cast);
-  assert.equal(result.identityResolution, 'verified');
-  assert.equal(result.primaryCharacterId, 'PARTNER_B');
-  assert.equal(result.primaryCharacterLabel, 'Deniz');
+  assert.equal(result.identityResolution, 'conflict');
+  assert.equal(result.primaryCharacterLabel, '');
 });
