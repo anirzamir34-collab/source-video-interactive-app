@@ -327,7 +327,10 @@ test('motion-only analysis continues to the real visual request with prepared so
   assert.equal(f.state.savedGameReady, false);
   assert.equal(f.calls.save.length, 0);
   assert.equal(f.calls.start.length, 1, 'no alternate speech request is attempted');
-  assert.deepEqual(f.calls.events, [{ type: 'SOURCE_TRANSCRIPT_UNAVAILABLE', data: { message: failedJob.message } }]);
+  assert.deepEqual(f.calls.events, [
+    { type: 'SOURCE_TRANSCRIPT_UNAVAILABLE', data: { message: failedJob.message } },
+    { type: 'PROTAGONIST_SURVEY_UNRESOLVED', data: { reason: 'UNRESOLVED' } }
+  ]);
 });
 
 test('requested dubbing remains strict and prevents visual provider work after a source media failure', async () => {
