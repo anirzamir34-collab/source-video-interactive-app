@@ -7,7 +7,7 @@ import * as gameplay from '../public/adult-gameplay.js';
 import { sourceRangeForClip } from '../public/sequence-integrity.js';
 import { matchSceneIntroductions, verifiedOpeningCast } from '../public/scene-entry.js';
 import { isAdultSocialRelationshipRole } from '../public/relationship-roles.js';
-import { sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
+import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards } from '../public/choice-groups.js';
 import { interactionEntryGuard, interactionClipGuard } from '../public/interaction-timeline.js';
 import { sourceSpeechOverlaps } from '../public/source-transcript.js';
 import { assignVerifiedOpeningRoles } from '../public/verified-scene-continuity.js';
@@ -55,7 +55,7 @@ function prepare(actions, overrides = {}, sourceContext = null, storyContext = {
   const scope = vm.createContext({
     ...gameplay, ...choiceRouting, assignVerifiedOpeningRoles, state, ENGINE_VERSION: 'test', matchSceneIntroductions, verifiedOpeningCast, isAdultSocialRelationshipRole, sourceSpeechOverlaps,
     canonicalizeActionTrackIds,
-    sourceIdentityLabel, sourceDisplayLabel, interactionEntryGuard,
+    sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards, interactionEntryGuard,
     bindActionCharacter: item => item,
     verifiedAdultPositionFamily: item => item.sourceVerified ? 'chapter' : '',
     playableAdultPanelFamily: item => item.sourceVerified && item.adultScene && item.positionId ? 'chapter' : '',
