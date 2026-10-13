@@ -175,7 +175,7 @@ export function groupSourceChoiceCards(clips, {
 export function collapseConsecutiveEquivalentCards(cards = [], { maxGapSeconds = 0.3 } = {}) {
   const items = Array.isArray(cards) ? cards : [];
   const maxGap = Math.max(0, Math.min(0.5, Number(maxGapSeconds) || 0));
-  const clean = value => text(value).toLocaleLowerCase('tr-TR').replace(/\\s+/g, ' ');
+  const clean = value => text(value).toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ');
   const identity = card => {
     const variants = Array.isArray(card?.variants) ? card.variants : [];
     const first = variants[0];
