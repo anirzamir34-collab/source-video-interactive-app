@@ -3,6 +3,7 @@ import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-pa
 
 const rendered = new WeakMap();
 const selectedPosition = new WeakMap();
+const openedDuringPlayback = new WeakMap();
 const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
@@ -24,22 +25,31 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   // control, not another interactive decision superimposed on the shot.
   const selectedChoice = state.selection
     ? state.graph.choices.find(choice => choice.id === state.selection.choiceId) : null;
-  // Keep the source-backed story navigation visible during playback.
-  // The selected action is highlighted and all cards are disabled until it ends.
-  const storyStage = surface === 'story' && state.selection
-    ? state.graph.stages.find(row => row.id === state.stageId) : null;
-  const storyStageChoices = storyStage?.choiceIds
-    .map(id => state.graph.choices.find(row => row.id === id))
-    .filter(Boolean);
-  const visibleChoices = storyStageChoices || (selectedChoice ? [selectedChoice] : activePosition
-    ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices);
+  const visibleChoices = state.selection ? choices : activePosition
+    ? choices.filter(choice => positionKey(choice) === activePosition || !positionKey(choice)) : choices;
+  const open = openedDuringPlayback.get(els)?.selectionId === state.selection?.id &&
+    openedDuringPlayback.get(els)?.open;
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
-    state.selection?.index, progress, choices.map(row => row.id), activePosition]);
+    state.selection?.index, progress, choices.map(row => row.id), activePosition, open]);
   if (els.cursorText) els.cursorText.textContent = `${state.cursor.toFixed(1)} sn`;
   if (rendered.get(els) === signature) return;
   rendered.set(els, signature);
   const targets = { story: els.choices, approach: els.approachChoices, panel: els.movementChoices };
   mountInteractionPanel(els.video?.closest('.video-stage'), els.adultInteractionPanel);
+  const stageElement = els.video?.closest('.video-stage');
+  let toggle = stageElement?.querySelector?.('.gameplay-menu-toggle');
+  if (stageElement && !toggle) {
+    toggle = document.createElement('button'); toggle.type = 'button';
+    toggle.className = 'gameplay-menu-toggle'; stageElement.appendChild(toggle);
+  }
+  if (toggle) {
+    toggle.hidden = !state.selection;
+    toggle.textContent = open ? 'Seçenekleri kapat' : 'Seçenekler';
+    toggle.onclick = () => {
+      openedDuringPlayback.set(els, { selectionId: state.selection?.id, open: !open });
+      rendered.delete(els); renderGameplay({ state, player, els, document });
+    };
+  }
   for (const target of [...Object.values(targets), els.positionTabs, els.adultQuickChoices]) target?.replaceChildren();
   for (const key of ['foreplaySection', 'categorySection', 'groupPartnerSection',
     'outcomeSection', 'orgasmDecision', 'rhythmControl', 'nextVariantBtn', 'finishAdultSceneBtn']) {
@@ -61,7 +71,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     // Explicit accessible names must not include CSS-generated list numerals
     // and chevrons (which broke voice control and role-based navigation).
     button.setAttribute('aria-label', label);
-    button.disabled = state.status === 'seeking';
+    button.disabled = false;
     button.addEventListener('click', action);
     parent.appendChild(button);
     return button;
@@ -122,9 +132,11 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       choice.label.trim().toLocaleLowerCase('tr-TR') === choice.positionLabel.trim().toLocaleLowerCase('tr-TR');
     const label = storyIsObservation ? 'Hikâyeyi oynat' :
       repeatingPositionLabel ? 'Kaynak kesitini oynat' : choice.label;
-    const card = makeButton(root, label, () => void player.select(choice.id),
+    const card = makeButton(root, label, () => {
+      openedDuringPlayback.delete(els); void player.select(choice.id);
+    },
       'choice story-choice gameplay-choice gameplay-choice-card');
-    card.disabled = Boolean(state.selection);
+    card.disabled = false;
     card.dataset.choiceId = choice.id;
     card.dataset.choiceSurface = surface;
     card.setAttribute('aria-pressed', String(state.selection?.choiceId === choice.id));
@@ -135,6 +147,24 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   // One selection surface only. The former secondary quick-action dock
   // mirrored the same cards and caused stacked/duplicated controls.
   els.adultQuickChoices?.replaceChildren();
+
+  if (state.selection && open) {
+    makeButton(root, state.status === 'paused' ? 'Sürdür' : 'Duraklat',
+      () => state.status === 'paused' ? void player.resume() : player.pause());
+    makeButton(root, 'Yeniden oynat', () => { openedDuringPlayback.delete(els); void player.replay(); });
+  }
+  if (!state.selection || open) {
+    const map = document.createElement('details'); map.className = 'gameplay-event-map';
+    const heading = document.createElement('summary'); heading.textContent = 'Olay haritası'; map.appendChild(heading);
+    for (const clip of state.graph.clips) {
+      const choice = state.graph.choices.find(row => row.clipIds.includes(clip.id));
+      if (!choice) continue;
+      makeButton(map, choice.label, () => {
+        openedDuringPlayback.delete(els); void player.selectSourceEvent(clip.id);
+      });
+    }
+    root.appendChild(map);
+  }
 
   if (state.status === 'error') makeButton(root, 'Yeniden dene', () => void player.retry());
   if (state.error && !state.selection && choices.length)
@@ -160,10 +190,9 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       'choice gameplay-skip gameplay-choice-card');
 
   syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
-    approach: els.approachChoices, surface });
+    approach: els.approachChoices, surface: state.selection && !open ? 'none' : surface });
   const clip = nextPlayableClip(state);
-  if (els.adultSceneTitle) els.adultSceneTitle.textContent = clip
-    ? `Kaynak · ${clip.startTime.toFixed(1)} sn` : 'Doğrulanmış seçimler';
+  if (els.adultSceneTitle) els.adultSceneTitle.textContent = 'Doğrulanmış seçimler';
   if (els.adultDockTitle) els.adultDockTitle.textContent = phaseLabel;
   for (const key of ['adultDockPhase', 'adultPhaseBadge', 'adultPhaseTitle'])
     if (els[key]) els[key].textContent = phaseLabel;

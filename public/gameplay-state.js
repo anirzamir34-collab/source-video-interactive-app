@@ -32,7 +32,7 @@ export function availableChoices(state, graph = state.graph) {
   if (!stage) return [];
   const progress = state.stageProgress[stage.id] || emptyProgress();
   let choices = stage.choiceIds.map(id => choiceOf(state, id)).filter(choice => playableChoiceClips(state, choice).length);
-  if (stage.phase === 'STORY') {
+  if (stage.phase === 'STORY' && !state.selection) {
     choices = choices.filter(choice => !progress.counts[choice.id] &&
       playableChoiceClips(state, choice).some(clip => clip.endTime > state.cursor + .03));
     // Preserve source-backed narrative actions even when a language model
@@ -93,7 +93,7 @@ const stageReady = (state, progress) => {
   const stage = stageOf(state);
   if (!stage) return false;
   if (stage.phase === 'STORY') return !availableChoices({ ...state,
-    stageProgress: { ...state.stageProgress, [stage.id]: progress } }).length;
+    selection: null, stageProgress: { ...state.stageProgress, [stage.id]: progress } }).length;
   const counts = Object.keys(progress.counts);
   const remaining = availableChoices(state).filter(row => !progress.counts[row.id]);
   // One sourced action may complete its stage, but never award 100% Lust
@@ -147,7 +147,7 @@ export function gameplayReducer(state, event = {}) {
   switch (event.type) {
     case 'SELECT': {
       const choice = availableChoices(state).find(row => row.id === event.choiceId);
-      if (!choice || state.status === 'seeking') return state;
+      if (!choice) return state;
       const clipIds = playableChoiceClips(state, choice).map(row => row.id);
       if (!clipIds.length) return state;
       return { ...state, serial: state.serial + 1, status: 'seeking', error: null,
@@ -253,8 +253,12 @@ export function gameplayReducer(state, event = {}) {
       const cursor = clamp(event.time, state.graph.duration);
       if (cursor < state.visualTime && event.rewind !== true) return { ...state, selection: null,
         status: 'decision', error: 'Önceki görsel duruma dönmek için Geri sar seçeneğini kullan.' };
-      const chapter = state.graph.chapters.find(row => row.endTime > cursor);
-      const stage = chapter && state.graph.stages.find(row => row.chapterId === chapter.id && row.endTime > cursor);
+      const chapter = state.graph.chapters.find(row => row.startTime <= cursor + .03 && row.endTime > cursor);
+      // Overlapping source events are separate playable layers. At their
+      // start, select the most specific later event, not an enclosing monologue.
+      const stage = chapter && state.graph.stages.filter(row => row.chapterId === chapter.id &&
+        row.startTime <= cursor + .03 && row.endTime > cursor)
+        .sort((a, b) => b.startTime - a.startTime || a.endTime - b.endTime)[0];
       let next = { ...state, cursor, chapterId: chapter?.id || null, stageId: stage?.id || null,
         status: chapter ? 'decision' : 'ended', selection: null, error: null };
       if (event.rewind === true) {
@@ -275,7 +279,18 @@ export function captureGameplay(state) {
 }
 export function restoreGameplay(graph, snapshot) {
   const fresh = createGameplayState(graph);
-  if (!snapshot || snapshot.version !== GAMEPLAY_VERSION || snapshot.fingerprint !== graph.fingerprint) return fresh;
+  if (!snapshot || snapshot.version !== GAMEPLAY_VERSION) return fresh;
+  // Graph metadata was extended without changing stable stage/choice IDs.
+  // Preserve v2 saves only when their stage and every recorded choice still
+  // exist in the rebuilt source graph; reject unrelated/tampered snapshots.
+  const compatible = snapshot.fingerprint === graph.fingerprint ||
+    (typeof snapshot.fingerprint === 'string' && snapshot.fingerprint.startsWith('vq2-') &&
+      graph.stages.some(row => row.id === snapshot.stageId) &&
+      Object.entries(snapshot.stageProgress || {}).every(([stageId, progress]) => {
+        const stage = graph.stages.find(row => row.id === stageId);
+        return stage && Object.keys(progress?.counts || {}).every(id => stage.choiceIds.includes(id));
+      }));
+  if (!compatible) return fresh;
   // Restore validated data, never replay selection/playback events. Counters
   // alone cannot reconstruct the chronological diminishing-return/retirement
   // decisions that produced a score, so preserve the bounded recorded score.

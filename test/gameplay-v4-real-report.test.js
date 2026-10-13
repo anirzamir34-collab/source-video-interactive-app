@@ -171,7 +171,7 @@ test('timeline arrows step through actual source events rather than jumping chap
 });
 
 
-test('cinematic story keeps all source cards while playing and never shows durations',()=>{
+test('cinematic story retains switchable source cards behind a collapsed playback menu',()=>{
   const labelled={...source,actions:source.actions.map((a,index)=>({
     ...a,label:index<5 ? 'Kaynak olayı '+(index+1) : a.label,
     ...(index<5 ? {storyEvidenceLevel:'fact',storyConfidence:.95,
@@ -206,7 +206,7 @@ test('cinematic story keeps all source cards while playing and never shows durat
   renderGameplay({state,player,els,document});
   assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,5,
     'a selection does not collapse the other source cards to one');
-  assert.ok(els.choices.children.filter(row=>row.tag==='button').every(row=>row.disabled));
+  assert.ok(els.choices.children.filter(row=>row.tag==='button').every(row=>!row.disabled));
 
   state={...state,selection:null,status:'decision',cursor:211.2};
   renderGameplay({state,player,els,document});

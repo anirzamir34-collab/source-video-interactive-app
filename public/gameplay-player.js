@@ -9,12 +9,13 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
   seek = seekMediaTo, play = playMedia } = {}) {
   let state = snapshot ? restoreGameplay(graph, snapshot) : createGameplayState(graph);
   let operation = null, destroyed = false, lastWall = now(), internalSeek = false, boundaryBusy = false, freePlayback = false;
+  let epoch = 0;
   let frame = null;
   const dispatch = event => {
     if (destroyed) return state;
     state = gameplayReducer(state, event); onChange(state); return state;
   };
-  const cancelEffect = () => { operation?.abort(); operation = null; internalSeek = false; boundaryBusy = false; };
+  const cancelEffect = () => { epoch++; operation?.abort(); operation = null; internalSeek = false; boundaryBusy = false; };
   // Story observations are continuous source playback, not successive
   // one-button decisions. Stop only at a genuine choice-bearing phase.
   async function continueChronologicalStory() {
@@ -42,18 +43,18 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     cancelEffect(); freePlayback = false;
     const clip = nextPlayableClip(state), selectionId = state.selection?.id;
     if (!clip) return;
-    const controller = new AbortController(); operation = controller;
+    const controller = new AbortController(), ownEpoch = epoch; operation = controller;
     video.pause(); internalSeek = true;
     try {
       await seek(video, clip.startTime, { signal: controller.signal });
-      if (controller.signal.aborted || destroyed) return;
+      if (controller.signal.aborted || destroyed || ownEpoch !== epoch || state.selection?.id !== selectionId) return;
       internalSeek = false;
       dispatch({ type: 'PLAYING', selectionId });
       await play(video, { signal: controller.signal });
-      if (controller.signal.aborted || destroyed) return;
+      if (controller.signal.aborted || destroyed || ownEpoch !== epoch) return;
       lastWall = now();
     } catch (error) {
-      if (controller.signal.aborted || destroyed) return;
+      if (controller.signal.aborted || destroyed || ownEpoch !== epoch) return;
       internalSeek = false;
       dispatch({ type: 'FAIL', selectionId, message: 'Video oynatılamadı. Yeniden dene.' });
     }
@@ -89,11 +90,12 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     if (stage?.surface === 'story' && !video.ended && mayContinueSentence &&
         conversationEndAt(time) > time + .03) return;
     boundaryBusy = true;
+    const boundaryEpoch = epoch;
     video.pause();
     dispatch({ type: 'CLIP_ENDED', selectionId, time });
     if (state.selection && state.status === 'seeking') await playSelected();
     else if (!state.selection) await continueChronologicalStory();
-    boundaryBusy = false;
+    if (boundaryEpoch === epoch) boundaryBusy = false;
   }
   const onTime = () => { void sample(); };
   const onSeeking = () => {
@@ -138,6 +140,16 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       if (state.selection === previous) return;
       await playSelected();
     },
+    pause() { if (state.selection && state.status === 'playing') video.pause(); },
+    replay() { if (state.selection) return api.select(state.selection.choiceId); },
+    async selectSourceEvent(clipId) {
+      const clip = graph.clips.find(row => row.id === clipId);
+      if (!clip) return;
+      cancelEffect(); freePlayback = false; video.pause();
+      dispatch({ type: 'SEEK', time: clip.startTime, rewind: true });
+      const choice = graph.choices.find(row => row.stageId === clip.stageId && row.clipIds.includes(clip.id));
+      if (choice) await api.select(choice.id);
+    },
     async retry() { dispatch({ type: 'RETRY' }); if (state.status === 'seeking') await playSelected(); },
     async resume() {
       if (destroyed || !state.selection) return;
@@ -172,6 +184,7 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
     },
     skipStage() {
       if (destroyed || freePlayback) return;
+      if (state.selection) { cancelEffect(); video.pause(); dispatch({ type: 'CANCEL' }); }
       const chapter = graph.chapters.find(row => row.id === state.chapterId);
       const followingStage = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1];
       // Skipping the last stage must not bypass an unanalysed interval just
@@ -200,7 +213,7 @@ export function createGameplayPlayer({ graph, video, snapshot, onChange = () => 
       const next = direction > 0
         ? chronological.find(clip => clip.startTime > currentTime + .35)
         : chronological.reverse().find(clip => clip.startTime < currentTime - .35);
-      if (next) void api.navigate(next.startTime, { rewind: direction < 0 });
+      if (next) void api.selectSourceEvent(next.id);
     },
     async nextChapter() {
       if (destroyed || state.selection || freePlayback) return;
