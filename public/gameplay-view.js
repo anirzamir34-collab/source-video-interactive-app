@@ -140,6 +140,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   // mirrored the same cards and caused stacked/duplicated controls.
   els.adultQuickChoices?.replaceChildren();
 
+  if (state.status === 'error')
+    makeButton(root, 'Yeniden dene', () => void player.retry());
   if (state.error && !state.selection && choices.length)
     makeButton(root, 'Videoya devam et', () => void player.continueVideo());
   if (state.status === 'paused') makeButton(root, 'Oynatmaya devam et', () => void player.resume());
