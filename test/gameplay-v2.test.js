@@ -20,21 +20,35 @@ function engage(state, id = availableChoices(state)[0]?.id, { finish = true, sec
   return finish ? reduce(state, { type: 'CLIP_ENDED', selectionId, time: end }) : state;
 }
 
-test('A: seven verified narrative observations survive encounter references as meaningful story decisions', () => {
+test('A: seven chronological observations survive without appearing as one decision', () => {
   const actions = Array.from({ length: 7 }, (_, i) => observation(`story-${i}`, i * 5, {
     phase: 'STORY', duration: 4, storyEvidenceLevel: 'fact', storyConfidence: .95,
     narrativeChoiceLabel: `Doğrulanmış niyet ${i}` }));
   const graph = createGameplayGraph(analysis(actions));
   const state = createGameplayState(graph);
   assert.equal(graph.choices.length, 7);
+  assert.equal(graph.stages.length, 7);
+  assert.equal(graph.decisions.length, 0);
   assert.equal(activeSurface(state), 'story');
-  assert.equal(availableChoices(state).length, 7);
+  assert.equal(availableChoices(state).length, 1);
   assert.ok(availableChoices(state).every(choice => choice.label !== 'Videoya devam et'));
   assert.ok(Object.isFrozen(graph.clips[0]));
 });
 
-test('A: labelled dialogue source events remain selectable without claiming unseen branches', () => {
+test('A: labelled dialogue source events have their own chronological stages', () => {
   const graph = createGameplayGraph(analysis([observation('a', 0, { phase: 'STORY' }), observation('b', 8, { phase: 'STORY' })]));
+  assert.equal(graph.stages.length, 2);
+  assert.equal(availableChoices(createGameplayState(graph)).length, 1);
+});
+
+test('A: independently evidenced alternatives at one decision boundary share a stage', () => {
+  const actions = ['left', 'right'].map((id, i) => observation(id, i * .4, {
+    phase: 'STORY', duration: 4, gameplayEvidence: evidence(id, {
+      decisionId: 'verified-fork', intent: id
+    }) }));
+  const graph = createGameplayGraph(analysis(actions));
+  assert.equal(graph.stages.length, 1);
+  assert.equal(graph.decisions.length, 1);
   assert.equal(availableChoices(createGameplayState(graph)).length, 2);
 });
 

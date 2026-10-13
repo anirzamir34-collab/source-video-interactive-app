@@ -7,18 +7,19 @@ const load = async (page, actions) => {
   await page.evaluate(data => __gameplayTest.load(data), source(actions));
 };
 
-test('A/G: real app offers narrative cards and fullscreen fallback preserves choices on mobile', async ({ page }) => {
+test('A/G: chronological narrative cards stay local and fullscreen preserves the current choice', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await load(page, Array.from({ length: 7 }, (_, i) => observation(`story-${i}`, i * 3, {
     phase: 'STORY', duration: 2, storyEvidenceLevel: 'fact', storyConfidence: .95,
     narrativeChoiceLabel: `Gözlenen karar ${i}` })));
-  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(7);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(1);
+  await expect(page.getByText('Olay haritası')).toHaveCount(0);
   await expect(page.locator('#choices')).toBeVisible();
   await expect(page.locator('#approachChoices')).toBeHidden();
   await page.evaluate(() => { document.querySelector('.video-stage').requestFullscreen = () => Promise.reject(new Error('fixture denial')); });
   await page.locator('#fullscreenBtn').click();
   await expect(page.locator('#fullscreenStatus')).toContainText('Tam ekran açılamadı');
-  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(7);
+  await expect(page.locator('#choices .gameplay-choice')).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(errors).toEqual([]);
 });
@@ -43,7 +44,7 @@ test('player owns the clock: switch and navigate before a long clip finishes', a
   await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeLessThan(15);
 });
 
-test('phase panels keep source navigation separate from local choices', async ({ page }) => {
+test('phase panels show only local choices and never a global event map', async ({ page }) => {
   await load(page, [observation('dialogue', 0, { phase: 'STORY', duration: 2,
     storyEvidenceLevel: 'fact', storyConfidence: .95, narrativeChoiceLabel: 'Kaynak konuşması' }),
     observation('approach', 3, { duration: 2 }),
@@ -51,11 +52,27 @@ test('phase panels keep source navigation separate from local choices', async ({
       positionId: 'seated-facing', positionLabel: 'Kaynak duruşu' })]);
   await expect(page.locator('#choices .gameplay-choice')).toHaveCount(1);
   await expect(page.locator('#choices .gameplay-event-map')).toHaveCount(0);
-  await expect(page.locator('.video-stage > .gameplay-event-map')).toHaveCount(1);
+  await expect(page.locator('.video-stage > .gameplay-event-map')).toHaveCount(0);
   await page.getByRole('button', { name: 'Bu aşamayı geç', exact: true }).click();
   await expect(page.locator('#approachChoices .gameplay-choice')).toHaveCount(1);
   await expect(page.locator('#choices')).toBeHidden();
   await expect(page.locator('#adultInteractionPanel')).toBeHidden();
+});
+
+test('two watched opening actions fill Lust and reveal the first position without skipping source video', async ({ page }) => {
+  await load(page, [observation('opening-a', 0, { duration: 2 }),
+    observation('opening-b', 3, { duration: 2 }),
+    observation('position', 9, { phase: 'CORE', duration: 3, positionId: 'seated-facing' })]);
+  await page.locator('#approachChoices .gameplay-choice').first().click();
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection)).toBeNull();
+  await expect(page.locator('#approachChoices')).toBeVisible();
+  await page.locator('#approachChoices .gameplay-choice').nth(1).click();
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().stageId)).toContain('position');
+  await expect(page.locator('#adultInteractionPanel')).toBeVisible();
+  await expect(page.locator('#adultFlowStatus')).toContainText('Lust %100');
+  expect(await page.locator('#video').evaluate(video => video.currentTime)).toBeLessThan(9);
+  await page.locator('#movementChoices .gameplay-choice').click();
+  await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeGreaterThan(9);
 });
 
 test('B/F/G: real video playback earns bounded engagement and seeks to next stage source start', async ({ page }) => {

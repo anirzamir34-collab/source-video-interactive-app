@@ -118,7 +118,13 @@ export function createGameplayGraph(analysis = {}) {
     chapter.endTime = Math.max(chapter.endTime, row.end);
     // One core stage contains verified position families and their movement
     // variants. Individual occurrences are nested choices, not new stages.
-    const stageKey = JSON.stringify([row.phase, row.phase === 'STORY' ? row.decisionId : '']);
+    // A source event is a chronological stop, not an alternative to every
+    // later conversation in the encounter. Only source-supported decisions
+    // observed at the same boundary may share a story stage.
+    const storyPoint = row.decisionId && prior?.decisionId === row.decisionId &&
+      Math.abs(row.start - prior.start) < 2 ? prior.storyPoint : row.id;
+    row.storyPoint = storyPoint;
+    const stageKey = JSON.stringify([row.phase, row.phase === 'STORY' ? storyPoint : '']);
     if (!stage || stage.key !== stageKey) {
       stage = { id: `stage:${row.id}:${row.start}`, key: stageKey, chapterId: chapter.id, phase: row.phase,
         surface: row.surface, choiceIds: [], startTime: row.start, endTime: row.end };

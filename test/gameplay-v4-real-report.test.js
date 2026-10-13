@@ -50,7 +50,7 @@ class Media extends EventTarget {
 const fakeSeek = async (video,time) => {video.seeks.push(time);video.currentTime=time;};
 const fakePlay = async video => {video.paused=false;};
 
-test('reported 11 source observations compile into 2 continuous source chapters, not 7 fragments',()=>{
+test('reported observations keep two chapters and separate chronological story stops',()=>{
   const graph=createGameplayGraph(source);
   assert.equal(graph.rejected.length,0);
   assert.equal(graph.chapters.length,2);
@@ -60,7 +60,7 @@ test('reported 11 source observations compile into 2 continuous source chapters,
   assert.equal(graph.clips[0].endTime,86.38);
   assert.equal(graph.clips[0].previewEndTime,86.38);
   assert.ok(graph.clips.every(clip=>clip.previewEndTime===clip.endTime));
-  assert.equal(graph.stages.filter(s=>s.phase==='STORY').length,1);
+  assert.equal(graph.stages.filter(s=>s.phase==='STORY').length,5);
   assert.equal(graph.stages.filter(s=>s.phase==='CORE').length,2);
   assert.ok(graph.choices.every(c=>c.clipIds.length===1),'reused IDs never merge unrelated actions');
 });
@@ -92,18 +92,20 @@ test('stage navigation preserves intermediate actions and bridges an unanalysed 
   const player = createGameplayPlayer({ graph, video, seek: fakeSeek, play: fakePlay });
   t.after(() => player.destroy());
 
-  player.skipStage();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(player.getState().stageId, graph.stages[1].id);
+  for (let i = 0; i < 5; i++) {
+    player.skipStage();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(player.getState().stageId, graph.stages[5].id);
   assert.equal(video.currentTime, 211.158);
 
   await player.nextChapter();
-  assert.equal(player.getState().stageId, graph.stages[1].id,
+  assert.equal(player.getState().stageId, graph.stages[5].id,
     'nextChapter must not bypass the remaining core stage');
 
   player.skipStage();
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(player.getState().stageId, graph.stages[2].id);
+  assert.equal(player.getState().stageId, graph.stages[6].id);
 
   player.skipStage();
   await new Promise(resolve => setImmediate(resolve));
@@ -144,7 +146,7 @@ test('skipping the current long story observation keeps later story events playa
   await player.skipCurrentClip();
   assert.equal(video.currentTime,86.383);
   assert.equal(player.getState().selection?.choiceId,graph.choices[1].id);
-  assert.equal(player.getState().stageId,graph.stages[0].id);
+  assert.equal(player.getState().stageId,graph.stages[1].id);
   assert.equal(progression(player.getState()).value,0);
 });
 
@@ -171,7 +173,7 @@ test('timeline arrows step through actual source events rather than jumping chap
 });
 
 
-test('cinematic story retains switchable source cards behind a collapsed playback menu',()=>{
+test('cinematic story offers the current local source card behind a collapsed playback menu',()=>{
   const labelled={...source,actions:source.actions.map((a,index)=>({
     ...a,label:index<5 ? 'Kaynak olayı '+(index+1) : a.label,
     ...(index<5 ? {storyEvidenceLevel:'fact',storyConfidence:.95,
@@ -195,22 +197,22 @@ test('cinematic story retains switchable source cards behind a collapsed playbac
   const player={select(){},advanceStage(){},skipStage(){},nextChapter(){},
     continueVideo(){},skipCurrentClip(){}};
   let state=createGameplayState(graph);
-  assert.equal(availableChoices(state).length,5);
+  assert.equal(availableChoices(state).length,1);
   renderGameplay({state,player,els,document});
   const labels=()=>els.choices.children.filter(row=>row.tag==='button').map(row=>row.textContent);
-  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,5);
+  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,1);
   assert.ok(!labels().includes('Sonraki sahne'));
   assert.ok(!els.choices.children.some(row=>row.className==='gameplay-source-meta'));
 
   state=gameplayReducer(state,{type:'SELECT',choiceId:graph.choices[0].id});
   renderGameplay({state,player,els,document});
-  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,5,
-    'a selection does not collapse the other source cards to one');
+  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,1,
+    'a selection keeps its current source card accessible');
   assert.ok(els.choices.children.filter(row=>row.tag==='button').every(row=>!row.disabled));
 
-  state={...state,selection:null,status:'decision',cursor:211.2};
+  state=gameplayReducer(state,{type:'SEEK',time:211.2});
   renderGameplay({state,player,els,document});
-  assert.ok(labels().includes('Sonraki aşama'));
+  assert.ok(els.approachChoices.children.some(row=>row.tag==='button'));
   assert.ok(!labels().includes('Sonraki sahne'),
     'an empty story stage cannot bypass the later stages in its chapter');
 });

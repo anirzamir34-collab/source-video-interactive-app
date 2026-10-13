@@ -94,9 +94,9 @@ test('v3: a genuine story decision needs fact-level intent evidence', () => {
     observation('narrative-' + i, i * 8, { phase: 'STORY',
       narrativeChoiceLabel: 'Gözlenen karar ' + i, storyEvidenceLevel: 'fact', storyConfidence: .95 }));
   const graph = createGameplayGraph(analysis(actions));
-  assert.equal(availableChoices(createGameplayState(graph)).length, 3);
+  assert.equal(availableChoices(createGameplayState(graph)).length, 1);
   const notVerified = actions.map(row => ({ ...row, storyEvidenceLevel: 'unknown', storyConfidence: 0 }));
-  assert.equal(availableChoices(createGameplayState(createGameplayGraph(analysis(notVerified)))).length, 3);
+  assert.equal(availableChoices(createGameplayState(createGameplayGraph(analysis(notVerified)))).length, 1);
 });
 
 test('v3: source encounter continues across dialogue, approach and core', () => {
