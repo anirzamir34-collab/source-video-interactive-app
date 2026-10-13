@@ -534,3 +534,38 @@ test('gap playback stops at the earliest verified story choice even when speech 
   assert.equal(f.futureActions()[0].actionId, 'first-dialogue');
   assert.equal(f.els.choices.children.length, 1);
 });
+
+
+test('delayed gap playback tick preserves the exact first verified decision boundary', async () => {
+  const f = fixture();
+  f.els.video.duration = 200;
+  f.state.analysis = { videoDuration: 200, partial: false, actions: [
+    { actionId: 'first', label: 'İlk soruyu sor', sourceVerified: true,
+      actionType: 'dialogue', startTime: 78.722, endTime: 90 },
+    { actionId: 'second', label: 'Sonraki soruyu sor', sourceVerified: true,
+      actionType: 'dialogue', startTime: 112.778, endTime: 124.775 }
+  ] };
+  await f.resumeAnalysisGap(78.722);
+  f.els.video.time = 92;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameCursorTime, 78.722);
+  assert.equal(f.state.consumedActionIds.has('first'), false);
+  assert.equal(f.futureActions()[0].actionId, 'first');
+  await f.playAction(f.futureActions()[0]);
+  assert.equal(f.els.video.currentTime, 78.722);
+});
+
+test('distinct simultaneous story questions show together without exposing later source events', () => {
+  const f = fixture();
+  f.state.analysis = { videoDuration: 200, actions: [
+    { actionId: 'question-a', label: 'Ayrılık nedenini sor', sourceVerified: true,
+      actionType: 'dialogue', startTime: 10, endTime: 16 },
+    { actionId: 'question-b', label: 'Ayrılık zamanını sor', sourceVerified: true,
+      actionType: 'dialogue', startTime: 10.2, endTime: 16 },
+    { actionId: 'later', label: 'Başka bir konuyu konuş', sourceVerified: true,
+      actionType: 'dialogue', startTime: 20, endTime: 25 }
+  ] };
+  f.renderChoices();
+  assert.deepEqual(Array.from(f.futureActions(), action => action.actionId), ['question-a', 'question-b']);
+  assert.equal(f.els.choices.children.length, 2);
+});
