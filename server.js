@@ -345,20 +345,20 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
         positionOccurrenceId:String(candidate.positionOccurrenceId || '').slice(0,80)};
     }
   } catch { repairFocus=null; }
-  const repairInstructions = !repairFocus ? '' : repairFocus.kind === 'SILENT_GAP' ? \`
+  const repairInstructions = !repairFocus ? '' : repairFocus.kind === 'SILENT_GAP' ? `
 TARGETED RE-ANALYSIS OF AN UNOBSERVED SOURCE INTERVAL:
-- The first pass reported no source-verified action from \${chunkStart.toFixed(1)} to \${chunkEnd.toFixed(1)} seconds. Examine the supplied dense video frames independently.
+- The first pass reported no source-verified action from ${chunkStart.toFixed(1)} to ${chunkEnd.toFixed(1)} seconds. Examine the supplied dense video frames independently.
 - List independently visible, distinct chronological source events with exact bounded timestamps, including ordinary conversations, transitions, verified approach gestures, and later interaction phases where supported.
 - Do not invent an event just because there is a gap. Audio statements are not independent proof of visual movements.
 - Set sourceVerified false for uncertain events and include an explicit warning for unresolved source intervals.
-\` : \`
+` : `
 TARGETED MOVEMENT REVIEW OF ONE LONG OBSERVED CONFIGURATION:
-- Original interval: \${chunkStart.toFixed(1)} to \${chunkEnd.toFixed(1)} seconds. Parent configuration \${repairFocus.positionLabel || repairFocus.positionId}.
+- Original interval: ${chunkStart.toFixed(1)} to ${chunkEnd.toFixed(1)} seconds. Parent configuration ${repairFocus.positionLabel || repairFocus.positionId}.
 - Do not guess different physical configurations from camera angles. Split only independently distinguishable visible source actions into precise time-bounded rows. Repeated cuts of the same action must retain a shared gameplayEvidence.sourceActionId, occurrenceId and action.key.
-- Every returned row requires gameplayEvidence.version 2, action.verified true, action.confidence >= 0.6, explicit visual timestamp evidence, and the same positionId \${repairFocus.positionId}. Do not promote sourceVerified merely because another row is labelled verified.
+- Every returned row requires gameplayEvidence.version 2, action.verified true, action.confidence >= 0.6, explicit visual timestamp evidence, and the same positionId ${repairFocus.positionId}. Do not promote sourceVerified merely because another row is labelled verified.
 - Different visible actions get different semantic keys; repeated cuts of one verified action keep the same key. If only one action is substantiated, return one with a warning.
 - Never fabricate two to six choices or divide the interval into arbitrary equal-duration clips.
-\`;
+`;
   const reviewInstructions = reviewMode ? `
 SECOND PASS VISUAL REVIEW MODE:
 - You have NO transcript, NO speaker profiles, NO remembered story context and NO non-speech-audio context. This is a deliberately independent, image-only channel.
