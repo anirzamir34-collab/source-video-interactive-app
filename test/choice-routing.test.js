@@ -23,6 +23,18 @@ test('existing verified action kinds have one surface even when their source con
   assert.equal(choiceSurfaceForAction(action({ sourceVerified: false, actionType: 'kiss' })), 'unverified');
 });
 
+test('a money offer remains story and a verified scene movement cannot leak into story', () => {
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'other', movementType: 'para teklifi',
+    choiceSurface: 'approach', choiceSurfaceEvidence: 'A banknote is offered.',
+    choiceSurfaceConfidence: 1 })), 'story');
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'tempo_change', adultScene: true,
+    choiceSurface: 'story', choiceSurfaceEvidence: 'Visible movement in source frames.',
+    choiceSurfaceConfidence: 1 })), 'panel');
+  assert.equal(choiceSurfaceForAction(action({ actionType: 'tempo_change', adultScene: true,
+    choiceSurface: 'story', choiceSurfaceEvidence: 'Only spoken words',
+    choiceSurfaceConfidence: 1 })), 'story');
+});
+
 test('ordinary hand gestures and dialogue wording do not promote a story action', () => {
   assert.equal(choiceSurfaceForAction(action({ label: 'Elini şakağına götürüp konuş', adultScene: true })), 'story');
   assert.equal(choiceSurfaceForAction(action({ label: 'Kollarını bağlayıp izle', adultScene: true })), 'story');

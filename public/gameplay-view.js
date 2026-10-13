@@ -29,10 +29,12 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   const positions = [...grouped.values()];
   const focusedPositionId = positions.some(row => row.positionId === state.focusedPositionId)
     ? state.focusedPositionId : positions[0]?.positionId;
-  // Tabs always show every sourced position; movements belong to the selected
-  // position. Positionless verified panel events remain independently playable.
+  // Tabs always show every sourced position. A panel action without a verified
+  // position link remains available separately, never under a guessed tab.
   const visibleChoices = surface === 'panel' && positions.length
-    ? choices.filter(row => !row.positionId || row.positionId === focusedPositionId) : choices;
+    ? choices.filter(row => row.positionId === focusedPositionId) : choices;
+  const unassignedChoices = surface === 'panel' && positions.length
+    ? choices.filter(row => !row.positionId) : [];
   const stageElement = els.video?.closest('.video-stage');
   const fullscreen = Boolean(stageElement && (document?.fullscreenElement === stageElement ||
     document?.webkitFullscreenElement === stageElement));
@@ -142,6 +144,18 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     // Source timestamps belong in the owner timeline/debug report, not in
     // cinematic choice buttons. Show the action itself, without duration.
   }
+  if (unassignedChoices.length) {
+    const heading = document.createElement('div');
+    heading.className = 'meta gameplay-unassigned-heading';
+    heading.textContent = 'Pozisyona bağlanmamış gözlenen eylemler';
+    root.appendChild(heading);
+    for (const choice of unassignedChoices) {
+      const card = makeButton(root, choice.label, () => selectChoice(choice),
+        'choice story-choice gameplay-choice gameplay-choice-card');
+      card.dataset.choiceId = choice.id;
+      card.dataset.choiceSurface = surface;
+    }
+  }
 
   // One selection surface only. The former secondary quick-action dock
   // mirrored the same cards and caused stacked/duplicated controls.
@@ -183,7 +197,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${characterProgress}%`;
   if (els.adultSceneTime && chapter)
     els.adultSceneTime.textContent = `${chapter.startTime.toFixed(1)}–${chapter.endTime.toFixed(1)} sn`;
-  if (els.movementCount) els.movementCount.textContent = `${visibleChoices.length} seçenek`;
+  if (els.movementCount) els.movementCount.textContent = `${visibleChoices.length + unassignedChoices.length} seçenek`;
   if (els.movementHeading) els.movementHeading.textContent = positions.length
     ? 'Gözlenen hareketler' : 'Gözlenen eylemler';
   if (els.femaleProgressText) els.femaleProgressText.textContent = `%${Math.round(progress.lust)}`;

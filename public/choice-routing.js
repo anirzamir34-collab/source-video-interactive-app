@@ -10,6 +10,10 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   // A verified dialogue range keeps its own category even when a broad parent
   // carries unrelated outcome metadata. Speech is not a performed event.
   if (storyTypes.has(type)) return 'story';
+  // A transaction is a narrative decision even if a provider marks the
+  // visible banknote as an approach action. It cannot earn Lust.
+  if (type === 'other' && /(?:para teklifi|money offer|offer money)/iu.test(
+    `${action.movementType || ''} ${action.narrativeChoiceLabel || ''} ${action.label || ''}`)) return 'story';
   if (panelFamily ||
       ['partner_transition', 'outcome', 'aftermath'].includes(type) ||
       ['climax', 'aftermath'].includes(text(action.outcomeType))) return 'panel';
@@ -27,6 +31,10 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   const speechOnly = /\b(?:only spoken words|speech only|dialogue only|only dialogue|only speech|sadece konusma|yalnizca konusma|yalnizca soz)\b/iu.test(
     String(action.choiceSurfaceEvidence || '').toLocaleLowerCase('tr-TR')
       .replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u'));
+  // A sourced physical tempo change stays in the scene panel even when the
+  // provider mislabels its surface as STORY. Do not infer a position from it.
+  if (type === 'tempo_change' && action.adultScene === true && declaredEvidence && !speechOnly)
+    return 'panel';
   if (approachTypes.has(type)) return (ordinaryContact && declaredEvidence) || speechOnly ? 'story' : 'approach';
   if (text(action.choiceSurface) === 'story' && declaredEvidence) return 'story';
   if (text(action.choiceSurface) === 'approach' && declaredEvidence) return 'approach';
