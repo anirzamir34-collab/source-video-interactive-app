@@ -1,4 +1,5 @@
 import { toggleFullscreen, revealFullscreenChoices } from './fullscreen.js';
+import { sourceOpeningTimeline } from './source-opening.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { normalizeProtagonistSurvey, surveySheetIndices } from './protagonist-survey.js';
 import { createAnalysisProgress } from './analysis-progress.js';
@@ -19,6 +20,7 @@ import {
   summarizeMovementChoiceCoverage,
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
+  coreLustPacingScale,
   computeWarmupSelectionDelta,
   warmupLustScale,
   expandVerifiedMovementVariants,
@@ -2539,6 +2541,9 @@ function normalizeAnalysis(body) {
     analysisCoverage: Number(body?.analysisCoverage || 0),
     secondPassChunkCount: Number(body?.secondPassChunkCount || 0),
     videoDuration: Number(body?.videoDuration ?? 0),
+    ...sourceOpeningTimeline({ videoDuration: body?.videoDuration,
+      introEndTime: body?.introEndTime, playStartTime: body?.playStartTime,
+      actions: ownership.playable }),
     mainMaleTrackId: body?.mainMaleTrackId ?? null,
     semanticVideoMap: body?.semanticVideoMap ?? [],
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
@@ -3924,6 +3929,15 @@ function unlockNextAdultPositionFromLust() {
   return next;
 }
 
+function currentCoreLustScale(position) {
+  if (!position || isWarmupPosition(position)) return 1;
+  const hasLockedNextCore = orderedLockedAdultPositions().some(next =>
+    next.id !== position.id && !isBonusPosition(next));
+  return coreLustPacingScale(position, {
+    hasLockedNextCore, unlockPoints: ADULT_LUST_UNLOCK_THRESHOLD
+  });
+}
+
 function addFemaleLust(amount) {
   if (state.adultOrgasmDecision) return null;
   if (state.interactionMeterNeedsReset) {
@@ -4981,7 +4995,7 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
     } else if (!state.interactionMeterNeedsReset) {
       addFemaleLust(delta.female * currentWarmupLustScale());
     }
-  } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : 1));
+  } else addFemaleLust(delta.female * (isWarmupPosition(position) ? currentWarmupLustScale() : currentCoreLustScale(position)));
   if (!isWarmupPosition(position)) {
     // Tapping a card never advances orgasm. Only verified core playback does.
     const climaxDelta = averageAdultProgress(delta.male, delta.female) * 0.12;
@@ -5878,7 +5892,7 @@ function updateAdultPlayback(now, mediaTime) {
     warmup: warmupMovement
   });
   if (!warmupMovement || !genericInteractionSnapshot().progressBudget)
-    addFemaleLust(progress.lust * (warmupMovement ? currentWarmupLustScale() : 1));
+    addFemaleLust(progress.lust * (warmupMovement ? currentWarmupLustScale() : currentCoreLustScale(position)));
   if (!warmupMovement) {
     const movementRate = averageAdultProgress(
       Number(movement.maleProgressRate || 1),
@@ -5994,22 +6008,10 @@ function futureActions() {
   const boundary = ordered.find(item => choiceSurfaceForAction(item) !== firstSurface)?.startTime ?? Infinity;
   const surfacePool = ordered.filter(item => choiceSurfaceForAction(item) === firstSurface &&
     Number(item.startTime) < Number(boundary));
-  const seenChoices = new Set();
-
-  const unique = surfacePool.filter((action) => {
-    const key = action.choiceKey ||
-      action.label.trim().toLocaleLowerCase('tr-TR');
-
-    if (seenChoices.has(key)) {
-      return false;
-    }
-
-    seenChoices.add(key);
-    return true;
-  });
-  // Future chronological chapters must never masquerade as simultaneous
-  // player alternatives. Show only the choices grounded in one source instant.
-  return selectSameMomentStoryActions(unique, 3);
+  // Deduplicate inside the actual decision instant. A label reused elsewhere
+  // in the video must not remove an independently verified source interval.
+  // Future chronological chapters must never masquerade as alternatives.
+  return selectSameMomentStoryActions(surfacePool, 3);
 }
 
 function nextVerifiedRouteTime() {
@@ -6063,8 +6065,11 @@ async function resumeAnalysisGap(target) {
     els.video.pause();
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
+    // Anchor a verified decision at its source timestamp even if a delayed
+    // timeupdate arrives after it. An ordinary speech/gap bridge with no
+    // verified route still advances to the actual observed media time.
     state.gameCursorTime = Math.min(
-      Math.max(bridgeTarget, now),
+      verifiedRouteAtBoundary ? bridgeTarget : Math.max(bridgeTarget, now),
       Number(els.video.duration) || Number(state.analysis?.videoDuration) || bridgeTarget
     );
     logEngineEvent('ANALYSIS_GAP_PLAYBACK_COMPLETED', { at: state.gameCursorTime });
@@ -6398,8 +6403,15 @@ function finishAction(action, decisionEndTime = action.endTime) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
   }
+  const observedEnd = Math.max(now, Number(action.endTime) || 0, Number(decisionEndTime) || 0);
+  // A late media callback may run after the next playable decision is already
+  // underway. Restore that verified boundary, not the stale callback position,
+  // so a later source action is not silently marked consumed. Keep normal
+  // sub-frame progress unchanged to avoid needless seek/rewind jitter.
+  const safeBoundary = Number.isFinite(nextSourceStart) &&
+    observedEnd > nextSourceStart + 0.15 ? nextSourceStart : observedEnd;
   const reachedTime = Math.min(Number(els.video.duration) || Number(state.analysis?.videoDuration) || Infinity,
-    Math.max(now, Number(action.endTime) || 0, Number(decisionEndTime) || 0));
+    safeBoundary);
   state.consumedActionIds.add(action.actionId);
   let reachedIndex = state.analysis.actions.findIndex(a => a.actionId === action.actionId);
   state.analysis.actions.forEach((candidate, index) => {

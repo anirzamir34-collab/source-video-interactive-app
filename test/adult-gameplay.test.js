@@ -18,6 +18,7 @@ import {
   summarizeMovementChoiceCoverage,
   consolidateVerifiedPositions,
   computeAdultSelectionDelta,
+  coreLustPacingScale,
   dedupeVerifiedTimelineActions,
   expandVerifiedMovementVariants,
   computeWarmupSelectionDelta,
@@ -1236,4 +1237,32 @@ test('semantic grouping never hides a changed action, tempo, source occurrence o
   assert.equal(collapseConsecutiveEquivalentCards([base, next('b', {}, { loopStartTime: 21 })]).length, 2);
   assert.equal(collapseConsecutiveEquivalentCards([base, next('b', {}, { partnerTrackId: 'PARTNER_B' })]).length, 2);
   assert.equal(collapseConsecutiveEquivalentCards([base, next('b')]).length, 1);
+});
+
+
+test('next core unlock pacing uses verified available footage, not a global fixed video duration', () => {
+  const sourcePosition = clips => ({
+    movements: clips.map(([start, end], i) => ({
+      id: `source-${i}`, sourceVerified: true, loopStartTime: start, loopEndTime: end
+    }))
+  });
+  const sparse = sourcePosition([[300, 312]]);
+  assert.ok(coreLustPacingScale(sparse, { hasLockedNextCore: true }) > 1);
+  assert.equal(coreLustPacingScale(sparse, { hasLockedNextCore: false }), 1);
+  assert.equal(coreLustPacingScale(sourcePosition([[300, 700]]), { hasLockedNextCore: true }), 1);
+  assert.equal(coreLustPacingScale({ movements: [
+    { sourceVerified: false, loopStartTime: 300, loopEndTime: 312 }
+  ] }, { hasLockedNextCore: true }), 1);
+});
+
+test('overlapping source clips never double-count their duration in later-core pacing', () => {
+  const movement = (id, start, end) =>
+    ({ id, sourceVerified: true, loopStartTime: start, loopEndTime: end });
+  const single = { movements: [movement('one', 10, 20)] };
+  const duplicate = { movements: [movement('one', 10, 20), movement('alias', 10, 20)] };
+  assert.equal(coreLustPacingScale(duplicate, { hasLockedNextCore: true }),
+    coreLustPacingScale(single, { hasLockedNextCore: true }));
+  const two = { movements: [movement('one', 10, 20), movement('two', 20, 30)] };
+  assert.ok(coreLustPacingScale(two, { hasLockedNextCore: true }) <
+    coreLustPacingScale(single, { hasLockedNextCore: true }));
 });

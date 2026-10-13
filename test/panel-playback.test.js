@@ -318,7 +318,7 @@ const runtimeNames = [
   'observeInteractionProgress',
   'guardPlayable', 'setAdultMachinePhase', 'isWarmupPosition', 'isBonusPosition',
   'adultTimeLabel', 'currentAdultFlow', 'currentWarmupLustScale', 'tempoLabel', 'orderedLockedAdultPositions',
-  'unlockNextAdultPositionFromLust', 'addFemaleLust', 'unlockedAdultPositions',
+  'unlockNextAdultPositionFromLust', 'currentCoreLustScale', 'addFemaleLust', 'unlockedAdultPositions',
   'unlockedAdultOutcomes', 'renderAdultFlowStatus', 'renderAdultProgress',
   'renderAdultApproachChoices', 'renderAdultProgressiveUI', 'selectAdultCategory',
   'renderInteractionInterludeChoices',

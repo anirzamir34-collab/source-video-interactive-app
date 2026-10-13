@@ -696,6 +696,40 @@ export function computeAdultSelectionDelta({
   };
 }
 
+// Scale later, source-backed core progression to what the currently playable
+// position can actually yield. Never accelerate an opening scene, invent a
+// clip, grant progress to a seek or slow down a naturally long source chapter.
+export function coreLustPacingScale(position = {}, { hasLockedNextCore = false, unlockPoints = 35 } = {}) {
+  if (!hasLockedNextCore) return 1;
+  const seen = new Set();
+  const ranges = (Array.isArray(position?.movements) ? position.movements : [])
+    .filter(item => item?.sourceVerified === true)
+    .map(item => clipRange(item))
+    .filter(Boolean)
+    .filter(range => {
+      const key = `${range.startTime}:${range.endTime}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.startTime - b.startTime);
+  if (!ranges.length) return 1;
+  let unionSeconds = 0;
+  let lastEnd = -Infinity;
+  for (const range of ranges) {
+    unionSeconds += Math.max(0, range.endTime - Math.max(range.startTime, lastEnd));
+    lastEnd = Math.max(lastEnd, range.endTime);
+  }
+  const referenceRate = adultPlaybackProgressDelta({ elapsed: 0.25 }).lust / 0.25;
+  const estimatedSelectionCredit = ranges.reduce((total, _, index) =>
+    total + computeAdultSelectionDelta({
+      repeatCount: 0, positionNew: index === 0, movementNew: true,
+      comboCount: Math.min(index + 1, 6)
+    }).female, 0);
+  const expectedCredit = unionSeconds * referenceRate + estimatedSelectionCredit;
+  return expectedCredit > 0 ? clamp(Number(unlockPoints) / expectedCredit, 1, 5) : 1;
+}
+
 export function pickNextVariant(variants, currentId = null, playCounts = new Map()) {
   const playable = (Array.isArray(variants) ? variants : [])
     .filter(item =>

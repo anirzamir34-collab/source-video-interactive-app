@@ -219,8 +219,14 @@ export function selectDiverseStoryActions(actions = [], limit = 3) {
   const intents = new Set();
   for (const action of Array.isArray(actions) ? actions : []) {
     const intent = storyChoiceIntentKey(action);
-    if (!intent || intents.has(intent)) continue;
-    intents.add(intent);
+    // A broad speech verb is not a unique decision intent: asking about two
+    // different subjects at the same instant remains two genuine alternatives.
+    // Other synonym families retain their existing duplicate suppression.
+    const uniqueIntent = intent === 'talk'
+      ? `talk:${normalizeChoiceIntentText(storyChoiceLabelForAction(action))}`
+      : intent;
+    if (!uniqueIntent || intents.has(uniqueIntent)) continue;
+    intents.add(uniqueIntent);
     selected.push(action);
     if (selected.length >= maximum) break;
   }
