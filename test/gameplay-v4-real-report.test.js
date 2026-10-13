@@ -173,7 +173,7 @@ test('timeline arrows step through actual source events rather than jumping chap
 });
 
 
-test('cinematic story exposes locally grouped sourced cards throughout playback',()=>{
+test('cinematic story retains only the owned source event throughout playback',()=>{
   const labelled={...source,actions:source.actions.map((a,index)=>({
     ...a,label:index<5 ? 'Kaynak olayı '+(index+1) : a.label,
     ...(index<5 ? {storyEvidenceLevel:'fact',storyConfidence:.95,
@@ -200,14 +200,14 @@ test('cinematic story exposes locally grouped sourced cards throughout playback'
   assert.equal(availableChoices(state).length,1);
   renderGameplay({state,player,els,document});
   const labels=()=>els.choices.children.filter(row=>row.tag==='button').map(row=>row.textContent);
-  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,4);
+  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,1);
   assert.ok(!labels().includes('Sonraki sahne'));
   assert.ok(!els.choices.children.some(row=>row.className==='gameplay-source-meta'));
 
   state=gameplayReducer(state,{type:'SELECT',choiceId:graph.choices[0].id});
   renderGameplay({state,player,els,document});
-  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,4,
-    'source playback must keep the same four local decisions visible');
+  assert.equal(labels().filter(text=>text.startsWith('Kaynak olayı')).length,1,
+    'source playback keeps its owner visible without inventing four alternative decisions');
   assert.ok(!labels().includes('Duraklat') && !labels().includes('Yeniden oynat'),
     'playback commands must not be mixed into story choices');
 
@@ -254,7 +254,7 @@ test('after-scene choices use the narrative overlay without moving or rewriting 
   assert.ok(!els.choices.children.some(row => String(row.textContent || '').includes('Lust %')));
 });
 
-test('13-action real report topology exposes four opening story cards and both distinct core choices', () => {
+test('13-action real report topology keeps chronological story separate and both core positions reachable', () => {
   // The report records 13 verified source actions, split into two chapters.
   // This small topology retains their source bounds and categories, without
   // storing the video, transcript or sensitive scene descriptions.
@@ -278,7 +278,7 @@ test('13-action real report topology exposes four opening story cards and both d
   const graph = createGameplayGraph({videoDuration:460.8,actions});
   assert.equal(graph.choices.length,13);
   const story = createGameplayState(graph);
-  assert.equal(phaseVisibleChoices(story).length,4, 'opening narrative buttons must not be serialized as only one');
+  assert.equal(phaseVisibleChoices(story).length,1, 'successive events without a decision ID are not alternatives');
   const coreStage = graph.stages.find(row=>row.phase==='CORE');
   assert.ok(coreStage);
   const core = { ...story, stageId:coreStage.id,chapterId:coreStage.chapterId };

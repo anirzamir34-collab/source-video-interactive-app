@@ -79,12 +79,12 @@ test('B: actual engagement can earn credit before a long clip ends, without doub
   assert.deepEqual(progression(state), progression(first));
 });
 
-test('C: eight choices reveal progressively and verified visual changes retire incompatible earlier clips', () => {
+test('C: eight verified choices stay accessible and visual changes retire incompatible earlier clips', () => {
   const actions = Array.from({ length: 8 }, (_, i) => observation(`a${i}`, i * 8, {
     gameplayEvidence: evidence(`a${i}`, { before: visual({ clothing: i < 2 ? 'coat' : 'shirt' }),
       after: visual({ clothing: i < 1 ? 'coat' : 'shirt' }) }) }));
   let state = createGameplayState(createGameplayGraph(analysis(actions)));
-  assert.equal(availableChoices(state).length, 3);
+  assert.equal(availableChoices(state).length, 8);
   const first = availableChoices(state)[0].id;
   state = engage(state, availableChoices(state)[1].id);
   assert.equal(state.visual.clothing, 'shirt');

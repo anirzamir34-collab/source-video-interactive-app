@@ -6,32 +6,18 @@ const positionKey = choice => choice.positionId ? String(choice.positionId) : ''
 const movementName = value => ({ rhythmic: 'Ritmik hareket', slow: 'Yavaş hareket',
   moderate: 'Dengeli hareket', fast: 'Hızlı hareket' })[String(value || '').trim().toLowerCase()] || value;
 
-// Presentation-only collection. One recorded STORY action per graph stage must
-// not become one lonely button. Only consecutive source-backed events in the
-// same chapter and phase are gathered; any phase boundary or meaningful gap
-// ends the local choice window. No new clips, outcomes or source times appear.
+// The reducer owns the exact same choices in normal and fullscreen layouts.
+// Chronologically adjacent observations are never turned into alternatives by
+// the view; only a verified decision/scene ownership group can do that.
 export function phaseVisibleChoices(state) {
-  const stage = state.graph.stages.find(row => row.id === state.stageId);
-  if (!stage || stage.phase !== 'STORY') return availableChoices(state);
-  const stages = [...state.graph.stages].sort((a, b) =>
-    a.startTime - b.startTime || a.endTime - b.endTime);
-  const index = stages.findIndex(row => row.id === stage.id);
-  const adjacent = (a, b) => a && b && a.chapterId === b.chapterId &&
-    a.phase === 'STORY' && b.phase === 'STORY' &&
-    b.startTime <= a.endTime + .25;
-  let first = index, last = index;
-  while (first > 0 && adjacent(stages[first - 1], stages[first])) first--;
-  while (last < stages.length - 1 && adjacent(stages[last], stages[last + 1])) last++;
-  const choiceById = new Map(state.graph.choices.map(choice => [choice.id, choice]));
-  return stages.slice(first, last + 1)
-    .flatMap(row => row.choiceIds.map(id => choiceById.get(id)))
-    .filter(Boolean);
+  return availableChoices(state);
 }
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
 export function renderGameplay({ state, player, els, document = globalThis.document }) {
   const progress = progression(state);
-  const surface = activeSurface(state);
+  const owningStage = state.graph.stages.find(row => row.id === state.stageId);
+  const surface = owningStage ? activeSurface(state) : 'none';
   const choices = phaseVisibleChoices(state);
   const grouped = new Map();
   if (surface === 'panel') for (const choice of choices) {
@@ -41,13 +27,17 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       positionId: choice.positionId, occurrenceId: choice.occurrenceId });
   }
   const positions = [...grouped.values()];
-  // Tabs name source-backed positions but never filter the other alternatives.
-  const visibleChoices = choices;
+  const focusedPositionId = positions.some(row => row.positionId === state.focusedPositionId)
+    ? state.focusedPositionId : positions[0]?.positionId;
+  // Tabs always show every sourced position; movements belong to the selected
+  // position. Positionless verified panel events remain independently playable.
+  const visibleChoices = surface === 'panel' && positions.length
+    ? choices.filter(row => !row.positionId || row.positionId === focusedPositionId) : choices;
   const stageElement = els.video?.closest('.video-stage');
   const fullscreen = Boolean(stageElement && (document?.fullscreenElement === stageElement ||
     document?.webkitFullscreenElement === stageElement));
   const signature = JSON.stringify([state.stageId, state.status, state.error, state.selection?.choiceId,
-    state.selection?.index, progress, choices.map(row => row.id), fullscreen]);
+    state.selection?.index, focusedPositionId, progress, choices.map(row => row.id), fullscreen]);
   if (els.cursorText) els.cursorText.textContent = `${state.cursor.toFixed(1)} sn`;
   if (rendered.get(els) === signature) return;
   rendered.set(els, signature);
@@ -84,10 +74,9 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     return button;
   };
   const selectChoice = choice => {
-    if (choice.stageId === state.stageId) void player.select(choice.id);
-    else if (choice.clipIds?.length) void player.selectSourceEvent(choice.clipIds[0]);
+    void player.select(choice.id);
   };
-  const phaseLabel = { STORY: 'Hikâye', APPROACH: 'Yakınlaşma', CORE: 'Etkileşim',
+  const phaseLabel = { STORY: 'Hikâye', APPROACH: 'Yakınlaşma', CORE: 'Etkileşim', INTERLUDE: 'Geçiş',
     OUTCOME: 'Sonuç', AFTERMATH: 'Sahne sonrası' }[progress.phase] || 'Hikâye';
   const chapter = state.graph.chapters.find(row => row.id === state.chapterId);
   const cast = chapter?.cast || [];
@@ -99,7 +88,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     (progress.phase === 'AFTERMATH' ? 'Sahne sonrası · Seçimler' :
       `${phaseLabel} · ${surface === 'story' ? 'İlerleme' : 'Lust'} %${Math.round(surface === 'story' ? progress.value : progress.lust)}`);
   root.appendChild(info);
-  if (state.status === 'continuing') {
+  if (state.status === 'continuing' || !owningStage) {
     // Never show stale choices over source footage between verified chapters.
     syncInteractionSurfaces({ panel: els.adultInteractionPanel, overlay: els.choices,
       approach: els.approachChoices, surface: 'none' });
@@ -131,7 +120,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
         if (targetChoice) selectChoice(targetChoice);
       }, 'position-tab gameplay-position-tab');
       tab.setAttribute('role', 'tab');
-      const selected = targetChoice?.id === state.selection?.choiceId;
+      const selected = row.positionId === focusedPositionId;
       tab.setAttribute('aria-selected', String(Boolean(selected)));
       tab.classList.toggle('active', Boolean(selected));
     }

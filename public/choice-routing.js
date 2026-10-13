@@ -10,6 +10,10 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   // A verified dialogue range keeps its own category even when a broad parent
   // carries unrelated outcome metadata. Speech is not a performed event.
   if (storyTypes.has(type)) return 'story';
+  // A witnessed body/position change is an interaction event, not a line of
+  // dialogue. It has no position tab unless the source supplies a position.
+  if (type === 'body_transition' && String(action.choiceSurfaceEvidence || '').trim() &&
+      Number(action.choiceSurfaceConfidence) >= .6) return 'panel';
   if (panelFamily ||
       ['partner_transition', 'outcome', 'aftermath'].includes(type) ||
       ['climax', 'aftermath'].includes(text(action.outcomeType))) return 'panel';

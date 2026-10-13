@@ -46,7 +46,7 @@ test('a declared category requires interval evidence and confidence and cannot c
   const opening = action({ actionType: 'body_transition', choiceSurface: 'approach' });
   assert.equal(choiceSurfaceForAction(opening), 'story');
   assert.equal(choiceSurfaceForAction({ ...opening, choiceSurfaceEvidence: 'Source interval evidence', choiceSurfaceConfidence: 0.59 }), 'story');
-  assert.equal(choiceSurfaceForAction({ ...opening, choiceSurfaceEvidence: 'Source interval evidence', choiceSurfaceConfidence: 0.95 }), 'approach');
+  assert.equal(choiceSurfaceForAction({ ...opening, choiceSurfaceEvidence: 'Source interval evidence', choiceSurfaceConfidence: 0.95 }), 'panel');
   assert.equal(choiceSurfaceForAction(action({ choiceSurface: 'panel', choiceSurfaceConfidence: 1, choiceSurfaceEvidence: 'A scene label' })), 'story');
 });
 
@@ -61,7 +61,7 @@ test('observed contact and kissing keep their opening surface when a provider ca
       choiceSurfaceEvidence: 'The same pair visibly draw closer and touch.', choiceSurfaceConfidence: 0.94 })), 'approach');
   }
   assert.equal(choiceSurfaceForAction(action({ actionType: 'body_transition', choiceSurface: 'story',
-    choiceSurfaceEvidence: 'They change posture.', choiceSurfaceConfidence: 0.94 })), 'story');
+    choiceSurfaceEvidence: 'They change posture.', choiceSurfaceConfidence: 0.94 })), 'panel');
 });
 
 test('choice windows stop at the next category boundary instead of offering later source clips', () => {

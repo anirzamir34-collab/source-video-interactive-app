@@ -186,7 +186,9 @@ test('fullscreen keeps all local source choices visible, including during playba
   const actions = [
     ...Array.from({ length: 4 }, (_, i) => observation('narrative-' + i, i * 2, {
       phase: 'STORY', duration: 2, storyEvidenceLevel: 'fact', storyConfidence: .95,
-      narrativeChoiceLabel: 'Hikâye seçeneği ' + i })),
+      narrativeChoiceLabel: 'Hikâye seçeneği ' + i,
+      gameplayEvidence: evidence('narrative-' + i, {
+        decisionId: 'opening-fork', intent: 'alternative-' + i }) })),
     observation('opening', 9, { phase: 'APPROACH', duration: 2 }),
     observation('core-a', 12, { phase: 'CORE', duration: 2,
       positionId: 'rear', positionLabel: 'Doggy Style' }),
@@ -211,10 +213,11 @@ test('fullscreen keeps all local source choices visible, including during playba
   await page.locator('#nextChoiceBtn').click();
   await expect.poll(() => page.evaluate(() => __gameplayTest.state().stageId)).toContain('core-a');
   await expect(page.locator('#adultInteractionPanel')).toBeVisible();
-  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(2);
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(1);
   await expect(page.locator('#positionTabs .position-tab')).toHaveCount(2);
-  await page.locator('#movementChoices .gameplay-choice').last().click();
+  await page.locator('#positionTabs .position-tab').last().click();
   await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(14);
-  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(2);
+  await expect(page.locator('#positionTabs .position-tab')).toHaveCount(2);
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(1);
   expect(errors).toEqual([]);
 });
