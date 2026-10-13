@@ -64,18 +64,21 @@ test('core tabs retain all positions while movement cards follow the selected po
   const graph = createGameplayGraph(analysis([
     observation('rear', 0, { phase: 'CORE', positionId: 'rear', positionLabel: 'Rear' }),
     observation('front', 8, { phase: 'CORE', positionId: 'missionary', positionLabel: 'Missionary' })]));
-  const element = () => ({ children: [], dataset: {}, style: {}, classList: { add() {}, remove() {}, toggle() {} },
+  const element = () => ({ children: [], dataset: {}, style: {}, handlers: {}, classList: { add() {}, remove() {}, toggle() {} },
     appendChild(child) { this.children.push(child); child.parentElement = this; },
-    replaceChildren() { this.children = []; }, setAttribute() {}, addEventListener() {} });
+    replaceChildren() { this.children = []; }, setAttribute() {}, addEventListener(name, fn) { this.handlers[name] = fn; } });
   const document = { createElement: element, querySelectorAll: () => [] };
   const stage = element(); stage.ownerDocument = document;
   const els = { video: { closest: () => stage }, choices: element(), approachChoices: element(),
     adultInteractionPanel: element(), movementChoices: element(), positionTabs: element() };
   let state = createGameplayState(graph);
-  const player = { select() {} };
+  let selectedId;
+  const player = { select(id) { selectedId = id; } };
   renderGameplay({ state, player, els, document });
   assert.equal(els.positionTabs.children.length, 2);
   assert.equal(els.movementChoices.children.filter(row => row.dataset.choiceId).length, 1);
+  els.positionTabs.children[1].handlers.click();
+  assert.equal(selectedId, graph.choices[1].id, 'a hidden movement still has a playable position tab');
   state = gameplayReducer(state, { type: 'SELECT', choiceId: graph.choices[1].id });
   renderGameplay({ state, player, els, document });
   assert.equal(els.positionTabs.children.length, 2);

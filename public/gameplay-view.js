@@ -115,7 +115,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
       const index = (ordinal.get(row.positionId) || 0) + 1;
       ordinal.set(row.positionId, index);
       const label = familyOccurrences.get(row.positionId) > 1 ? `${row.label} · ${index}` : row.label;
-      const targetChoice = visibleChoices.find(choice => positionKey(choice) === row.key);
+      const targetChoice = choices.find(choice => positionKey(choice) === row.key);
       const tab = makeButton(els.positionTabs, label, () => {
         if (targetChoice) selectChoice(targetChoice);
       }, 'position-tab gameplay-position-tab');
