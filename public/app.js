@@ -1,4 +1,5 @@
 import { toggleFullscreen, revealFullscreenChoices } from './fullscreen.js';
+import { sourceOpeningTimeline } from './source-opening.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { normalizeProtagonistSurvey, surveySheetIndices } from './protagonist-survey.js';
 import { createAnalysisProgress } from './analysis-progress.js';
@@ -2540,6 +2541,9 @@ function normalizeAnalysis(body) {
     analysisCoverage: Number(body?.analysisCoverage || 0),
     secondPassChunkCount: Number(body?.secondPassChunkCount || 0),
     videoDuration: Number(body?.videoDuration ?? 0),
+    ...sourceOpeningTimeline({ videoDuration: body?.videoDuration,
+      introEndTime: body?.introEndTime, playStartTime: body?.playStartTime,
+      actions: ownership.playable }),
     mainMaleTrackId: body?.mainMaleTrackId ?? null,
     semanticVideoMap: body?.semanticVideoMap ?? [],
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
@@ -6399,8 +6403,15 @@ function finishAction(action, decisionEndTime = action.endTime) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
   }
+  const observedEnd = Math.max(now, Number(action.endTime) || 0, Number(decisionEndTime) || 0);
+  // A late media callback may run after the next playable decision is already
+  // underway. Restore that verified boundary, not the stale callback position,
+  // so a later source action is not silently marked consumed. Keep normal
+  // sub-frame progress unchanged to avoid needless seek/rewind jitter.
+  const safeBoundary = Number.isFinite(nextSourceStart) &&
+    observedEnd > nextSourceStart + 0.15 ? nextSourceStart : observedEnd;
   const reachedTime = Math.min(Number(els.video.duration) || Number(state.analysis?.videoDuration) || Infinity,
-    Math.max(now, Number(action.endTime) || 0, Number(decisionEndTime) || 0));
+    safeBoundary);
   state.consumedActionIds.add(action.actionId);
   let reachedIndex = state.analysis.actions.findIndex(a => a.actionId === action.actionId);
   state.analysis.actions.forEach((candidate, index) => {
