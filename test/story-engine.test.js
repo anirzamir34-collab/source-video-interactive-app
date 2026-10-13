@@ -144,3 +144,16 @@ test('multiple alternatives in one source instant remain available without movin
   assert.deepEqual(result.map(item => item.actionId), ['a', 'b', 'c']);
   assert.deepEqual(result.map(item => [item.startTime, item.endTime]), [[12, 18], [12, 17], [12, 18]]);
 });
+
+
+test('two distinct questions at one verified moment stay separate while synonymous observations collapse', () => {
+  const actions = [
+    { actionId: 'question-a', label: 'Neden ayrıldığını sor', startTime: 112.778, endTime: 124.775 },
+    { actionId: 'question-b', label: 'Ne zaman ayrıldığını sor', startTime: 112.778, endTime: 124.775 },
+    { actionId: 'question-duplicate', label: 'Neden ayrıldığını sor', startTime: 112.778, endTime: 124.775 },
+    { actionId: 'later', label: 'Daha sonra konuş', startTime: 124.775, endTime: 134.373 }
+  ];
+  assert.deepEqual(selectSameMomentStoryActions(actions).map(action => action.actionId),
+    ['question-a', 'question-b']);
+  assert.deepEqual(selectSameMomentStoryActions(actions.slice(3)).map(action => action.actionId), ['later']);
+});
