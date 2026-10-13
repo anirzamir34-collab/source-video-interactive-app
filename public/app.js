@@ -5994,22 +5994,10 @@ function futureActions() {
   const boundary = ordered.find(item => choiceSurfaceForAction(item) !== firstSurface)?.startTime ?? Infinity;
   const surfacePool = ordered.filter(item => choiceSurfaceForAction(item) === firstSurface &&
     Number(item.startTime) < Number(boundary));
-  const seenChoices = new Set();
-
-  const unique = surfacePool.filter((action) => {
-    const key = action.choiceKey ||
-      action.label.trim().toLocaleLowerCase('tr-TR');
-
-    if (seenChoices.has(key)) {
-      return false;
-    }
-
-    seenChoices.add(key);
-    return true;
-  });
-  // Future chronological chapters must never masquerade as simultaneous
-  // player alternatives. Show only the choices grounded in one source instant.
-  return selectSameMomentStoryActions(unique, 3);
+  // Deduplicate inside the actual decision instant. A label reused elsewhere
+  // in the video must not remove an independently verified source interval.
+  // Future chronological chapters must never masquerade as alternatives.
+  return selectSameMomentStoryActions(surfacePool, 3);
 }
 
 function nextVerifiedRouteTime() {
@@ -6063,10 +6051,11 @@ async function resumeAnalysisGap(target) {
     els.video.pause();
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
-    state.gameCursorTime = Math.min(
-      Math.max(bridgeTarget, now),
-      Number(els.video.duration) || Number(state.analysis?.videoDuration) || bridgeTarget
-    );
+    // A delayed timeupdate can arrive after the exact verified boundary.
+    // Preserve that boundary as the decision cursor; the selected action will
+    // seek to its own source timestamp instead of skipping a choice.
+    state.gameCursorTime = Math.min(bridgeTarget,
+      Number(els.video.duration) || Number(state.analysis?.videoDuration) || bridgeTarget);
     logEngineEvent('ANALYSIS_GAP_PLAYBACK_COMPLETED', { at: state.gameCursorTime });
     setGameState('DECISION_PENDING');
     renderChoices();
