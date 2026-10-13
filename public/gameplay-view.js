@@ -10,9 +10,7 @@ const movementName = value => ({ rhythmic: 'Ritmik hareket', slow: 'Yavaş harek
 /** The only DOM projection for mobile, desktop and fullscreen. */
 export function renderGameplay({ state, player, els, document = globalThis.document }) {
   const progress = progression(state);
-  // Post-scene choices belong to the narrative overlay, not the core position panel.
-  const active = activeSurface(state);
-  const surface = progress.phase === 'AFTERMATH' && active === 'panel' ? 'story' : active;
+  const surface = activeSurface(state);
   const choices = availableChoices(state);
   const grouped = new Map();
   if (surface === 'panel') for (const choice of choices) {
@@ -77,7 +75,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   const info = document.createElement('div');
   info.className = 'meta gameplay-status';
   info.textContent = state.status === 'ended' ? 'Video tamamlandı.' : state.error ||
-    `${phaseLabel} · ${surface === 'story' ? 'İlerleme' : 'Lust'} %${Math.round(surface === 'story' ? progress.value : progress.lust)}`;
+    (progress.phase === 'AFTERMATH' ? 'Sahne sonrası · Seçimler' :
+      `${phaseLabel} · ${surface === 'story' ? 'İlerleme' : 'Lust'} %${Math.round(surface === 'story' ? progress.value : progress.lust)}`);
   root.appendChild(info);
   if (state.status === 'continuing') {
     // Never show stale choices over source footage between verified chapters.
