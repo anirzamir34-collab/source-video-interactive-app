@@ -437,10 +437,23 @@ export function reviewAndHardenAnalysis(input = {}) {
       issues.push({ severity: 'drop', code: interval.reasons.join('+'), actionId: id });
       continue;
     }
-    if (confidence + 1e-6 < minimum) {
+    // A directly grounded *ordinary* story observation can be kept with a
+    // narrow confidence margin. This does not relax visual verification of
+    // intimate actions, position families, outcomes or unreadable intervals.
+    const ordinaryType = ['dialogue', 'story', 'scene_transition', 'camera_transition']
+      .includes(String(action.actionType || '').toLowerCase());
+    const groundedOrdinary = action.sourceVerified === true && action.adultScene !== true &&
+      !action.positionId && !action.positionLabel && ordinaryType &&
+      action.storyEvidenceLevel === 'fact' && String(action.storyEvidence || '').trim() &&
+      confidence >= Math.max(0.45, minimum - 0.07);
+    if (confidence + 1e-6 < minimum && !groundedOrdinary) {
       droppedActionIds.push(id);
       issues.push({ severity: 'drop', code: 'LOW_CONFIDENCE', actionId: id, confidence, minimum });
       continue;
+    }
+    if (confidence + 1e-6 < minimum && groundedOrdinary) {
+      issues.push({ severity: 'warning', code: 'GROUNDED_STORY_CONFIDENCE_MARGIN',
+        actionId: id, confidence, minimum });
     }
     if (analysisGaps.some(gap =>
       (interval.start < gap.endTime && interval.end > gap.startTime) ||

@@ -157,11 +157,33 @@ export function bindActionCharacter(action, context = {}) {
   }
   const candidate = lookup(targetId);
   const partnerCandidate = lookup(action.partnerTrackId);
+  const subject = lookup(action.subjectTrackId);
+  // primaryCharacterId and partnerTrackId do not necessarily denote the same
+  // person. Some providers place the player (actor) in primaryCharacterId
+  // and the real addressee in partnerTrackId. Two different valid people are
+  // not an identity conflict. Prefer the witnessed partner only when the
+  // primary candidate is explicitly the actor, not the addressee.
+  const primaryIsActor = Boolean(candidate && subject &&
+    canonicalCharacterId(candidate) === canonicalCharacterId(subject));
+  const partnerIsDistinct = Boolean(partnerCandidate && subject &&
+    canonicalCharacterId(partnerCandidate) !== canonicalCharacterId(subject));
+  const partnerInScene = partnerCandidate && (!declared.length || present.includes(partnerCandidate));
+  const resolvedTarget = primaryIsActor && partnerIsDistinct && partnerInScene
+    ? partnerCandidate : (candidate || partnerCandidate);
+  // If two different people are both asserted as the addressee in a
+  // group scene, the target remains ambiguous. The ONE exception is a provider
+  // duplicating the known actor in primaryCharacterId and correctly naming
+  // a different witnessed partner; this is not a two-target contradiction.
   const conflictingTargets = Boolean(action.primaryCharacterId && action.partnerTrackId &&
-    text(action.primaryCharacterId) !== text(action.partnerTrackId) &&
-    (!candidate || !partnerCandidate || canonicalCharacterId(candidate) !== canonicalCharacterId(partnerCandidate)));
-  const mismatch = conflictingTargets || Boolean(candidate && declared.length && !present.includes(candidate));
-  const target = mismatch ? null : candidate;
+    (!candidate || !partnerCandidate ||
+      (canonicalCharacterId(candidate) !== canonicalCharacterId(partnerCandidate) &&
+       !primaryIsActor)));
+  // An impossible target (not among the explicitly observed scene people)
+  // remains unresolved; never rewrite it to someone merely nearby.
+  const mismatch = conflictingTargets ||
+    Boolean(resolvedTarget && declared.length && !present.includes(resolvedTarget)) ||
+    Boolean(targetId && !candidate && !partnerCandidate);
+  const target = mismatch ? null : resolvedTarget;
   const result = { ...action,
     characterSourceLabel: String(action.characterSourceLabel ?? action.label ?? ''),
     characterSourceNarrativeLabel: String(action.characterSourceNarrativeLabel ?? action.narrativeChoiceLabel ?? '')
