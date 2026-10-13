@@ -39,8 +39,8 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   mountInteractionPanel(els.video?.closest('.video-stage'), els.adultInteractionPanel);
   const stageElement = els.video?.closest('.video-stage');
   // Remove the old duplicate/source-explorer overlays from the movie canvas.
-  stageElement?.querySelector('.gameplay-menu-toggle')?.remove();
-  stageElement?.querySelector('.gameplay-source-navigator')?.remove();
+  stageElement?.querySelector?.('.gameplay-menu-toggle')?.remove?.();
+  stageElement?.querySelector?.('.gameplay-source-navigator')?.remove?.();
   for (const target of [...Object.values(targets), els.positionTabs, els.adultQuickChoices]) target?.replaceChildren();
   for (const key of ['foreplaySection', 'categorySection', 'groupPartnerSection',
     'outcomeSection', 'orgasmDecision', 'rhythmControl', 'nextVariantBtn', 'finishAdultSceneBtn']) {
