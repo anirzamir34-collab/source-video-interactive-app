@@ -84,13 +84,14 @@ test('B/F/G: real video playback earns bounded engagement and seeks to next stag
   await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection)).toBeNull();
   expect(await page.evaluate(() => Object.values(__gameplayTest.state().stageProgress)[0].score)).toBe(50);
   await page.locator('#approachChoices .gameplay-choice').nth(1).click();
-  await expect(page.getByRole('button', { name: 'Sonraki aşama', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Sonraki aşama', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().stageId)).toContain('ending');
   await expect(page.locator('#adultInteractionPanel')).toBeVisible();
   await expect(page.locator('#movementChoices .gameplay-choice')).toBeVisible();
   await expect(page.locator('#adultPhaseTitle')).toHaveText('Etkileşim');
   await expect(page.locator('#approachChoices')).toBeHidden();
-  expect(await page.locator('#video').evaluate(video => video.currentTime)).toBeCloseTo(6, 1);
+  expect(await page.locator('#video').evaluate(video => video.currentTime)).toBeLessThan(6);
+  await page.locator('#movementChoices .gameplay-choice').click();
+  await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeGreaterThan(6);
   expect(errors).toEqual([]);
 });
 
