@@ -434,6 +434,23 @@ ${storyContextMemory}
 - Every returned action must additionally contain narrativeChoiceLabel, narrativeReason, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence.
 - narrativeChoiceLabel is the player-facing Turkish story choice. It must describe the meaning of the REAL playable action in context, not invent a branch.
 - narrativeChoiceLabel must still map to that action's exact startTime/endTime. Never write a choice whose promised consequence is absent from that exact source segment.
+- ORDINARY DIALOGUE AND STORY CHOICES ONLY: identify the exact onset and end
+  of each DISTINCT visible or spoken event. Do not slice an ongoing story into
+  arbitrary fixed-length windows just to produce more choices.
+- When a later ordinary event becomes visible, end the preceding choice
+  BEFORE that next event's onset. One real action (e.g. someone taking an
+  object) must not be presented first as the ending of an unrelated clip
+  and again as the entirety of the next choice.
+- Two ordinary story choices may share an exact startTime only when they are
+  genuine alternatives grounded in that same observed decision instant.
+  Sequential events at different timestamps are not simultaneous alternatives.
+- Derive timestamps from the supplied source frames and aligned dialogue;
+  do not round or evenly distribute decisions across a scene. When the
+  frames cannot resolve a precise boundary, keep a single neutral
+  source-grounded observation instead of inventing two adjacent actions.
+- Apply these chronological rules to ALL source videos, characters and
+  non-intimate scene types. Do not change critical visual verification for
+  other action classes.
 - If relationship/background context is uncertain, use neutral story wording such as 'Onunla konuşmaya devam et', 'Neden geldiğini sor' or another source-grounded action instead of asserting an unsupported relationship.
 - Prefer story-aware wording over mechanical wording when evidence supports it: scene intention + interaction + verified action. Do not replace precise sexual-position controls with fictional dialogue or outcomes.
 

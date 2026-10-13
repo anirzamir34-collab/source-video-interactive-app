@@ -227,6 +227,22 @@ export function selectDiverseStoryActions(actions = [], limit = 3) {
   return selected;
 }
 
+// Chronological events are not alternative choices. Only source actions that
+// start at the same observed decision instant may share a choice stack.
+// Preserve existing intent filtering *within* that instant. This operates on
+// any story source, irrespective of its characters or narrative.
+export function selectSameMomentStoryActions(actions = [], limit = 3, toleranceSeconds = 0.6) {
+  const tolerance = Math.max(0, Math.min(1.5, Number(toleranceSeconds) || 0));
+  const ordered = (Array.isArray(actions) ? actions : [])
+    .filter(action => Number.isFinite(Number(action?.startTime)))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  if (!ordered.length) return [];
+  const firstTime = Number(ordered[0].startTime);
+  const contemporaneous = ordered.filter(action =>
+    Number(action.startTime) <= firstTime + tolerance + 1e-6);
+  return selectDiverseStoryActions(contemporaneous, limit);
+}
+
 export function storyActionMeta(action = {}) {
   return {
     sceneTitle: cleanText(action.sceneTitle, 140),

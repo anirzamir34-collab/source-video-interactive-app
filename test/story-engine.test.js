@@ -4,6 +4,7 @@ import {
   mergeStoryContexts,
   normalizeStoryContext,
   selectDiverseStoryActions,
+  selectSameMomentStoryActions,
   sensoryActionMeta,
   storyChoiceIntentKey,
   storyChoiceLabelForAction
@@ -119,4 +120,27 @@ test('collapses synonymous story choices while preserving distinct actions', () 
   ], 3);
 
   assert.deepEqual(choices.map((choice) => choice.actionId), ['watch', 'approach', 'talk']);
+});
+
+
+test('ordinary decisions show only simultaneous alternatives, never future chronological events', () => {
+  const actions = [
+    { actionId: 'smile', label: 'Gülümse', actionType: 'story', startTime: 10, endTime: 14 },
+    { actionId: 'ask', label: 'Nedenini sor', actionType: 'dialogue', startTime: 10.25, endTime: 15 },
+    { actionId: 'take', label: 'Bardağı eline al', actionType: 'story', startTime: 15, endTime: 20 },
+    { actionId: 'leave', label: 'Odadan ayrıl', actionType: 'story', startTime: 27, endTime: 32 }
+  ];
+  assert.deepEqual(selectSameMomentStoryActions(actions).map(a => a.actionId), ['smile', 'ask']);
+  assert.deepEqual(selectSameMomentStoryActions(actions.slice(2)).map(a => a.actionId), ['take']);
+  assert.deepEqual(selectSameMomentStoryActions([...actions].reverse()).map(a => a.actionId), ['smile', 'ask']);
+  assert.deepEqual(selectSameMomentStoryActions([]), []);
+});
+
+test('multiple alternatives in one source instant remain available without moving their timestamps', () => {
+  const a = { actionId: 'a', label: 'Eşyayı incele', startTime: 12, endTime: 18 };
+  const b = { actionId: 'b', label: 'Soruyu sor', startTime: 12, endTime: 17 };
+  const c = { actionId: 'c', label: 'Kapıyı aç', startTime: 12, endTime: 18 };
+  const result = selectSameMomentStoryActions([a, b, c], 3);
+  assert.deepEqual(result.map(item => item.actionId), ['a', 'b', 'c']);
+  assert.deepEqual(result.map(item => [item.startTime, item.endTime]), [[12, 18], [12, 17], [12, 18]]);
 });

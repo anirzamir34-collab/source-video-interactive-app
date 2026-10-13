@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
-import { selectDiverseStoryActions } from '../public/story-engine.js';
+import { selectDiverseStoryActions, selectSameMomentStoryActions } from '../public/story-engine.js';
 import { conversationEnd } from '../public/conversation-timing.js';
-import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo, playMedia } from '../public/playback-logic.js';
+import { analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, nextVerifiedActionBoundary, seekMediaTo, playMedia } from '../public/playback-logic.js';
 
 // Exercise the actual application handlers with deterministic media events.
 // These tests deliberately use ordinary chapter data and no model/API calls.
@@ -66,7 +66,7 @@ function fixture() {
   };
   const els = new Proxy({ video: new Media() }, { get(target, key) { return target[key] ||= new Element(); } });
   const scope = vm.createContext({ ...choiceRouting, state, els, AbortController, DOMException,
-    analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, seekMediaTo, playMedia,
+    analysisGapBridgeTarget, hasRemainingVideo, sceneExitTime, nextVerifiedActionBoundary, seekMediaTo, playMedia,
     mediaClient: { conversationEndAt: (time, rows, duration) => conversationEnd(time, rows, [], { duration }) },
     setTimeout, clearTimeout,
     guardPlayable: () => ({ allowed: true }),
@@ -75,7 +75,7 @@ function fixture() {
     setGameState: value => { state.gameState = value; },
     setAdultMachinePhase() {}, logEngineEvent() {}, cancelAdultSeek() {}, clearInteractionSelection() {}, persistRuntimeSnapshot() {}, renderDebug() {},
     orderedLockedAdultPositions: () => [], findAdultSceneAt: () => null,
-    selectDiverseStoryActions, findAdultSceneForTimeline: () => null,
+    selectDiverseStoryActions, selectSameMomentStoryActions, findAdultSceneForTimeline: () => null,
     verifiedAdultPositionFamily: () => null, storyChoiceLabelForAction: action => action.label,
     playableAdultPanelFamily: () => '',
     escapeHtml: value => String(value)
@@ -449,7 +449,7 @@ function useRealCompletion(f) {
   vm.runInContext(source.slice(start, end), f);
 }
 
-test('waiting for speech retains a still-running general choice and plays it without rewinding', async () => {
+test('next verified source boundary interrupts long speech without rewinding or losing the next choice', async () => {
   const f = fixture(); useRealCompletion(f);
   const selected = { actionId: 'door', label: 'Kapıyı aç', startTime: 1, endTime: 2, sourceVerified: true };
   const next = { actionId: 'walk', label: 'Masaya yürü', startTime: 3, endTime: 5, sourceVerified: true };
@@ -459,15 +459,17 @@ test('waiting for speech retains a still-running general choice and plays it wit
   f.els.video.time = 2;
   f.els.video.dispatchEvent(new Event('timeupdate'));
   assert.equal(f.els.video.paused, false);
-  f.els.video.time = 4.2;
+  // Speech lasts to 4s, but the next source-verified decision starts at 3s.
+  // We must not play across that 3s boundary and erase the next event.
+  f.els.video.time = 3.02;
   f.els.video.dispatchEvent(new Event('timeupdate'));
   assert.equal(f.state.activeAction, null);
-  assert.equal(f.state.gameCursorTime, 4.2);
+  assert.equal(f.state.gameCursorTime, 3.02);
   assert.equal(f.state.consumedActionIds.has('walk'), false);
   assert.equal(f.els.choices.children.length, 1);
   assert.equal(f.futureActions()[0].actionId, 'walk');
   await f.playAction(next);
-  assert.equal(f.els.video.currentTime, 4.2);
+  assert.equal(f.els.video.currentTime, 3.02);
   assert.equal(f.els.video.paused, false);
 });
 

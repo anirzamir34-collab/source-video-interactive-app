@@ -34,6 +34,25 @@ export function analysisGapBridgeTarget(gaps, currentTime, routeTimes, duration)
   return crossesGap ? target : null;
 }
 
+// A prolonged conversation may continue after a verified choice ends.
+// Its audio must never play straight through the beginning of the next
+// source-verified event and silently consume that next decision.
+// Unknown/overlapping alternative ranges are not moved or fabricated.
+export function nextVerifiedActionBoundary(actions = [], currentAction = {}) {
+  const start = Number(currentAction.startTime);
+  const end = Number(currentAction.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  const following = (Array.isArray(actions) ? actions : [])
+    .filter(action => action && action !== currentAction &&
+      String(action.actionId || '') !== String(currentAction.actionId || '') &&
+      action.sourceVerified === true)
+    .map(action => Number(action.startTime))
+    .filter(next => Number.isFinite(next) &&
+      next > start + 0.05 && next >= end - 0.12)
+    .sort((a, b) => a - b);
+  return following.length ? following[0] : null;
+}
+
 const pendingMediaSeeks = new WeakMap();
 const pendingMediaPlays = new WeakMap();
 

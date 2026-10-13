@@ -54,7 +54,7 @@ import {
   verifiedAdultPositionFamily,
   verifiedPartnerTransition
 } from './adult-gameplay.js';
-import { analysisGapBridgeTarget, hasRemainingVideo, isCompleteChunkAnalysis, sceneExitTime, seekMediaTo, playMedia } from './playback-logic.js';
+import { analysisGapBridgeTarget, hasRemainingVideo, isCompleteChunkAnalysis, sceneExitTime, nextVerifiedActionBoundary, seekMediaTo, playMedia } from './playback-logic.js';
 import {
   ANALYSIS_SCHEMA_VERSION,
   ENGINE_VERSION,
@@ -76,6 +76,7 @@ import {
   mergeStoryContexts,
   normalizeStoryContext,
   selectDiverseStoryActions,
+  selectSameMomentStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
 import { bindActionCharacter, canonicalizeActionTrackIds, verifiedCharacterName, verifiedVisualDescription } from './character-identity.js';
@@ -6006,7 +6007,9 @@ function futureActions() {
     seenChoices.add(key);
     return true;
   });
-  return selectDiverseStoryActions(unique, 3);
+  // Future chronological chapters must never masquerade as simultaneous
+  // player alternatives. Show only the choices grounded in one source instant.
+  return selectSameMomentStoryActions(unique, 3);
 }
 
 function nextVerifiedRouteTime() {
@@ -6373,7 +6376,8 @@ function genericConversationEnd(now) {
 function finishAction(action, decisionEndTime = action.endTime) {
   if (state.activeAction !== action) return;
   const now = Number(els.video.currentTime) || 0;
-  const safeEnd = genericConversationEnd(now);
+  const nextSourceStart = nextVerifiedActionBoundary(state.analysis?.actions, action);
+  const safeEnd = Math.min(genericConversationEnd(now), nextSourceStart ?? Infinity);
   if (safeEnd > now + .03 && !els.video.ended) {
     els.choices.classList.add('hidden');
     return; // The same timeupdate listener waits for speech; no seek or request.

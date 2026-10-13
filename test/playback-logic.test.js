@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { canvasBlob, hasRemainingVideo, analysisGapBridgeTarget, isCompleteChunkAnalysis, sceneExitTime, seekMediaTo, playMedia } from '../public/playback-logic.js';
+import { canvasBlob, hasRemainingVideo, analysisGapBridgeTarget, isCompleteChunkAnalysis, sceneExitTime, nextVerifiedActionBoundary, seekMediaTo, playMedia } from '../public/playback-logic.js';
 
 test('scene exit preserves adjacent footage and only actual video end is terminal', () => {
   assert.equal(sceneExitTime(24, 100), 24);
@@ -122,4 +122,24 @@ test('failed analysis ranges bridge to the next verified route or media end', ()
   assert.equal(analysisGapBridgeTarget(gaps, 11, [], 100), 100);
   assert.equal(analysisGapBridgeTarget(gaps, 21, [30], 100), null);
   assert.equal(analysisGapBridgeTarget([], 11, [30], 100), null);
+});
+
+
+test('a continuing dialogue never consumes the next verified chronological choice', () => {
+  const first = { actionId: 'smile', sourceVerified: true, startTime: 4.8, endTime: 14.4 };
+  const next = { actionId: 'take', sourceVerified: true, startTime: 14.4, endTime: 24 };
+  const later = { actionId: 'leave', sourceVerified: true, startTime: 24, endTime: 36 };
+  assert.equal(nextVerifiedActionBoundary([first, next, later], first), 14.4);
+  assert.equal(nextVerifiedActionBoundary([first, { ...next, sourceVerified: false }, later], first), 24);
+  assert.equal(nextVerifiedActionBoundary([first], first), null);
+});
+
+test('co-temporal alternatives and overlapping observations do not move playback boundaries', () => {
+  const current = { actionId: 'first', sourceVerified: true, startTime: 10, endTime: 20 };
+  const same = { actionId: 'alternative', sourceVerified: true, startTime: 10, endTime: 24 };
+  const overlapping = { actionId: 'overlap', sourceVerified: true, startTime: 15, endTime: 21 };
+  const next = { actionId: 'next', sourceVerified: true, startTime: 20, endTime: 29 };
+  assert.equal(nextVerifiedActionBoundary([current, same, overlapping, next], current), 20);
+  assert.equal(nextVerifiedActionBoundary([current, same, overlapping], current), null);
+  assert.equal(nextVerifiedActionBoundary([], current), null);
 });
