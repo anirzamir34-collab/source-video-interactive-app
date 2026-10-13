@@ -4,6 +4,7 @@ import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-pa
 const rendered = new WeakMap();
 const selectedPosition = new WeakMap();
 const openedDuringPlayback = new WeakMap();
+const sourceNavigators = new WeakMap();
 const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
 const movementName = value => ({ rhythmic: 'Ritmik hareket', slow: 'Yavaş hareket',
   moderate: 'Dengeli hareket', fast: 'Hızlı hareket' })[String(value || '').trim().toLowerCase()] || value;
@@ -59,6 +60,63 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
   els.adultInteractionPanel?.classList.remove('compact-collapsed');
   els.movementSection?.classList.toggle('hidden', surface !== 'panel');
   els.positionSection?.classList.toggle('hidden', !positions.length || Boolean(state.selection));
+
+
+  // The chapter's current choices and the source explorer are distinct.
+  // The explorer remains usable DURING playback and never invents branches.
+  // It also keeps STORY/APPROACH/CORE observations in separate categories.
+  if (stageElement) {
+    let navigator = sourceNavigators.get(els);
+    if (!navigator || navigator.parentElement !== stageElement) {
+      navigator = document.createElement('details');
+      navigator.className = 'gameplay-source-navigator';
+      stageElement.appendChild(navigator);
+      sourceNavigators.set(els, navigator);
+    }
+    if (navigator.dataset.graphFingerprint !== state.fingerprint) {
+      navigator.open = false;
+      navigator.dataset.graphFingerprint = state.fingerprint;
+    }
+    navigator.replaceChildren();
+    const heading = document.createElement('summary');
+    heading.textContent = 'Sahneler ve seçenekler';
+    navigator.appendChild(heading);
+    const labels = {
+      STORY: 'Konuşmalar ve hikâye',
+      APPROACH: 'Yakınlaşma',
+      CORE: 'Ana etkileşimler',
+      AFTERMATH: 'Sahne sonrası',
+      OUTCOME: 'Sonuç'
+    };
+    for (const phase of ['STORY', 'APPROACH', 'CORE', 'AFTERMATH', 'OUTCOME']) {
+      const phaseClips = state.graph.clips.filter(clip =>
+        state.graph.stages.some(stage => stage.id === clip.stageId && stage.phase === phase));
+      if (!phaseClips.length) continue;
+      const group = document.createElement('section');
+      group.className = 'gameplay-source-group';
+      const title = document.createElement('strong');
+      title.textContent = labels[phase];
+      group.appendChild(title);
+      for (const clip of phaseClips) {
+        const choice = state.graph.choices.find(row => row.stageId === clip.stageId && row.clipIds.includes(clip.id));
+        if (!choice) continue;
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'gameplay-source-event';
+        link.textContent = choice.abstained ? 'Kaynak olayını oynat' : choice.label;
+        link.setAttribute('aria-label', link.textContent);
+        link.dataset.clipId = clip.id;
+        link.setAttribute('aria-current', String(state.selection?.clipIds?.includes(clip.id) || false));
+        link.addEventListener('click', () => {
+          navigator.open = false;
+          openedDuringPlayback.delete(els);
+          void player.selectSourceEvent(clip.id);
+        });
+        group.appendChild(link);
+      }
+      navigator.appendChild(group);
+    }
+  }
 
   const root = targets[surface] || els.choices;
   if (!root) return;
