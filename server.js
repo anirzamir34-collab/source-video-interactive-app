@@ -317,6 +317,8 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const protagonistProfile = String(
     req.body?.protagonistProfile || ''
   ).trim();
+  const identitySurvey = String(req.body?.identitySurvey || '') === '1';
+  const protagonistHint = String(req.body?.protagonistHint || '').trim().slice(0, 300);
   const dialogueContext = String(req.body?.dialogueContext || '[]');
   const dialogueSpeakerContext = String(req.body?.dialogueSpeakerContext || '[]').slice(0, 16000);
   const sensoryAudioContext = String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
@@ -437,10 +439,16 @@ ${storyContextMemory}
 
 PROTAGONIST IDENTITY LOCK:
 Current locked profile:
-${protagonistProfile || 'NOT_LOCKED. In this chunk, identify one clearly visible adult male with the strongest narrative continuity and label him MAIN_MALE.'}
+${protagonistProfile || "NOT_LOCKED. The protagonist may first appear in a later chapter. Do not promote an unobserved person to MAIN_MALE; retain neutral character facts and allow later chapters to identify him."}
 
-- Select exactly one adult male as MAIN_MALE.
-- If a locked profile exists, preserve that same identity across clothing, pose, distance and camera-angle changes.
+- Use MAIN_MALE only when an adult male is actually present and identifiable in this chapter.
+- The opening chapter may contain only women; that is NOT proof that the
+  video lacks a male protagonist, and does not justify inventing one.
+- If a verified video-wide profile exists, match the same person across
+  clothing, pose, distance, and camera changes. A contradictory source frame
+  must stay unresolved rather than being relabeled.
+- When the profile is unresolved, keep non-protagonist observations as neutral
+  chronological story context; do not manufacture male-player actions.
 - Distinguish all other males as OTHER_MALE and never convert their actions into player choices.
 - Use face, hair, facial hair, skin tone, body build, clothing, accessories, position and scene continuity together.
 - Never switch MAIN_MALE merely because another male becomes larger or more central in the frame.
@@ -764,11 +772,48 @@ Rules:
       throw Object.assign(new Error('No available economy analysis model.'), { code: 'GEMINI_MODEL_UNAVAILABLE' });
     };
 
+    // A sparse survey sees the entire video *before* the first chapter locks
+    // MAIN_MALE. It returns only neutral, visible identity evidence, never
+    // inferred kinship, intimate actions, or any playable clips.
+    const identityPrompt = `SOURCE VIDEO — FULL-VIDEO CHARACTER IDENTITY SURVEY.
+The images are contact sheets sampled from the beginning, middle, and end of
+the SAME source video. Each image and its tiles carry real source timestamps.
+Video duration: ${duration}. Sampled timestamp groups: ${timestamps}.
+Optional user description of the desired adult male: ${JSON.stringify(protagonistHint)}.
+
+Determine whether one adult male visibly recurs and dominates the story's
+active on-screen participation across the ENTIRE set of supplied frames.
+Do not pick a man merely because he appears in the first scene, fills one
+close-up, stands in the background, or is mentioned in dialogue.
+If only one adult male is visible across all supplied samples, select him
+even if the video opens with women only. If multiple men are present,
+prefer a visually evidenced match to the optional user description.
+Without a hint, compare recurring visibility across sampled time spans AND
+the number of visibly active scene participations; a background bystander
+must not defeat the repeatedly active character. Sampled evidence may be
+insufficient: leave the identity unresolved if the candidates are tied or
+identity continuity cannot be established.
+Use face, hair, facial hair, physique and stable visual markers. Clothing alone
+does not prove identity. Never infer family relations or names from appearance.
+Do not describe any sexual conduct. Do not create actions, timestamps, or
+narrative branches. Return ONLY JSON:
+{"visibleAdultMale":false,"maleCount":0,"unambiguous":false,
+ "confidence":0,"protagonistProfile":"","visualEvidence":"",
+ "selectionReason":""}
+Set visibleAdultMale=true only if a visually adult male is identifiable.
+maleCount is the number of DISTINCT adult men found in these visual samples.
+Set unambiguous=true only if one candidate is materially better supported
+and the selected protagonist has stable visual anchors in the supplied frames.
+Keep visualEvidence short and concrete; no speculation.`;
     let parsed;
     try {
-      parsed = await generateStoryboardJson(prompt, files);
+      parsed = await generateStoryboardJson(identitySurvey ? identityPrompt : prompt,
+        files, identitySurvey ? 'identity-survey' : 'full');
     } catch (fullChunkError) {
       const fullFailureReason = storyboardFailureReason(fullChunkError);
+      if (identitySurvey) return res.status(422).json({ available: false,
+        reason: fullFailureReason, message: 'Video-geneli karakter taraması tamamlanamadı.',
+        aiUsage: analysisUsage });
       console.warn('[gemini-storyboard-failure]', JSON.stringify({
         chunkIndex, reason: fullFailureReason,
         status: Number(fullChunkError?.status ?? fullChunkError?.statusCode ?? fullChunkError?.response?.status) || null,
@@ -901,6 +946,20 @@ Rules:
         ]
       };
       }
+    }
+    if (identitySurvey) {
+      // The client validates confidence and evidence before using the lock.
+      return res.json({
+        available: true,
+        visibleAdultMale: parsed?.visibleAdultMale === true,
+        maleCount: Math.max(0, Math.floor(Number(parsed?.maleCount) || 0)),
+        unambiguous: parsed?.unambiguous === true,
+        confidence: Math.max(0, Math.min(1, Number(parsed?.confidence) || 0)),
+        protagonistProfile: String(parsed?.protagonistProfile || '').slice(0, 500),
+        visualEvidence: String(parsed?.visualEvidence || '').slice(0, 500),
+        selectionReason: String(parsed?.selectionReason || '').slice(0, 300),
+        aiUsage: analysisUsage
+      });
     }
     const unresolvedGaps = Array.isArray(parsed?.analysisGaps)
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
