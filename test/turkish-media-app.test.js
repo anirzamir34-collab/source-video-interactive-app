@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createAnalysisProgress } from '../public/analysis-progress.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
+import { normalizeProtagonistSurvey, surveySheetIndices } from '../public/protagonist-survey.js';
 
 const appSource = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
@@ -76,7 +77,7 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     analysisProgress: createAnalysisProgress({ setTimer: () => 1, clearTimer() {} }),
     analysisOwner: new AbortController(), analysisAbortController: null, analysisSucceeded: false,
     framesProgress() {}, onTurkishMediaStatus() {},
-    state, els, sourceContextAdapter, Blob, FormData, AbortSignal,
+    state, els, sourceContextAdapter, normalizeProtagonistSurvey, surveySheetIndices, Blob, FormData, AbortSignal,
     console: { error() {} }, videoUrlInput: new Element(), resolveUrlBtn: new Element(),
     renderDebug() {}, updateAnalyzeAvailability() {},
     adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
@@ -86,6 +87,14 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     analysisResponseCache: { readCheckpoint: async () => null, saveCheckpoint: async () => true },
     fetch: async (url, options) => {
       calls.visual.push({ url, options });
+      // The neutral whole-video character survey precedes the real source
+      // analysis. The latter must still be requested after this survey.
+      if (visual && options?.body?.get('identitySurvey') === '1') {
+        return { ok: true, json: async () => ({
+          available: true, visibleAdultMale: false, maleCount: 0, unambiguous: false,
+          confidence: 0, protagonistProfile: '', visualEvidence: ''
+        }) };
+      }
       if (visual) throw new DOMException('First request captured', 'AbortError');
       return { ok: true };
     },
@@ -299,8 +308,9 @@ test('motion-only analysis continues to the real visual request with prepared so
   await f.run();
   assert.equal(f.calls.extract.length, 1);
   assert.equal(f.session.storyboard, storyboard);
-  assert.equal(f.calls.visual.length, 1, 'the actual source storyboard analysis request still runs');
-  const request = f.calls.visual[0];
+  assert.equal(f.calls.visual.length, 2, 'identity survey cannot replace the real visual analysis');
+  assert.equal(f.calls.visual[0].options.body.get('identitySurvey'), '1');
+  const request = f.calls.visual[1];
   assert.equal(request.url, '/api/gemini-storyboard-analyze');
   assert.equal(request.options.method, 'POST');
   assert.equal(request.options.body.getAll('storyboards').length, 1);
