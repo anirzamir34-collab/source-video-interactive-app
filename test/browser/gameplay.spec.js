@@ -23,6 +23,26 @@ test('A/G: real app offers narrative cards and fullscreen fallback preserves cho
   expect(errors).toEqual([]);
 });
 
+test('player owns the clock: switch and navigate before a long clip finishes', async ({ page }, testInfo) => {
+  await load(page, [observation('first', 0, { duration: 9 }),
+    observation('second', 12, { duration: 9 })]);
+  await page.locator('#approachChoices .gameplay-choice').first().click();
+  await expect(page.locator('.gameplay-menu-toggle')).toBeVisible();
+  await expect(page.locator('#approachChoices')).toBeHidden();
+  await page.locator('.gameplay-menu-toggle').click();
+  await expect(page.locator('#approachChoices .gameplay-choice')).toHaveCount(2);
+  await page.locator('#approachChoices .gameplay-choice').nth(1).click();
+  await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeGreaterThan(12);
+  expect(await page.evaluate(() => __gameplayTest.state().selection?.choiceId)).toContain('second');
+  await expect(page.locator('#approachChoices')).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath('playing-collapsed.png') });
+  await page.locator('.gameplay-menu-toggle').click();
+  await page.getByRole('button', { name: 'Duraklat', exact: true }).click();
+  await expect(page.locator('#video')).toHaveJSProperty('paused', true);
+  await page.getByRole('button', { name: 'Yeniden oynat', exact: true }).click();
+  await expect.poll(() => page.locator('#video').evaluate(video => video.currentTime)).toBeLessThan(15);
+});
+
 test('B/F/G: real video playback earns bounded engagement and seeks to next stage source start', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await load(page, [observation('a', 0, { duration: 2 }), observation('b', 3, { duration: 2 }),

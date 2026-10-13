@@ -64,7 +64,10 @@ export function createGameplayGraph(analysis = {}) {
     const id = text(action.actionId || action.id) || `source-${index}`;
     const origin = evidence?.sourceActionId || text(action.sourceActionId || action.observedActionId) || id;
     const specific = evidence?.action;
-    const legacyLabel = text(action.label);
+    const legacyLabel = text(action.label).replace(/^\[object Object\]$/i, '');
+    const identityResolution = text(action.identityResolution) || 'unknown';
+    const classificationReview = identityResolution === 'conflict' ||
+      text(action.classificationReview) !== 'verified' ? 'needs_review' : 'verified';
     // Dialogue may supply the meaning of a narrative choice, but never the
     // observed physical action. These are separate evidence channels.
     const groundedStoryLabel = surface === 'story' && action.storyEvidenceLevel === 'fact' &&
@@ -90,7 +93,8 @@ export function createGameplayGraph(analysis = {}) {
       decisionId: evidence?.decisionId || '', before: factsBefore, after: factsAfter,
       confidence: specific?.confidence || confidence(action.confidence),
       provenance: evidence?.provenance || 'legacy-source-analysis',
-      relationship: action.relationshipResolution === 'verified' && action.relationshipSubjectId && action.relationshipTargetId
+      identityResolution, classificationReview,
+      relationship: identityResolution !== 'conflict' && action.relationshipResolution === 'verified' && action.relationshipSubjectId && action.relationshipTargetId
         ? { from: text(action.relationshipSubjectId), to: text(action.relationshipTargetId),
             label: text(action.relationshipRoleLabel) } : null });
   }
@@ -128,7 +132,9 @@ export function createGameplayGraph(analysis = {}) {
       // Never invent 12/14-second cut points. Completing a source observation
       // means reaching its actual validated end, unless a later verified
       // boundary is provided by the analysis.
-      previewEndTime: row.end, visualVerified: Boolean(row.evidence?.action?.verified),
+      previewEndTime: row.end, visualVerified: Boolean(row.evidence?.action?.verified) && row.classificationReview === 'verified',
+      identityResolution: row.identityResolution, classificationReview: row.classificationReview,
+      occurrenceId: row.occurrence, participantTrackIds: row.cast, evidence: row.evidence,
       before: row.before, after: row.after, confidence: row.confidence, provenance: row.provenance };
     clips.push(clip);
     // Missing occurrence/identity proof keeps records separate. Shared tempo is never proof.
@@ -143,13 +149,30 @@ export function createGameplayGraph(analysis = {}) {
         phase: row.phase, surface: row.surface, label: row.label, intent: row.intent,
         positionId: row.group, positionLabel: row.positionLabel, occurrenceId: row.occurrence,
         abstained: row.abstained, confidence: row.confidence, cast: row.cast,
+        kind: row.decisionId ? 'candidate_decision' : 'source_event',
+        sourceActionId: row.origin, classificationReview: row.classificationReview,
         relationship: row.relationship, clipIds: [] };
       groups.set(key, choice); choices.push(choice); stage.choiceIds.push(choice.id);
     }
     choice.clipIds.push(clip.id); prior = row;
   }
+  const decisionGroups = new Map();
+  for (const choice of choices.filter(row => row.kind === 'candidate_decision')) {
+    const id = rows.find(row => row.origin === choice.sourceActionId)?.decisionId;
+    if (id) decisionGroups.set(id, [...(decisionGroups.get(id) || []), choice]);
+  }
+  const decisions = [...decisionGroups].filter(([, options]) => options.length > 1 &&
+    options.every(row => row.stageId === options[0].stageId &&
+      Math.abs(clips.find(clip => clip.id === row.clipIds[0]).startTime -
+        clips.find(clip => clip.id === options[0].clipIds[0]).startTime) < 2))
+    .map(([id, options]) => ({ id, choiceIds: options.map(row => row.id), stageId: options[0].stageId }));
+  const decisionChoices = new Set(decisions.flatMap(row => row.choiceIds));
+  for (const choice of choices) choice.kind = decisionChoices.has(choice.id) ? 'story_decision' : 'source_event';
+  const sourceEvents = clips.map(clip => ({ clipId: clip.id, sourceActionId: clip.sourceActionId,
+    stageId: clip.stageId, startTime: clip.startTime, endTime: clip.endTime,
+    occurrenceId: clip.occurrenceId, classificationReview: clip.classificationReview }));
   const data = { version: EVIDENCE_VERSION, duration: Number(analysis.videoDuration) || Math.max(0, ...rows.map(r => r.end)),
-    chapters, stages, choices, clips, rejected,
+    chapters, stages, choices, clips, sourceEvents, decisions, rejected,
     characters: (analysis.storyContext?.characters || []).map(row => ({ id: text(row.participantTrackId || row.id),
       label: text(row.displayName || row.visualDescription), verified: row.evidenceLevel === 'fact' })) };
   return freeze({ ...data, fingerprint: graphFingerprint(data) });

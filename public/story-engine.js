@@ -14,7 +14,13 @@ function uniqueByText(items = [], max = 24) {
   const seen = new Set();
   const out = [];
   for (const raw of Array.isArray(items) ? items : []) {
-    const text = cleanText(raw?.text ?? raw?.label ?? raw, 420);
+    const candidate = raw?.text ?? raw?.label ?? raw;
+    let text = cleanText(typeof candidate === 'object' ? candidate?.text || candidate?.label : candidate, 420);
+    if (text === '[object Object]') text = '';
+    // Some model responses stringify a structured fact. Retain only its
+    // independent source quotation when available; otherwise drop the row.
+    if (!text && raw && typeof raw === 'object') text = cleanText(raw.evidence, 420);
+    if (text === '[object Object]') text = '';
     if (!text) continue;
     const key = text.toLocaleLowerCase('tr-TR');
     if (seen.has(key)) continue;

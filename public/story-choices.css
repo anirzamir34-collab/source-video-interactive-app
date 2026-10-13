@@ -272,3 +272,12 @@
     right: max(8px, env(safe-area-inset-right)) !important;
   }
 }
+#playerSection .video-stage .gameplay-menu-toggle {
+  position: absolute; right: 1rem; bottom: 1rem; z-index: 60;
+  border: 1px solid rgba(255,255,255,.6); border-radius: 999px;
+  padding: .6rem 1rem; background: rgba(8,19,24,.84); color: white;
+  font: inherit; cursor: pointer;
+}
+#playerSection .video-stage .gameplay-menu-toggle[hidden] { display: none !important; }
+#playerSection .video-stage .gameplay-event-map { max-height: 35vh; overflow: auto; }
+#playerSection .video-stage .gameplay-event-map > button { display: block; width: 100%; margin-top: .35rem; }
