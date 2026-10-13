@@ -114,6 +114,28 @@ test('D: changed cast, occurrence or observed semantics forbids cut merging', ()
   }
 });
 
+
+test('core: independently evidenced source actions remain six choices; repeated cuts play as one ordered sequence', () => {
+  const actions = Array.from({ length: 6 }, (_, i) => observation(`core-${i}`, i * 8, {
+    phase: 'CORE', duration: 4,
+    positionId: 'seated-facing', positionLabel: 'Doğrulanan duruş',
+    positionOccurrenceId: 'same-continuous-configuration',
+    gameplayEvidence: evidence(`atomic-${i}`, { occurrenceId: 'same-continuous-configuration' })
+  }));
+  actions.push(observation('core-zero-return', 49, {
+    phase: 'CORE', duration: 4, positionId: 'seated-facing',
+    positionLabel: 'Doğrulanan duruş', positionOccurrenceId: 'same-continuous-configuration',
+    gameplayEvidence: evidence('atomic-0', { occurrenceId: 'same-continuous-configuration' })
+  }));
+  const graph = createGameplayGraph(analysis(actions));
+  assert.equal(graph.stages.length, 1);
+  assert.equal(graph.stages[0].phase, 'CORE');
+  assert.equal(graph.choices.length, 6);
+  assert.equal(graph.choices[0].clipIds.length, 2);
+  assert.deepEqual(graph.choices[0].clipIds.map(id => graph.clips.find(row => row.id === id).startTime), [0, 49]);
+  assert.equal(availableChoices(createGameplayState(graph)).length, 6);
+});
+
 test('E: verified observed action overrides a mismatching headline and generic tempo abstains', () => {
   const observed = evidence('a', { action: { ...evidence('a').action, label: 'Kapıyı aç' } });
   const graph = createGameplayGraph(analysis([observation('a', 0, { label: 'Pencereyi aç', gameplayEvidence: observed }),
