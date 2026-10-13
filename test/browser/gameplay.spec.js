@@ -216,7 +216,8 @@ test('fullscreen keeps all local source choices visible, including during playba
   await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(1);
   await expect(page.locator('#positionTabs .position-tab')).toHaveCount(2);
   await page.locator('#positionTabs .position-tab').last().click();
-  await expect.poll(() => page.evaluate(() => __gameplayTest.state().selection?.clipIds[0])).toContain('core-b');
+  await expect.poll(() => page.evaluate(() => __gameplayTest.state().focusedPositionId)).toBe('missionary');
+  await expect(page.locator('#movementChoices .gameplay-choice')).toHaveAttribute('data-choice-id', /core-b/);
   await expect.poll(() => page.locator('#video').evaluate(v => v.currentTime)).toBeGreaterThan(13.95);
   await expect(page.locator('#positionTabs .position-tab')).toHaveCount(2);
   await expect(page.locator('#movementChoices .gameplay-choice')).toHaveCount(1);
