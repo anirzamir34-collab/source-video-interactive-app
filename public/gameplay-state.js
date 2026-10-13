@@ -5,6 +5,35 @@ const stageOf = state => state.graph.stages.find(row => row.id === state.stageId
 const choiceOf = (state, id) => state.graph.choices.find(row => row.id === id);
 const clipOf = (state, id) => state.graph.clips.find(row => row.id === id);
 const emptyProgress = () => ({ score: 0, counts: {}, completed: false });
+const orderedStages = graph => [...graph.stages].sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
+const followingStage = state => {
+  const stages = orderedStages(state.graph);
+  return stages[stages.findIndex(row => row.id === state.stageId) + 1] || null;
+};
+
+// The opening belongs to the next observed position, even when an unanalysed
+// source gap caused the graph to split it into another chapter. A previous
+// position ends this opening. Neither position playback nor elapsed time
+// contributes to its meter.
+function openingChoices(state) {
+  const stages = orderedStages(state.graph);
+  const current = stageOf(state);
+  if (!current) return [];
+  const core = current.phase === 'CORE' || current.phase === 'AFTERMATH' || current.phase === 'OUTCOME'
+    ? [...stages].reverse().find(row => row.phase === 'CORE' && row.startTime <= current.startTime)
+    : stages.find(row => row.phase === 'CORE' && row.startTime >= current.startTime);
+  if (!core) return [];
+  const previousCore = [...stages].reverse().find(row => row.phase === 'CORE' && row.startTime < core.startTime);
+  const first = previousCore?.endTime ?? -Infinity;
+  const cast = new Set(state.graph.choices.filter(row => row.stageId === core.id).flatMap(row => row.cast));
+  return stages.filter(row => row.phase === 'APPROACH' && row.startTime > first &&
+    row.endTime <= core.startTime + .05 && core.startTime - row.endTime <= 180)
+    .flatMap(row => row.choiceIds.map(id => ({ id, stageId: row.id })))
+    .filter(({ id }) => {
+      const choice = choiceOf(state, id);
+      return !cast.size || !choice?.cast.length || choice.cast.some(person => cast.has(person));
+    });
+}
 
 export function createGameplayState(graph, { currentTime = 0 } = {}) {
   const chapter = graph.chapters.find(row => row.endTime > currentTime) || graph.chapters[0];
@@ -73,26 +102,16 @@ export function nextPlayableClip(state, selection = state.selection) {
 }
 export function progression(state) {
   const stage = stageOf(state), progress = state.stageProgress[stage?.id] || emptyProgress();
-  const chapter = state.graph.chapters.find(row => row.id === state.chapterId);
-  const next = chapter?.stageIds[chapter.stageIds.indexOf(state.stageId) + 1] || null;
-  const interactiveStages = (chapter?.stageIds || []).map(id =>
-    state.graph.stages.find(row => row.id === id)).filter(row => row && row.phase !== 'STORY');
-  // The opening meter is earned from distinct, watched approach actions.
-  // Counting CORE/AFTERMATH in its denominator made it change after unlock
-  // and prevented a sparse but genuinely observed opening from filling.
-  const firstCore = interactiveStages.find(row => row.phase === 'CORE');
-  const approachStages = interactiveStages.filter(row => row.phase === 'APPROACH' &&
-    (!firstCore || row.startTime < firstCore.startTime));
-  const approachIds = approachStages.flatMap(row => row.choiceIds);
-  const earnedApproaches = approachStages.reduce((sum, row) => sum +
-    row.choiceIds.filter(id => state.stageProgress[row.id]?.counts?.[id] > 0).length, 0);
-  const lust = approachIds.length ? clamp(100 * earnedApproaches / approachIds.length) : 0;
-  const sceneEngagements = interactiveStages.reduce((sum, row) =>
-    sum + Object.keys(state.stageProgress[row.id]?.counts || {}).length, 0);
+  const next = followingStage(state);
+  const opening = openingChoices(state);
+  const earned = opening.filter(row => state.stageProgress[row.stageId]?.counts?.[row.id] > 0).length;
+  const lust = opening.length ? clamp(100 * earned / opening.length) : 0;
+  const sceneEngagements = opening.length ? earned : 0;
   return { stageId: state.stageId, phase: stage?.phase || 'STORY', value: clamp(progress.score),
     lust, sceneEngagements, completed: progress.completed,
     playedChoices: Object.keys(progress.counts).length,
-    nextStageId: progress.completed ? next : null, characters: state.characters, relationships: state.relationships };
+    nextStageId: progress.completed && !(stage?.phase === 'APPROACH' && next?.phase === 'CORE' && lust < 100)
+      ? next?.id || null : null, characters: state.characters, relationships: state.relationships };
 }
 const stageReady = (state, progress) => {
   const stage = stageOf(state);
@@ -143,8 +162,16 @@ function finishSelection(state) {
   const stage = stageOf(state);
   let progress = state.stageProgress[stage.id] || emptyProgress();
   progress = { ...progress, completed: progress.completed || stageReady(state, progress) };
-  return { ...state, selection: null, status: 'decision', error: null,
+  let next = { ...state, selection: null, status: 'decision', error: null,
     stageProgress: { ...state.stageProgress, [stage.id]: progress } };
+  const following = followingStage(next);
+  if (stage.phase === 'APPROACH' && progress.completed && following?.phase === 'CORE' &&
+      progression(next).lust >= 100) {
+    // Reveal the first position without seeking over unanalysed footage.
+    // Playing that position remains an explicit player command.
+    next = { ...next, stageId: following.id, chapterId: following.chapterId };
+  }
+  return next;
 }
 
 export function gameplayReducer(state, event = {}) {
@@ -227,13 +254,18 @@ export function gameplayReducer(state, event = {}) {
       if (!state.selection || !clip || clip.id !== event.clipId) return state;
       // Skipping only advances the source cursor. It does not create visual
       // facts, grant a completion reward, or jump over the entire story.
-      return { ...state, cursor: Math.max(state.cursor, clip.endTime),
+      const next = { ...state, cursor: Math.max(state.cursor, clip.endTime),
         selection: null, status: 'decision', error: null };
+      const stage = stageOf(next), previous = next.stageProgress[stage.id] || emptyProgress();
+      if (stage.phase !== 'STORY') return next;
+      return { ...next, stageProgress: { ...next.stageProgress,
+        [stage.id]: { ...previous, completed: stageReady(next, previous) } } };
     }
     case 'ADVANCE_STAGE': {
       const next = progression(state).nextStageId;
       if (!next || state.selection) return state;
-      return { ...state, stageId: next, status: 'decision', error: null };
+      const stage = state.graph.stages.find(row => row.id === next);
+      return { ...state, stageId: next, chapterId: stage.chapterId, status: 'decision', error: null };
     }
     case 'SKIP_STAGE': {
       if (state.selection) return state;
@@ -285,29 +317,36 @@ export function captureGameplay(state) {
 export function restoreGameplay(graph, snapshot) {
   const fresh = createGameplayState(graph);
   if (!snapshot || snapshot.version !== GAMEPLAY_VERSION) return fresh;
-  // Graph metadata was extended without changing stable stage/choice IDs.
-  // Preserve v2 saves only when their stage and every recorded choice still
-  // exist in the rebuilt source graph; reject unrelated/tampered snapshots.
+  // Source event IDs survive a change from one long STORY stage to chronological
+  // stages. Distribute earned choice counts by their new owner, never discard a
+  // saved game just because the old stage envelope no longer exists.
+  const allChoices = new Map(graph.choices.map(row => [row.id, row]));
+  const migrating = snapshot.fingerprint !== graph.fingerprint;
   const compatible = snapshot.fingerprint === graph.fingerprint ||
     (typeof snapshot.fingerprint === 'string' && snapshot.fingerprint.startsWith('vq2-') &&
-      graph.stages.some(row => row.id === snapshot.stageId) &&
-      Object.entries(snapshot.stageProgress || {}).every(([stageId, progress]) => {
-        const stage = graph.stages.find(row => row.id === stageId);
-        return stage && Object.keys(progress?.counts || {}).every(id => stage.choiceIds.includes(id));
-      }));
+      graph.choices.some(row => row.id === snapshot.stageId ||
+        graph.stages.some(stage => stage.id === snapshot.stageId)) &&
+      Object.values(snapshot.stageProgress || {}).every(progress =>
+        Object.keys(progress?.counts || {}).every(id => allChoices.has(id))));
   if (!compatible) return fresh;
   // Restore validated data, never replay selection/playback events. Counters
   // alone cannot reconstruct the chronological diminishing-return/retirement
   // decisions that produced a score, so preserve the bounded recorded score.
   const stageProgress = {};
+  const savedCounts = {};
+  if (migrating) for (const progress of Object.values(snapshot.stageProgress || {})) {
+    for (const [id, count] of Object.entries(progress?.counts || {}))
+      savedCounts[id] = Math.max(savedCounts[id] || 0, count);
+  }
   for (const stage of graph.stages) {
     const saved = snapshot.stageProgress?.[stage.id];
-    if (!saved) continue;
-    const counts = Object.fromEntries(stage.choiceIds.filter(id => Number.isSafeInteger(saved.counts?.[id]) &&
-      saved.counts[id] > 0 && saved.counts[id] <= 1000).map(id => [id, saved.counts[id]]));
+    if (!saved && !stage.choiceIds.some(id => savedCounts[id])) continue;
+    const source = migrating ? savedCounts : saved.counts;
+    const counts = Object.fromEntries(stage.choiceIds.filter(id => Number.isSafeInteger(source?.[id]) &&
+      source[id] > 0 && source[id] <= 1000).map(id => [id, source[id]]));
     const maximum = Object.values(counts).reduce((sum, count) => sum +
       100 / Math.max(2, Math.min(4, stage.choiceIds.length)) * 2 * (1 - Math.pow(.5, count)), 0);
-    stageProgress[stage.id] = { counts, score: Math.min(clamp(saved.score), maximum), completed: false };
+    stageProgress[stage.id] = { counts, score: migrating ? clamp(maximum) : Math.min(clamp(saved.score), maximum), completed: false };
   }
   let restored = { ...fresh, stageProgress,
     observedClipIds: graph.clips.map(row => row.id).filter(id => Array.isArray(snapshot.observedClipIds) && snapshot.observedClipIds.includes(id)),
@@ -317,7 +356,11 @@ export function restoreGameplay(graph, snapshot) {
     const clip = clipOf(restored, row.clipId);
     if (clip && typeof row.completed === 'boolean') restored = observeFacts(restored, clip, row.completed);
   }
-  const target = graph.stages.find(row => row.id === snapshot.stageId);
+  const stages = orderedStages(graph);
+  const target = migrating
+    ? stages.find(row => row.startTime <= restored.cursor + .03 && row.endTime > restored.cursor) ||
+      stages.find(row => row.startTime > restored.cursor) || stages.find(row => row.id === snapshot.stageId)
+    : stages.find(row => row.id === snapshot.stageId);
   if (target) restored = { ...restored, chapterId: target.chapterId, stageId: target.id };
   else if (snapshot.chapterId === null && restored.cursor >= graph.duration - .05) {
     restored = { ...restored, chapterId: null, stageId: null, status: 'ended' };

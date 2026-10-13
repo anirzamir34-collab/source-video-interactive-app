@@ -36,12 +36,13 @@ class FakeMedia extends EventTarget {
 const seek = async (media, time) => { media.currentTime = time; };
 const play = async media => { media.paused = false; };
 
-test('multiple evidenced labels are selectable, even if no intent was supplied', () => {
+test('multiple evidenced labels survive as successive source events, not one decision', () => {
   const graph = createGameplayGraph(source);
   const state = createGameplayState(graph);
   assert.equal(graph.choices.length, 5);
-  assert.equal(availableChoices(state).length, 5);
-  assert.deepEqual(availableChoices(state).map(row => row.label), source.actions.map(row => row.label));
+  assert.equal(availableChoices(state).length, 1);
+  assert.deepEqual(graph.stages.map(stage => graph.choices.find(row => row.stageId === stage.id).label),
+    source.actions.map(row => row.label));
   assert.ok(graph.choices.every(choice => choice.intent === ''));
   assert.ok(graph.choices.every(choice => choice.clipIds.length === 1));
 });
@@ -49,6 +50,7 @@ test('multiple evidenced labels are selectable, even if no intent was supplied',
 test('selecting a source-backed event never invents a second outcome', () => {
   const graph = createGameplayGraph(source);
   let state = createGameplayState(graph);
+  state = gameplayReducer(state, { type: 'SEEK', time: 103.2 });
   state = gameplayReducer(state, { type: 'SELECT', choiceId: graph.choices[2].id });
   assert.equal(state.selection.choiceId, graph.choices[2].id);
   assert.deepEqual(state.selection.clipIds, [graph.choices[2].clipIds[0]]);
@@ -65,8 +67,9 @@ test('single source-event skip lands on the next available timestamp without ear
   await player.skipCurrentClip();
   assert.equal(video.currentTime, 86.383);
   assert.equal(player.getState().selection, null);
-  assert.equal(availableChoices(player.getState()).length, 4);
-  assert.equal(Object.keys(player.getState().stageProgress).length, 0);
+  assert.equal(availableChoices(player.getState()).length, 1);
+  assert.equal(Object.values(player.getState().stageProgress).reduce((sum, row) =>
+    sum + Object.keys(row.counts).length, 0), 0);
 });
 
 test('unattributed source intervals never turn into fabricated narrative branches', () => {

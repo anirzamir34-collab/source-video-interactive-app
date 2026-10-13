@@ -4,8 +4,9 @@ import { syncInteractionSurfaces, mountInteractionPanel } from './interaction-pa
 const rendered = new WeakMap();
 const selectedPosition = new WeakMap();
 const openedDuringPlayback = new WeakMap();
-const eventMaps = new WeakMap();
 const positionKey = choice => choice.positionId ? String(choice.positionId) : '';
+const movementName = value => ({ rhythmic: 'Ritmik hareket', slow: 'Yavaş hareket',
+  moderate: 'Dengeli hareket', fast: 'Hızlı hareket' })[String(value || '').trim().toLowerCase()] || value;
 
 /** The only DOM projection for mobile, desktop and fullscreen. */
 export function renderGameplay({ state, player, els, document = globalThis.document }) {
@@ -130,7 +131,7 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     const repeatingPositionLabel = surface === 'panel' && choice.positionLabel &&
       choice.label.trim().toLocaleLowerCase('tr-TR') === choice.positionLabel.trim().toLocaleLowerCase('tr-TR');
     const label = storyIsObservation ? 'Hikâyeyi oynat' :
-      repeatingPositionLabel ? choice.movementLabel || choice.label : choice.label;
+      repeatingPositionLabel ? movementName(choice.movementLabel) || choice.label : choice.label;
     const card = makeButton(root, label, () => {
       openedDuringPlayback.delete(els); void player.select(choice.id);
     },
@@ -153,37 +154,6 @@ export function renderGameplay({ state, player, els, document = globalThis.docum
     makeButton(root, 'Yeniden oynat', () => { openedDuringPlayback.delete(els); void player.replay(); },
       'gameplay-playback-control');
   }
-  // Global source navigation belongs beside the video, never inside a story,
-  // approach or position choice list. Closed by default on every new game.
-  if (stageElement) {
-    let map = eventMaps.get(els);
-    if (!map || map.parentElement !== stageElement) {
-      map = document.createElement('details'); map.className = 'gameplay-event-map';
-      stageElement.appendChild(map); eventMaps.set(els, map);
-    }
-    if (map.dataset.graphFingerprint !== state.fingerprint) {
-      map.open = false; map.dataset.graphFingerprint = state.fingerprint;
-    }
-    map.replaceChildren();
-    const heading = document.createElement('summary'); heading.textContent = 'Olay haritası'; map.appendChild(heading);
-    for (const phase of ['STORY', 'APPROACH', 'CORE', 'OUTCOME', 'AFTERMATH']) {
-      const clips = state.graph.clips.filter(row =>
-        state.graph.stages.find(stage => stage.id === row.stageId)?.phase === phase);
-      if (!clips.length) continue;
-      const label = document.createElement('strong');
-      label.textContent = { STORY: 'Hikâye', APPROACH: 'Yakınlaşma', CORE: 'Pozisyonlar',
-        OUTCOME: 'Sonuç', AFTERMATH: 'Sahne sonrası' }[phase];
-      map.appendChild(label);
-      for (const clip of clips) {
-        const choice = state.graph.choices.find(row => row.clipIds.includes(clip.id));
-        if (!choice) continue;
-        makeButton(map, choice.label, () => {
-          map.open = false; openedDuringPlayback.delete(els); void player.selectSourceEvent(clip.id);
-        }, 'gameplay-event-link');
-      }
-    }
-  }
-
   if (state.status === 'error') makeButton(root, 'Yeniden dene', () => void player.retry());
   if (state.error && !state.selection && choices.length)
     makeButton(root, 'Videoya devam et', () => void player.continueVideo());
