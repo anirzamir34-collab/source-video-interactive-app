@@ -122,9 +122,9 @@ export function nextPlayableClip(state, selection = state.selection) {
   const clip = clipOf(state, selection.clipIds[selection.index]);
   return clipIsContinuous(state, clip) ? clip : null;
 }
-// Each distinct watched opening interaction contributes once. Replaying the
-// same source interval cannot manufacture new Lust or block a lone verified
-// opening from reaching its observed core scene.
+// Replays have a hard cap. A single verified opening requires more than one
+// watched engagement; repeated taps without playback never grant credit.
+const LUST_MIN_MASS = 3, LUST_REPLAY_BONUS = .5, LUST_REPLAY_CAP = 2;
 const undressing = /soyun|çıkar|cikar|clothing|undress|kıyafet|giysi/iu;
 export function lustWeight(choice) {
   const description = String(choice?.movementLabel || '') + ' ' + String(choice?.label || '');
@@ -139,13 +139,16 @@ export function lustOf(state, opening) {
     distinctMass += weight;
     if (count > 0) {
       earned++;
-      credit += weight;
+      credit += weight * Math.min(LUST_REPLAY_CAP,1+LUST_REPLAY_BONUS*(count-1));
     }
   }
   // Two separately observed actions should unlock together; one isolated
   // action requires three real watched plays. No repeated single choice can
   // bypass a second available and unplayed action.
-  const lust = clamp(100 * credit / distinctMass);
+  const required = opening.length >= 2 ? Math.min(LUST_MIN_MASS,distinctMass)
+    : distinctMass * LUST_REPLAY_CAP;
+  const raw = clamp(100*credit/required);
+  const lust = opening.length > 1 && earned < 2 ? Math.min(raw,75) : raw;
   return {lust,earned};
 }
 export function progression(state) {

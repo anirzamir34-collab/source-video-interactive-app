@@ -58,7 +58,7 @@ test('real report: repeated opening playback does not mint extra Lust; old graph
     const choice = availableChoices(state)[0];
     const owner = state.stageId;
     state = { ...state, stageProgress: { [owner]: { counts: { [choice.id]: 1 }, score: 50, completed: true } } };
-    assert.equal(progression(state).lust, 100);
+    assert.equal(progression(state).lust, 50);
     state = { ...state, stageProgress: { [owner]: { counts: { [choice.id]: 100 }, score: 100, completed: true } } };
     assert.equal(progression(state).lust, 100);
     const old = { version: 2, fingerprint: report.graph.fingerprint,
@@ -68,5 +68,5 @@ test('real report: repeated opening playback does not mint extra Lust; old graph
     const restored = restoreGameplay(graph, old);
     assert.equal(restored.stageId, owner);
     assert.equal(restored.stageProgress[owner].counts[choice.id], 1);
-    assert.equal(progression(restored).lust, 100);
+    assert.equal(progression(restored).lust, 50);
   });

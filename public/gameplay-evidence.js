@@ -56,7 +56,13 @@ export function createGameplayGraph(analysis = {}) {
       rejected.push({ id: text(action.actionId), reason: 'UNVERIFIED_SOURCE_INTERVAL' }); continue;
     }
     const evidence = normalizeGameplayEvidence(action.gameplayEvidence);
-    const surface = choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) });
+    const routed = choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) });
+    // The legacy scene preparer may use a transition as an approach entry.
+    // In this graph an explicitly STORY-labelled observed body transition is
+    // a separate panel interlude, never a narrative dialogue choice.
+    const surface = action.actionType === 'body_transition' && routed === 'story' &&
+      String(action.choiceSurfaceEvidence || '').trim() && Number(action.choiceSurfaceConfidence) >= .6
+      ? 'panel' : routed;
     const phase = surface === 'story' ? 'STORY' : surface === 'approach' ? 'APPROACH'
       : action.actionType === 'aftermath' ? 'AFTERMATH' : action.actionType === 'outcome' ? 'OUTCOME'
         : action.actionType === 'body_transition' ? 'INTERLUDE' : 'CORE';
