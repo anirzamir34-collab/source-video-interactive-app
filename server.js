@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
 import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
-import { loadMediaConfig, GEMINI_DEFAULT_MODEL } from './lib/turkish-media/config.js';
+import { loadMediaConfig } from './lib/turkish-media/config.js';
 import { createMediaCache } from './lib/turkish-media/cache.js';
 import { createLimiter } from './lib/turkish-media/limiter.js';
 import { createAudioService } from './lib/turkish-media/audio.js';
@@ -1634,20 +1634,34 @@ app.post('/api/gemini-key-status', async (req, res) => {
     });
   }
 
-  const model = process.env.TRANSLATION_MODEL || process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
-  // Older open tabs poll this route every minute. Configuration queries must
-  // remain inference-free too; a real provider probe needs explicit intent.
-  if (req.body?.verify !== true) return res.json({ ok: true, state: 'configured', source, model,
+  // Keep configuration-only checks free of provider calls.
+  if (req.body?.verify !== true) return res.json({ ok: true, state: 'configured', source,
     providerAccessVerified: false,
     message: 'Gemini anahtarı yapılandırılmış. Bağlantıyı Test et düğmesiyle doğrulayabilirsin.' });
+
+  // Probe the same analysis tier selected in the UI. A translation-only model
+  // can be unavailable even when analysis works, and vice versa.
+  const tier = analysisTierFromRequest(req.body?.analysisTier);
+  const models = analysisModelCandidates(tier);
+  let model = models[0];
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model,
-      contents: 'Reply OK.',
-      config: { maxOutputTokens: 1, temperature: 0 }
-    });
-    console.info('[gemini-request-usage]', JSON.stringify({ stage: 'explicit-key-test',
+    let response;
+    for (const candidate of models) {
+      model = candidate;
+      try {
+        response = await ai.models.generateContent({
+          model,
+          contents: 'Reply OK.',
+          config: { maxOutputTokens: 16, temperature: 0 }
+        });
+        break;
+      } catch (error) {
+        if (storyboardFailureReason(error) !== 'GEMINI_MODEL_UNAVAILABLE' ||
+            candidate === models.at(-1)) throw error;
+      }
+    }
+    console.info('[gemini-request-usage]', JSON.stringify({ stage: 'explicit-key-test', model,
       ...addGeminiUsage(emptyGeminiUsage(), response?.usageMetadata) }));
     return res.json({
       ok: true,
@@ -1656,14 +1670,19 @@ app.post('/api/gemini-key-status', async (req, res) => {
       checkedAt: Date.now(),
       source,
       message: source === 'browser'
-        ? 'Kendi Gemini anahtarın çalışıyor ve kota kullanılabilir.'
-        : 'Sunucu Gemini anahtarı çalışıyor ve kota kullanılabilir.'
+        ? 'Kendi Gemini anahtarın seçilen analiz modeliyle çalışıyor.'
+        : 'Sunucu Gemini anahtarı seçilen analiz modeliyle çalışıyor.'
     });
   } catch (error) {
     const details = String(error?.message || error);
     const normalized = details.toLowerCase();
+    const reason = storyboardFailureReason(error);
+    const status = Number(error?.status ?? error?.statusCode ?? error?.response?.status) || null;
     const retryAfterSeconds = quotaRetrySeconds(details) || 0;
-    if (normalized.includes('api_key_invalid') || normalized.includes('api key not valid') || normalized.includes('invalid api key')) {
+    // Never log the key or provider response body.
+    console.warn('[gemini-key-test-failure]', JSON.stringify({ reason, status, model, source }));
+    if (status === 401 || normalized.includes('api_key_invalid') ||
+        normalized.includes('api key not valid') || normalized.includes('invalid api key')) {
       return res.status(401).json({ ok: false, state: 'invalid', source, message: 'API anahtarı geçersiz.' });
     }
     if (normalized.includes('no credits') || normalized.includes('credit balance') || normalized.includes('prepay')) {
@@ -1672,8 +1691,10 @@ app.post('/api/gemini-key-status', async (req, res) => {
           ? 'Kendi Gemini anahtarında kullanılabilir kredi yok.'
           : 'Sunucu Gemini kredisi tükendi. Kendi Gemini API anahtarını girebilir veya sunucu bakiyesini yenileyebilirsin.' });
     }
-    if (normalized.includes('resource_exhausted') || normalized.includes('429') || normalized.includes('quota')) {
-      const daily = normalized.includes('per_day') || normalized.includes('per day') || normalized.includes('daily');
+    if (reason === 'GEMINI_QUOTA_OR_CREDITS' || reason === 'GEMINI_RATE_LIMITED' ||
+        reason === 'GEMINI_DAILY_LIMIT' || reason === 'GEMINI_CREDITS_DEPLETED') {
+      const daily = reason === 'GEMINI_DAILY_LIMIT' || normalized.includes('per_day') ||
+        normalized.includes('per day') || normalized.includes('daily');
       return res.status(429).json({
         ok: false,
         state: daily ? 'daily_limit' : 'rate_limited',
@@ -1684,14 +1705,23 @@ app.post('/api/gemini-key-status', async (req, res) => {
           : 'Anahtar şu anda hız/kota sınırında; biraz sonra tekrar denenebilir.'
       });
     }
-    if (normalized.includes('permission_denied') || normalized.includes('403')) {
-      return res.status(403).json({ ok: false, state: 'forbidden', source, message: 'Anahtarın Gemini modeline erişim izni yok.' });
+    if (reason === 'GEMINI_MODEL_UNAVAILABLE') {
+      return res.status(404).json({ ok: false, state: 'model_unavailable', source, model,
+        message: 'Seçilen Gemini analiz modeli bu projede kullanılamıyor. Başka analiz modunu deneyebilirsin.' });
+    }
+    if (status === 403 || normalized.includes('permission_denied')) {
+      return res.status(403).json({ ok: false, state: 'forbidden', source,
+        message: 'Anahtarın Gemini modeline erişim izni yok.' });
+    }
+    if (reason === 'GEMINI_INVALID_REQUEST') {
+      return res.status(502).json({ ok: false, state: 'probe_error', source,
+        message: 'Anahtar testi Gemini tarafından reddedildi. Analiz isteğini yeniden dene.' });
     }
     return res.status(502).json({
       ok: false,
       state: 'unavailable',
       source,
-      message: 'Anahtar şu anda doğrulanamadı; daha sonra tekrar dene.'
+      message: 'Gemini bağlantısı şu anda doğrulanamadı; analiz isteğini yeniden deneyebilirsin.'
     });
   }
 });

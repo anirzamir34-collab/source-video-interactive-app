@@ -205,10 +205,13 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
   const end = source.indexOf("\napp.get('/health'", start);
   let calls = 0;
   const handler = vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
-    clientGeminiApiKey: () => 'test-account', GEMINI_DEFAULT_MODEL: 'test-model',
+    clientGeminiApiKey: () => 'test-account',
+    analysisTierFromRequest: tier => tier === 'deep' ? 'deep' : 'economy',
+    analysisModelCandidates: () => ['test-model'],
+    storyboardFailureReason: () => 'GEMINI_TEMPORARILY_UNAVAILABLE',
     GoogleGenAI: class { models = { generateContent: async () => { calls++; return { usageMetadata: {} }; } }; },
     addGeminiUsage: usage => { usage.requests++; return usage; }, emptyGeminiUsage: () => ({ requests: 0 }),
-    process: { env: {} }, console: { info() {} }, quotaRetrySeconds: () => 0
+    console: { info() {}, warn() {} }, quotaRetrySeconds: () => 0
   });
   for (let i = 0; i < 60; i++) {
     const response = serverResponse(); await handler({ body: {} }, response);
