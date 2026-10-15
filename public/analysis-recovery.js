@@ -22,14 +22,41 @@ export function storyboardFailureReason(error) {
   return 'GEMINI_STORYBOARD_ERROR';
 }
 
-function responseError(code) {
-  return Object.assign(new Error(code), { code });
+// Keep provider refusal telemetry free of the submitted video, prompt, and
+// generated content. Different block origins require different diagnoses.
+const PROVIDER_BLOCK_REASONS = new Set([
+  'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'IMAGE_SAFETY', 'RECITATION'
+]);
+const PROVIDER_SAFETY_CATEGORIES = new Set([
+  'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_HARASSMENT',
+  'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_DANGEROUS_CONTENT',
+  'HARM_CATEGORY_CIVIC_INTEGRITY'
+]);
+const safeBlockReason = value => {
+  const code = String(value || '').trim().toUpperCase();
+  return PROVIDER_BLOCK_REASONS.has(code) ? code : null;
+};
+
+function responseError(code, safetyDiagnostic = null) {
+  return Object.assign(new Error(code), { code, ...(safetyDiagnostic ? { safetyDiagnostic } : {}) });
 }
 
 export function parseStoryboardResponse(response) {
-  const finish = [response?.candidates?.[0]?.finishReason, response?.promptFeedback?.blockReason].filter(Boolean).join(' ');
-  if (/SAFETY|PROHIBITED_CONTENT|BLOCKLIST|IMAGE_SAFETY|RECITATION/i.test(finish)) {
-    throw responseError('GEMINI_CONTENT_RESTRICTED');
+  const promptBlockReason = safeBlockReason(response?.promptFeedback?.blockReason);
+  const candidateFinishReason = safeBlockReason(response?.candidates?.[0]?.finishReason);
+  if (promptBlockReason || candidateFinishReason) {
+    const ratings = [
+      ...(Array.isArray(response?.promptFeedback?.safetyRatings) ? response.promptFeedback.safetyRatings : []),
+      ...(Array.isArray(response?.candidates?.[0]?.safetyRatings) ? response.candidates[0].safetyRatings : [])
+    ];
+    const blockedCategories = [...new Set(ratings
+      .filter(rating => rating?.blocked === true)
+      .map(rating => String(rating?.category || '').toUpperCase())
+      .filter(category => PROVIDER_SAFETY_CATEGORIES.has(category)))];
+    throw responseError('GEMINI_CONTENT_RESTRICTED', {
+      origin: promptBlockReason ? 'prompt_feedback' : 'candidate_finish',
+      promptBlockReason, candidateFinishReason, blockedCategories
+    });
   }
   const raw = String(response?.text || '').trim();
   if (!raw) throw responseError('GEMINI_EMPTY_RESPONSE');
@@ -38,7 +65,8 @@ export function parseStoryboardResponse(response) {
   try { parsed = parseModelJson(raw); }
   catch {
     if (/\b(?:I|we)\s+(?:cannot|can't|can’t|am unable|are unable)\b|\b(?:request|prompt|content|images?|material)\b.{0,180}\b(?:not allowed|cannot|can't|unable|prohibited|policy|policies|restricted)\b/is.test(raw)) {
-      throw responseError('GEMINI_CONTENT_RESTRICTED');
+      throw responseError('GEMINI_CONTENT_RESTRICTED', { origin: 'model_text_refusal',
+        promptBlockReason: null, candidateFinishReason: null, blockedCategories: [] });
     }
     // A prose response is not a truncated JSON document. Repeating or cropping
     // the same material cannot turn it into verified structured evidence.
