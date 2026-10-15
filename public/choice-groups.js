@@ -184,3 +184,50 @@ export function collapseConsecutiveEquivalentCards(cards = [], { maxGapSeconds =
   }
   return grouped.map((card, index) => ({ ...card, displayIndex: index + 1 }));
 }
+
+// Presentation only: several adjacent, independently verified actions in one
+// occurrence may live under one card. Every original source clip and its own
+// label remain available as a variant; never bridge a gap or another group.
+export function bundleAdjacentSourceCards(cards = [], { targetCount = 4, maxVariants = 6 } = {}) {
+  const result = (Array.isArray(cards) ? cards : []).map(card => ({
+    ...card, variants: [...(card?.variants || [])],
+    sourceLabels: [...(card?.sourceLabels || [card?.label].filter(Boolean))]
+  }));
+  const target = Math.max(1, Math.min(8, Math.floor(Number(targetCount) || 4)));
+  const capacity = Math.max(2, Math.min(12, Math.floor(Number(maxVariants) || 6)));
+  const compatible = (left, right) => {
+    const a = left?.variants?.at(-1), b = right?.variants?.[0];
+    const last = a ? clipRange(a) : null, first = b ? clipRange(b) : null;
+    if (!last || !first || a.sourceVerified !== true || b.sourceVerified !== true ||
+        left.variants.length + right.variants.length > capacity ||
+        !text(left.sourcePositionId) || left.sourcePositionId !== right.sourcePositionId ||
+        text(left.occurrenceId) !== text(right.occurrenceId)) return false;
+    for (const field of ['sourceOccurrenceId', 'positionOccurrenceId', 'routeNamespace',
+      'subjectTrackId', 'partnerTrackId']) {
+      if (text(a[field]) !== text(b[field])) return false;
+    }
+    return choiceSurfaceKey(a) === choiceSurfaceKey(b) &&
+      first.startTime >= last.endTime - 0.05 && first.startTime <= last.endTime + 1;
+  };
+  while (result.length > target) {
+    let pair = -1, smallest = Infinity;
+    for (let index = 0; index < result.length - 1; index += 1) {
+      if (!compatible(result[index], result[index + 1])) continue;
+      const combined = result[index].variants.length + result[index + 1].variants.length;
+      if (combined < smallest) { smallest = combined; pair = index; }
+    }
+    if (pair < 0) break;
+    const left = result[pair], right = result[pair + 1];
+    const labels = [...new Set([...left.sourceLabels, ...right.sourceLabels].map(text).filter(Boolean))];
+    const sameEnergy = left.energyFlavor === right.energyFlavor;
+    result.splice(pair, 2, {
+      ...left,
+      variants: [...left.variants, ...right.variants], sourceLabels: labels,
+      label: labels.length <= 2 ? labels.join(' / ') : `${labels.slice(0, 2).join(' / ')} (+${labels.length - 2})`,
+      energyFlavor: sameEnergy ? left.energyFlavor : 'mixed',
+      energyLabel: sameEnergy ? left.energyLabel : '',
+      hasTempoShift: false, tempoVariants: []
+    });
+  }
+  return result.map((card, index) => ({ ...card, displayIndex: index + 1 }));
+}
