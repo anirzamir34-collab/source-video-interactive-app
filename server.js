@@ -775,6 +775,18 @@ Rules:
           }
           return cached.value;
         } catch (error) {
+          if (storyboardFailureReason(error) === 'GEMINI_CONTENT_RESTRICTED') {
+            // Provider metadata only: no input images, prompt, text, API key
+            // or raw SDK response are written to the application logs.
+            console.warn('[gemini-restriction-diagnostic]', JSON.stringify({
+              stage: identitySurvey ? 'identity-survey' : reviewMode ? 'review' : 'analysis',
+              chunkIndex, model,
+              ...(error?.safetyDiagnostic || {
+                origin: 'provider_api_error', promptBlockReason: null,
+                candidateFinishReason: null, blockedCategories: []
+              })
+            }));
+          }
           // Legacy 2.5 models are access-restricted for some projects. Retry
           // once with current Lite ONLY on true model unavailability: never
           // substitute a paid stronger model or retry exhausted credits.
