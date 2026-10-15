@@ -548,6 +548,89 @@ test('nearby scene fragments with a different opaque cast remain separate', () =
   }
 });
 
+test('same-cast opening carries its earned Lust into a nearby verified position chapter', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    participantTrackIds: ['MAIN_MALE', 'PARTNER_A'] };
+  const opening = { id: 'opening', startTime: 27.611, endTime: 74.944, postSceneTime: 74.944,
+    foreplay: [{ ...cast, id: 'opening-choice', sourceVerified: true, startTime: 27.611, endTime: 51.278 }],
+    dialogue: [], positions: [], outcomes: [] };
+  const next = { id: 'positions', startTime: 94.667, endTime: 280.056, postSceneTime: 280.056,
+    foreplay: [], dialogue: [{ ...cast, sourceVerified: true, startTime: 94.667, endTime: 110.444 }],
+    positions: [{ ...cast, id: 'position:1', sourceVerified: true, startTime: 110.444,
+      endTime: 134.111 }], outcomes: [] };
+  const continuousStory = [{ ...cast, actionType: 'story', sourceVerified: true,
+    startTime: 74.944, endTime: 90.722 }];
+  const joined = mergeFragments([opening, next], continuousStory);
+  assert.equal(joined.length, 1);
+  assert.deepEqual([joined[0].startTime, joined[0].endTime], [27.611, 280.056]);
+  assert.equal(joined[0].foreplay[0].id, 'opening-choice');
+  assert.equal(joined[0].positions[0].id, 'position:1');
+  assert.equal(mergeFragments([opening, next], [{ ...continuousStory[0],
+    actionType: 'scene_transition' }]).length, 2);
+  assert.equal(mergeFragments([opening, next], [{ ...continuousStory[0],
+    partnerTrackId: 'PARTNER_B' }]).length, 2);
+});
+
+test('reported 27–110 second opening and following verified panel build one playable scene', () => {
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A'] };
+  const opening = (id, start, end, actionType, choiceSurface) => action(id, start, end, {
+    ...cast, adultScene: false, adultSceneId: '', adultSceneStartTime: undefined,
+    adultSceneEndTime: undefined, positionId: '', positionLabel: '',
+    actionType, choiceSurface, choiceSurfaceEvidence: 'Observed source action',
+    choiceSurfaceConfidence: .95
+  });
+  const rows = [
+    opening('tl-002', 27.611, 51.278, 'touch', 'approach'),
+    opening('tl-003', 51.278, 67.056, 'dialogue', 'story'),
+    opening('tl-004', 67.056, 74.944, 'clothing', 'approach'),
+    opening('tl-005', 74.944, 90.722, 'story', 'story'),
+    action('tl-006', 94.667, 110.444, { ...cast, actionType: 'dialogue',
+      choiceSurface: 'story', positionId: '', positionLabel: '',
+      adultSceneId: 'adult-001', adultSceneStartTime: 94.667,
+      adultSceneEndTime: 134.111 }),
+    action('tl-007', 110.444, 134.111, { ...cast, actionType: 'position',
+      adultSceneId: 'adult-001', adultSceneStartTime: 94.667,
+      adultSceneEndTime: 134.111, positionId: 'manual', positionLabel: 'Manuel Uyarım',
+      positionStartTime: 110.444, positionEndTime: 134.111 }),
+    action('tl-008', 134.111, 173.556, { ...cast, actionType: 'position',
+      adultSceneId: 'adult-001', adultSceneStartTime: 94.667,
+      adultSceneEndTime: 173.556, positionId: 'oral', positionLabel: 'Oral',
+      positionStartTime: 134.111, positionEndTime: 173.556 }),
+    opening('tl-010', 173.556, 189.333, 'body_transition', 'story'),
+    action('tl-012', 203.1, 250.4, { ...cast, actionType: 'position',
+      adultSceneId: 'adult-001', adultSceneStartTime: 94.667,
+      adultSceneEndTime: 250.4, positionId: 'manual', positionLabel: 'Manuel Uyarım',
+      positionStartTime: 203.1, positionEndTime: 250.4 }),
+    opening('tl-014', 250.4, 262.3, 'touch', 'approach'),
+    action('tl-015', 262.3, 280.056, { ...cast, actionType: 'position',
+      adultSceneId: 'adult-001', adultSceneStartTime: 94.667,
+      adultSceneEndTime: 280.056, positionId: 'cowgirl', positionLabel: 'Kovboy',
+      positionStartTime: 262.3, positionEndTime: 280.056 })
+  ];
+  const state = prepare(rows, {
+    mergeAdultSceneFragments: mergeFragments,
+    playableAdultPanelFamily: item => item.positionId || '',
+    canonicalAdultPosition: item => ({ id: item.positionId, label: item.positionLabel }),
+    adultCategoryFor: item => ({ id: item.positionId, label: item.positionLabel }),
+    isWarmupPosition: item => item.familyId === 'manual'
+  });
+  assert.equal(state.adultScenes.length, 1, JSON.stringify(state.adultScenes.map(item => ({
+    id: item.id, startTime: item.startTime, endTime: item.endTime,
+    foreplay: item.foreplay.map(row => [row.id, row.subjectTrackId, row.partnerTrackId, row.participantTrackIds]),
+    positions: item.positions.map(row => [row.id, row.subjectTrackId, row.partnerTrackId, row.participantTrackIds])
+  }))));
+  assert.equal(state.adultScenes[0].startTime, 27.611);
+  assert.ok(state.adultScenes[0].foreplay.some(item => item.id === 'tl-002'));
+  assert.ok(state.adultScenes[0].positions.some(item => item.familyId === 'cowgirl'));
+});
+
 test('a verified same-cast transition joins a 41-second opening-to-core gap without making the gap playable', () => {
   const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
   const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
