@@ -208,6 +208,7 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
     clientGeminiApiKey: () => 'test-account',
     analysisTierFromRequest: tier => tier === 'deep' ? 'deep' : 'economy',
     analysisModelCandidates: () => ['test-model'],
+    process: { env: {} },
     storyboardFailureReason: () => 'GEMINI_TEMPORARILY_UNAVAILABLE',
     GoogleGenAI: class { models = { generateContent: async () => { calls++; return { usageMetadata: {} }; } }; },
     addGeminiUsage: usage => { usage.requests++; return usage; }, emptyGeminiUsage: () => ({ requests: 0 }),
