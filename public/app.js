@@ -6176,11 +6176,15 @@ function renderChoices() {
     const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration);
     const cursor = Math.max(state.gameCursorTime, Number(els.video.currentTime) || 0);
     if (hasRemainingVideo(cursor, duration)) {
-      setGameState('DECISION_PENDING');
-      const next = Number.isFinite(routeTime) && routeTime > cursor + .05
-        ? () => void resumeAnalysisGap(routeTime) : resumeSourceVideo;
-      showPlaybackRecovery(next === resumeSourceVideo ? 'Bu noktadan sonra seçim yok; videoya devam et.'
-        : 'Sonraki seçime kadar videoya devam et.', next, 'Videoya devam et');
+      if (Number.isFinite(routeTime) && routeTime > cursor + .05) {
+        // Empty lookahead is a source gap, not a choice. Keep playing the
+        // original video and stop at the next verified decision boundary.
+        void resumeAnalysisGap(routeTime);
+      } else {
+        setGameState('DECISION_PENDING');
+        showPlaybackRecovery('Bu noktadan sonra seçim yok; videoya devam et.', resumeSourceVideo,
+          'Videoya devam et');
+      }
     } else {
       setGameState('ENDED');
       els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
