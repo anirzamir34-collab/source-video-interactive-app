@@ -302,9 +302,11 @@ export async function extractStoryboard(source, onProgress = () => {}, signal, o
     const columns = 3;
     const rows = 4;
     const framesPerSheet = columns * rows;
-    const cellWidth = 320;
+    // Preserve every timestamp/frame; resize contact-sheet tiles modestly to
+    // reduce upload bytes without throwing away short-action evidence.
+    const cellWidth = 288;
     const ratio = (video.videoHeight || 9) / (video.videoWidth || 16);
-    const cellHeight = Math.max(180, Math.round(cellWidth * ratio));
+    const cellHeight = Math.max(162, Math.round(cellWidth * ratio));
 
     const canvas = document.createElement('canvas');
     canvas.width = columns * cellWidth;
