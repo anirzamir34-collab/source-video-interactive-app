@@ -61,11 +61,14 @@ export function createAnalysisProgress({ list, summary, detail, message, bar, co
   function begin({ motion = false, dubbing = true, subtitles = true, remote = false } = {}) {
     if (timer !== null) clearTimer.call(globalThis, timer);
     rows.clear(); active = true; startedAt = now(); terminalText = ''; finishedAt = null;
-    const ids = ['source', 'extract', 'encode', 'hash', 'upload', 'serverAudio', 'transcript', 'speakers',
+    const mediaRequested = dubbing || subtitles;
+    const ids = ['source',
+      ...(mediaRequested ? ['extract', 'encode', 'hash', 'upload', 'serverAudio', 'transcript', 'speakers'] : []),
       ...(motion ? ['frames', 'frameUpload', 'analysis', 'review', 'integrity'] : []),
-      ...(dubbing || subtitles ? ['translation'] : []),
+      ...(mediaRequested ? ['translation'] : []),
       ...(dubbing ? ['voices', 'dub', 'align'] : []),
-      ...(subtitles ? ['subtitles'] : []), ...(dubbing ? ['mix'] : []), 'package', 'save'];
+      ...(subtitles ? ['subtitles'] : []), ...(dubbing ? ['mix'] : []),
+      ...(mediaRequested ? ['package'] : []), 'save'];
     for (const id of ids) rows.set(id, { id, label: LABELS[id], status: 'pending' });
     container?.classList.remove('hidden');
     update('source', { status: 'working', detail: remote ? 'Video telefona indiriliyor.' : 'Seçilen cihaz dosyası hazırlanıyor.' });
