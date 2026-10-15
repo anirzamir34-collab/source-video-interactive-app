@@ -40,11 +40,24 @@ export function mergeRepairedAnalysis(analysis, repairs, duration) {
   }
   const attempted = new Set(repairs.map(item => `${item.gap.startTime}:${item.gap.endTime}`));
   unresolved.push(...originalGaps.filter(gap => !attempted.has(`${gap.startTime}:${gap.endTime}`)));
+  const replacedWarnings = repairs.filter(item => item.result?.available).map(({ gap }) =>
+    Number.isInteger(gap.chunkIndex)
+      ? `Bölüm ${gap.chunkIndex + 1} (${Number(gap.startTime).toFixed(1)}–${Number(gap.endTime).toFixed(1)} sn) `
+      : '');
+  const warnings = (analysis.warnings || []).filter(warning =>
+    !replacedWarnings.some(prefix => prefix && typeof warning === 'string' && warning.startsWith(prefix)));
+  for (const { gap, result } of repairs) {
+    if (!result?.available) continue;
+    for (const remaining of result.analysisGaps || []) {
+      warnings.push(`Aralık ${Number(remaining.startTime).toFixed(1)}–${Number(remaining.endTime).toFixed(1)} sn hâlâ doğrulanmadı; seçenek üretilmedi.`);
+    }
+    warnings.push(...(result.warnings || []));
+  }
   return { ...analysis,
     actions: [...existing, ...added].sort((a, b) => Number(a.startTime) - Number(b.startTime)),
     analysisGaps: unresolved.sort((a, b) => a.startTime - b.startTime),
     partial: unresolved.length > 0,
     repairedGapCount: Number(analysis.repairedGapCount || 0) + resolved,
-    warnings: [...(analysis.warnings || []), ...repairs.flatMap(item => item.result?.warnings || [])]
+    warnings
   };
 }

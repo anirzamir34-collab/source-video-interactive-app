@@ -80,12 +80,16 @@ export function canContinuePastChunkFailure(failure) {
 }
 
 export function chunkGapResult(failure, chunkIndex, startTime, endTime) {
+  const reason = failure?.reason || 'CHUNK_ANALYSIS_GAP';
+  const detail = reason === 'GEMINI_CONTENT_RESTRICTED'
+    ? 'Gemini içerik kısıtlaması nedeniyle bu bölümü analiz etmedi; seçenek üretilmedi.'
+    : 'okunamadı; bu aralık için seçenek üretilmedi.';
   return {
     available: false, actions: [], chunkIndex, chunkStart: startTime, chunkEnd: endTime,
     retryable: failure?.retryable !== false,
-    reason: failure?.reason || 'CHUNK_ANALYSIS_GAP',
-    analysisGaps: [{ chunkIndex, startTime, endTime, reason: failure?.reason || 'CHUNK_ANALYSIS_GAP' }],
-    warnings: [`Bölüm ${chunkIndex + 1} (${startTime.toFixed(1)}–${endTime.toFixed(1)} sn) okunamadı; bu aralık için seçenek üretilmedi.`]
+    reason,
+    analysisGaps: [{ chunkIndex, startTime, endTime, reason }],
+    warnings: [`Bölüm ${chunkIndex + 1} (${startTime.toFixed(1)}–${endTime.toFixed(1)} sn) ${detail}`]
   };
 }
 

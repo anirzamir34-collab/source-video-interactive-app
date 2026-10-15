@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { parseStoryboardResponse, generateStoryboardWithRetry, storyboardFailureReason, isTerminalStoryboardFailure,
-  hasDeclaredPartialCoverage } from '../public/analysis-recovery.js';
+  hasDeclaredPartialCoverage, chunkGapResult } from '../public/analysis-recovery.js';
+
+test('restricted source interval reports its provider reason and never fabricates choices', () => {
+  const gap = chunkGapResult({ reason: 'GEMINI_CONTENT_RESTRICTED', retryable: false }, 1, 94.7, 189.3);
+  assert.deepEqual(gap.actions, []);
+  assert.equal(gap.analysisGaps[0].reason, 'GEMINI_CONTENT_RESTRICTED');
+  assert.match(gap.warnings[0], /içerik kısıtlaması/);
+});
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 import { serializeReviewCandidates } from '../public/classification-integrity.js';
 import { geminiQuotaFailure } from '../public/gemini-quota.js';

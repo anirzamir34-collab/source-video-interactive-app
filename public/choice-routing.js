@@ -2,11 +2,30 @@ const text = value => String(value || '').trim().toLowerCase();
 const approachTypes = new Set(['kiss', 'touch', 'clothing']);
 const storyTypes = new Set(['dialogue', 'story', 'scene_transition', 'camera_transition']);
 
+function visiblyApproachesPartner(action) {
+  if (String(action.actionType || '').toLowerCase() !== 'story' || action.nonIntimate === true ||
+      Number(action.choiceSurfaceConfidence) < 0.8) return false;
+  const subject = String(action.subjectTrackId || '').trim();
+  const partner = String(action.partnerTrackId || '').trim();
+  if (!subject || !partner || subject === partner) return false;
+  const normalize = value => String(value || '').toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i').replace(/ş/g, 's').replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ö/g, 'o');
+  const label = normalize(action.label);
+  const evidence = normalize(action.choiceSurfaceEvidence);
+  const proximity = /\b(?:yakinlas\w*|yaklas\w*|draws? closer|moves? closer)\b/u;
+  const nonApproach = /\b(?:teklif\w*|soyl\w*|konus\w*|dedi|selam\w*|tokalas\w*|greeting|handshake|sadece konusma|only spoken|speech only|invites?)\b/u;
+  return proximity.test(label) && proximity.test(evidence) && !nonApproach.test(evidence);
+}
+
 // Source categories own their choices. Speech, shared participants and a scene
 // envelope do not change a category, and a requested panel cannot create one.
 export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   if (action.sourceVerified !== true) return 'unverified';
   const type = text(action.actionType);
+  // A model can call an observed approach a generic story event. Preserve a
+  // directly evidenced, two-person source interval in the opening controls.
+  if (visiblyApproachesPartner(action)) return 'approach';
   // A verified dialogue range keeps its own category even when a broad parent
   // carries unrelated outcome metadata. Speech is not a performed event.
   if (storyTypes.has(type)) return 'story';

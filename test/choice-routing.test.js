@@ -28,6 +28,21 @@ test('ordinary hand gestures and dialogue wording do not promote a story action'
   assert.equal(choiceSurfaceForAction(action({ label: 'Kollarını bağlayıp izle', adultScene: true })), 'story');
 });
 
+test('a verified physical approach survives a generic story classification', () => {
+  const opening = action({ actionType: 'story', label: 'Partneriyle yakınlaş',
+    subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    choiceSurface: 'story', choiceSurfaceConfidence: 1,
+    choiceSurfaceEvidence: 'Kadın koltuğa gelir ve erkekle yakınlaşır.' });
+  assert.equal(choiceSurfaceForAction(opening), 'approach');
+  assert.equal(choiceSurfaceForAction({ ...opening, partnerTrackId: '' }), 'story');
+  assert.equal(choiceSurfaceForAction({ ...opening,
+    choiceSurfaceEvidence: 'Kadın yakınlaşmayı teklif ediyor.' }), 'story');
+  assert.equal(choiceSurfaceForAction({ ...opening,
+    choiceSurfaceEvidence: 'Kadın yaklaşır ve selamlaşır.' }), 'story');
+  assert.equal(choiceSurfaceForAction({ ...opening, sourceVerified: false }), 'unverified');
+  assert.equal(choiceSurfaceForAction({ ...opening, choiceSurfaceConfidence: 0.4 }), 'story');
+});
+
 test('spoken invitations and uncorroborated contact tags remain ordinary choices', () => {
   const dialogue = action({ actionType: 'dialogue', label: 'Seks yapalım dedi',
     transcript: 'Seks yapalım', choiceSurface: 'approach',

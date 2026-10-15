@@ -815,6 +815,27 @@ test('position family ignores furniture, kissing and ordinary hand-contact wordi
   assert.equal(adultPositionFamily('Kucağındaki kadını öperek ritmik şekilde hareket et'), 'seated-facing');
 });
 
+test('verified away-facing top position retains its source movement card', () => {
+  const action = {
+    sourceVerified: true,
+    adultScene: true,
+    actionType: 'position',
+    label: 'Kadın üstte, arkası dönük yakınlaş',
+    positionId: 'reverse-cowgirl',
+    positionLabel: 'Kadın üstte, arkası dönük',
+    receiverBodyOrientation: 'on_top_away',
+    receiverSupport: 'straddling',
+    positionConfigurationConfidence: 1,
+    positionEvidence: 'Partner erkeğin üzerinde, arkası ona dönük.',
+    classificationReview: 'verified',
+    movementType: 'ritmik hareket'
+  };
+  assert.equal(adultPositionFamily(action.label), 'reverse-cowgirl');
+  assert.equal(resolveVerifiedAdultPosition(action).family, 'reverse-cowgirl');
+  assert.equal(movementBelongsToVerifiedPosition(action, 'reverse-cowgirl'), true);
+  assert.equal(adultPositionFamily('Kadın üstte, yüz yüze yakınlaş'), 'cowgirl');
+});
+
 test('verified position labels work even when optional position metadata is missing or stale', () => {
   assert.equal(verifiedAdultPositionFamily({
     sourceVerified: true,

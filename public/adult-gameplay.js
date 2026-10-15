@@ -41,6 +41,10 @@ export function adultPositionFamily(value) {
   if (/\b(oral(?:\s+seks)?|sakso|blowjob|fellatio|cunnilingus)\b/.test(text)) return 'oral';
   if (/\b(manuel\s+uyarim|manual\s+stimulation|handjob|masturbasyon)\b/.test(text)) return 'manual';
   if (/\b(reverse\s+cowgirl|reverse\s+rider|ters\s+kovboy|ters\s+cowgirl|ters\s+rider|ters\s+kucak(?:ta)?|arkasi\s+donuk\s+kovboy|sirtini\s+donerek\s+ustte)\b/.test(text)) return 'reverse-cowgirl';
+  // The provider often describes the same verified orientation in ordinary
+  // Turkish rather than using the position name. Check it before the broad
+  // "kadin ustte" family below so its movement is not discarded as cowgirl.
+  if (/\b(?:kadin\s+ustte|kovboy|cowgirl|rider)[^.!?]{0,60}\b(?:arkasi|sirti)(?:\s+erkege)?\s+donuk\b/.test(text)) return 'reverse-cowgirl';
   if (/\b(lap\s+dance|kucakta|kucaginda|kucagindaki|kucaginda\s+oturan|lotus|yuz\s+yuze\s+oturarak|seated\s+face[\s-]?to[\s-]?face)\b/.test(text)) return 'seated-facing';
   if (/\b(prone[\s-]?bone|pronebone|flat[\s-]?doggy|yuzustu\s+arkadan|yuzukoyun\s+arkadan)\b/.test(text)) return 'prone-bone';
   if (/\b(piledriver|omuzda|bacak(?:lar)?\s+(?:yukari(?:da)?|havada)|legs[\s-]+up)\b/.test(text)) return 'legs-up';
