@@ -161,3 +161,45 @@ test('the live server handler reports refused chapters without retrying or split
   }
 });
 
+
+
+test('provider restriction diagnostics preserve only allowlisted feedback metadata', () => {
+  const provider = {
+    text: 'sensitive source content must never be logged',
+    promptFeedback: {
+      blockReason: 'SAFETY',
+      safetyRatings: [{ category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', blocked: true },
+        { category: 'USER_OR_SECRET', blocked: true }]
+    }
+  };
+  assert.throws(() => parseStoryboardResponse(provider), error => {
+    assert.equal(error.code, 'GEMINI_CONTENT_RESTRICTED');
+    assert.deepEqual(error.safetyDiagnostic, {
+      origin: 'prompt_feedback', promptBlockReason: 'SAFETY',
+      candidateFinishReason: null, blockedCategories: ['HARM_CATEGORY_SEXUALLY_EXPLICIT']
+    });
+    assert.doesNotMatch(JSON.stringify(error.safetyDiagnostic), /sensitive source|USER_OR_SECRET/);
+    return true;
+  });
+  assert.throws(() => parseStoryboardResponse({ candidates: [{
+    finishReason: 'PROHIBITED_CONTENT', safetyRatings: []
+  }] }), error => {
+    assert.deepEqual(error.safetyDiagnostic, {
+      origin: 'candidate_finish', promptBlockReason: null,
+      candidateFinishReason: 'PROHIBITED_CONTENT', blockedCategories: []
+    });
+    return true;
+  });
+  assert.throws(() => parseStoryboardResponse({ text: 'I cannot fulfill this request.' }), error => {
+    assert.equal(error.safetyDiagnostic.origin, 'model_text_refusal');
+    assert.equal(error.safetyDiagnostic.candidateFinishReason, null);
+    return true;
+  });
+});
+
+test('restriction diagnostics are logged without any additional paid Gemini call', () => {
+  const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /\[gemini-restriction-diagnostic\]/);
+  assert.match(source, /stage: identitySurvey \? 'identity-survey' : reviewMode \? 'review' : 'analysis'/);
+  assert.match(source, /error\?\.safetyDiagnostic/);
+});
