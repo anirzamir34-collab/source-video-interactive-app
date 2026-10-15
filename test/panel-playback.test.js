@@ -417,6 +417,52 @@ test('an empty introduction menu leaves a visible source playback control', () =
   assert.equal(f.els.video.paused, true);
 });
 
+test('past opening cards leave a continue control for the next verified chapter', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'late-opening', startTime: 189, endTime: 410,
+    positions: [chapter('main', 378)], dialogue: [], outcomes: [], foreplay: [
+      { id: 'last-opening', label: 'Observed opening', sourceVerified: true,
+        startTime: 335, endTime: 374.7 }
+    ] };
+  f.state.adultTimelineFloor = 374.7;
+  f.els.video.duration = 500;
+  f.els.video.time = 374.7;
+  f.els.video.pause();
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'last-opening'));
+  const continueButton = f.els.approachChoices.children.find(node => node.textContent === 'Videoya devam et');
+  assert.ok(continueButton, 'replay cards cannot hide natural source continuation');
+  continueButton.dispatchEvent(new Event('click'));
+  await flush();
+  f.els.video.time = 375;
+  f.updateAdultPlayback(375000, 375);
+  assert.equal(f.els.video.paused, false, 'past replay cards cannot pause the short source gap');
+  f.els.video.time = 379;
+  f.updateAdultPlayback(379000, 379);
+  assert.equal(f.state.adultSexUnlocked, true);
+  assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
+});
+
+test('choosing an earlier verified opening card preserves its pending playback credit', () => {
+  const f = runtimeFixture();
+  const opening = { id: 'opening-replay', label: 'Observed opening', sourceVerified: true,
+    startTime: 189, endTime: 252 };
+  f.state.adultScene = { id: 'opening-replay-scene', startTime: 189, endTime: 410,
+    positions: [chapter('main', 378)], dialogue: [], outcomes: [], foreplay: [opening] };
+  f.genericInteractionSnapshot();
+  f.state.interactionRuntime = { ...f.state.interactionRuntime, currentTime: 372,
+    progressionValue: 72 };
+  f.state.adultSelectionToken = 4;
+  f.state.activeAdultPreludeId = opening.id;
+  f.state.adultPendingSelectionProgress = { token: 4, kind: 'prelude', item: opening };
+  f.els.video.time = 189;
+  f.reconcileInteractionSource(189);
+  assert.equal(f.state.adultSelectionToken, 4);
+  assert.equal(f.state.activeAdultPreludeId, opening.id);
+  assert.equal(f.state.adultPendingSelectionProgress?.token, 4);
+  assert.equal(f.state.interactionRuntime.progressionValue, 72);
+});
+
 test('a verified standalone introduction plays in its own panel and earns Lust', async () => {
   const f = runtimeFixture();
   f.state.adultScene = { id: 'opening-only', startTime: 84, endTime: 133,

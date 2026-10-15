@@ -3706,7 +3706,13 @@ function reconcileInteractionSource(mediaTime, { manual = false } = {}) {
   const staleSelection = Boolean((state.activeAdultPreludeId || state.activeMovementId) &&
     (!activeSource || activeSource.sourceVerified !== true ||
       Number(mediaTime) < activeStart - 0.15));
-  if (manual || rewind || staleSelection) {
+  // Choosing an earlier verified card seeks back to that card on purpose.
+  // Preserve its pending playback and the opening budget; clearing it here
+  // makes replay cards look clickable while their Lust credit never lands.
+  const selectedReplay = !manual && rewind && !staleSelection &&
+    state.adultPendingSelectionProgress?.token === state.adultSelectionToken &&
+    Number(mediaTime) >= activeStart - 0.15 && Number(mediaTime) < activeEnd - 0.04;
+  if (manual || (rewind && !selectedReplay) || staleSelection) {
     state.adultSelectionToken += 1;
     clearInteractionSelection();
     resetAdultTapRhythm();
@@ -4409,7 +4415,10 @@ function renderAdultApproachChoices(scene, later = false) {
     target.appendChild(button);
   });
 
-  if (!candidates.length) {
+  // Replay cards can remain visible after the last opening clip. They must
+  // not hide the control that lets natural playback reach the verified core.
+  const hasForwardChoice = candidates.some(choice => Number(choice.endTime) > projectedFloor + 0.05);
+  if (!hasForwardChoice) {
     const unlocked = flow >= 99.9 ? unlockNextAdultPositionFromLust() : null;
     if (unlocked) {
       state.adultUiSignature = '';
@@ -5717,7 +5726,8 @@ function updateAdultPlayback(now, mediaTime) {
       mediaTime < Number(state.adultScene?.endTime) - 0.04) {
     renderAdultProgressiveUI(true);
     const hasDecision = state.interactionRuntime?.currentPhase === 'APPROACH'
-      ? Boolean(state.adultApproachChoices?.length)
+      ? Boolean(state.adultApproachChoices?.some(choice =>
+        Number(choice.endTime) > Number(mediaTime) + 0.05))
       : Boolean(els.positionTabs?.querySelector('button:not(:disabled)'));
     if (hasDecision) {
       els.video.pause();
