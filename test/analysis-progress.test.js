@@ -62,3 +62,14 @@ test('completed server stages and measured speech counts remain distinct from cu
   assert.equal(row(view, 'align').status, 'cancelled');
   assert.equal(row(view, 'dub').status, 'done');
 });
+
+test('visual-only analysis never queues paid speech/translation stages', () => {
+  const view = progress();
+  view.begin({ motion: true, dubbing: false, subtitles: false });
+  const queued = view.snapshot().map(step => step.id);
+  assert.deepEqual(queued, ['source', 'frames', 'frameUpload', 'analysis', 'review', 'integrity', 'save']);
+  for (const id of ['extract', 'encode', 'hash', 'upload', 'serverAudio', 'transcript', 'speakers', 'translation', 'dub']) {
+    assert.equal(row(view, id), undefined);
+  }
+  view.finish();
+});
