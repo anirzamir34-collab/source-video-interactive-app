@@ -393,10 +393,10 @@ test('a grouped introduction card selects another existing clip on each click an
   f.els.video.time = 0;
   f.renderAdultApproachChoices(f.state.adultScene);
   const card = f.els.approachChoices.children.find(node => node.dataset.clipId);
-  assert.equal(card.dataset.variantIds, 'opening-0,opening-1');
-  assert.equal(f.els.approachChoices.children.filter(node => node.dataset.clipId)[1].dataset.variantIds, 'opening-2');
+  assert.equal(card.dataset.variantIds, 'opening-0,opening-1,opening-2');
+  assert.equal(f.els.approachChoices.children.filter(node => node.dataset.clipId).length, 1);
   assert.equal(f.state.adultApproachChoices[0].startTime, 0);
-  assert.equal(f.state.adultApproachChoices[0].endTime, 20);
+  assert.equal(f.state.adultApproachChoices[0].endTime, 30);
   card.dispatchEvent(new Event('click'));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.state.activeMovementId, 'opening-0');

@@ -52,7 +52,7 @@ test('identical verified source records are idempotent but later distinct clips 
     [0, 30]);
 });
 
-test('many distinct labels in one verified occurrence form compact coherent cards', () => {
+test('distinct observed labels remain distinct within one verified occurrence', () => {
   const movements = Array.from({ length: 20 }, (_, index) => clip(index, {
     label: `Kaynak hareket ${index + 1}`, sourcePositionId: 'same-occurrence'
   }));
@@ -60,17 +60,17 @@ test('many distinct labels in one verified occurrence form compact coherent card
     startTime: 0, endTime: 100, movements,
     sourceRanges: [{ id: 'same-occurrence', startTime: 0, endTime: 100 }] };
   const cards = buildVerifiedMovementChoices(movements, 'Kaynak pozisyonu', 5, position);
-  assert.ok(cards.length <= 5);
-  assert.ok(cards.every(card => card.variants.length >= 3 && card.variants.length <= 5));
+  assert.equal(cards.length, movements.length);
+  assert.ok(cards.every(card => card.variants.length === 1));
   assert.deepEqual(cards.flatMap(card => card.variants), movements);
 });
 
-test('eighteen compatible source clips form several bounded cards without losing or changing a clip', () => {
+test('eighteen adjacent cuts of one action form one card without losing or changing a clip', () => {
   const clips = Array.from({ length: 18 }, (_, i) => clip(i));
   const before = structuredClone(clips);
   const cards = buildVerifiedMovementChoices(clips, 'Yürüyüş', 5);
-  assert.equal(cards.length, 5);
-  assert.ok(cards.every(card => card.variants.length >= 2 && card.variants.length <= 6));
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].variants.length, 18);
   assert.ok(cards.every(card => card.label === 'Patikada yürü'));
   assert.deepEqual(cards.flatMap(card => card.variants), clips);
   assert.ok(cards.flatMap(card => card.variants).every(item => clips.includes(item)));
@@ -212,12 +212,12 @@ test('opaque action types remain distinct inside one trusted display context', (
     [['type:A', 'type:A'], ['type:B', 'type:B']]);
 });
 
-test('five parts of the same observed action form coherent two or three part cards', () => {
+test('five adjacent parts of the same observed action form one card', () => {
   const parts = Array.from({ length: 5 }, (_, index) => clip(index, {
     derivedFromVerifiedSegment: 'observed:a', label: 'Chapter A'
   }));
   const cards = groupSourceChoiceCards(parts);
-  assert.deepEqual(cards.map(card => card.variants.length), [3, 2]);
+  assert.deepEqual(cards.map(card => card.variants.length), [5]);
   assert.ok(cards.every(card => card.label === 'Chapter A'));
   assert.deepEqual(cards.flatMap(card => card.variants), parts);
   const [single] = groupSourceChoiceCards([parts[0]]);
@@ -248,7 +248,7 @@ test('verified provider display labels remain opaque and partner distinction is 
 });
 
 
-test('separate source action IDs at matching verified intensity become one multi-clip option', () => {
+test('distinct labels and unverified gaps do not merge just because the intensity matches', () => {
   const specs = [
     { id: 'fast-a', start: 10, end: 16, label: 'Hızlan', tempo: 'fast' },
     { id: 'fast-b', start: 18.4, end: 24, label: 'Hızlı sürdür', tempo: 'fast' },
@@ -265,8 +265,26 @@ test('separate source action IDs at matching verified intensity become one multi
     partnerTrackId: 'partner-a', startTime: 10, endTime: 40,
     sourceRanges: specs.map(spec => ({ id: 'same-occurrence', startTime: spec.start, endTime: spec.end })) };
   const cards = buildVerifiedMovementChoices(clips, 'Recorded activity', 5, parent);
-  assert.equal(cards.length, 2);
+  assert.equal(cards.length, 4);
   assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
-    [['fast-a','fast-b','fast-c'],['intense-a']]);
+    [['fast-a'], ['fast-b'], ['fast-c'], ['intense-a']]);
   assert.equal(new Set(cards.flatMap(card => card.variants.map(item => item.id))).size, 4);
+});
+
+test('adjacent changes stay distinct while adjacent matching cuts share one bounded card', () => {
+  const clips = [
+    clip(0, { label: 'Patikada yürü', loopStartTime: 10, loopEndTime: 20 }),
+    clip(1, { label: 'Patikada yürü', loopStartTime: 20, loopEndTime: 30 }),
+    clip(2, { label: 'Dur ve etrafa bak', loopStartTime: 30, loopEndTime: 40 }),
+    clip(3, { label: 'Patikada yürü', loopStartTime: 40, loopEndTime: 50 }),
+    clip(4, { label: 'Patikada yürü', loopStartTime: 60, loopEndTime: 70 })
+  ];
+  const position = { id: 'trail', startTime: 10, endTime: 70,
+    sourceRanges: [{ id: 'trail-a', startTime: 10, endTime: 50 },
+      { id: 'trail-a', startTime: 60, endTime: 70 }] };
+  const cards = buildVerifiedMovementChoices(clips, 'Yürüyüş', 5, position);
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
+    [['clip-0', 'clip-1'], ['clip-2'], ['clip-3'], ['clip-4']]);
+  assert.deepEqual(cards.map(card => card.label),
+    ['Patikada yürü', 'Dur ve etrafa bak', 'Patikada yürü', 'Patikada yürü']);
 });

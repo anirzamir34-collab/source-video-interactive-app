@@ -250,7 +250,7 @@ test('a different verified position between returns keeps the later return chron
   assert.deepEqual(result[2].sourcePositionIds, ['last-rear']);
 });
 
-test('a rich verified position exposes several compact cards while retaining every source clip', () => {
+test('adjacent cuts with the same action stay on one card while retaining every source clip', () => {
   const source = { id: 'observed-position', startTime: 0, endTime: 60, sourceVerified: true };
   const movements = Array.from({ length: 6 }, (_, index) => ({
     id: `clip-${index}`, sourcePositionId: source.id,
@@ -263,7 +263,7 @@ test('a rich verified position exposes several compact cards while retaining eve
   const position = { id: 'position', startTime: 0, endTime: 60,
     sourceRanges: [source], movements };
   const choices = buildVerifiedMovementChoices(movements, 'Pozisyon', 8, position);
-  assert.ok(choices.length >= 3);
+  assert.equal(choices.length, 1);
   assert.deepEqual(choices.flatMap(item => item.variants.map(variant => variant.id)).sort(),
     movements.map(item => item.id).sort());
 });
@@ -785,7 +785,7 @@ test('sex control requires verified fast, hard or deep evidence', () => {
   assert.equal(isEnergeticSexMoment({ sourceVerified: false, movementTempo: 'fast' }), false);
 });
 
-test('builds tempo-consistent subchoices and keeps every clip in its energy pool', () => {
+test('keeps tempo-consistent clips separate across unverified gaps', () => {
   const movements = [
     { id: 'a', label: 'Kovboy Pozisyonu · Sekans 1', movementTempo: 'slow', loopStartTime: 0, loopEndTime: 10, sourceVerified: true },
     { id: 'b', label: 'Kovboy Pozisyonu · Sekans 2', movementTempo: 'slow', loopStartTime: 12, loopEndTime: 22, sourceVerified: true },
@@ -795,13 +795,13 @@ test('builds tempo-consistent subchoices and keeps every clip in its energy pool
   ].map(item => ({ ...item, sourcePositionId: 'observed-occurrence' }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 3);
+  assert.equal(choices.length, 5);
   const slow = choices.find(choice => choice.intensityBand === 'slow');
-  const steady = choices.find(choice => choice.intensityBand === 'steady');
   const intense = choices.filter(choice => choice.intensityBand === 'intense');
   assert.equal(slow.label, 'Kovboy Pozisyonu');
   assert.deepEqual(choices.filter(choice => choice.intensityBand === 'slow').flatMap(choice => choice.variants.map(item => item.id)), ['a', 'b']);
-  assert.deepEqual(steady.variants.map(item => item.id), ['c', 'd']);
+  assert.deepEqual(choices.filter(choice => choice.intensityBand === 'steady')
+    .flatMap(choice => choice.variants.map(item => item.id)), ['c', 'd']);
   assert.deepEqual(intense.flatMap(choice => choice.variants.map(item => item.id)), ['e']);
   assert.ok(choices.every(choice => choice.hasTempoShift === false));
 });
@@ -920,7 +920,7 @@ test('verified oral activity cannot be overwritten by missionary-like body suppo
   }), { family: 'oral', correctedFromAction: true });
 });
 
-test('movement choice grouping retains every verified clip', () => {
+test('alternating observed actions remain distinct and retain every verified clip', () => {
   const movements = Array.from({ length: 11 }, (_, index) => ({
     id: `reverse-${index}`,
     label: index % 2 ? 'Ters kovboy pozisyonunda ritmi sürdür' : 'Kadının kalçasını tut',
@@ -932,7 +932,7 @@ test('movement choice grouping retains every verified clip', () => {
     sourcePositionId: 'reverse-occurrence'
   }));
   const choices = buildVerifiedMovementChoices(movements, 'Ters Kovboy Pozisyonu', 4);
-  assert.ok(choices.length < movements.length);
+  assert.equal(choices.length, movements.length);
   assert.ok(choices.every(choice => choice.variants.length <= 6));
   assert.deepEqual(
     choices.flatMap(choice => choice.variants).map(item => item.id).sort(),
@@ -1043,7 +1043,7 @@ test('position-only evidence stays one honest playable card without generic cut 
 });
 
 
-test('movement cards keep each occurrence separate instead of merging all clips', () => {
+test('movement cards do not bridge source gaps or different occurrences', () => {
   const movements = Array.from({ length: 20 }, (_, index) => ({
     id: `clip-${index}`,
     label: 'Kovboy Pozisyonu · Sekans 1',
@@ -1055,12 +1055,9 @@ test('movement cards keep each occurrence separate instead of merging all clips'
   }));
 
   const choices = buildVerifiedMovementChoices(movements, 'Kovboy Pozisyonu', 4);
-  assert.equal(choices.length, 4);
+  assert.equal(choices.length, movements.length);
   assert.equal(choices.flatMap(choice => choice.variants).length, 20);
-  assert.deepEqual(
-    choices.map(choice => [...new Set(choice.variants.map(item => item.sourcePositionId))]),
-    [['occurrence-a'], ['occurrence-a'], ['occurrence-b'], ['occurrence-b']]
-  );
+  assert.ok(choices.every(choice => new Set(choice.variants.map(item => item.sourcePositionId)).size === 1));
 });
 
 test('movement coverage reports every verified variant across source action cards', () => {
