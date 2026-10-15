@@ -5090,3 +5090,28 @@ body { font-size: 13px; }
     max-height: 45% !important;
   }
 }
+
+/* Explicit Gemini deep-model picker; stays compact on mobile. */
+.analysis-deep-model {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(53, 221, 176, .2);
+  border-radius: 11px;
+  background: rgba(0, 0, 0, .3);
+}
+.analysis-deep-model.hidden { display: none !important; }
+.analysis-deep-model label { font-size: 11px; color: #bfffea; }
+.analysis-deep-model select {
+  width: 100%;
+  max-width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid rgba(53, 221, 176, .38);
+  border-radius: 9px;
+  background: #090d0c;
+  color: #effff9;
+  font-size: 12px;
+}
+.analysis-deep-model small { color: rgba(255, 255, 255, .65); line-height: 1.4; }
