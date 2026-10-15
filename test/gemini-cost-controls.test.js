@@ -232,3 +232,18 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
     { maxOutputTokens: 16, thinkingConfig: { thinkingLevel: 'low' } });
 });
 
+
+
+test('visual-analysis prompt avoids unrelated relationship examples while retaining evidence and family safety controls', () => {
+  const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const prompt = source.slice(source.indexOf('STORY ENGINE V1 — EVIDENCE-AWARE NARRATIVE UNDERSTANDING:'),
+    source.indexOf('PROTAGONIST IDENTITY LOCK:'));
+  assert.ok(prompt.length > 0);
+  assert.doesNotMatch(prompt, /A mother addressing her daughter|Include source-supported grandparents|Kızıyla sohbet et|stepfather/);
+  assert.match(prompt, /A relationship or background label becomes FACT only when the source explicitly establishes it/);
+  assert.match(prompt, /If dialogue explicitly establishes a sensitive family relationship, retain it only as neutral factual story context/);
+  assert.match(prompt, /do not turn that relationship label into sexualized choice wording/);
+  assert.match(prompt, /For adult\/intimate actions, keep verified relationships in top-level storyContext only/);
+  assert.match(prompt, /Every relationship entry must contain from, to, relation, evidenceLevel, confidence and evidence/);
+  assert.match(prompt, /Relationship direction is explicit: from identifies the reference person/);
+});
