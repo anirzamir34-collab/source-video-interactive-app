@@ -84,7 +84,10 @@ Medya aşamaları `media_stage_start` / `media_stage_end` JSON logları üretir.
 |---|---|
 | `APP_PASSWORD` | Zorunlu uygulama giriş parolası |
 | `PORT` | `10000` |
-| `GEMINI_API_KEY`, `GEMINI_MODEL` | Görsel analiz ve Türkçe çeviri için sunucu fallback'i; kullanıcı Gemini anahtarı önceliklidir. Model varsayılanı `gemini-3.8-flash` |
+| `GEMINI_API_KEY` | Görsel analiz ve Türkçe çeviri için sunucu anahtarı; kullanıcı Gemini anahtarı önceliklidir. |
+| `GEMINI_ECONOMY_MODEL` | Normal analiz: varsayılan `gemini-3.1-flash-lite`; erişilemeyen eski Lite'a otomatik geçiş yapılmaz. |
+| `GEMINI_ECONOMY_FALLBACK_MODEL` | İsteğe bağlı alternatif Lite, yalnız gerçek model erişim hatasında kullanılır. |
+| `GEMINI_ANALYSIS_MODEL` | Eski istemciler için derin analiz varsayılanı `gemini-3.8-flash`; yeni arayüz 3.8 Flash / 4 Argon seçimini açıkça gönderir. |
 | `EXTERNAL_ANALYSIS_URL` | İsteğe bağlı harici analiz servisi |
 | `ELEVENLABS_API_KEY` | Transcription/dublaj/hizalama/katalog için isteğe bağlı sunucu fallback'i; tarayıcı anahtarıyla zorunlu değildir |
 | `DUB_QUALITY_MODE` | `quality`; `fast` sözleşme doğrulanana kadar kapalı |
@@ -99,8 +102,8 @@ Medya aşamaları `media_stage_start` / `media_stage_end` JSON logları üretir.
 | `DUB_REQUEST_TIMEOUT_MS` | `300000` (1000–600000) |
 | `DUB_MAX_RETRIES` | `3` (0–5) |
 | `TRANSLATION_PROVIDER` | `gemini`; bu sürüm yalnız Gemini kabul eder |
-| `TRANSLATION_MODEL` | Öncelik: bu değer → `GEMINI_MODEL` → `gemini-3.8-flash`; JSON schema destekleyen erişilebilir model |
-| `GEMINI_ANALYSIS_THINKING_LEVEL` | Gemini 3 görsel çağrıları için `low` (varsayılan), `medium` veya `high`; düşük düzey gecikmeyi hedefler, çıktı bütçesi ve ikinci doğrulama korunur. Eski/özel modeller kendi varsayılanını kullanır. |
+| `TRANSLATION_MODEL` | Varsayılan `gemini-2.5-flash-lite`; erişilemeyen Lite için `gemini-3.1-flash-lite` yedeği. Bu model video analiz modelinden bağımsızdır. |
+| `GEMINI_ANALYSIS_THINKING_LEVEL` | Gemini 3/4 analiz çağrıları için `low` (varsayılan), `medium` veya `high`; kullanıcı özellikle değiştirmedikçe Argon düşük düşünme bütçesiyle çalışır. |
 | `TRANSLATION_VERSION` | `scene-tr-gemini-v2`; çeviri davranışı değişince cache sürümünü değiştirin |
 | `ELEVENLABS_PRONUNCIATION_DICTIONARY_ID` | İsteğe bağlı merkezi ElevenLabs dictionary locator |
 | `ELEVENLABS_PRONUNCIATION_DICTIONARY_VERSION_ID` | Dictionary seçilirse zorunlu version locator |
@@ -171,3 +174,14 @@ Yeni migration envanteri ve doğrulama sınırları: [Migration notes](docs/turk
 Genel seçimli oynatımda hareket bitişi devam eden konuşmayı kesmez: kaynak konuşma ve açık dublajın gerçek bitişleri, 120 ms nefes payıyla karar sınırını geciktirir. Video ileri sarılmaz; aynı timeupdate dinleyicisi konuşma bitene kadar oynatır.
 
 Eski `originalSpeechMuted` kayıtlarında, susturulmuş kaynak konuşma kayıtlı videonun kendi sesinden kısık seviyede geri getirilir. Dublaj ses yüksekliği korunur; diğer aralıklarda mevcut miks kaynak sesi taşır. Bu uyumluluk yolu yereldir, yeni sağlayıcı isteği oluşturmaz.
+
+
+## Gemini derin analiz model seçimi ve maliyet kontrolü (15 Ekim 2026)
+
+- Normal mod varsayılanı: Gemini 3.1 Flash-Lite. Üretimde erişilemeyen 2.5 Flash-Lite'a gereksiz çağrı yapılmaz.
+- Derin Analiz etkinleştirildiğinde kullanıcı **analize başlamadan** Gemini 3.8 Flash (varsayılan) veya Gemini 4 Argon seçer. Argon'a kendiliğinden yükseltme yoktur; seçilen model tüm sahne ve gerekli ikinci doğrulama çağrılarına uygulanır.
+- Tam video karakter kimliği taraması her zaman ekonomik modda çalışır. Aynı dosya ve analiz modunun tamamlanan bölümleri cihazda/checkpoint'te yeniden kullanılır.
+- Model tarafında genel karakter taraması `MEDIA_RESOLUTION_LOW` ve sahne/doğrulama `MEDIA_RESOLUTION_MEDIUM` kullanır (Gemini 3/4); mevcut kare zamanları, örnek sayısı ve sahne planı korunur. Storyboard JPEG kalite ayarı zaten %60'tır; sadece hücre boyutu 320'den 288 piksele indirilmiştir.
+- Gemini 4 Argon için `thinkingLevel=low`, yapılandırılmış JSON çıktısı ve maksimum 16.384 çıkış tokeni kullanılır. Bu bir harcama üst sınırı değildir: API giriş tokenleri, tekrar denemeler, konuşma analizi, çeviri, Render ve dublaj ayrı maliyetler yaratabilir.
+- Analiz API'si ve API anahtar testi yalnız tanımlı iki derin model ID'sini kabul eder; model değişikliği eski bölüm önbelleğini paylaşmaz. Argon ücretli API projesi ve açık hesap erişimi gerektirir.
+- Bu uygulama Gemini'ye doğrudan video göndermek yerine kanıt zamanlarını taşıyan 12-kare storyboard görüntüleri gönderir. Google'ın agentic video tasarruf oranları bu pipeline'a otomatik uygulanmaz. Model bazlı gerçek maliyet ve sahne doğruluğunu karşılaştırmak için aynı videonun ölçümleri kullanılmalıdır.
