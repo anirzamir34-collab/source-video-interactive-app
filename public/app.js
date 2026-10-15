@@ -250,6 +250,8 @@ const els = {
   fileMeta: $('fileMeta'),
   analyzeBtn: $('analyzeBtn'),
   deepAnalysisMode: $('deepAnalysisMode'),
+  deepAnalysisModel: $('deepAnalysisModel'),
+  deepModelPicker: $('deepModelPicker'),
   dubQualityMode: $('dubQualityMode'),
   dubbingProvider: $('dubbingProvider'),
   subtitleTrack: $('subtitleTrack'),
@@ -764,7 +766,8 @@ async function testGeminiApiKey() {
     const response = await fetch('/api/gemini-key-status', {
       method: 'POST',
       headers: geminiRequestHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ verify: true, analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy' })
+      body: JSON.stringify({ verify: true, analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy',
+        deepAnalysisModel: els.deepAnalysisModel?.value || 'gemini-3.8-flash' })
     });
     const body = await response.json().catch(() => ({}));
     state.geminiProviderStatus = { ...body, state: String(body.state || (response.ok ? 'available' : 'unavailable')) };
@@ -833,14 +836,18 @@ function selectedAnalysisModes() {
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
     dubbingProvider: 'classic',
     quality: 'ultra',
-    analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy'
+    analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy',
+    deepAnalysisModel: els.deepAnalysisModel?.value || 'gemini-3.8-flash'
   };
 }
 
 function updateAnalysisModesUI() {
   const modes = selectedAnalysisModes();
   const analysisModelLabel = modes.analysisTier === 'deep'
-    ? 'Derin Analiz · güçlü Gemini' : 'Ayrıntılı analiz · ekonomik Gemini';
+    ? (modes.deepAnalysisModel === 'gemini-4-argon' ? 'Derin Analiz · Gemini 4 Argon' : 'Derin Analiz · Gemini 3.8 Flash')
+    : 'Ayrıntılı analiz · ekonomik Gemini';
+  els.deepModelPicker?.classList.toggle('hidden', modes.analysisTier !== 'deep');
+  if (els.deepAnalysisModel) els.deepAnalysisModel.disabled = state.analysisInProgress || modes.analysisTier !== 'deep';
 
   const active = [];
   if (modes.motion) active.push('hareket ve seçim');
@@ -867,7 +874,7 @@ function updateAnalyzeAvailability() {
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
-  [els.deepAnalysisMode, els.dubQualityMode, els.dubbingProvider, els.motionMode, els.subtitleMode, els.dubMode]
+  [els.deepAnalysisMode, els.deepAnalysisModel, els.dubQualityMode, els.dubbingProvider, els.motionMode, els.subtitleMode, els.dubMode]
     .forEach(control => { if (control) control.disabled = busy; });
   [els.elevenLabsApiKeyInput, els.saveElevenLabsApiKeyBtn, els.testElevenLabsApiKeyBtn,
     els.clearElevenLabsApiKeyBtn, els.geminiApiKeyInput, els.saveGeminiApiKeyBtn,
@@ -881,6 +888,7 @@ function updateAnalyzeAvailability() {
 
 [
   els.deepAnalysisMode,
+  els.deepAnalysisModel,
   els.motionMode,
   els.subtitleMode,
   els.dubMode,
@@ -1650,6 +1658,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     analysisModeKey = JSON.stringify({
       pipelineVersion: 'video-wide-protagonist-context-5',
       analysisTier: modes.analysisTier,
+      deepAnalysisModel: modes.analysisTier === 'deep' ? modes.deepAnalysisModel : null,
       chunks: analysisPlan.chunks,
       motion: modes.motion,
       quality: modes.quality,
@@ -1703,6 +1712,8 @@ els.analyzeBtn.addEventListener('click', async () => {
       const sheets = surveySheetIndices(storyboard.sheets.length, 8);
       const surveyForm = new FormData();
       surveyForm.append('identitySurvey', '1');
+      // Global identity survey always uses the inexpensive Lite tier.
+      surveyForm.append('analysisTier', 'economy');
       surveyForm.append('duration', String(storyboard.duration));
       surveyForm.append('chunkStart', '0');
       surveyForm.append('chunkEnd', String(storyboard.duration));
@@ -1717,7 +1728,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         analysisOwner.signal.throwIfAborted();
         analysisProgress.update('analysis', { detail: 'Video genelinde karakter devamlılığı denetleniyor.' });
         const surveyResponse = await postAnalysisForm('/api/gemini-storyboard-analyze', surveyForm,
-          { timeoutMs: 180000, stage: 'analysis', label: 'Video geneli karakter taraması' });
+          { headers: geminiRequestHeaders(), timeoutMs: 180000, stage: 'analysis', label: 'Video geneli karakter taraması' });
         const surveyBody = await surveyResponse.json().catch(() => ({}));
         session.protagonistSurvey = surveyResponse.ok
           ? normalizeProtagonistSurvey(surveyBody)
@@ -1812,6 +1823,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     form.append('sensoryAudioContext', JSON.stringify(chunkSensoryAudio));
     form.append('qualityMode', 'ultra');
     form.append('analysisTier', modes.analysisTier);
+    if (modes.analysisTier === 'deep') form.append('deepAnalysisModel', modes.deepAnalysisModel);
       form.append('protagonistProfile', contextSnapshot.protagonistProfile);
       form.append('protagonistHint', requestedProtagonist);
       form.append('storyContextMemory', JSON.stringify(contextSnapshot.storyContextMemory));
