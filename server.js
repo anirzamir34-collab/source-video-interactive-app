@@ -25,7 +25,7 @@ import { serializeReviewCandidates } from './public/classification-integrity.js'
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 import { geminiGenerationConfig } from './lib/gemini-generation-config.js';
-import { analysisModelCandidates, analysisTierFromRequest } from './lib/analysis-model-routing.js';
+import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -325,6 +325,11 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   // Detailed storyboard coverage is fixed; only the selected model changes.
   const qualityMode = 'ultra';
   const analysisTier = analysisTierFromRequest(req.body?.analysisTier);
+  const deepAnalysisModel = String(req.body?.deepAnalysisModel || '').trim();
+  if (analysisTier === 'deep' && deepAnalysisModel && !isSupportedDeepAnalysisModel(deepAnalysisModel)) {
+    return res.status(400).json({ available: false, retryable: false, reason: 'UNSUPPORTED_DEEP_ANALYSIS_MODEL',
+      message: 'Yalnızca arayüzde sunulan güçlü Gemini modelleri seçilebilir.' });
+  }
   const reviewMode = String(req.body?.reviewMode || '') === '1';
   let reviewCandidates;
   try { reviewCandidates = serializeReviewCandidates(req.body?.reviewCandidates || '[]'); }
@@ -735,10 +740,10 @@ Rules:
         }))
       ];
       const candidates = analysisModelCandidates(analysisTier,
-        { ...process.env, GEMINI_ANALYSIS_MODEL: ANALYSIS_MODEL });
+        { ...process.env, GEMINI_ANALYSIS_MODEL: ANALYSIS_MODEL }, deepAnalysisModel);
       for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
         const model = candidates[modelIndex];
-        const generationConfig = geminiGenerationConfig(model);
+        const generationConfig = geminiGenerationConfig(model, process.env, { identitySurvey });
         const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
         const requestUsage = emptyGeminiUsage();
         const startedAt = Date.now();
@@ -782,6 +787,7 @@ Rules:
         } finally {
           console.info('[gemini-request-usage]', JSON.stringify({ stage: reviewMode ? 'review' : 'analysis',
             chunkIndex, outcome, model, analysisTier,
+            mediaResolution: generationConfig.mediaResolution || 'default',
             thinkingLevel: generationConfig.thinkingConfig?.thinkingLevel || 'default',
             durationMs: Date.now() - startedAt, attempts, sheetCount: requestFiles.length, ...requestUsage }));
         }
@@ -1642,7 +1648,12 @@ app.post('/api/gemini-key-status', async (req, res) => {
   // Probe the same analysis tier selected in the UI. A translation-only model
   // can be unavailable even when analysis works, and vice versa.
   const tier = analysisTierFromRequest(req.body?.analysisTier);
-  const models = analysisModelCandidates(tier);
+  const selected = String(req.body?.deepAnalysisModel || '').trim();
+  if (tier === 'deep' && selected && !isSupportedDeepAnalysisModel(selected)) {
+    return res.status(400).json({ ok: false, state: 'model_unavailable', reason: 'UNSUPPORTED_DEEP_ANALYSIS_MODEL',
+      message: 'Desteklenmeyen Gemini modeli seçildi.' });
+  }
+  const models = analysisModelCandidates(tier, process.env, selected);
   let model = models[0];
   try {
     const ai = new GoogleGenAI({ apiKey });
