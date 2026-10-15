@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { repairableAnalysisGaps, mergeRepairedAnalysis } from '../public/analysis-gap-repair.js';
+import { repairableAnalysisGaps, retryableAnalysisGaps, mergeRepairedAnalysis } from '../public/analysis-gap-repair.js';
 
 const original = { actions: [
   { actionId: 'old', startTime: 0, endTime: 12, sourceVerified: true },
@@ -51,4 +51,14 @@ test('repair removes stale unreadable warning but keeps unresolved coverage visi
   } }], 200);
   assert.equal(repaired.partial, true);
   assert.deepEqual(repaired.warnings, ['Başka uyarı', 'Aralık 140.0–150.0 sn hâlâ doğrulanmadı; seçenek üretilmedi.']);
+});
+
+test('blocked content remains visible but is excluded from any paid repair retry', () => {
+  const analysis = { analysisGaps: [
+    { startTime: 10, endTime: 20, reason: 'GEMINI_CONTENT_RESTRICTED' },
+    { startTime: 20, endTime: 30, reason: 'GEMINI_TEMPORARILY_UNAVAILABLE' }
+  ] };
+  assert.equal(repairableAnalysisGaps(analysis, 40).length, 2);
+  assert.deepEqual(retryableAnalysisGaps(analysis, 40).map(gap => gap.startTime), [20]);
+  assert.deepEqual(retryableAnalysisGaps({ analysisGaps: [analysis.analysisGaps[0]] }, 40), []);
 });
