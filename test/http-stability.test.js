@@ -110,6 +110,16 @@ test('HTTP integration: authentication, safe errors and restart-resumable full-s
       assert.equal(response.status, status); assert.equal((await response.json()).available, false);
     }
   });
+  await t.test('retired whole-video character survey never reaches Gemini', async () => {
+    const form = new FormData();
+    form.append('identitySurvey', '1');
+    form.append('storyboards', new Blob(['sample frame'], { type: 'image/jpeg' }), 'frame.jpg');
+    const response = await request('/api/gemini-storyboard-analyze', {
+      method: 'POST', headers: { Cookie: cookie }, body: form
+    });
+    assert.equal(response.status, 410);
+    assert.equal((await response.json()).reason, 'SURVEY_REMOVED');
+  });
   await t.test('17-field storyboard review is accepted by multipart parsing before Gemini inference', async () => {
     // The Deep/Economy selector added the 15th ordinary field. The review
     // adds two more: the old 16-field Multer limit rejected every such request

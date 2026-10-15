@@ -200,6 +200,6 @@ test('provider restriction diagnostics preserve only allowlisted feedback metada
 test('restriction diagnostics are logged without any additional paid Gemini call', () => {
   const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   assert.match(source, /\[gemini-restriction-diagnostic\]/);
-  assert.match(source, /stage: identitySurvey \? 'identity-survey' : reviewMode \? 'review' : 'analysis'/);
+  assert.match(source, /stage: reviewMode \? 'review' : 'analysis'/);
   assert.match(source, /error\?\.safetyDiagnostic/);
 });
