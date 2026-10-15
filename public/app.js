@@ -1033,6 +1033,13 @@ function onTurkishMediaStatus(status) {
   }
   if (status.sourceTranscript) { updateSourceTranscript(status.sourceTranscript); renderVoiceMappingPanel(); }
   logEngineEvent('TURKISH_MEDIA_STATUS', { state: status.state, jobId: status.jobId || null });
+  // An optional/stale audio job must not replace live visual analysis with a
+  // misleading fatal error while subtitles and dubbing are both switched off.
+  if (status.state === 'FAILED' && state.analysisInProgress &&
+      els.motionMode?.checked && !els.dubMode?.checked && !els.subtitleMode?.checked) {
+    els.mediaJobRetryBtn?.classList.add('hidden');
+    return;
+  }
   if (status.state === 'PLAYBACK_READY') { els.dubBufferStatus.classList.add('hidden'); return; }
   if (['PLAYBACK_BLOCKED', 'PLAYBACK_FAILED'].includes(status.state)) {
     els.dubBufferMessage.textContent = status.message || 'Türkçe ses oynatılamadı.';
@@ -1544,13 +1551,19 @@ els.analyzeBtn.addEventListener('click', async () => {
   session.audioContextStatus = 'pending';
   const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality,
     ...(modes.dubbingProvider === 'elevenlabs_v1' ? { provider: 'elevenlabs_v1' } : {}) });
+  const visualOnly = modes.motion && !modes.dubbing && !modes.subtitles;
   const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
-  const reusableMedia = !contextualMedia && canReuseTurkishMedia(session, mediaModeKey, modes);
+  const reusableMedia = !visualOnly && !contextualMedia && canReuseTurkishMedia(session, mediaModeKey, modes);
   // Do not stamp a previous media manifest with the newly requested mode.
   // Contextual dubbing only becomes reusable after the finished mix exists.
   let result;
   try {
-    if (contextualMedia) {
+    if (visualOnly) {
+      // Visual-only was previously charged for an unrequested Scribe v2
+      // transcript. Reuse an already available transcript for free, but do
+      // not upload audio or call ElevenLabs with both media outputs off.
+      session.audioContextStatus = session.sourceTranscript ? session.audioContextStatus : 'skipped';
+    } else if (contextualMedia) {
       if (session.sourceTranscript) {
         for (const id of ['extract', 'encode', 'hash', 'upload', 'serverAudio', 'transcript', 'speakers'])
           analysisProgress.update(id, { status: 'reused', detail: 'Önceki konuşma çözümlemesi kullanılıyor.' });
@@ -1573,9 +1586,11 @@ els.analyzeBtn.addEventListener('click', async () => {
       session.mediaManifest = result;
       session.mediaModeKey = mediaModeKey;
     }
-    updateSourceTranscript(result.sourceTranscript);
-    if (reusableMedia) onTurkishMediaStatus({ state: 'READY', sourceTranscript: result.sourceTranscript });
-    renderMediaControls();
+    if (!visualOnly) {
+      updateSourceTranscript(result.sourceTranscript);
+      if (reusableMedia) onTurkishMediaStatus({ state: 'READY', sourceTranscript: result.sourceTranscript });
+      renderMediaControls();
+    }
   } catch (error) {
     if (!contextualMedia) session.mediaManifest = null;
     session.audioContextStatus = 'unavailable';
@@ -2106,7 +2121,10 @@ els.analyzeBtn.addEventListener('click', async () => {
         storyContext: mergedStoryContext,
         actions: mergedActions,
         warnings: [...(session.audioContextStatus === 'unavailable'
-          ? ['Konuşma analizi alınamadı; karakter bilgisi yalnızca görsel kanıta dayanıyor.'] : []), ...chunkResults.flatMap(result =>
+          ? ['Konuşma analizi alınamadı; karakter bilgisi yalnızca görsel kanıta dayanıyor.'] : []),
+          ...(session.audioContextStatus === 'skipped'
+            ? ['Altyazı ve dublaj kapalı: ElevenLabs konuşma çözümlemesi istenmedi; seçenekler yalnız görsel kanıta dayanıyor.'] : []),
+          ...chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
         )],
         analysisGaps,
