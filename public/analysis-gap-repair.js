@@ -10,6 +10,13 @@ export function repairableAnalysisGaps(analysis, duration) {
     .sort((a, b) => a.startTime - b.startTime);
 }
 
+// Preserve all declared gaps for reporting, but never spend tokens re-sending
+// intervals explicitly rejected by the provider's content restrictions.
+export function retryableAnalysisGaps(analysis, duration) {
+  return repairableAnalysisGaps(analysis, duration)
+    .filter(gap => gap.reason !== 'GEMINI_CONTENT_RESTRICTED');
+}
+
 export function mergeRepairedAnalysis(analysis, repairs, duration) {
   const originalGaps = repairableAnalysisGaps(analysis, duration);
   const existing = analysis.actions || [];
