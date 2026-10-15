@@ -20,8 +20,6 @@ test('Argon is low thinking, medium vision, no unsupported sampling and bounded 
   assert.equal(config.maxOutputTokens, 16384);
   assert.equal(config.temperature, undefined);
   assert.equal(config.httpOptions.timeout, 210000);
-  assert.equal(geminiGenerationConfig('gemini-4-argon', {}, { identitySurvey: true }).mediaResolution, 'MEDIA_RESOLUTION_LOW');
-  assert.equal(geminiGenerationConfig('gemini-4-argon', {}, { identitySurvey: true }).maxOutputTokens, 3072);
 });
 
 test('custom and older models do not receive unsupported settings', () => {
