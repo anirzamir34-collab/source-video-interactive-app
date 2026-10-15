@@ -89,7 +89,7 @@ import {
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 import { recoverVerifiedChunksOnCreditExhaustion } from './partial-analysis-recovery.js';
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
-import { repairableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
+import { repairableAnalysisGaps, retryableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 
 import { attachPanelFeedback, compactPanelChoiceLabel, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
@@ -2111,6 +2111,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         )],
         analysisGaps,
         analysisMode: 'MULTI_PASS_DEEP_HARDENED',
+        analysisTier: modes.analysisTier,
+        deepAnalysisModel: modes.analysisTier === 'deep' ? modes.deepAnalysisModel : null,
         chunkCount: completedResults.length,
         processedChunkCount: chunkResults.filter(Boolean).length,
         expectedChunkCount: chunkCount,
@@ -2548,6 +2550,8 @@ function normalizeAnalysis(body) {
     chunkCount: Number(body?.chunkCount || 0),
     processedChunkCount: Number(body?.processedChunkCount || 0),
     partial: body?.partial === true,
+    analysisTier: body?.analysisTier === 'deep' ? 'deep' : body?.analysisTier === 'economy' ? 'economy' : null,
+    deepAnalysisModel: body?.analysisTier === 'deep' ? String(body?.deepAnalysisModel || '') : null,
     analysisGaps: Array.isArray(body?.analysisGaps) ? body.analysisGaps : [],
     expectedChunkCount: Number(body?.expectedChunkCount || 0),
     analysisCoverage: Number(body?.analysisCoverage || 0),
@@ -7101,8 +7105,14 @@ async function openSavedGame(game) {
 async function repairSavedGame(game, onProgress = () => {}) {
   const savedSourceContext = sourceContextAdapter(game.turkishMedia?.manifest.sourceTranscript);
   const previous = game.payload.analysis;
-  const gaps = repairableAnalysisGaps(previous, game.duration);
-  if (!gaps.length) throw new Error('Bu kayıtta eksik analiz aralığı yok.');
+  const gaps = retryableAnalysisGaps(previous, game.duration);
+  if (!gaps.length) throw new Error('Eksik bölümler Gemini içerik kısıtlaması nedeniyle reddedilmiş. Aynı aralıkları ücretli olarak tekrar göndermiyoruz.');
+  // Older saved games did not retain their paid model choice. Never silently
+  // downgrade a deep run to economy or unexpectedly bill an expensive model.
+  if (!['economy', 'deep'].includes(previous.analysisTier) ||
+      (previous.analysisTier === 'deep' && !['gemini-3.8-flash', 'gemini-4-argon'].includes(previous.deepAnalysisModel))) {
+    throw new Error('Bu eski kayıtta kullanılan Gemini modeli bilinmiyor. Ücretli yanlış modele geçmemek için yeni bir analizde model seçimini açıkça yap.');
+  }
   const repairs = [];
   for (let index = 0; index < gaps.length; index++) {
     const gap = gaps[index];
@@ -7120,6 +7130,8 @@ async function repairSavedGame(game, onProgress = () => {}) {
     form.append('chunkIndex', String(index));
     form.append('chunkCount', String(gaps.length));
     form.append('qualityMode', 'ultra');
+    form.append('analysisTier', previous.analysisTier);
+    if (previous.analysisTier === 'deep') form.append('deepAnalysisModel', previous.deepAnalysisModel);
     form.append('storyContextMemory', JSON.stringify(previous.storyContext || {}));
     form.append('dialogueContext', JSON.stringify((savedSourceContext?.segments || []).filter(item =>
       Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));

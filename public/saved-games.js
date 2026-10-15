@@ -1,4 +1,4 @@
-import { repairableAnalysisGaps } from './analysis-gap-repair.js';
+import { repairableAnalysisGaps, retryableAnalysisGaps } from './analysis-gap-repair.js';
 
 // Store media separately so opening the shelf never reads every video into memory.
 const DATABASE = 'videoquest-saved-games';
@@ -162,6 +162,7 @@ function summary(game) {
     totalBytes: video.size + mixBytes,
     actionCount: payload.analysis?.actions.length || 0,
     analysisGapCount: repairableAnalysisGaps(payload.analysis, game.duration).length,
+    analysisRepairableGapCount: retryableAnalysisGaps(payload.analysis, game.duration).length,
     dialogueCount: manifest?.sourceTranscript?.utterances.length ?? payload.dialogue?.segments.length ?? 0,
     dubCount: manifest?.dubSegments?.length || 0
   };
@@ -213,15 +214,18 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
       });
       // Records written before gap counts were added need their small payload
       // inspected once; never load their video bytes just to draw the shelf.
-      const legacy = rows.filter(row => row.analysisGapCount == null);
+      const legacy = rows.filter(row => row.analysisGapCount == null || row.analysisRepairableGapCount == null);
       if (legacy.length) {
         const payloads = await transaction(['payloads'], 'readonly', (tx, done) => {
           const request = tx.objectStore('payloads').getAll();
           request.onsuccess = () => done(request.result);
         });
         const byId = new Map(payloads.map(row => [row.id, row.payload]));
-        legacy.forEach(row => { row.analysisGapCount = repairableAnalysisGaps(
-          byId.get(row.id)?.analysis, row.duration).length; });
+        legacy.forEach(row => {
+          const analysis = byId.get(row.id)?.analysis;
+          row.analysisGapCount = repairableAnalysisGaps(analysis, row.duration).length;
+          row.analysisRepairableGapCount = retryableAnalysisGaps(analysis, row.duration).length;
+        });
       }
       // V1 metadata cannot advertise a final mix; raw old rows stay untouched.
       return rows.map(row => ({ ...row,

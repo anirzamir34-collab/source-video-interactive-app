@@ -1,5 +1,5 @@
 import { createGameStore, exportGame, importGame, storageError } from './saved-games.js';
-import { repairableAnalysisGaps } from './analysis-gap-repair.js';
+import { retryableAnalysisGaps } from './analysis-gap-repair.js';
 
 const sizeText = bytes => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const durationText = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
@@ -84,10 +84,12 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
       name.textContent = row.title;
       const detail = document.createElement('p');
       const gapCount = Number(row.analysisGapCount || 0);
-      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}`;
+      const repairableCount = Number(row.analysisRepairableGapCount ?? gapCount);
+      const restrictedCount = Math.max(0, gapCount - repairableCount);
+      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}${restrictedCount ? ` · ${restrictedCount} içerik kısıtlaması (yeniden ücretli deneme yok)` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'saved-game-actions';
-      for (const [label, action] of [['Baştan oyna', 'play'], ...(gapCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
+      for (const [label, action] of [['Baştan oyna', 'play'], ...(repairableCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
@@ -101,7 +103,7 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
             message('Kayıt silindi. İndirdiğin yedek dosyaları silinmedi.');
           } else if (action === 'repair') {
             const game = await store.load(row.id);
-            const missing = repairableAnalysisGaps(game.payload.analysis, game.duration);
+            const missing = retryableAnalysisGaps(game.payload.analysis, game.duration);
             if (!missing.length) throw new Error('Bu kayıtta doğrulanmış eksik analiz aralığı yok.');
             message(`${missing.length} eksik aralık yeniden analiz ediliyor…`);
             const analysis = await repairGame(game, update => message(update));
