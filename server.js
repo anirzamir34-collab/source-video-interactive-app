@@ -1664,7 +1664,11 @@ app.post('/api/gemini-key-status', async (req, res) => {
         response = await ai.models.generateContent({
           model,
           contents: 'Reply OK.',
-          config: { maxOutputTokens: 16, temperature: 0 }
+          // Argon does not support temperature and its default thinking is costlier.
+          // A key probe needs only a tiny response, not paid medium reasoning.
+          config: model === 'gemini-4-argon'
+            ? { maxOutputTokens: 16, thinkingConfig: { thinkingLevel: 'low' } }
+            : { maxOutputTokens: 16, temperature: 0 }
         });
         break;
       } catch (error) {

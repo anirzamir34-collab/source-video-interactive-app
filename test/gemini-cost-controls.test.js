@@ -204,13 +204,15 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
   const start = source.indexOf('async (req, res) => {', route);
   const end = source.indexOf("\napp.get('/health'", start);
   let calls = 0;
+  const requests = [];
   const handler = vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
     clientGeminiApiKey: () => 'test-account',
     analysisTierFromRequest: tier => tier === 'deep' ? 'deep' : 'economy',
-    analysisModelCandidates: () => ['test-model'],
+    analysisModelCandidates: (tier, _env, selected) => tier === 'deep' ? [selected] : ['test-model'],
+    isSupportedDeepAnalysisModel: model => ['gemini-3.8-flash', 'gemini-4-argon'].includes(model),
     process: { env: {} },
     storyboardFailureReason: () => 'GEMINI_TEMPORARILY_UNAVAILABLE',
-    GoogleGenAI: class { models = { generateContent: async () => { calls++; return { usageMetadata: {} }; } }; },
+    GoogleGenAI: class { models = { generateContent: async request => { calls++; requests.push(request); return { usageMetadata: {} }; } }; },
     addGeminiUsage: usage => { usage.requests++; return usage; }, emptyGeminiUsage: () => ({ requests: 0 }),
     console: { info() {}, warn() {} }, quotaRetrySeconds: () => 0
   });
@@ -221,5 +223,12 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
   assert.equal(calls, 0);
   const response = serverResponse(); await handler({ body: { verify: true } }, response);
   assert.equal(calls, 1); assert.equal(response.body.state, 'available');
+  const argonResponse = serverResponse();
+  await handler({ body: { verify: true, analysisTier: 'deep', deepAnalysisModel: 'gemini-4-argon' } }, argonResponse);
+  assert.equal(argonResponse.body.state, 'available');
+  assert.equal(argonResponse.body.model, 'gemini-4-argon');
+  assert.equal(calls, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).config)),
+    { maxOutputTokens: 16, thinkingConfig: { thinkingLevel: 'low' } });
 });
 
