@@ -70,15 +70,10 @@ export function groupSourceChoiceCards(clips, {
       return true;
     })
     .sort((a, b) => clipRange(a).startTime - clipRange(b).startTime || String(a.id).localeCompare(String(b.id)));
-  const requestedTarget = Math.max(1, Math.min(8, Math.floor(Number(preferredCount) || 5)));
-  // This is a density preference, never a hard cap that combines unrelated
-  // source actions. Small rich inputs should still expose several choices.
-  // A position with several verified source clips should expose more than one
-  // or two cards; grouping still keeps adjacent variants from the same
-  // observed action together and never synthesizes a new clip.
-  const target = Math.min(requestedTarget, mergeWithinContext
-    ? source.length : Math.max(1, Math.ceil(source.length / 3)));
-  const groups = new Map();
+  // A display target must not manufacture numbered copies of one observation
+  // or compress different observations merely to reach a card count.
+  void preferredCount;
+  const groups = [];
   for (const clip of source) {
     const label = sourceActionLabel(labelFor?.(clip) || clip.label);
     const rawProfile = bandFor?.(clip) || text(clip.movementTempo) || 'unclear';
@@ -95,13 +90,11 @@ export function groupSourceChoiceCards(clips, {
     const declaredOrigin = text(clip.sourceActionId || clip.observedActionId ||
       clip.actionOriginId || clip.derivedFromVerifiedSegment);
     const stableContext = mergeWithinContext && occurrence;
-    // A verified temporal rhythm is the logical gameplay option within the
-    // same source occurrence. Different model action IDs are its clip variants,
-    // not separate one-clip buttons. Unknown rhythms retain distinct origins.
-    const sameObservedRhythm = stableContext &&
+    // Different model IDs can be cuts of one observed action, but only when
+    // their visible description also agrees. Tempo alone is not an identity.
+    const sameObservedAction = stableContext &&
       ['position', 'movement', 'tempo_change', 'rhythm'].includes(text(clip.actionType).toLowerCase()) &&
-      ['slow', 'fast', 'intense', 'deep', 'hard'].includes(text(profile.energyFlavor).toLowerCase()) &&
-      ['slow', 'moderate', 'fast'].includes(text(clip.movementTempo).toLowerCase());
+      Boolean(label);
     const key = JSON.stringify([
       choiceSurfaceKey(clip),
       occurrence || declaredScope,
@@ -113,53 +106,35 @@ export function groupSourceChoiceCards(clips, {
       stableContext ? '' : text(clip.receiverSupport), band,
       // Even a trusted display context cannot erase the provider's declared
       // action kind or the origin of parts split from one observed action.
-      sameObservedRhythm ? '' : (hasScope && hasType ? actionType : label),
-      sameObservedRhythm ? '' : declaredOrigin,
+      hasScope && hasType ? [actionType, label.toLocaleLowerCase('tr-TR')] : label,
+      sameObservedAction ? '' : declaredOrigin,
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);
-    if (!groups.has(key)) groups.set(key, { key, band, profile, occurrence,
-      semanticRhythm: Boolean(sameObservedRhythm), packets: new Map() });
-    const group = groups.get(key);
-    const origin = declaredOrigin || text(clip.id);
-    if (!group.packets.has(origin)) group.packets.set(origin, []);
-    group.packets.get(origin).push(clip);
+    const previous = groups.at(-1);
+    const priorRange = previous ? clipRange(previous.clips.at(-1)) : null;
+    const range = clipRange(clip);
+    // Never let an option jump over another event or an unverified gap.
+    const adjacent = priorRange && range.startTime >= priorRange.endTime - 0.05 &&
+      range.startTime <= priorRange.endTime + 1;
+    if (previous?.key === key && adjacent) previous.clips.push(clip);
+    else groups.push({ key, band, profile, occurrence, clips: [clip] });
   }
   const cards = [];
-  for (const group of groups.values()) {
-    const groupSize = [...group.packets.values()].reduce((sum, packet) => sum + packet.length, 0);
-    const proportionalCards = Math.max(1, Math.round(target * groupSize / Math.max(1, source.length)));
-    // A semantic option plays up to five verified source cuts in order. Beyond
-    // that, separate bounded cards keep every source clip reachable.
-    const capacity = group.semanticRhythm ? 5 :
-      groupSize <= 2 ? groupSize : Math.max(2, Math.min(5, Math.ceil(groupSize / proportionalCards)));
-    let pending = [];
-    const flush = () => {
-      if (!pending.length) return;
-      const first = pending[0];
-      const range = clipRange(first);
-      cards.push({
-        id: `movement-choice:${encodeURIComponent(JSON.stringify([group.key, first.id, range.startTime]))}`,
-        label: sourceActionLabel(labelFor?.(first) || first.label) || 'Kesiti oynat',
-        tempo: group.profile.tempo || (group.profile.intensityBand === 'slow' ? 'slow'
-          : group.profile.intensityBand === 'intense' ? 'fast' : 'moderate'),
-        intensityBand: group.profile.intensityBand || group.band,
-        energyFlavor: group.profile.energyFlavor || group.profile.intensityBand || group.band,
-        energyLabel: group.profile.energyLabel || '',
-        hasTempoShift: false, tempoVariants: [],
-        sourcePositionId: text(first.sourcePositionId), occurrenceId: group.occurrence,
-        variants: pending
-      });
-      pending = [];
-    };
-    for (const packet of group.packets.values()) {
-      // Keep the parts of one observed action together where possible.
-      if (pending.length && pending.length + packet.length > capacity) flush();
-      for (const clip of packet) {
-        if (pending.length >= capacity) flush();
-        pending.push(clip);
-      }
-    }
-    flush();
+  for (const group of groups) {
+    const first = group.clips[0];
+    const range = clipRange(first);
+    cards.push({
+      id: `movement-choice:${encodeURIComponent(JSON.stringify([group.key, first.id, range.startTime]))}`,
+      label: sourceActionLabel(labelFor?.(first) || first.label) || 'Kesiti oynat',
+      tempo: group.profile.tempo || (group.profile.intensityBand === 'slow' ? 'slow'
+        : group.profile.intensityBand === 'intense' ? 'fast' : 'moderate'),
+      intensityBand: group.profile.intensityBand || group.band,
+      energyFlavor: group.profile.energyFlavor || group.profile.intensityBand || group.band,
+      energyLabel: group.profile.energyLabel || '',
+      hasTempoShift: false, tempoVariants: [],
+      sourcePositionId: text(first.sourcePositionId), occurrenceId: group.occurrence,
+      variants: group.clips
+    });
   }
   return cards.sort((a, b) => clipRange(a.variants[0]).startTime - clipRange(b.variants[0]).startTime)
     .map((card, index) => ({ ...card, displayIndex: index + 1 }));
