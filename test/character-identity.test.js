@@ -262,13 +262,18 @@ test('real analysis normalization applies stable character mapping to main and e
   vm.runInContext(source.slice(begin, end), scope);
   const analysis = scope.normalizeAnalysis({ storyContext: cast, actions: ['main', 'bonus'].map((actionLevel, i) => ({
     actionId: `a-${i}`, label: 'Cevabı dinle', primaryCharacterId: 'MERAL',
+    sceneId: `scene-${i}`, locationId: 'same-room',
     involvedCharacterIds: ['DANNY', 'MERAL'], primaryCharacterLabel: "Danny’nin kadını",
     actionLevel, startTime: i * 10, endTime: i * 10 + 5, sourceVerified: true
   })) });
   assert.equal(analysis.actions.length, 2);
   for (const action of analysis.actions) assert.equal(action.primaryCharacterLabel, 'Meral');
+  assert.deepEqual(Array.from(analysis.actions, action => [action.sceneId, action.locationId]),
+    [['scene-0', 'same-room'], ['scene-1', 'same-room']]);
   for (const action of analysis.actions) assert.equal(storyChoiceLabelForAction(action), 'Eşi · Cevabı dinle');
   const normalizedAgain = scope.normalizeAnalysis(JSON.parse(JSON.stringify(analysis)));
+  assert.deepEqual(Array.from(normalizedAgain.actions, action => [action.sceneId, action.locationId]),
+    [['scene-0', 'same-room'], ['scene-1', 'same-room']]);
   for (const action of normalizedAgain.actions) assert.equal(storyChoiceLabelForAction(action), 'Eşi · Cevabı dinle');
 });
 

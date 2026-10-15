@@ -569,6 +569,33 @@ test('distinct simultaneous story questions show together without exposing later
   assert.equal(f.els.choices.children.length, 2);
 });
 
+test('one location offers up to four verified actions and retires them when the next scene begins', async () => {
+  const f = fixture(); useRealCompletion(f);
+  const actions = [
+    { actionId: 'room-a-1', sceneId: 'scene-a1', locationId: 'room-a', label: 'Kapıyı aç', startTime: 10, endTime: 15 },
+    { actionId: 'room-a-2', sceneId: 'scene-a1', locationId: 'room-a', label: 'Masaya yürü', startTime: 15, endTime: 20 },
+    { actionId: 'room-a-3', sceneId: 'scene-a2', locationId: 'room-a', label: 'Bardağı al', startTime: 20, endTime: 25 },
+    { actionId: 'room-a-4', sceneId: 'scene-a2', locationId: 'room-a', label: 'Pencereye bak', startTime: 25, endTime: 30 },
+    { actionId: 'room-b-1', sceneId: 'scene-b1', locationId: 'room-b', label: 'Koridora gir', startTime: 30, endTime: 36 },
+    { actionId: 'room-b-2', sceneId: 'scene-b1', locationId: 'room-b', label: 'Işığı aç', startTime: 36, endTime: 41 }
+  ].map(action => ({ ...action, sourceVerified: true, actionType: 'other' }));
+  f.state.analysis.actions = actions;
+  f.state.gameCursorTime = 10;
+  assert.deepEqual(Array.from(f.futureActions(), action => action.actionId),
+    ['room-a-1', 'room-a-2', 'room-a-3', 'room-a-4']);
+  await f.playAction(actions[2]);
+  assert.equal(f.state.activeAction?.actionId, 'room-a-3');
+  assert.equal(f.els.video.currentTime, 20);
+  f.els.video.time = 25;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.equal(f.state.gameCursorTime, 25);
+  assert.deepEqual(Array.from(f.futureActions(), action => action.actionId), ['room-a-4']);
+  await f.playAction(actions[3]);
+  f.els.video.time = 30;
+  f.els.video.dispatchEvent(new Event('timeupdate'));
+  assert.deepEqual(Array.from(f.futureActions(), action => action.actionId), ['room-b-1', 'room-b-2']);
+});
+
 test('late source frame does not consume a following normal decision', async () => {
   const f = fixture(); useRealCompletion(f);
   const first = { actionId: 'first', label: 'İlk konuşma', actionType: 'dialogue',

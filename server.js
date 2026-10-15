@@ -501,6 +501,7 @@ TWO-LEVEL DEEP ANALYSIS:
 - BONUS actions are meaningful visible changes inside the same main scene: pace/rhythm change, acceleration, slowing, pause, kiss, touch, hand placement, posture, body transition, clothing removal or another clearly visible male action.
 - Do not represent a several-minute scene with one broad action when meaningful changes occur inside it.
 - Keep the same sceneId for BONUS actions until a new MAIN action begins.
+- Give actions in one visibly continuous physical location the same locationId, even when a new MAIN action changes the interaction. Change locationId at an observed location cut or move; leave it empty when the location cannot be verified. It identifies source continuity, never an imagined branch.
 - Determine each action boundary only from observed changes in visible movement, context, speaker or interaction.
 - Continuous unchanging footage is one action regardless of length. A change is a new action only if it is observable, not because enough time passed.
 - Use independently verified changes in posture, direction, contact, position, tempo, cast or camera continuity to split a long scene.
@@ -535,6 +536,7 @@ Return ONLY valid JSON with this exact shape:
     {
       "actionId": "tl-001",
       "sceneId": "scene-001",
+      "locationId": "stable-visible-location-id-or-empty",
       "actionLevel": "main|bonus",
       "actionType": "dialogue|story|scene_transition|position|tempo_change|kiss|touch|clothing|body_transition|partner_transition|camera_transition|outcome|aftermath|other",
       "choiceSurface": "story|approach|panel",
@@ -993,6 +995,7 @@ Rules:
         ...action,
         actionId: String(action.actionId || `tl-${String(index + 1).padStart(3, '0')}`),
         sceneId: String(action.sceneId || `scene-${String(index + 1).padStart(3, '0')}`),
+        locationId: String(action.locationId || '').trim().slice(0, 100),
         actionLevel: action.actionLevel === 'bonus' ? 'bonus' : 'main',
         actionType: String(action.actionType || 'other'),
         choiceSurface: ['story', 'approach', 'panel'].includes(action.choiceSurface) ? action.choiceSurface : '',

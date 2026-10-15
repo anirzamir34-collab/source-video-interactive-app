@@ -12,7 +12,7 @@ import * as interaction from '../public/interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
 import * as panel from '../public/interaction-panel.js';
 import * as compat from '../public/interaction-compat.js';
-import { collapseConsecutiveEquivalentCards } from '../public/choice-groups.js';
+import { collapseConsecutiveEquivalentCards, bundleAdjacentSourceCards } from '../public/choice-groups.js';
 import * as completion from '../public/interaction-completion.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
@@ -102,7 +102,8 @@ function fixture() {
   const els = new Proxy({ video, panelPlaybackRecovery: null }, {
     get(target, key) { return Object.hasOwn(target, key) ? target[key] : (target[key] = new Element()); }
   });
-  const scope = vm.createContext({ ...choiceRouting, ...completion, collapseConsecutiveEquivalentCards, state, els, AbortController, DOMException,
+  const scope = vm.createContext({ ...choiceRouting, ...completion, collapseConsecutiveEquivalentCards,
+    bundleAdjacentSourceCards, state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
@@ -1618,5 +1619,27 @@ test('context-control clips stay visible as ordinary movement choices', () => {
     new Set(activeChoices.flatMap(card => card.variants.map(item => item.id))),
     new Set(['one-0', 'one-1', 'one-2'])
   );
+});
+
+test('panel presents eight adjacent verified actions as four playable cards', () => {
+  const f = runtimeFixture();
+  const position = f.state.adultScene.positions[0];
+  position.endTime = 100;
+  position.sourceRanges = [{ id: 'source-one', startTime: 20, endTime: 100, sourceVerified: true }];
+  position.movements = Array.from({ length: 8 }, (_, index) => ({
+    id: `recorded-${index}`, sourcePositionId: 'source-one', sourceVerified: true,
+    actionType: 'movement', movementType: `observed-${index}`,
+    label: `Recorded action ${index + 1}`,
+    startTime: 20 + index * 10, endTime: 30 + index * 10,
+    loopStartTime: 20 + index * 10, loopEndTime: 30 + index * 10
+  }));
+  f.addFemaleLust(35);
+  f.renderAdultProgressiveUI(true);
+  f.selectAdultPosition('one', false);
+  const cards = position.activeMovementChoices;
+  assert.equal(cards.length, 4);
+  assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)),
+    position.movements.map(item => item.id));
+  assert.ok(cards.every(card => card.variants.length === 2));
 });
 

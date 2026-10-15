@@ -105,7 +105,8 @@ import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
-import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards } from './choice-groups.js';
+import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
+  bundleAdjacentSourceCards } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
@@ -2407,6 +2408,8 @@ function normalizeAnalysis(body) {
   const cleaned = actions
     .map((a, i) => ({
       actionId: String(a.actionId ?? a.id ?? `ACTION_${String(i + 1).padStart(3, '0')}`),
+      sceneId: String(a.sceneId || '').trim(),
+      locationId: String(a.locationId || '').trim().slice(0, 100),
       label: String(a.label ?? a.action ?? 'Unnamed action'),
       narrativeChoiceLabel: String(a.narrativeChoiceLabel || ''),
       characterSourceLabel: String(a.characterSourceLabel ?? a.label ?? a.action ?? 'Unnamed action'),
@@ -3450,12 +3453,12 @@ function prepareAdultScenes() {
         ...position,
         ...linkedEntry,
         controlClipIds: [...controlClipIds],
-        movementChoices: collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(buildVerifiedMovementChoices(
+        movementChoices: bundleAdjacentSourceCards(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(buildVerifiedMovementChoices(
           position.movements,
           position.label,
-          8,
+          4,
           position
-        ), 8))
+        ), 4)), { targetCount: 4 })
       };
     });
 
@@ -5208,9 +5211,9 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   // contextual control is an alternate way to advance among them, not a
   // reason to hide them from the panel.
   const movementPool = verifiedMovements;
-  const movementChoices = collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
-    buildVerifiedMovementChoices(movementPool, position.label, 8, position), 8
-  ));
+  const movementChoices = bundleAdjacentSourceCards(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
+    buildVerifiedMovementChoices(movementPool, position.label, 4, position), 4
+  )), { targetCount: 4 });
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
@@ -6002,10 +6005,21 @@ function futureActions() {
   const boundary = ordered.find(item => choiceSurfaceForAction(item) !== firstSurface)?.startTime ?? Infinity;
   const surfacePool = ordered.filter(item => choiceSurfaceForAction(item) === firstSurface &&
     Number(item.startTime) < Number(boundary));
-  // Deduplicate inside the actual decision instant. A label reused elsewhere
-  // in the video must not remove an independently verified source interval.
-  // Future chronological chapters must never masquerade as alternatives.
-  return selectSameMomentStoryActions(surfacePool, 3);
+  // A source scene can offer several verified actions at its current location.
+  // Stop before the first new scene: later locations are not choices here.
+  // Older analyses without scene IDs retain the same-instant rule.
+  const sceneKey = item => String(item?.locationId || item?.sceneId || '').trim();
+  const currentKey = sceneKey(surfacePool[0]);
+  if (!currentKey) return selectSameMomentStoryActions(surfacePool, 4);
+  const boundaryIndex = surfacePool.findIndex(item => sceneKey(item) !== currentKey);
+  const local = boundaryIndex < 0 ? surfacePool : surfacePool.slice(0, boundaryIndex);
+  const seen = new Set();
+  return local.filter(item => {
+    const label = storyChoiceLabelForAction(item).toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+    if (!label || seen.has(label)) return false;
+    seen.add(label);
+    return true;
+  }).slice(0, 4);
 }
 
 function nextVerifiedRouteTime() {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSourceChoiceCards, sourceIdentityLabel, sourceDisplayLabel } from '../public/choice-groups.js';
+import { groupSourceChoiceCards, sourceIdentityLabel, sourceDisplayLabel,
+  bundleAdjacentSourceCards } from '../public/choice-groups.js';
 import { buildVerifiedMovementChoices, exclusiveControlClipIds, findAdultSceneForTimeline,
   forwardLocalMovementClips, splitSparseMovementChoiceCards } from '../public/adult-gameplay.js';
 
@@ -287,4 +288,35 @@ test('adjacent changes stay distinct while adjacent matching cuts share one boun
     [['clip-0', 'clip-1'], ['clip-2'], ['clip-3'], ['clip-4']]);
   assert.deepEqual(cards.map(card => card.label),
     ['Patikada yürü', 'Dur ve etrafa bak', 'Patikada yürü', 'Patikada yürü']);
+});
+
+test('eight adjacent source actions become four cards with two exact clips each', () => {
+  const clips = Array.from({ length: 8 }, (_, index) => clip(index, {
+    label: `Recorded action ${index + 1}`,
+    sourceOccurrenceId: 'one-occurrence',
+    loopStartTime: 10 + index * 10,
+    loopEndTime: 20 + index * 10
+  }));
+  const atomic = groupSourceChoiceCards(clips);
+  const cards = bundleAdjacentSourceCards(atomic, { targetCount: 4 });
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
+    [['clip-0', 'clip-1'], ['clip-2', 'clip-3'], ['clip-4', 'clip-5'], ['clip-6', 'clip-7']]);
+  assert.deepEqual(cards[0].sourceLabels, ['Recorded action 1', 'Recorded action 2']);
+  assert.deepEqual(cards.flatMap(card => card.variants), clips);
+});
+
+test('card density never joins a source gap or a different occurrence', () => {
+  const clips = Array.from({ length: 6 }, (_, index) => clip(index, {
+    label: `Recorded action ${index + 1}`,
+    sourceOccurrenceId: index < 3 ? 'first' : 'second',
+    loopStartTime: index < 3 ? index * 10 : 100 + (index - 3) * 10,
+    loopEndTime: index < 3 ? (index + 1) * 10 : 110 + (index - 3) * 10
+  }));
+  const cards = bundleAdjacentSourceCards(groupSourceChoiceCards(clips), { targetCount: 2 });
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
+    [['clip-0', 'clip-1', 'clip-2'], ['clip-3', 'clip-4', 'clip-5']]);
+  const distant = clips.map((item, index) => ({ ...item,
+    loopStartTime: item.loopStartTime + index * 3,
+    loopEndTime: item.loopEndTime + index * 3 }));
+  assert.equal(bundleAdjacentSourceCards(groupSourceChoiceCards(distant), { targetCount: 2 }).length, 6);
 });
