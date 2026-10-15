@@ -473,16 +473,15 @@ test('next verified source boundary interrupts long speech without rewinding or 
   assert.equal(f.els.video.paused, false);
 });
 
-test('a distant general choice is reached by playing intervening footage, including stale button protection', async () => {
+test('a distant general choice is reached automatically without exposing a stale distant button', async () => {
   const f = fixture();
   const later = { actionId: 'book', label: 'Kitabı al', startTime: 90, endTime: 95, sourceVerified: true };
   f.state.analysis.actions = [later];
   f.renderChoices();
   assert.equal(f.futureActions().length, 0);
-  assert.equal(f.els.choices.children[1].dataset.playbackRecovery, 'continue');
+  assert.equal(f.els.choices.children.length, 0);
   await f.playAction(later);
   assert.equal(f.els.video.currentTime, 0, 'a stale distant choice never seeks');
-  f.els.choices.children[1].dispatchEvent(new Event('click'));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.els.video.currentTime, 0);
   assert.equal(f.els.video.paused, false);
