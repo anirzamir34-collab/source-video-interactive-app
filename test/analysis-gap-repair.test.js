@@ -40,3 +40,15 @@ test('failed or partially recovered ranges stay repairable without deleting veri
     available: true, analysisGaps: [{ startTime: 20, endTime: 70 }]
   } }], 90), /tutarsız/);
 });
+
+test('repair removes stale unreadable warning but keeps unresolved coverage visible', () => {
+  const gap = { chunkIndex: 1, startTime: 94.7, endTime: 189.3, reason: 'GEMINI_CONTENT_RESTRICTED' };
+  const analysis = { actions: [], analysisGaps: [gap], partial: true,
+    warnings: ['Bölüm 2 (94.7–189.3 sn) okunamadı; bu aralık için seçenek üretilmedi.', 'Başka uyarı'] };
+  const repaired = mergeRepairedAnalysis(analysis, [{ gap, result: { available: true,
+    actions: [{ startTime: 112, endTime: 120, sourceVerified: true }],
+    analysisGaps: [{ startTime: 140, endTime: 150, reason: 'GEMINI_CONTENT_RESTRICTED' }]
+  } }], 200);
+  assert.equal(repaired.partial, true);
+  assert.deepEqual(repaired.warnings, ['Başka uyarı', 'Aralık 140.0–150.0 sn hâlâ doğrulanmadı; seçenek üretilmedi.']);
+});
