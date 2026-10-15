@@ -74,6 +74,38 @@ function prepare(actions, overrides = {}, sourceContext = null, storyContext = {
   return state;
 }
 
+test('reported first approach and away-facing movement become separate playable source choices', () => {
+  const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A' };
+  const opening = action('opening', 94.667, 112.417, {
+    ...cast, label: 'Partneriyle yakınlaş', actionType: 'story',
+    adultScene: false, adultSceneId: '', positionId: '', positionLabel: '',
+    choiceSurface: 'story', choiceSurfaceConfidence: 1,
+    choiceSurfaceEvidence: 'Kadın koltuğa gelir ve erkekle yakınlaşır.'
+  });
+  const position = action('position', 112.417, 149.5, {
+    ...cast, label: 'Kadın üstte, arkası dönük yakınlaş', actionType: 'position',
+    adultSceneId: 'scene-a', adultSceneStartTime: 112.417, adultSceneEndTime: 149.5,
+    positionId: 'reverse-cowgirl', positionLabel: 'Kadın üstte, arkası dönük',
+    receiverBodyOrientation: 'on_top_away', receiverSupport: 'straddling',
+    positionConfigurationConfidence: 1, positionEvidence: 'Partner arkası erkeğe dönük olarak üstte.',
+    classificationReview: 'verified', movementType: 'ritmik hareket',
+    positionStartTime: 112.417, positionEndTime: 149.5
+  });
+  const state = prepare([opening, position], {
+    verifiedAdultPositionFamily: gameplay.verifiedAdultPositionFamily,
+    playableAdultPanelFamily: gameplay.playableAdultPanelFamily,
+    canonicalAdultPosition: item => ({ id: gameplay.resolveVerifiedAdultPosition(item).family,
+      label: 'Ters Kovboy Pozisyonu', correctedFromAction: false }),
+    adultCategoryFor: () => ({ id: 'position', label: 'Pozisyonlar' }),
+    movementBelongsToVerifiedPosition: gameplay.movementBelongsToVerifiedPosition
+  }, null, { characters: [{ participantTrackId: 'PARTNER_A', evidenceLevel: 'fact' }] });
+  assert.equal(state.adultScenes.length, 1);
+  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => item.sourceActionId), ['opening']);
+  assert.equal(state.adultScenes[0].positions[0].movementChoices.length, 1);
+  assert.equal(state.adultAnalysisTrace.actions[0].route, 'FOREPLAY');
+  assert.equal(state.adultAnalysisTrace.actions[1].movementAccepted, true);
+});
+
 test('distant verified intimacy remains a separate progressing panel with explicit track aliases', () => {
   const shared = { partnerTrackId: 'actor-b', positionId: '', positionLabel: '',
     adultScene: false, adultSceneId: '', adultSceneStartTime: undefined,
