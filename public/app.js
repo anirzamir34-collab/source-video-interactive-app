@@ -2805,8 +2805,19 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
       const start = Number(action.startTime);
       const end = Number(action.endTime);
       const actionType = String(action.actionType || '').toLowerCase();
-      const explicitNarrativeBreak = ['dialogue', 'story', 'scene_transition'].includes(actionType);
-      return action?.sourceVerified === true && explicitNarrativeBreak &&
+      const subject = String(action.subjectTrackId || '').trim();
+      const partner = String(action.partnerTrackId || '').trim();
+      // A conversation or an observed action by the same pair connects nearby
+      // chapters; it is not itself proof that the encounter ended. An actual
+      // scene/partner transition or a verified different cast still fences it.
+      const explicitNarrativeBreak = ['scene_transition', 'partner_transition',
+        'outcome', 'aftermath'].includes(actionType);
+      const unattributedNarrative = ['dialogue', 'story'].includes(actionType) &&
+        (!subject || !partner || !subjectTrackId || !partnerTrackId);
+      const differentCast = Boolean(subject && partner && subjectTrackId && partnerTrackId &&
+        (subject !== subjectTrackId || partner !== partnerTrackId));
+      return action?.sourceVerified === true &&
+        (explicitNarrativeBreak || unattributedNarrative || differentCast) &&
         Number.isFinite(start) && Number.isFinite(end) &&
         Math.min(end, Number(scene.startTime)) - Math.max(start, Number(previous.endTime)) >= 0.5;
     });
