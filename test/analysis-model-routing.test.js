@@ -69,3 +69,17 @@ test('saved-game repair retains the selected Gemini tier and skips content-restr
   assert.match(app, /form\.append\('analysisTier', previous\.analysisTier\)/);
   assert.match(app, /form\.append\('deepAnalysisModel', previous\.deepAnalysisModel\)/);
 });
+
+test('visual-only skips ElevenLabs job while explicitly requested subtitles or dubbing still use transcription', () => {
+  const start = app.indexOf('const visualOnly = modes.motion && !modes.dubbing && !modes.subtitles;');
+  const end = app.indexOf('  if (!modes.motion) {', start);
+  assert.ok(start > 0 && end > start);
+  const section = app.slice(start, end);
+  const visualBranch = section.slice(section.indexOf('if (visualOnly) {'), section.indexOf('} else if (contextualMedia) {'));
+  assert.doesNotMatch(visualBranch, /mediaClient\.start|mediaClient\.retry/);
+  assert.match(visualBranch, /session\.audioContextStatus = session\.sourceTranscript \? session\.audioContextStatus : 'skipped'/);
+  assert.match(section, /else if \(contextualMedia\)/);
+  assert.match(section, /transcriptOnly: true/);
+  assert.match(section, /if \(!visualOnly\) \{/);
+  assert.match(app, /status\.state === 'FAILED' && state\.analysisInProgress &&[\s\S]*?els\.motionMode\?\.checked && !els\.dubMode\?\.checked/);
+});
