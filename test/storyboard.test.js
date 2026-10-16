@@ -24,6 +24,20 @@ test('a fifty-minute video no longer collapses nineteen sheets into ten broad re
   assert.ok(plan.chunks.every(chunk => chunk.sheetCount === 1));
 });
 
+test('Flash uses shorter general-purpose windows without losing storyboard sheets', () => {
+  for (const [sheets, seconds] of [[12, 578], [30, 1200], [48, 3600]]) {
+    const flash = adaptiveAnalysisChunkPlan(sheets, seconds, 'ultra', 'gemini-3.8-flash');
+    const argon = adaptiveAnalysisChunkPlan(sheets, seconds, 'ultra', 'gemini-4-argon');
+    assert.ok(flash.chunkCount > argon.chunkCount);
+    assert.deepEqual(flash.chunks.flatMap(chunk =>
+      Array.from({ length: chunk.sheetCount }, (_, index) => chunk.firstSheet + index)),
+    Array.from({ length: sheets }, (_, index) => index));
+  }
+  assert.equal(adaptiveAnalysisChunkPlan(12, 578, 'fast', 'gemini-3.8-flash').chunkCount,
+    adaptiveAnalysisChunkPlan(12, 578, 'fast').chunkCount);
+  assert.equal(adaptiveAnalysisChunkPlan(2, 600, 'ultra', 'gemini-3.8-flash').chunkCount, 2);
+});
+
 test('uneven chunk groups include each sheet once and stay balanced', () => {
   for (const [sheets, seconds] of [[19, 2000], [40, 3600], [12, 578], [2, 45]]) {
     const plan = adaptiveAnalysisChunkPlan(sheets, seconds);
