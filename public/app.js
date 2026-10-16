@@ -1891,20 +1891,21 @@ els.analyzeBtn.addEventListener('click', async () => {
                 };
               }
               if (!reviewResponse.ok || !reviewBody?.available) {
-                const failureReason = String(reviewBody?.reason || 'SECOND_PASS_REVIEW_FAILED');
-                // This chapter already has a successful first pass. Never
-                // replace its observations with a whole-chapter gap merely
-                // because the *additional* review is unavailable. Hardening
-                // will still exclude weak/unsubstantiated classifications.
-                chunkBody = {
-                  ...chunkBody,
-                  secondPassDeferred: true,
-                  warnings: [...(chunkBody.warnings || []),
-                    `Bölüm ${chunkIndex + 1}: ikinci doğrulama (${failureReason}) başarısız; ilk analiz korunuyor. Belirsiz bulgular ayrıca kontrol edilmeli.`]
+                chunkFailure = reviewBody || {
+                  available: false,
+                  reason: 'SECOND_PASS_REVIEW_FAILED',
+                  message: `Bölüm ${chunkIndex + 1} ikinci doğrulamadan geçemedi.`
                 };
-              } else {
-                chunkBody = mergeSecondPassReview(chunkBody, reviewBody, criticalReviewCandidates);
+                if (chunkFailure?.retryable === false || chunkFailure?.reason === 'GEMINI_CREDITS_DEPLETED') {
+                  break;
+                }
+                // Retry only a failed review; the successful first pass stays
+                // in session.firstPassResults and is never re-billed.
+                throw Object.assign(new Error(chunkFailure.message || 'Doğrulama isteği başarısız.'), {
+                  analysisFailure: chunkFailure
+                });
               }
+              chunkBody = mergeSecondPassReview(chunkBody, reviewBody, criticalReviewCandidates);
             }
             chunkResults[chunkIndex] = chunkBody;
             delete session.firstPassResults[chunkIndex];
@@ -2464,7 +2465,8 @@ function normalizeAnalysis(body) {
       receiverSupport: String(a.receiverSupport || 'unclear'),
       positionConfigurationConfidence: Math.max(0, Math.min(1, Number(a.positionConfigurationConfidence) || 0)),
       positionEvidence: String(a.positionEvidence || ''),
-      classificationReview: a.classificationReview === 'verified' ? 'verified' : 'pending',
+      classificationReview: ['verified', 'first_pass'].includes(a.classificationReview)
+        ? a.classificationReview : 'pending',
       groupScene: a.groupScene === true,
       adultParticipantCount: Math.max(0, Math.floor(Number(a.adultParticipantCount) || 0)),
       participantTrackIds: Array.isArray(a.participantTrackIds)
