@@ -1,7 +1,7 @@
 name: VideoQuest reliability tests
 on:
   push:
-    branches: [main, codex/videoquest-reliability-tests]
+    branches: [main, codex/videoquest-reliability-tests, fix/videoquest-long-analysis-repair-20261016]
   pull_request:
 permissions:
   contents: read
