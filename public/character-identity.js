@@ -45,8 +45,14 @@ export function mergeCharacterRecords(records = []) {
     const old = out[index];
     const oldName = verifiedCharacterName(old);
     const newName = verifiedCharacterName(record);
+    const factRole = value => value.evidenceLevel === 'fact' && Number(value.confidence) >= 0.78 &&
+      text(value.evidence) ? verifiedRoleNoun(value.sourceRole || value.role) : '';
+    const oldRole = factRole(old), newRole = factRole(record);
+    // Contradictory family roles on one track are an identity conflict, not a
+    // reason to silently use whichever chunk happened to arrive last.
     const conflict = old.identityConflict || record.identityConflict ||
-      (oldName && newName && nameKey(oldName) !== nameKey(newName));
+      (oldName && newName && nameKey(oldName) !== nameKey(newName)) ||
+      (oldRole && newRole && oldRole !== newRole);
     const rank = value => verifiedCharacterName(value) ? 3 :
       value.evidenceLevel === 'fact' && text(value.evidence) ? 2 : value.evidenceLevel === 'inference' ? 1 : 0;
     const better = rank(record) > rank(old) ||
@@ -62,7 +68,12 @@ export function mergeCharacterRecords(records = []) {
     }
     const aliases = [...new Set([old.id, record.id, ...(old.characterIds || []), ...(record.characterIds || [])].map(text).filter(Boolean))];
     if (aliases.length > 1) merged.characterIds = aliases.slice(0, 24);
-    if (conflict) { merged.displayName = ''; merged.identityConflict = true; }
+    if (conflict) {
+      merged.displayName = '';
+      merged.sourceRole = '';
+      merged.role = '';
+      merged.identityConflict = true;
+    }
     out[index] = merged;
   }
   return out;

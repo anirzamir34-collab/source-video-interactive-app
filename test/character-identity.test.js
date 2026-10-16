@@ -228,6 +228,19 @@ test('same names never merge distinct tracks and contradictory names do not sile
   assert.equal(action.identityResolution, 'conflict');
 });
 
+test('contradictory verified family roles on one track remain unresolved across chunks', () => {
+  const observed = role => ({ id: 'PERSON', participantTrackId: 'PERSON_TRACK',
+    displayName: '', sourceRole: role, evidenceLevel: 'fact', confidence: 0.93,
+    evidence: `Konuşmada ${role} olarak tanıtılıyor.` });
+  const merged = mergeStoryContexts([{ characters: [observed('annesi')] },
+    { characters: [observed('kızı')] }]);
+  assert.equal(merged.characters.length, 1);
+  assert.equal(merged.characters[0].identityConflict, true);
+  assert.equal(merged.characters[0].sourceRole, '');
+  assert.equal(canonicalizeActionTrackIds({ primaryCharacterId: 'PERSON' }, merged)
+    .primaryCharacterId, 'PERSON');
+});
+
 test('absent participants, missing IDs and ambiguous group targets never borrow another name', () => {
   const absent = bindActionCharacter({ label: 'Soruyu dinle', primaryCharacterId: 'DENIZ', primaryCharacterLabel: 'Deniz', involvedCharacterIds: ['DANNY', 'MERAL'] }, cast);
   assert.equal(absent.primaryCharacterLabel, '');
