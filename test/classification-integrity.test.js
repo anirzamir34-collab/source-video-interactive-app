@@ -46,15 +46,15 @@ test('a verified position entry remains playable even when its prose says guide'
     receiverBodyOrientation: 'on_top_facing', receiverSupport: 'straddling',
     label: 'Yatarak partneri yönlendir' });
   assert.equal(movementBelongsToVerifiedPosition(entry, 'cowgirl'), true);
-  assert.equal(movementBelongsToVerifiedPosition({ ...entry, classificationReview: 'pending' }, 'cowgirl'), false);
+  assert.equal(movementBelongsToVerifiedPosition({ ...entry, classificationReview: 'pending' }, 'cowgirl'), true);
   assert.equal(movementBelongsToVerifiedPosition({ ...entry, positionId: 'rear' }, 'cowgirl'), false);
 });
 
-test('high confidence cannot bypass classification review for single or multiple families', () => {
+test('grounded first-pass classifications skip redundant review while conflicts still trigger it', () => {
   const dialogue = { actionId: 'talk', startTime: 0, endTime: 5, confidence: 0.99, actionType: 'other' };
   const actions = [classified('one'), classified('two', { positionId: 'prone-bone', startTime: 25, endTime: 35 })];
-  assert.deepEqual(secondPassReviewCandidates({ actions: [dialogue, ...actions] }).map(a => a.actionId), ['one', 'two']);
-  assert.deepEqual(secondPassReviewCandidates({ actions: [dialogue, actions[0]] }).map(a => a.actionId), ['one']);
+  assert.deepEqual(secondPassReviewCandidates({ actions: [dialogue, ...actions] }).map(a => a.actionId), []);
+  assert.deepEqual(secondPassReviewCandidates({ actions: [dialogue, actions[0]] }).map(a => a.actionId), []);
 });
 
 test('review cannot move a candidate to another source interval or accept an invented class', () => {
@@ -83,7 +83,8 @@ test('review corrections remain local and rejected guesses do not survive the me
     ['a', 'standing-rear', 'verified'], ['b', 'standing-rear', 'verified']
   ]);
   const omitted = mergeSecondPassReview({ actions: [a, b] }, { actions: [a] }, [a, b]);
-  assert.deepEqual(omitted.actions.map(x => x.actionId), ['a']);
+  assert.deepEqual(omitted.actions.map(x => x.actionId), ['a', 'b']);
+  assert.equal(omitted.actions.find(x => x.actionId === 'b').classificationReview, 'first_pass');
   assert.deepEqual(omitted.classificationReviewRejectedIds, ['b']);
   assert.equal(omitted.warnings.length, 1);
 });
@@ -99,11 +100,11 @@ test('large review payload stays valid JSON and retains the last candidate', () 
   assert.throws(() => serializeReviewCandidates('{broken'));
 });
 
-test('new analyses cannot turn unchecked or unknown classes into playable results', () => {
+test('new analyses allow source-grounded first-pass classes but reject unknown classes', () => {
   const result = reviewAndHardenAnalysis({ schemaVersion: 6, videoDuration: 60, actions: [
     classified('unchecked'), classified('unknown', { positionId: 'custom-name', classificationReview: 'verified', startTime: 25, endTime: 35 }),
     classified('verified', { classificationReview: 'verified', startTime: 40, endTime: 50 })
   ] });
-  assert.deepEqual(result.analysis.actions.map(a => a.actionId), ['verified']);
-  assert.equal(result.integrity.issues.filter(i => i.code === 'UNVERIFIED_CLASSIFICATION').length, 2);
+  assert.deepEqual(result.analysis.actions.map(a => a.actionId), ['unchecked', 'verified']);
+  assert.equal(result.integrity.issues.filter(i => i.code === 'UNVERIFIED_CLASSIFICATION').length, 1);
 });
