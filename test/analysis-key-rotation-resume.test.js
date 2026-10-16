@@ -89,8 +89,10 @@ test('never checkpoint failed, truncated or blocked provider outputs; code retai
   assert.match(app, /analysisCheckpointKey\(/);
   assert.match(app, /await analysisResponseCache\.readCheckpoint\(checkpointPrefix, index\)/);
   assert.match(app, /await analysisResponseCache\.saveCheckpoint\(checkpointPrefix, chunkIndex, chunkBody\)/);
-  assert.match(app, /error\?\.code !== 'TRANSLATION_BLOCKED'/);
+  assert.match(app, /isRecoverableTurkishMediaFailure\(error\)/);
   assert.match(app, /sourceAudioOnly = true/);
   assert.match(app, /mediaClient\.reset\(\{ cancelJob: false \}\)/);
-  assert.match(app, /Gemini konuşma çevirisini engelledi/);
+  const mediaRecovery = readFileSync(new URL('../public/media-failure-recovery.js', import.meta.url), 'utf8');
+  assert.match(mediaRecovery, /TRANSLATION_BLOCKED/);
+  assert.match(mediaRecovery, /Özgün kaynak sesle devam/);
 });
