@@ -85,8 +85,7 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
       const detail = document.createElement('p');
       const gapCount = Number(row.analysisGapCount || 0);
       const repairableCount = Number(row.analysisRepairableGapCount ?? gapCount);
-      const restrictedCount = Math.max(0, gapCount - repairableCount);
-      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}${restrictedCount ? ` · ${restrictedCount} içerik kısıtlaması (yeniden ücretli deneme yok)` : ''}`;
+      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık · kullanıcı isteğiyle yeniden dene` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'saved-game-actions';
       for (const [label, action] of [['Baştan oyna', 'play'], ...(repairableCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
@@ -105,6 +104,8 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
             const game = await store.load(row.id);
             const missing = retryableAnalysisGaps(game.payload.analysis, game.duration);
             if (!missing.length) throw new Error('Bu kayıtta doğrulanmış eksik analiz aralığı yok.');
+            const restrictedCount = missing.filter(gap => gap.reason === 'GEMINI_CONTENT_RESTRICTED').length;
+            if (restrictedCount && !confirm(`${restrictedCount} aralık Gemini tarafından daha önce reddedildi. Yeniden gönderim ücretli olabilir ve yine reddedilebilir. Doğrulanmış eski bulgular korunacak. Devam edilsin mi?`)) return;
             message(`${missing.length} eksik aralık yeniden analiz ediliyor…`);
             const analysis = await repairGame(game, update => message(update));
             const updated = { ...game, payload: { ...game.payload, analysis } };
