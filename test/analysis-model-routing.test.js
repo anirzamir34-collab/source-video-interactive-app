@@ -62,10 +62,10 @@ test('UI requires the user to opt into expensive Argon before analysis; frame co
   assert.equal(adaptiveAnalysisChunkPlan(19, 1200, 'ultra').chunkCount, 12);
 });
 
-test('saved-game repair retains the selected Gemini tier and skips content-restricted gaps', () => {
+test('saved-game repair retains the selected Gemini tier and allows explicit saved-game gap retries', () => {
   assert.match(app, /analysisTier: modes\.analysisTier,/);
   assert.match(app, /deepAnalysisModel: modes\.analysisTier === 'deep' \? modes\.deepAnalysisModel : null,/);
-  assert.match(app, /retryableAnalysisGaps\(previous, game\.duration\)/);
+  assert.match(app, /retryableAnalysisGaps\(previous, game\.duration, \{ includeRestricted: true \}\)/);
   assert.match(app, /form\.append\('analysisTier', previous\.analysisTier\)/);
   assert.match(app, /form\.append\('deepAnalysisModel', previous\.deepAnalysisModel\)/);
 });
