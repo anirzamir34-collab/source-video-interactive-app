@@ -1809,6 +1809,7 @@ els.analyzeBtn.addEventListener('click', async () => {
 
       let chunkSucceeded = false;
       let firstPassBody = session.firstPassResults[chunkIndex] || null;
+      let reviewAttempted = false;
       chunkFailure = null;
 
       // The server already retries a transient Gemini response twice. Bound
@@ -1870,6 +1871,7 @@ els.analyzeBtn.addEventListener('click', async () => {
               form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
               els.analysisOutput.textContent =
                 `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${criticalReviewCandidates.length} bulgu ikinci kez doğrulanıyor...\nHazır kareler yeniden kullanılıyor; videodan tekrar kare çıkarılmıyor.`;
+              reviewAttempted = true;
               const reviewResponse = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
                 headers: geminiRequestHeaders(),
                 stage: 'review', label: 'Bölüm ' + (chunkIndex + 1) + ' · ' + criticalReviewCandidates.length + ' bulgu'
@@ -1943,6 +1945,31 @@ els.analyzeBtn.addEventListener('click', async () => {
             `Tamamlanan bölümler korunuyor: ${chunkResults.filter(result => result?.available).length}/${chunkCount}`;
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
+      }
+
+      // A failed *additional* visual review must not discard a complete
+      // initial analysis during a temporary network/provider failure. The
+      // first pass stays clearly marked as review-deferred; normal hardening
+      // still rejects weak or inconsistent classifications before gameplay.
+      // Explicit provider content refusal and depleted credits are not silently
+      // promoted into verified gameplay.
+      const reviewFailureReason = String(chunkFailure?.reason || '');
+      if (!chunkSucceeded && reviewAttempted && firstPassBody?.available &&
+          !['GEMINI_CONTENT_RESTRICTED', 'GEMINI_CREDITS_DEPLETED', 'GEMINI_QUOTA_OR_CREDITS',
+            'GEMINI_RATE_LIMITED', 'GEMINI_DAILY_LIMIT', 'GEMINI_AUTH_ERROR',
+            'GEMINI_INVALID_REQUEST'].includes(reviewFailureReason)) {
+        chunkResults[chunkIndex] = {
+          ...firstPassBody,
+          secondPassDeferred: true,
+          firstPassActionCount: firstPassBody.actions?.length || 0,
+          warnings: [...(firstPassBody.warnings || []),
+            `Bölüm ${chunkIndex + 1}: ikinci doğrulama ${reviewFailureReason || 'SECOND_PASS_REVIEW_FAILED'} nedeniyle tamamlanamadı. İlk analiz korundu; bağımsız doğrulama durumu belirsiz.`]
+        };
+        session.chunkResults = chunkResults;
+        delete session.firstPassResults[chunkIndex];
+        await analysisResponseCache.saveCheckpoint(checkpointPrefix, chunkIndex, chunkResults[chunkIndex]);
+        chunkSucceeded = true;
+        chunkFailure = null;
       }
 
       if (!chunkSucceeded) {
