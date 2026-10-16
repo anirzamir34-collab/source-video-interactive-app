@@ -14,7 +14,11 @@ function uniqueByText(items = [], max = 24) {
   const seen = new Set();
   const out = [];
   for (const raw of Array.isArray(items) ? items : []) {
-    const text = cleanText(raw?.text ?? raw?.label ?? raw, 420);
+    // Do not stringify nested provider objects as the visible '[object Object]'.
+    const value = raw && typeof raw === 'object'
+      ? (typeof raw.text === 'string' ? raw.text : typeof raw.label === 'string' ? raw.label : '')
+      : raw;
+    const text = cleanText(value, 420);
     if (!text) continue;
     const key = text.toLocaleLowerCase('tr-TR');
     if (seen.has(key)) continue;
