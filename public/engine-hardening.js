@@ -270,6 +270,18 @@ function activityTypeEvidence(action = {}) {
   return String(action.activityEvidence || '').trim();
 }
 
+// A grounded first-pass observation stays usable even if a later discretionary
+// review is unavailable. Do not confuse source verification with an independent
+// second-pass approval: both statuses remain distinguishable in diagnostics.
+export function isGroundedFirstPassClassification(action = {}) {
+  if (action.sourceVerified !== true || Number(action.confidence) < 0.84 ||
+      !knownPositionId(action.positionId) || !String(action.positionEvidence || '').trim() ||
+      Number(action.positionConfigurationConfidence) < 0.78) return false;
+  const start = Number(action.startTime), end = Number(action.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 5) return false;
+  return true;
+}
+
 export function secondPassReviewCandidates(result = {}) {
   const actions = Array.isArray(result.actions) ? result.actions : [];
   if (!actions.length) return [];
@@ -281,7 +293,8 @@ export function secondPassReviewCandidates(result = {}) {
   actions.forEach(action => {
     // A model's own confidence score cannot certify its visual classification.
     // Review every classified interval together in one request for this chunk.
-    if (isClassificationCandidate(action) && action.classificationReview !== 'verified') {
+    if (isClassificationCandidate(action) && action.classificationReview !== 'verified' &&
+        !isGroundedFirstPassClassification(action)) {
       selected.add(action);
       return;
     }
@@ -373,13 +386,17 @@ export function mergeSecondPassReview(firstPass = {}, reviewPass = {}, candidate
     seen.add(id);
     return true;
   }).map(action => ({ ...action, classificationReview: 'verified' }));
-  const actions = [...untouched, ...verified]
+  const unconfirmed = firstActions.filter(action => candidateIds.has(String(action?.actionId || '')) &&
+    !seen.has(String(action?.actionId || ''))).map(action => ({
+      ...action, classificationReview: 'first_pass', reviewOutcome: 'not_confirmed'
+    }));
+  const actions = [...untouched, ...verified, ...unconfirmed]
     .sort((a, b) => numberOr(a.startTime) - numberOr(b.startTime));
-  const rejectedIds = [...candidateIds].filter(id => !seen.has(id));
+  const rejectedIds = unconfirmed.map(action => String(action?.actionId || ''));
   const warnings = [...new Set([
     ...(Array.isArray(firstPass.warnings) ? firstPass.warnings : []),
     ...(Array.isArray(reviewPass.warnings) ? reviewPass.warnings : []),
-    ...(rejectedIds.length ? [`${rejectedIds.length} aday görsel doğrulama veya kaynak aralığı kontrolünden geçemedi; seçeneklere eklenmedi.`] : [])
+    ...(rejectedIds.length ? [`${rejectedIds.length} ilk analiz bulgusu ikinci doğrulamada onaylanmadı; kaynak destekli bulgular ayrıca işaretlenerek korundu.`] : [])
   ])];
 
   return {
@@ -426,7 +443,8 @@ export function reviewAndHardenAnalysis(input = {}) {
     const id = String(action.actionId || `action-${action.__index}`);
 
     if (Number(input.schemaVersion) >= 6 && isClassificationCandidate(action) &&
-        (!knownPositionId(action.positionId) || action.classificationReview !== 'verified')) {
+        (!knownPositionId(action.positionId) ||
+          (action.classificationReview !== 'verified' && !isGroundedFirstPassClassification(action)))) {
       droppedActionIds.push(id);
       issues.push({ severity: 'drop', code: 'UNVERIFIED_CLASSIFICATION', actionId: id });
       continue;
