@@ -10,6 +10,15 @@ import {
   storyChoiceLabelForAction
 } from '../public/story-engine.js';
 
+test('invalid object facts cannot become literal object Object text', () => {
+  const result = normalizeStoryContext({
+    facts: [{ text: { nested: 'malformed' } }, { text: '[object Object]' }, { text: 'Doğrulanmış bilgi' }],
+    unknowns: [{ bad: true }, '[object Object]', 'Kimlik bilinmiyor']
+  });
+  assert.deepEqual(result.facts.map(row => row.text), ['Doğrulanmış bilgi']);
+  assert.deepEqual(result.unknowns, ['Kimlik bilinmiyor']);
+});
+
 test('uses narrative choice only when evidence is strong enough', () => {
   assert.equal(storyChoiceLabelForAction({
     label: 'Kadına yaklaş',
