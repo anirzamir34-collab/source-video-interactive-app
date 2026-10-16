@@ -23,11 +23,13 @@ export function verifiedVisualDescription(character) {
   const evidence = text(character?.evidence).replace(/\s*\(spk:\d+\)/giu, '');
   // Use only a directly supplied visual descriptor. Never turn a track ID,
   // generic gender, or a claimed relationship into a character name.
-  const first = value => value.match(/^([^,.;]{5,75})(?:[,.;]|$)/u)?.[1]?.trim() || '';
-  const phrase = [first(evidence), first(text(character?.description))]
-    .find(value => /(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü)(?=\s|$)/iu.test(value)) || '';
-  if (!/(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü)(?=\s|$)/iu.test(phrase)) return '';
-  return phrase.replace(/\s+(?:misafir\s+|diğer\s+)?(?:kadın|erkek|kişi|kız)$/iu, '').trim();
+  const descriptor = /(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü|dövmeli|gözlüklü|kel)(?=\s|,|$)/iu;
+  // Earlier code read only the first comma-delimited adjective; e.g.
+  // 'Açık tenli, sarı saçlı kadın' lost 'sarı saçlı' and fell back to Partner B.
+  const description = text(character?.description).slice(0, 110);
+  const verifiedDescription = [description, evidence.slice(0, 110)]
+    .find(value => descriptor.test(value) && /(?:kadın|erkek|kişi|woman|man)/iu.test(value));
+  return verifiedDescription ? verifiedDescription.slice(0, 85).replace(/[.,;]+$/u, '').trim() : '';
 }
 
 export function mergeCharacterRecords(records = []) {
