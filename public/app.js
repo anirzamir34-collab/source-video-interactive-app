@@ -3,6 +3,7 @@ import { sourceOpeningTimeline } from './source-opening.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
+import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import { createServerRevisionReader } from './server-revision.js';
 import {
@@ -2216,6 +2217,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       '\nTürkçe dublaj/çeviri, API kredisi yenilenene kadar ertelendi; kaynak ses korunuyor.';
   }
   let sourceAudioOnly = false;
+  let mediaFailureMessage = '';
   if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
     analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
@@ -2247,17 +2249,16 @@ els.analyzeBtn.addEventListener('click', async () => {
       updateSourceTranscript(finalMedia.sourceTranscript);
       renderMediaControls();
     } catch (error) {
-      if (error?.code !== 'TRANSLATION_BLOCKED') throw error;
-      // This is a provider content restriction, NOT exhausted credits.
-      // Never route a blocked source transcript to another model or invent a
-      // replacement translation. The independently verified visual game
-      // remains playable with the source video's original soundtrack.
+      // The visual game is independently complete. A failed translation,
+      // voice mapping or audio render must not erase minutes of verified work.
+      // Do not swallow cancellations or programming errors.
+      if (analysisOwner.signal.aborted || !isRecoverableTurkishMediaFailure(error)) throw error;
       sourceAudioOnly = true;
+      mediaFailureMessage = mediaFallbackMessage(error);
       session.mediaManifest = null;
       mediaClient.reset({ cancelJob: false });
       renderMediaControls();
-      analysisProgress.update('translation', { status: 'skipped',
-        detail: 'Gemini bu konuşmaların çevirisini engelledi; özgün kaynak ses korunuyor.' });
+      analysisProgress.update('translation', { status: 'skipped', detail: mediaFailureMessage });
     }
   }
 
@@ -2278,7 +2279,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Eksik bölgelerden seçenek uydurulmadı.' : 'Oyun modu kullanıma hazır.',
     creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : '',
-    sourceAudioOnly ? 'Türkçe dublaj üretilemedi: Gemini konuşma çevirisini engelledi. Bu bir kota sorunu değildir. Oyun özgün video sesiyle açıldı.' : ''
+    sourceAudioOnly ? mediaFailureMessage : ''
   ].join('\n');
   initializeInteractive(normalized);
   state.savedGameReady = true;
