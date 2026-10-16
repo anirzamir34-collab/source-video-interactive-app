@@ -18,7 +18,36 @@ function replaceTargetPlaceholder(value, target, verifiedName) {
   const match = /^PARTNER[_-]([A-Z0-9]+)\$/iu.exec(id);
   if (!match) return value;
   const aliases = [id, `Partner ${match[1]}`, `Karakter ${match[1]}`];
-  const pattern = new RegExp(`(? {
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${aliases.map(escapeRegExp).join('|')})(?![\\p{L}\\p{N}_])`, 'giu');
+  return typeof value === 'string' ? value.replace(pattern, verifiedName) : value;
+}
+function fixTurkishSuffixes(txt) {
+  if (typeof txt !== 'string') return txt;
+  const pairs = [
+    [/kızı'nın/gi, "kızının"], [/kızı ile/gi, "kızınla"], [/kızı'na/gi, "kızına"],
+    [/kız'nın/gi, "kızının"], [/kız ile/gi, "kızınla"], [/kız'a/gi, "kızına"],
+    [/annesi'nin/gi, "annesinin"], [/anne ile/gi, "annenle"], [/anne'ye/gi, "annene"],
+    [/babası'nın/gi, "babasının"], [/baba ile/gi, "babanla"], [/baba'ya/gi, "babana"],
+    [/teyzesi'nin/gi, "teyzesinin"], [/teyze ile/gi, "teyzenle"], [/teyze'ye/gi, "teyzene"],
+    [/halası'nın/gi, "halasının"], [/hala ile/gi, "halanla"], [/hala'ya/gi, "halana"],
+    [/ablası'nın/gi, "ablasının"], [/abla ile/gi, "ablanla"], [/abla'ya/gi, "ablana"],
+    [/yengesi'nin/gi, "yengesinin"], [/yenge ile/gi, "yengenle"], [/yenge'ye/gi, "yengene"]
+  ];
+  let res = txt;
+  for (const [pat, rep] of pairs) {
+    res = res.replace(pat, rep);
+  }
+  return res;
+}
+
+export function synchronizeExportIdentity(analysis) {
+  if (!analysis || typeof analysis !== 'object' || !Array.isArray(analysis.actions)) return analysis;
+  const characters = Array.isArray(analysis.storyContext?.characters) ? analysis.storyContext.characters : [];
+  if (!characters.length) return analysis;
+  const lookup = characterLookup(characters);
+  return {
+    ...analysis,
+    actions: analysis.actions.map(action => {
       if (!action || typeof action !== 'object') return action;
       const involved = [
         ...(Array.isArray(action.involvedCharacterIds) ? action.involvedCharacterIds : []),
@@ -47,8 +76,6 @@ function replaceTargetPlaceholder(value, target, verifiedName) {
         subjectDisplayNameFact: subjectFact
       };
 
-      // TÜM KORUMALAR VE FILTRELER KALDIRILDI. SAHNE TÜRÜ VEYA AKSİYON TÜRÜ AYRIMI YOKTUR.
-      // VİDEO ANALİZİNDE BULUNAN TÜM KARAKTERLER VE ROLLER SEÇİMLERE AYNEN ENJEKTE EDİLİR.
       if (finalTarget && targetFact) {
         for (const field of ['label', 'narrativeChoiceLabel', 'primaryCharacterLabel']) {
           result[field] = replaceTargetPlaceholder(action[field], finalTarget, targetFact);
