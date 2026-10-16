@@ -1,4 +1,5 @@
 import { repairableAnalysisGaps, retryableAnalysisGaps } from './analysis-gap-repair.js';
+import { synchronizeExportIdentity } from './export-identity.js';
 
 // Store media separately so opening the shelf never reads every video into memory.
 const DATABASE = 'videoquest-saved-games';
@@ -329,7 +330,14 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
 export function exportGame(input) {
   const game = prepareGame(input);
   const { video, dubAudio, ...metadata } = game;
-  const header = new TextEncoder().encode(JSON.stringify({ ...metadata,
+  // Final export-only copy. Preserve factual identity metadata and repair
+  // unambiguous ordinary dialogue placeholders without affecting saved games
+  // or reintroducing kinship terms into intimate choice labels.
+  const exportMetadata = metadata.payload?.analysis ? {
+    ...metadata,
+    payload: { ...metadata.payload, analysis: synchronizeExportIdentity(metadata.payload.analysis) }
+  } : metadata;
+  const header = new TextEncoder().encode(JSON.stringify({ ...exportMetadata,
     videoSize: video.size, videoType: video.type, mixSize: dubAudio?.size || 0, mixType: dubAudio?.type || '' }));
   if (header.byteLength > MAX_HEADER) throw new Error('Dublaj verisi yedek dosyası için çok büyük. Cihazdaki kayıt korunuyor.');
   const length = new Uint8Array(4);
