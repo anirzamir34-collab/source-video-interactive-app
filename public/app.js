@@ -1873,10 +1873,11 @@ els.analyzeBtn.addEventListener('click', async () => {
               break;
             }
           } else {
-            // The first source-backed pass is authoritative for this workflow.
-            // Re-running the same frames caused complete-chunk losses when a review failed.
-            // Keep the review infrastructure available for a future explicitly selected mode.
-            const criticalReviewCandidates = [];
+            // Source-backed first-pass evidence is the default. Keep a second
+            // pass only for an explicitly requested diagnostic review mode;
+            // otherwise a separate provider call can discard a valid chapter.
+            const criticalReviewCandidates = modes.reviewMode === 'manual'
+              ? secondPassReviewCandidates(chunkBody) : [];
             if (criticalReviewCandidates.length) {
               form.set('reviewMode', '1');
               form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
