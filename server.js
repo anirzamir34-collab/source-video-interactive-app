@@ -699,13 +699,13 @@ Rules:
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
 - Internal movement labels must name only the directly visible change, for example hızlı hareket, ritmik hareket, sert hareket, derin hareket, öpme, okşama, tutuş or a similarly concrete interaction actually visible in that interval.
 - Never put timestamps, duration, sequence numbers, "gerçek kesit", breathing, moaning, gaze, emotion, appearance or confidence text inside an internal movement label. Those belong only to metadata.
-- Set movementTempo from directly visible cadence only. Use slow, moderate or fast for stable segments; split a changing cadence into separate 10+ second verified segments whenever the source duration permits. Use unclear when speed cannot be verified.
+- Set movementTempo from directly visible cadence only. Use slow, moderate or fast for stable segments; split a changing cadence into separate 5+ second verified segments when the source frames resolve the change and its boundaries. Use unclear when speed cannot be verified.
 - Use fast only when repeated motion is visibly and consistently fast across the complete interval. Put words such as sert, derin or güçlü in movementType/label only when that exact quality is directly visible throughout the same time-aligned segment; never infer it from dialogue, audio alone or the surrounding adult scene.
 - These explicit movementTempo and movementType observations control the optional on-screen sex interaction button. If no source-verified fast, hard or deep interval exists, do not manufacture one and allow the button to remain unavailable for the entire video.
 - Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.
 - Do not split tiny repetitions into fake choices and do not merge genuinely different changes.
 - loopStartTime and loopEndTime must define a naturally repeatable real interval inside the action and position.
-- A position and every selectable movement loop must each be at least 10.0 seconds long; omit anything shorter. It may be extended only across visibly continuous footage of the same movement and position; otherwise omit that internal choice.
+- A position and every selectable movement loop must each be at least 5.0 seconds long; omit anything shorter. Require source frames to verify the start, midpoint and end of the whole interval. It may be extended only across visibly continuous footage of the same movement and position; otherwise omit that internal choice.
 - Never return one-frame, frozen-frame, transition, cut, camera-change or seek-unstable loops.
 - adultSceneStartTime and adultSceneEndTime must cover the real scene; postSceneTime must point to its first real continuation.
 - maleProgressRate and femaleProgressRate are game pacing weights from 0.25 to 2.5 based on visible motion intensity and duration.
