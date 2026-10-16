@@ -157,3 +157,14 @@ test('two distinct questions at one verified moment stay separate while synonymo
     ['question-a', 'question-b']);
   assert.deepEqual(selectSameMomentStoryActions(actions.slice(3)).map(action => action.actionId), ['later']);
 });
+
+test('nested provider fact objects never appear as [object Object] in story memory', () => {
+  const merged = mergeStoryContexts([{ storyContext: {
+    facts: [{ text: { nested: 'cannot be displayed' }, evidence: 'source' },
+      { text: 'The speaker opens a letter.', evidence: 'source' }],
+    inferences: [{ text: { nested: 'cannot be displayed' } }],
+    unknowns: [{ arbitrary: 'unknown' }]
+  } }]);
+  assert.deepEqual(merged.facts.map(x => x.text), ['The speaker opens a letter.']);
+  assert.ok(!JSON.stringify(merged).includes('[object Object]'));
+});
