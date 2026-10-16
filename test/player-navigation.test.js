@@ -316,14 +316,19 @@ test('ordinary choice seek errors expose retry without starting playback', async
   assert.equal(f.state.activeAction, action);
 });
 
-test('overlapping unconsumed ordinary choices play from their actual source start', async () => {
+test('partly elapsed ordinary choices are hidden and cannot rewind playback', async () => {
   const f = fixture();
   f.state.gameCursorTime = 12;
-  const action = { actionId: 'overlap', startTime: 10, endTime: 20, sourceVerified: true };
-  await f.playAction(action);
-  assert.equal(f.els.video.currentTime, 10);
-  assert.equal(f.els.video.paused, false);
-  assert.equal(f.state.activeAction, action);
+  const earlier = { actionId: 'earlier', label: 'Earlier source moment', actionType: 'dialogue',
+    startTime: 10, endTime: 20, sourceVerified: true };
+  const next = { actionId: 'next', label: 'Next source moment', actionType: 'dialogue',
+    startTime: 22, endTime: 27, sourceVerified: true };
+  f.state.analysis.actions = [earlier, next];
+  assert.deepEqual(Array.from(f.futureActions(), action => action.actionId), ['next']);
+  await f.playAction(earlier);
+  assert.equal(f.els.video.currentTime, 0);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.activeAction, undefined);
 });
 
 test('blocked ordinary choice resumes with its original end boundary intact', async () => {
