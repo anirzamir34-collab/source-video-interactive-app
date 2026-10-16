@@ -21,7 +21,7 @@ test('analysis chunks scale with video length and stay capped at twenty', () => 
 test('Argon gives a 29-minute video finer independent analysis windows without dropping samples', () => {
   const duration = 1729.548;
   const plan = adaptiveAnalysisChunkPlan(40, duration, 'ultra', 'gemini-4-argon');
-  assert.equal(plan.chunkCount, 22);
+  assert.equal(plan.chunkCount, 32);
   assert.deepEqual(plan.chunks.flatMap(chunk =>
     Array.from({ length: chunk.sheetCount }, (_, index) => chunk.firstSheet + index)),
     Array.from({ length: 40 }, (_, index) => index));
@@ -104,6 +104,7 @@ test('uses adaptive remote sampling while preserving local analysis density', ()
   assert.deepEqual(storyboardSamplingPlan(600, true), { baseCount: 100, focusedCount: 35 });
   assert.deepEqual(storyboardSamplingPlan(1200, true), { baseCount: 160, focusedCount: 56 });
   assert.deepEqual(storyboardSamplingPlan(240, false), { baseCount: 144, focusedCount: 0 });
+  assert.deepEqual(storyboardSamplingPlan(1729.548, false), { baseCount: 385, focusedCount: 0 });
 });
 
 test('remote frame preparation grows with video duration instead of using broad buckets', () => {
