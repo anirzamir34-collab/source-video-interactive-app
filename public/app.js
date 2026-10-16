@@ -7117,7 +7117,7 @@ async function repairSavedGame(game, onProgress = () => {}) {
   const savedSourceContext = sourceContextAdapter(game.turkishMedia?.manifest.sourceTranscript);
   const previous = game.payload.analysis;
   const gaps = retryableAnalysisGaps(previous, game.duration);
-  if (!gaps.length) throw new Error('Eksik bölümler Gemini içerik kısıtlaması nedeniyle reddedilmiş. Aynı aralıkları ücretli olarak tekrar göndermiyoruz.');
+  if (!gaps.length) throw new Error('Kayıtta yeniden denenebilecek doğrulanmış eksik analiz aralığı bulunmuyor.');
   // Older saved games did not retain their paid model choice. Never silently
   // downgrade a deep run to economy or unexpectedly bill an expensive model.
   if (!['economy', 'deep'].includes(previous.analysisTier) ||
