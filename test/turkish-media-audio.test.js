@@ -632,24 +632,17 @@ test('measured internal pauses are compacted while both words and their transfor
   }
 });
 
-test('adaptive fitting chains tempo stages, keeps pitch and both audio sections instead of rejecting duration', async t => {
+test('adaptive fitting never turns three seconds of speech into a one-second garble', async t => {
   const media = await realMedia(t); if (!media) return;
   const file = await media.fixture('adaptive.wav', 'if(lt(t\\,1.5)\\,.2*sin(2*PI*880*t)\\,.2*sin(2*PI*1320*t))', 3);
   if (!file) return;
-  const fitted = await media.service.fitDubSegment(file, { targetDuration: 1, maxTempo: 1.2, adaptiveTempo: true });
-  assert.ok(fitted.tempo >= 3); assert.equal(fitted.duration, 1); assert.equal(fitted.adaptiveTempo, true);
-  const audio = await samples(fitted.path);
-  assert.ok(frequencyAmplitude(audio.slice(.1 * SAMPLE_RATE, .3 * SAMPLE_RATE), 880, .1 * SAMPLE_RATE) > .1);
-  assert.ok(frequencyAmplitude(audio.slice(.6 * SAMPLE_RATE, .85 * SAMPLE_RATE), 1320, .6 * SAMPLE_RATE) > .1);
-  const words = fitNativeDialogueWords([{ nativeDuration: 3, nativeWords: [
-    { text: 'Merhaba.', start: .03, end: 1.4 }, { text: 'Evet.', start: 1.55, end: 2.94 }
-  ] }], 'Merhaba. Evet.', fitted);
-  assert.equal(words.length, 2); assert.ok(words[1].end <= 1);
+  await assert.rejects(media.service.fitDubSegment(file,
+    { targetDuration: 1, maxTempo: 1.2, adaptiveTempo: true }), { code: 'DUB_REGENERATE_REQUIRED' });
 });
 
 test('production short slots converge by sample count instead of repeating the same tempo plateau', async t => {
   const media = await realMedia(t); if (!media) return;
-  for (const duration of [.72, .88]) for (const [name, expression] of [
+  for (const duration of [.72, .74]) for (const [name, expression] of [
     ['chirp', '.2*sin(2*PI*(200*t+300*t*t))'],
     ['pulse', 'if(lt(mod(n\\,800)\\,150)\\,.2*sin(2*PI*380*t)\\,0)']
   ]) {
