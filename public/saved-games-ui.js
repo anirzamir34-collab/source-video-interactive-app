@@ -86,10 +86,10 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
       const gapCount = Number(row.analysisGapCount || 0);
       const repairableCount = Number(row.analysisRepairableGapCount ?? gapCount);
       const restrictedCount = Math.max(0, gapCount - repairableCount);
-      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}${restrictedCount ? ` · ${restrictedCount} içerik kısıtlaması (yeniden ücretli deneme yok)` : ''}`;
+      detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık` : ''}${restrictedCount ? ` · ${restrictedCount} içerik kısıtlaması (yalnızca isteğe bağlı tekrar deneme)` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'saved-game-actions';
-      for (const [label, action] of [['Baştan oyna', 'play'], ...(repairableCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
+      for (const [label, action] of [['Baştan oyna', 'play'], ...(gapCount && repairGame ? [['Eksik bölümleri yeniden dene', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
@@ -103,8 +103,10 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
             message('Kayıt silindi. İndirdiğin yedek dosyaları silinmedi.');
           } else if (action === 'repair') {
             const game = await store.load(row.id);
-            const missing = retryableAnalysisGaps(game.payload.analysis, game.duration);
+            const missing = retryableAnalysisGaps(game.payload.analysis, game.duration, { includeRestricted: true });
             if (!missing.length) throw new Error('Bu kayıtta doğrulanmış eksik analiz aralığı yok.');
+            const restricted = missing.filter(gap => gap.reason === 'GEMINI_CONTENT_RESTRICTED').length;
+            if (restricted && !confirm(`${restricted} bölüm daha önce Gemini tarafından içerik kısıtlamasıyla reddedildi. Tekrar aynı sonuç alınabilir ve API kullanımı ücretlendirebilir. Yalnızca bu kayıttaki eksik bölümleri yeniden göndermek istiyor musun?`)) return;
             message(`${missing.length} eksik aralık yeniden analiz ediliyor…`);
             const analysis = await repairGame(game, update => message(update));
             const updated = { ...game, payload: { ...game.payload, analysis } };
