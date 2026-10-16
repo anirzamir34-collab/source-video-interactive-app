@@ -1825,7 +1825,12 @@ els.analyzeBtn.addEventListener('click', async () => {
 
         try {
           if (firstPassBody) {
-            chunkBody = firstPassBody;
+            // A pending first pass from a transient retry is still a genuine
+            // successful initial response. Preserve its origin metadata.
+            chunkBody = { ...firstPassBody, actions: (firstPassBody.actions || []).map(action => ({
+              ...action, classificationReview: action.classificationReview === 'verified'
+                ? 'verified' : 'first_pass'
+            })) };
             response = { ok: true };
           } else {
             response = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
@@ -7174,6 +7179,9 @@ async function repairSavedGame(game, onProgress = () => {}) {
         const corrected = normalizeChunkActionTimes(result.actions, gap.startTime, gap.endTime);
         result = { ...result, actions: corrected.actions };
         const normalized = normalizeAnalysis({ ...result,
+          actions: (result.actions || []).map(action => ({ ...action,
+            classificationReview: action.classificationReview === 'verified'
+              ? 'verified' : 'first_pass' })),
           storyContext: mergeStoryContexts([{ storyContext: previous.storyContext }, result]),
           videoDuration: game.duration });
         result.actions = normalized.actions.map((action, actionIndex) => ({
