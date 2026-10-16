@@ -96,6 +96,22 @@ test('ordinary dialogue shows an evidenced relationship without exposing unnamed
   assert.equal(storyChoiceLabelForAction(unknown), 'Konuşmayı sürdür');
 });
 
+test('a verified stepdad fact in the reverse direction labels ordinary dialogue only', () => {
+  const context = { characters: [named('FATHER', 'MAIN_MALE', 'Kemal'),
+    { id: 'VISITOR', participantTrackId: 'PARTNER_A', displayName: 'Genç Kadın',
+      evidenceLevel: 'fact', confidence: .95, evidence: 'Diyalogda yakınlık açıklanıyor.' }],
+  relationships: [{ from: 'VISITOR', to: 'FATHER', relation: 'stepdad',
+    evidenceLevel: 'fact', confidence: .95, evidence: 'Konuşmada açıkça stepdad deniyor.' }] };
+  const source = { label: 'Konuşmayı sürdür', subjectTrackId: 'MAIN_MALE',
+    primaryCharacterId: 'PARTNER_A', partnerTrackId: 'PARTNER_A',
+    involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A'] };
+  const ordinary = bindActionCharacter({ ...source, adultScene: false }, context);
+  assert.equal(storyChoiceLabelForAction(ordinary), 'Üvey çocuğu · Konuşmayı sürdür');
+  const intimate = bindActionCharacter({ ...source, adultScene: true }, context);
+  assert.equal(intimate.relationshipDisplayLabel, '');
+  assert.equal(storyChoiceLabelForAction(intimate), 'Konuşmayı sürdür');
+});
+
 test('ordinary dialogue resolves verified source characters without emitting Karakter A/B as a visible name', () => {
   const context = {
     characters: [

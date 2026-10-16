@@ -79,12 +79,14 @@ test('kinship, friendship and spouse vocabulary stays evidence-independent and i
     ['dede', 'dedesi'], ['torun', 'torunu'], ['kuzen', 'kuzeni'], ['dost', 'dostu'],
     ['eş', 'eşi'], ['anneanne', 'anneannesi'], ['babaanne', 'babaannesi'],
     ['hala', 'halası'], ['dayı', 'dayısı'], ['kayınvalide', 'kayınvalidesi'],
-    ['iş arkadaşı', 'iş arkadaşı'], ['friend', 'arkadaşı'], ['grandson', 'torunu']
+    ['iş arkadaşı', 'iş arkadaşı'], ['friend', 'arkadaşı'], ['grandson', 'torunu'],
+    ['stepdad', 'üvey babası'], ['stepmom', 'üvey annesi']
   ]) assert.equal(relationshipRoleNoun(input), expected);
   assert.equal(relationshipRoleNoun('uncle'), '');
   assert.equal(relationshipRoleNoun('aunt'), '');
   assert.equal(inverseRelationshipRole('dedesi'), 'torunu');
   assert.equal(inverseRelationshipRole('kızı'), 'ebeveyni');
+  assert.equal(inverseRelationshipRole('stepdad'), 'üvey çocuğu');
   assert.equal(inverseRelationshipRole('torunu'), '');
   assert.equal(inverseRelationshipRole('yeğeni'), '');
 });
