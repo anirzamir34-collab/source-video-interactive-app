@@ -1891,21 +1891,20 @@ els.analyzeBtn.addEventListener('click', async () => {
                 };
               }
               if (!reviewResponse.ok || !reviewBody?.available) {
-                chunkFailure = reviewBody || {
-                  available: false,
-                  reason: 'SECOND_PASS_REVIEW_FAILED',
-                  message: `Bölüm ${chunkIndex + 1} ikinci doğrulamadan geçemedi.`
+                const failureReason = String(reviewBody?.reason || 'SECOND_PASS_REVIEW_FAILED');
+                // This chapter already has a successful first pass. Never
+                // replace its observations with a whole-chapter gap merely
+                // because the *additional* review is unavailable. Hardening
+                // will still exclude weak/unsubstantiated classifications.
+                chunkBody = {
+                  ...chunkBody,
+                  secondPassDeferred: true,
+                  warnings: [...(chunkBody.warnings || []),
+                    `Bölüm ${chunkIndex + 1}: ikinci doğrulama (${failureReason}) başarısız; ilk analiz korunuyor. Belirsiz bulgular ayrıca kontrol edilmeli.`]
                 };
-                if (chunkFailure?.retryable === false || chunkFailure?.reason === 'GEMINI_CREDITS_DEPLETED') {
-                  break;
-                }
-                // Apply the same retry delay to failed review requests as to
-                // failed initial requests; preserve the provider's reason.
-                throw Object.assign(new Error(chunkFailure.message || 'Doğrulama isteği başarısız.'), {
-                  analysisFailure: chunkFailure
-                });
+              } else {
+                chunkBody = mergeSecondPassReview(chunkBody, reviewBody, criticalReviewCandidates);
               }
-              chunkBody = mergeSecondPassReview(chunkBody, reviewBody, criticalReviewCandidates);
             }
             chunkResults[chunkIndex] = chunkBody;
             delete session.firstPassResults[chunkIndex];
@@ -2443,7 +2442,13 @@ function normalizeAnalysis(body) {
       confidence: Number(a.confidence ?? 0),
       subjectTrackId: a.subjectTrackId ?? a.subject ?? null,
       actionLevel: a.actionLevel === "bonus" ? "bonus" : "main",
-      actionType: String(a.actionType || "other"),
+      // Directly verified position metadata outranks a stale camera-transition
+      // action type. A camera cut alone without verified evidence is never
+      // promoted into a position.
+      actionType: a.actionType === 'camera_transition' && a.sourceVerified === true &&
+        a.classificationReview === 'verified' &&
+        Number(a.confidence || 0) >= 0.78 && String(a.positionId || '').trim() &&
+        String(a.positionEvidence || '').trim() ? 'position' : String(a.actionType || "other"),
       choiceSurface: String(a.choiceSurface || ''),
       choiceSurfaceEvidence: String(a.choiceSurfaceEvidence || '').trim().slice(0, 500),
       choiceSurfaceConfidence: Math.max(0, Math.min(1, Number(a.choiceSurfaceConfidence) || 0)),
