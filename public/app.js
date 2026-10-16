@@ -1031,6 +1031,9 @@ function onTurkishMediaStatus(status) {
   state.turkishMediaStatus = status;
   if (status.state === 'FAILED' && status.error?.code === 'VOICE_PROFILE_UNVERIFIED') {
     state.voiceMappingManualRequested = true;
+    // The source transcript may already be in memory even when a failed job
+    // status does not repeat it. Reveal the voice editor in either case.
+    renderVoiceMappingPanel();
   }
   if (status.sourceTranscript) { updateSourceTranscript(status.sourceTranscript); renderVoiceMappingPanel(); }
   logEngineEvent('TURKISH_MEDIA_STATUS', { state: status.state, jobId: status.jobId || null });
