@@ -444,3 +444,19 @@ test('small uncertainty in source-backed ordinary dialogue does not erase the cl
     actions: [{ ...action, adultScene: true, actionType: 'touch' }] });
   assert.equal(intimate.analysis.actions.length, 0);
 });
+
+test('schema six retains high-confidence source-grounded first-pass classification without external review', () => {
+  const source = { actionId: 'first', startTime: 10, endTime: 18,
+    loopStartTime: 10, loopEndTime: 18, positionStartTime: 10, positionEndTime: 18,
+    sourceVerified: true, confidence: .94, classificationReview: 'pending',
+    adultScene: true, adultSceneId: 's', actionType: 'position',
+    positionId: 'missionary', positionLabel: 'Missionary',
+    positionConfigurationConfidence: .94,
+    positionEvidence: 'The same stable body configuration is present through the source interval.' };
+  const good = reviewAndHardenAnalysis({ schemaVersion: 6, videoDuration: 25, actions: [source] });
+  assert.ok(good.analysis.actions.some(row => row.actionId === 'first'));
+  assert.ok(good.integrity.issues.some(row => row.code === 'SOURCE_GROUNDED_FIRST_PASS'));
+  const withoutEvidence = reviewAndHardenAnalysis({ schemaVersion: 6, videoDuration: 25,
+    actions: [{ ...source, positionEvidence: '' }] });
+  assert.equal(withoutEvidence.analysis.actions.length, 0);
+});
