@@ -61,4 +61,5 @@ test('blocked content remains visible but is excluded from any paid repair retry
   assert.equal(repairableAnalysisGaps(analysis, 40).length, 2);
   assert.deepEqual(retryableAnalysisGaps(analysis, 40).map(gap => gap.startTime), [20]);
   assert.deepEqual(retryableAnalysisGaps({ analysisGaps: [analysis.analysisGaps[0]] }, 40), []);
+  assert.deepEqual(retryableAnalysisGaps(analysis, 40, { includeRestricted: true }).map(gap => gap.startTime), [10, 20]);
 });
