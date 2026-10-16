@@ -578,6 +578,37 @@ test('only a measured long utterance is shortened and regenerated before extreme
   assert.equal(result.qualityReport.adaptiveTempoCount, 0);
 });
 
+test('measured overlong dialogue may be shortened twice before extreme time stretching', async t => {
+  const f = await fixture(t);
+  const translate = f.translationProvider.translateScene;
+  f.translationProvider.translateScene = async (scene, options = {}) => {
+    const rows = await translate(scene, options);
+    return rows.map(row => row.translatedText !== 'Merhaba.' ? row : ({
+      ...row,
+      translatedText: !options.shorten
+        ? 'Merhaba, bugün burada ne yapıyorsun acaba?'
+        : options.shorteningRound === 1 ? 'Merhaba, bugün ne yapıyorsun?' : 'Selam.',
+      displaySubtitleText: !options.shorten
+        ? 'Merhaba, bugün burada ne yapıyorsun acaba?'
+        : options.shorteningRound === 1 ? 'Merhaba, bugün ne yapıyorsun?' : 'Selam.'
+    }));
+  };
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (file, options) => {
+    const turn = JSON.parse(await readFile(file, 'utf8'));
+    if (turn.text !== 'Selam.' && turn.text.startsWith('Merhaba')) {
+      throw Object.assign(new Error('too long'), { code: 'DUB_REGENERATE_REQUIRED',
+        actualDuration: 6 });
+    }
+    return fit(file, options);
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(result.translatedUtterances[0].translatedText, 'Selam.');
+  assert.equal(result.qualityReport.shortenedDubCount, 2);
+  assert.deepEqual(f.calls.translate.slice(1).map(row => row.options.shorteningRound), [1, 2]);
+  assert.equal(f.calls.synthesize.length, 3);
+});
+
 test('adjacent sentences by one speaker share time without changing source words or generating again', async t => {
   const f = await fixture(t, { words: [{ text: 'Hello.', type: 'word', start: 1, end: 1.4, speaker_id: 'speaker_0' },
     { text: 'Yes.', type: 'word', start: 1.45, end: 4, speaker_id: 'speaker_0' }] });
