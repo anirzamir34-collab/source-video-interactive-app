@@ -84,7 +84,9 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
       name.textContent = row.title;
       const detail = document.createElement('p');
       const gapCount = Number(row.analysisGapCount || 0);
-      const repairableCount = Number(row.analysisRepairableGapCount ?? gapCount);
+      // Older saves cached zero repairable gaps while provider restrictions were excluded.
+      // All declared gaps are now user-initiated retries; trust the durable gap count.
+      const repairableCount = gapCount;
       detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık · kullanıcı isteğiyle yeniden dene` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'saved-game-actions';
