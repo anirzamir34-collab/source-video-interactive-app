@@ -5,7 +5,24 @@ import vm from 'node:vm';
 import { createTurkishMediaClient } from '../public/turkish-media-client.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
 import { mapSpeakerVoices } from '../lib/turkish-media/voice-mapping.js';
+import { publicMediaError } from '../lib/turkish-media/errors.js';
 import { normalizeScribeTranscript } from '../lib/turkish-media/model.js';
+
+test('unverified speakers require a manual choice rather than a prior automatic gender guess', () => {
+  const speaker = [{ speakerId: 'uncertain-source', gender: null }];
+  const catalog = [
+    { voice_id: 'male', labels: { gender: 'male', language: 'tr' } },
+    { voice_id: 'female', labels: { gender: 'female', language: 'tr' } }
+  ];
+  let error;
+  try { mapSpeakerVoices(speaker, catalog); } catch (cause) { error = cause; }
+  assert.equal(error?.code, 'VOICE_PROFILE_UNVERIFIED');
+  assert.deepEqual(publicMediaError(error).speakerIds, ['uncertain-source']);
+  assert.throws(() => mapSpeakerVoices(speaker, catalog, { 'uncertain-source': 'male' }),
+    { code: 'VOICE_PROFILE_UNVERIFIED' });
+  assert.deepEqual(mapSpeakerVoices(speaker, catalog, {}, { 'uncertain-source': 'female' }),
+    { 'uncertain-source': 'female' });
+});
 
 test('verified female profile cannot reuse a male or unlabelled catalog voice', () => {
   const speakers = [{ speakerId: 'person-a', gender: 'female' }];
