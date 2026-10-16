@@ -2257,6 +2257,10 @@ els.analyzeBtn.addEventListener('click', async () => {
       mediaFailureMessage = mediaFallbackMessage(error);
       session.mediaManifest = null;
       mediaClient.reset({ cancelJob: false });
+      if (error?.code === 'VOICE_PROFILE_UNVERIFIED') {
+        state.voiceMappingManualRequested = true;
+        renderVoiceMappingPanel();
+      }
       renderMediaControls();
       analysisProgress.update('translation', { status: 'skipped', detail: mediaFailureMessage });
     }
