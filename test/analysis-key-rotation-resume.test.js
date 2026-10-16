@@ -89,7 +89,9 @@ test('never checkpoint failed, truncated or blocked provider outputs; code retai
   assert.match(app, /analysisCheckpointKey\(/);
   assert.match(app, /await analysisResponseCache\.readCheckpoint\(checkpointPrefix, index\)/);
   assert.match(app, /await analysisResponseCache\.saveCheckpoint\(checkpointPrefix, chunkIndex, chunkBody\)/);
-  assert.match(app, /error\?\.code !== 'TRANSLATION_BLOCKED'/);
+  assert.match(app, /errorCode === 'TRANSLATION_BLOCKED'/);
+  assert.match(app, /if \(error\?\.name === 'AbortError'\) throw error/);
+  assert.match(app, /session\.mediaManifest = null/);
   assert.match(app, /sourceAudioOnly = true/);
   assert.match(app, /mediaClient\.reset\(\{ cancelJob: false \}\)/);
   assert.match(app, /Gemini konuşma çevirisini engelledi/);
