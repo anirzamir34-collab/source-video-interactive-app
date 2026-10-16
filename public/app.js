@@ -2209,12 +2209,15 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
     analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
+    const speakerCount = state.sourceContext?.speakers?.length || 0;
+    const uncertainVoices = Math.max(0, speakerCount - Object.keys(speakerHints).length);
     els.analysisState.textContent = 'PREPARING_TURKISH_MEDIA';
     els.analysisTitle.textContent = 'Konuşmacılar eşleştiriliyor ve Türkçe medya hazırlanıyor';
     els.analysisOutput.textContent = [
       `${Object.keys(speakerHints).length} kaynak konuşmacı kimliği görsel karakterlerle doğrulandı.`,
-      'Aynı kişiye ait parçalanmış konuşmacı kimlikleri tek sabit Türkçe sese bağlanıyor.',
-      'Ses seçimi; doğrulanmış karakter profili, Türkçe desteği ve mevcut duygu/ton etiketleriyle otomatik yapılıyor.'
+      ...(uncertainVoices ? [`${uncertainVoices} konuşmacının görüntüyle kimlik eşleşmesi kesin değil; otomatik ses tercihini sonradan kontrol et.`] : []),
+      'Doğrulanmış aynı kişiye ait parçalar tek Türkçe sese bağlanıyor.',
+      'Eşleşmeyen sesler tahminidir; ses yönetimi bölümünden dinleyerek düzeltilebilir.'
     ].join('\n');
     // A successful media retry has already completed the paid stages. Reuse
     // its manifest while rebuilding the game from saved visual chapters.
