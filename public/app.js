@@ -1864,7 +1864,10 @@ els.analyzeBtn.addEventListener('click', async () => {
               break;
             }
           } else {
-            const criticalReviewCandidates = secondPassReviewCandidates(chunkBody);
+            // The first source-backed pass is authoritative for this workflow.
+            // Re-running the same frames caused complete-chunk losses when a review failed.
+            // Keep the review infrastructure available for a future explicitly selected mode.
+            const criticalReviewCandidates = [];
             if (criticalReviewCandidates.length) {
               form.set('reviewMode', '1');
               form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
