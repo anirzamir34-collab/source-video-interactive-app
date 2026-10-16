@@ -2233,6 +2233,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       '\nTürkçe dublaj/çeviri, API kredisi yenilenene kadar ertelendi; kaynak ses korunuyor.';
   }
   let sourceAudioOnly = false;
+  let sourceAudioReason = '';
   if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
     analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
@@ -2261,17 +2262,32 @@ els.analyzeBtn.addEventListener('click', async () => {
       updateSourceTranscript(finalMedia.sourceTranscript);
       renderMediaControls();
     } catch (error) {
-      if (error?.code !== 'TRANSLATION_BLOCKED') throw error;
-      // This is a provider content restriction, NOT exhausted credits.
-      // Never route a blocked source transcript to another model or invent a
-      // replacement translation. The independently verified visual game
-      // remains playable with the source video's original soundtrack.
+      if (error?.name === 'AbortError') throw error;
+      // Independent, successfully verified video analysis is never discarded
+      // because a later optional Turkish-media step fails (voice catalog,
+      // translation, synthesis, alignment, or duration fitting). Keep the
+      // original source soundtrack and persist the playable game. Do not
+      // fabricate missing translations or publish incomplete audio.
       sourceAudioOnly = true;
+      const errorCode = String(error?.code || 'TURKISH_MEDIA_FAILED').slice(0, 80);
+      const errorMessage = String(error?.message || 'Türkçe medya hazırlanamadı.').slice(0, 350);
+      sourceAudioReason = errorCode === 'TRANSLATION_BLOCKED'
+        ? 'Gemini konuşma çevirisini engelledi. Bu bir kota sorunu değildir.'
+        : `Türkçe medya hazırlanamadı (${errorCode}): ${errorMessage}`;
+      session.lastMediaError = { code: errorCode, message: errorMessage };
       session.mediaManifest = null;
+      // A missing/ambiguous voice profile must be corrected by the user; do
+      // not silently assign a gendered voice or re-issue a failed provider
+      // request. The source transcript remains in state for the voice editor.
+      if (errorCode === 'VOICE_PROFILE_UNVERIFIED') {
+        state.voiceMappingManualRequested = true;
+        renderVoiceMappingPanel();
+      }
       mediaClient.reset({ cancelJob: false });
       renderMediaControls();
       analysisProgress.update('translation', { status: 'skipped',
-        detail: 'Gemini bu konuşmaların çevirisini engelledi; özgün kaynak ses korunuyor.' });
+        detail: 'Türkçe ses tamamlanamadı. İlk analiz ve kaynak ses korunarak oyun kaydediliyor.' });
+      logEngineEvent('TURKISH_MEDIA_DEFERRED', { code: errorCode, analysisActionCount: normalized.actions.length });
     }
   }
 
@@ -2292,7 +2308,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Eksik bölgelerden seçenek uydurulmadı.' : 'Oyun modu kullanıma hazır.',
     creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : '',
-    sourceAudioOnly ? 'Türkçe dublaj üretilemedi: Gemini konuşma çevirisini engelledi. Bu bir kota sorunu değildir. Oyun özgün video sesiyle açıldı.' : ''
+    sourceAudioOnly ? `${sourceAudioReason} Oyun özgün video sesiyle açıldı. Kayıtlı oyun ve doğrulanmış aksiyonlar korundu.` : ''
   ].join('\n');
   initializeInteractive(normalized);
   state.savedGameReady = true;
