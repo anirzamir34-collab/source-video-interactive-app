@@ -448,7 +448,7 @@ test('small uncertainty in source-backed ordinary dialogue does not erase the cl
 test('schema six retains high-confidence source-grounded first-pass classification without external review', () => {
   const source = { actionId: 'first', startTime: 10, endTime: 18,
     loopStartTime: 10, loopEndTime: 18, positionStartTime: 10, positionEndTime: 18,
-    sourceVerified: true, confidence: .94, classificationReview: 'pending',
+    sourceVerified: true, confidence: .94, classificationReview: 'first_pass',
     adultScene: true, adultSceneId: 's', actionType: 'position',
     positionId: 'missionary', positionLabel: 'Missionary',
     positionConfigurationConfidence: .94,
