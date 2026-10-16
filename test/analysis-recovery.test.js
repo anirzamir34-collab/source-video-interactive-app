@@ -16,6 +16,7 @@ import { serializeReviewCandidates } from '../public/classification-integrity.js
 import { geminiQuotaFailure } from '../public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from '../lib/analysis-request-cache.js';
 import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
+import { hasFamilyOrSpouseContext } from '../public/relationship-roles.js';
 import { analysisModelCandidates, analysisTierFromRequest } from '../lib/analysis-model-routing.js';
 
 for (const response of [
@@ -142,7 +143,7 @@ test('the live server handler reports refused chapters without retrying or split
       addGeminiUsage: usage => { usage.requests += 1; },
       storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
       geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction',
-      geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,
+      geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig, hasFamilyOrSpouseContext,
       analysisModelCandidates, analysisTierFromRequest, storyboardRequestCache: createAnalysisRequestCache(),
       GEMINI_DEFAULT_MODEL: 'gemini-test-model', ANALYSIS_MODEL: 'gemini-3.1-pro-preview',
       process: { env: {} }, console: { warn() {}, error() {}, info() {} }

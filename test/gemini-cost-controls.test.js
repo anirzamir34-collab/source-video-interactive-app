@@ -11,6 +11,7 @@ import { analysisModelCandidates, analysisTierFromRequest } from '../lib/analysi
 import { createServerRevisionReader } from '../public/server-revision.js';
 import { createAnalysisResponseCache, analysisRequestKey } from '../public/analysis-response-cache.js';
 import { geminiQuotaFailure } from '../public/gemini-quota.js';
+import { hasFamilyOrSpouseContext } from '../public/relationship-roles.js';
 import { storyboardFailureReason, generateStoryboardWithRetry } from '../public/analysis-recovery.js';
 import { isTerminalStoryboardFailure } from '../public/analysis-recovery.js';
 import { serializeReviewCandidates } from '../public/classification-integrity.js';
@@ -146,7 +147,7 @@ function serverHandler(generateContent) {
   const start = source.indexOf('async (req, res) => {', route);
   const end = source.indexOf("\napp.post('/api/external-analyze'", start);
   return vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
-    ...choiceRouting, GoogleGenAI: class { models = { generateContent }; },
+    ...choiceRouting, hasFamilyOrSpouseContext, GoogleGenAI: class { models = { generateContent }; },
     geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction',
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
