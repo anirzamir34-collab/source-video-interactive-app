@@ -21,13 +21,13 @@ test('a scene offers its verified dialogue clips without making a user watch the
     .map(row => row.id), []);
 });
 
-test('unknown source voices keep dubbing and use distinct catalogue voices', () => {
+test('unknown source voices require a confirmed choice instead of assuming a female catalogue voice', () => {
   const speakers = [{ speakerId: 'voice-1', gender: null }, { speakerId: 'voice-2', gender: 'male' }];
   const catalog = [
     { voice_id: 'male', labels: { gender: 'male', language: 'tr' } },
     { voice_id: 'female', labels: { gender: 'female', language: 'tr' } }
   ];
-  assert.deepEqual(mapSpeakerVoices(speakers, catalog), { 'voice-2': 'male', 'voice-1': 'female' });
+  assert.throws(() => mapSpeakerVoices(speakers, catalog), { code: 'VOICE_PROFILE_UNVERIFIED' });
   assert.deepEqual(mapSpeakerVoices(speakers, catalog, {}, { 'voice-1': 'female' }),
     { 'voice-2': 'male', 'voice-1': 'female' });
 });
