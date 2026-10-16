@@ -7,6 +7,19 @@ import { sourceContextAdapter } from '../public/source-transcript.js';
 import { mapSpeakerVoices } from '../lib/turkish-media/voice-mapping.js';
 import { normalizeScribeTranscript } from '../lib/turkish-media/model.js';
 
+test('unknown source voices cannot silently become male or female without manual choice', () => {
+  const speakers = [{ speakerId: 'uncertain', gender: null }];
+  const catalog = [
+    { voice_id: 'male', labels: { gender: 'male', language: 'tr' } },
+    { voice_id: 'female', labels: { gender: 'female', language: 'tr' } }
+  ];
+  assert.throws(() => mapSpeakerVoices(speakers, catalog), { code: 'VOICE_PROFILE_UNVERIFIED' });
+  assert.throws(() => mapSpeakerVoices(speakers, catalog, { uncertain: 'male' }),
+    { code: 'VOICE_PROFILE_UNVERIFIED' }, 'a previous automatic assignment is not reliable source evidence');
+  assert.deepEqual(mapSpeakerVoices(speakers, catalog, {}, { uncertain: 'female' }),
+    { uncertain: 'female' }, 'an intentional user choice may resolve an ambiguous source speaker');
+});
+
 test('verified female profile cannot reuse a male or unlabelled catalog voice', () => {
   const speakers = [{ speakerId: 'person-a', gender: 'female' }];
   const catalog = [
