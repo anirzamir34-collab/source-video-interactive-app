@@ -273,7 +273,18 @@ export function playableAdultPanelFamily(action = {}) {
     verifiedActivityMetadata
   );
 
-  if (['camera_transition', 'partner_transition', 'clothing', 'outcome', 'aftermath'].includes(type)) return '';
+  // A provider may label a continuous, source-verified action 'camera_transition'
+  // because of a close-up. Preserve the actual source-backed configuration
+  // only when the reviewed position and a nontrivial loop are both evidenced.
+  const cameraWithAction = type === 'camera_transition' &&
+    action.classificationReview === 'verified' &&
+    Number(action.positionConfigurationConfidence) >= 0.84 &&
+    String(action.positionEvidence || '').trim() &&
+    String(action.movementType || '').trim() &&
+    Number(action.loopEndTime) - Number(action.loopStartTime) >= 5 &&
+    Boolean(action.positionId);
+  if ((type === 'camera_transition' && !cameraWithAction) ||
+      ['partner_transition', 'clothing', 'outcome', 'aftermath'].includes(type)) return '';
   // A provider's parent metadata can be stale. A visible kiss, ordinary touch,
   // or dialogue is never a panel position merely because activityType claims
   // otherwise. The observed action itself must name the claimed activity.
@@ -363,7 +374,13 @@ export function resolveVerifiedAdultPosition(action = {}) {
 
 export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '') {
   const actionType = String(action.actionType || '').toLowerCase();
-  if (['partner_transition', 'camera_transition'].includes(actionType)) return false;
+  if (actionType === 'partner_transition') return false;
+  if (actionType === 'camera_transition' && !(
+    action.sourceVerified === true && action.classificationReview === 'verified' &&
+    Number(action.positionConfigurationConfidence) >= 0.84 &&
+    String(action.positionEvidence || '').trim() &&
+    String(action.movementType || '').trim() &&
+    Number(action.loopEndTime) - Number(action.loopStartTime) >= 5)) return false;
   const resolvedFamily = resolveVerifiedAdultPosition(action).family;
   const verifiedSameFamilyBodyChange = actionType === 'body_transition' &&
     action?.sourceVerified === true &&
