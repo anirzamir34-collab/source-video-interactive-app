@@ -41,17 +41,21 @@ export function sheetsPerAnalysisChunk(qualityMode = 'ultra', remote = false) {
   return 3;
 }
 
-export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityMode = 'ultra') {
+export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityMode = 'ultra', analysisModel = '') {
   const sheets = Math.max(1, Math.floor(Number(sheetCount) || 1));
   const seconds = Math.max(1, Number(duration) || 1);
   const fast = String(qualityMode || 'ultra').toLowerCase() === 'fast';
+  const compactFlash = !fast && String(analysisModel || '').toLowerCase() === 'gemini-3.8-flash';
   // Model calls scale with the source duration, not with a dense patch of
-  // focused frames. Short videos should never pay the long-video ceiling.
-  const targetSeconds = fast ? 125 : 95;
-  const durationCeiling = seconds <= 180 ? 3
-    : seconds <= 480 ? 6
-      : seconds <= 900 ? 10
-        : seconds <= 1800 ? 12 : seconds <= 2400 ? 15 : 20;
+  // focused frames. Flash gets smaller independent windows so a long summary
+  // cannot swallow several distinct moments; preserve the existing plan for
+  // other models and previously selected fast mode.
+  const targetSeconds = fast ? 125 : compactFlash ? 70 : 95;
+  const durationCeiling = compactFlash
+    ? seconds <= 180 ? 4 : seconds <= 480 ? 8 : seconds <= 900 ? 14
+      : seconds <= 1800 ? 24 : seconds <= 2400 ? 32 : 40
+    : seconds <= 180 ? 3 : seconds <= 480 ? 6 : seconds <= 900 ? 10
+      : seconds <= 1800 ? 12 : seconds <= 2400 ? 15 : 20;
   const chunkCount = Math.min(sheets, durationCeiling, Math.max(1, Math.ceil(seconds / targetSeconds)));
   // Partition by cumulative boundaries. Rounding a single group size up
   // reduced 19 sheets / 15 requested chapters to only 10 actual chapters.
