@@ -150,6 +150,24 @@ function useNativeTiming(f) {
   };
 }
 
+test('uncertain source speaker prompts for manual voice before paying for translation or TTS', async t => {
+  const f = await fixture(t);
+  const original = f.elevenLabs.transcribe;
+  f.elevenLabs.transcribe = async (...args) => {
+    const response = await original(...args);
+    response.speakers = response.speakers.map(row =>
+      row.speaker_id === 'speaker_0' ? { ...row, gender: null } : row);
+    return response;
+  };
+  let failure;
+  try { await f.pipeline(f.input); } catch (error) { failure = error; }
+  assert.equal(failure?.code, 'VOICE_PROFILE_UNVERIFIED');
+  assert.deepEqual(failure.speakerIds.length, 1);
+  assert.equal(f.calls.translate.length, 0);
+  assert.equal(f.calls.synthesize.length, 0);
+  assert.equal(f.calls.mix.length, 0);
+});
+
 test('measured mix progress reaches the client before packaging without inventing a completed mix', async t => {
   const f = await fixture(t); useNativeTiming(f);
   const mix = f.audio.mixAudio;
