@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createTurkishMediaClient } from '../public/turkish-media-client.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
 import { mapSpeakerVoices } from '../lib/turkish-media/voice-mapping.js';
+import { publicMediaError } from '../lib/turkish-media/errors.js';
 import { normalizeScribeTranscript } from '../lib/turkish-media/model.js';
 
 test('unknown source voices cannot silently become male or female without manual choice', () => {
@@ -13,7 +14,10 @@ test('unknown source voices cannot silently become male or female without manual
     { voice_id: 'male', labels: { gender: 'male', language: 'tr' } },
     { voice_id: 'female', labels: { gender: 'female', language: 'tr' } }
   ];
-  assert.throws(() => mapSpeakerVoices(speakers, catalog), { code: 'VOICE_PROFILE_UNVERIFIED' });
+  let failure;
+  try { mapSpeakerVoices(speakers, catalog); } catch (error) { failure = error; }
+  assert.equal(failure?.code, 'VOICE_PROFILE_UNVERIFIED');
+  assert.deepEqual(publicMediaError(failure).speakerIds, ['uncertain']);
   assert.throws(() => mapSpeakerVoices(speakers, catalog, { uncertain: 'male' }),
     { code: 'VOICE_PROFILE_UNVERIFIED' }, 'a previous automatic assignment is not reliable source evidence');
   assert.deepEqual(mapSpeakerVoices(speakers, catalog, {}, { uncertain: 'female' }),
