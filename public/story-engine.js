@@ -7,7 +7,10 @@ const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, Number(va
 const FACT_LEVELS = new Set(['fact', 'inference', 'unknown']);
 
 function cleanText(value, max = 320) {
-  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, max);
+  // Invalid nested model objects and prior serialization artifacts are not story facts.
+  if (value != null && typeof value === 'object') return '';
+  const result = String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, max);
+  return result === '[object Object]' ? '' : result;
 }
 
 function uniqueByText(items = [], max = 24) {
