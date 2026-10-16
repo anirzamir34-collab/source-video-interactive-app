@@ -10,11 +10,11 @@ export function repairableAnalysisGaps(analysis, duration) {
     .sort((a, b) => a.startTime - b.startTime);
 }
 
-// Preserve all declared gaps for reporting, but never spend tokens re-sending
-// intervals explicitly rejected by the provider's content restrictions.
+// A saved-game repair is always a deliberate user action. Return declared missing
+// intervals, including provider-restricted ones, without fabricating coverage.
+// The UI confirms paid retries for previously restricted intervals explicitly.
 export function retryableAnalysisGaps(analysis, duration) {
-  return repairableAnalysisGaps(analysis, duration)
-    .filter(gap => gap.reason !== 'GEMINI_CONTENT_RESTRICTED');
+  return repairableAnalysisGaps(analysis, duration);
 }
 
 export function mergeRepairedAnalysis(analysis, repairs, duration) {
