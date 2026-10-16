@@ -220,7 +220,10 @@ test('earlier cached generated turns recover their original timestamps without r
   const put = f.cache.put;
   f.cache.put = (key, value, options) => put(key, value?.nativeWords ? { model: value.model } : value, options);
   const fit = f.audio.fitDubSegment;
-  f.audio.fitDubSegment = async (...args) => { const value = await fit(...args); delete value.tempo; return value; };
+  // Simulate a legacy alignment with a corrupt speech offset. The first
+  // pass must explicitly reach the alignment-permission failure; the next
+  // attempt should recover native timestamps from paid generation cache.
+  f.audio.fitDubSegment = async (...args) => { const value = await fit(...args); value.sourceOffset = 42; return value; };
   let alignmentCalls = 0;
   f.elevenLabs.align = async () => { alignmentCalls++; throw new MediaError('ELEVENLABS_ALIGNMENT_PERMISSION_MISSING', 'No permission', { status: 401 }); };
   await assert.rejects(f.pipeline(f.input), { code: 'ELEVENLABS_ALIGNMENT_PERMISSION_MISSING' });
