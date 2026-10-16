@@ -1844,7 +1844,11 @@ els.analyzeBtn.addEventListener('click', async () => {
               );
               chunkBody = {
                 ...chunkBody,
-                actions: normalizedChunk.actions,
+                // Mark only successful initial-response evidence; do not treat
+                // arbitrary unchecked imported records as verified.
+                actions: normalizedChunk.actions.map(action => ({ ...action,
+                  classificationReview: action.classificationReview === 'verified'
+                    ? 'verified' : 'first_pass' })),
                 chunkStart,
                 chunkEnd,
                 chunkTimeRebased: normalizedChunk.rebased
@@ -2465,7 +2469,8 @@ function normalizeAnalysis(body) {
       receiverSupport: String(a.receiverSupport || 'unclear'),
       positionConfigurationConfidence: Math.max(0, Math.min(1, Number(a.positionConfigurationConfidence) || 0)),
       positionEvidence: String(a.positionEvidence || ''),
-      classificationReview: a.classificationReview === 'verified' ? 'verified' : 'pending',
+      classificationReview: a.classificationReview === 'verified' ? 'verified'
+        : a.classificationReview === 'first_pass' ? 'first_pass' : 'pending',
       groupScene: a.groupScene === true,
       adultParticipantCount: Math.max(0, Math.floor(Number(a.adultParticipantCount) || 0)),
       participantTrackIds: Array.isArray(a.participantTrackIds)
