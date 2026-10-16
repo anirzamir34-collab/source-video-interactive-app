@@ -1,12 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneSurfaceChoices,
-  distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice } from '../public/choice-routing.js';
+  distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice,
+  isForwardTimelineChoice } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 
 const action = extra => ({ actionId: 'source-a', sourceVerified: true, confidence: 0.95,
   label: 'Observed source action', startTime: 10, endTime: 15, actionType: 'other', ...extra });
+
+test('normal timeline choices never rewind to a partly played earlier clip', () => {
+  const clip = action({ startTime: 10, endTime: 15 });
+  assert.equal(isForwardTimelineChoice(clip, 9), true);
+  assert.equal(isForwardTimelineChoice(clip, 10), true);
+  assert.equal(isForwardTimelineChoice(clip, 12), false);
+  assert.equal(isForwardTimelineChoice(clip, 15), false);
+  assert.equal(isForwardTimelineChoice(action({ startTime: 60, endTime: 65 }), 10), false);
+  assert.equal(isForwardTimelineChoice(action({ startTime: 10, endTime: 10 }), 9), false);
+});
 
 test('scene envelopes and generic motion cannot turn a story action into an opening choice', () => {
   for (const actionType of ['other', 'dialogue', 'story', 'body_transition', 'movement', 'tempo_change', 'camera_transition']) {

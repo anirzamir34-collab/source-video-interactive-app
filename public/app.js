@@ -108,7 +108,8 @@ import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, ve
 import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
   bundleAdjacentSourceCards } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
-  sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices } from './choice-routing.js';
+  sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices,
+  isForwardTimelineChoice } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -6005,7 +6006,7 @@ function futureActions() {
   );
 
   const pool = state.analysis.actions.filter(a =>
-    Number(a.endTime) > state.gameCursorTime + .03 &&
+    isForwardTimelineChoice(a, state.gameCursorTime, { lookAhead: lookAheadSeconds }) &&
     a.startTime <= windowEnd &&
     !state.consumedActionIds.has(a.actionId) &&
     isUnownedTimelineChoice(a)
@@ -6340,7 +6341,7 @@ async function playAction(action) {
   const actionStart = Number(action?.startTime);
   const actionEnd = Number(action?.endTime);
   if (!guard.allowed || !Number.isFinite(actionStart) || !Number.isFinite(actionEnd) ||
-      actionEnd <= state.gameCursorTime + .03 || actionStart > state.gameCursorTime + 45 ||
+      !isForwardTimelineChoice(action, state.gameCursorTime) ||
       state.consumedActionIds.has(action.actionId)) {
     logEngineEvent('TIMELINE_BACKWARD_SEEK_BLOCKED', {
       actionId: action?.actionId || null,

@@ -52,6 +52,18 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   return 'story';
 }
 
+// Normal timeline choices may be offered only while their source start is
+// still ahead of the decision cursor. A lingering tail of an earlier clip
+// must not send playback back to that clip's beginning.
+export function isForwardTimelineChoice(action, cursor, { lookAhead = 45 } = {}) {
+  const start = Number(action?.startTime);
+  const end = Number(action?.endTime);
+  const position = Number(cursor);
+  return Number.isFinite(start) && Number.isFinite(end) && Number.isFinite(position) &&
+    end > start && end > position + 0.03 &&
+    start >= position - 0.05 && start <= position + lookAhead;
+}
+
 export function withChoiceSurface(action, options) {
   return { ...action, choiceSurface: choiceSurfaceForAction(action, options) };
 }
