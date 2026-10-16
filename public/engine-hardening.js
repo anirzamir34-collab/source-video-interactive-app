@@ -425,11 +425,24 @@ export function reviewAndHardenAnalysis(input = {}) {
     const minimum = minimumConfidenceForAction(action);
     const id = String(action.actionId || `action-${action.__index}`);
 
+    // Independent second-pass calls are not mandatory for first-pass visual evidence.
+    // Accept a directly sourced, high-confidence canonical configuration without
+    // calling an external model again. Uncertain classifications still fail closed.
+    const firstPassGrounded = action.sourceVerified === true &&
+      Boolean(knownPositionId(action.positionId)) &&
+      Number(action.confidence) >= SECOND_PASS_POSITION_CONFIDENCE &&
+      Number(action.positionConfigurationConfidence) >= 0.78 &&
+      String(action.positionEvidence || '').trim().length >= 15;
     if (Number(input.schemaVersion) >= 6 && isClassificationCandidate(action) &&
-        (!knownPositionId(action.positionId) || action.classificationReview !== 'verified')) {
+        (!knownPositionId(action.positionId) ||
+          (action.classificationReview !== 'verified' && !firstPassGrounded))) {
       droppedActionIds.push(id);
       issues.push({ severity: 'drop', code: 'UNVERIFIED_CLASSIFICATION', actionId: id });
       continue;
+    }
+
+    if (firstPassGrounded && action.classificationReview !== 'verified') {
+      issues.push({ severity: 'info', code: 'SOURCE_GROUNDED_FIRST_PASS', actionId: id });
     }
 
     if (!interval.valid) {
