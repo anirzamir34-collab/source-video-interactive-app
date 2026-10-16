@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
+import { HarmBlockThreshold, HarmCategory } from '@google/genai';
+import { geminiAnalysisSafetySettings, geminiGenerationConfig } from '../lib/gemini-generation-config.js';
+
+test('visual analysis sets all four configurable harm categories to BLOCK_NONE', () => {
+  assert.deepEqual(geminiAnalysisSafetySettings, [
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+    HarmCategory.HARM_CATEGORY_HARASSMENT,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT
+  ].map(category => ({ category, threshold: HarmBlockThreshold.BLOCK_NONE })));
+});
 
 test('Gemini 3 uses low effort and medium vision without truncating actions', () => {
   for (const model of ['gemini-3.8-flash', 'gemini-3-flash-preview']) {

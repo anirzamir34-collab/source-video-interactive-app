@@ -147,6 +147,7 @@ function serverHandler(generateContent) {
   const end = source.indexOf("\napp.post('/api/external-analyze'", start);
   return vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
     ...choiceRouting, GoogleGenAI: class { models = { generateContent }; },
+    geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction',
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
     storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,

@@ -141,6 +141,7 @@ test('the live server handler reports refused chapters without retrying or split
       resolveGeminiApiKey: () => 'test-only', emptyGeminiUsage: () => ({ requests: 0 }),
       addGeminiUsage: usage => { usage.requests += 1; },
       storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
+      geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction',
       geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,
       analysisModelCandidates, analysisTierFromRequest, storyboardRequestCache: createAnalysisRequestCache(),
       GEMINI_DEFAULT_MODEL: 'gemini-test-model', ANALYSIS_MODEL: 'gemini-3.1-pro-preview',

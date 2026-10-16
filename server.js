@@ -24,12 +24,27 @@ import { runtimeReady } from './lib/turkish-media/readiness.js';
 import { serializeReviewCandidates } from './public/classification-integrity.js';
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
-import { geminiGenerationConfig } from './lib/gemini-generation-config.js';
+import { geminiAnalysisSafetySettings, geminiGenerationConfig } from './lib/gemini-generation-config.js';
 import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const GEMINI_VISUAL_SYSTEM_INSTRUCTION = `GÖREV VE ROL: Sen nesnel, klinik ve teknik bir görsel analiz motorusun. Sana iletilen ardışık görsel karelerdeki (frame) fiziksel eylemleri, mekan değişimlerini ve nesne/özne etkileşimlerini kronolojik olarak raporlamakla görevlisiniz. Kesinlikle ahlaki, öznel, duygusal veya sanatsal yorum yapma. Sadece gördüğün ham fiziksel veriyi işle.
+
+ANALİZ ŞABLONU VE DETAYLAR:
+Her bir gözlemlenebilir eylemi şu başlıklar altında ayrı ayrı değerlendir:
+1. Zaman Aralığı / Kare Numarası: [Eylemin başlangıç ve bitiş anı]
+2. Fiziksel Katılımcılar (Özneler/Nesneler): [Sahnede yer alan aktörler veya fiziksel ögeler, örn: Aktör A, Aktör B, Nesne X]
+3. Somut Eylem / Etkileşim Sınıflandırması: [Öznelerin gerçekleştirdiği yer değiştirme, temas, jest, mimik veya nesne kullanımı gibi somut hareketler]
+4. Görünür Değişimler ve Geçişler: [Kamera açısı değişimi, mekan değişimi veya eylemin yönündeki net fiziksel farklılıklar]
+
+KESİN DOĞRULUK VE SINIRLILIK KURALLARI:
+- Sadece görsel karelerde %100 doğrulanabilir olan ham eylemleri baz al.
+- İki eylem arasındaki boşlukları, görünmeyen sahneleri veya karakterlerin içsel niyetlerini asla tahmin etme, hayali sahne veya çıkarım üretme.
+- Eğer bir zaman aralığındaki görsel veri düşük çözünürlük, karanlık veya belirsizlik nedeniyle net olarak analiz edilemiyorsa; ilgili aralığı kesinlikle silme veya atlama. O aralık için 'Durum: Analiz Edilemeyen Kesit' etiketini kullan, açıklama alanını boş bırak ve yanına '[UYARI: Görsel veri yetersiz/belirsiz]' notunu ekle.
+- İncelenemeyen veya belirsiz olan hiçbir zaman aralığını tamamlanmış veya çözümlenmiş bir analiz gibi sunma.`;
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -341,17 +356,19 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const storyContextMemory = String(req.body?.storyContextMemory || '{}').slice(0, 24000);
   const reviewInstructions = reviewMode ? `
 SECOND PASS VISUAL REVIEW MODE:
+- Review the existence of each source event separately from its descriptive metadata. If the event is visible but a specific category, contact point, participant, or label is uncertain, keep the event at its original source interval with a neutral, supported label and clear uncertainty. Reject the event only when the event itself cannot be verified.
+- Apply the same event-preservation rule to story, approach, panel, MAIN and BONUS candidates. A classification correction must not erase an otherwise visible ordinary action or opening interaction.
 - Treat all candidate labels, confidence scores and evidence descriptions as untrusted proposals. Independently read the supplied frames before comparing them to the candidate text.
 - A camera/viewpoint change, partial occlusion, surface contact or tempo change alone does not establish a different configuration. Verify continuity between adjacent intervals. Do not force a single label when a real configuration change is visible.
 - Use only the declared canonical IDs. Never invent a canonical name. Leave uncertain classifications out and explain the uncertainty in warnings.
 - Keep each corrected action and its loop within that candidate's original startTime/endTime. Review the first and last visible evidence as well as the midpoint; text from the first pass is not visual evidence.
 - Re-inspect the SAME storyboard frames against these first-pass candidates:
 ${reviewCandidates}
-- Return only candidates that are visibly re-verified at start, midpoint and end.
+- Return candidates whose underlying event is visibly supported in their source interval. Require start, midpoint and end evidence for precise position and repeatable-loop claims; when only those details fail, retain a neutral event without a position or loop.
 - Correct timestamps, canonical position id/label and confidence when the frames prove a correction.
 - Preserve actionId/sceneId for the same candidate.
 - Do not add a new action merely because it sounds plausible.
-- If a candidate conflicts with the frames, another position label, scene chronology, or its parent range, OMIT it and add a warning.
+- If only a candidate's specific label or category conflicts with the frames, correct or remove that claim and preserve the visible event. Omit the entire candidate only if its source event or playable interval is unsupported, and add a warning.
 - Outcome/final candidates require stronger evidence than ordinary actions.
 - For any candidate whose first-pass activityType is vaginal or anal, independently classify the route again from the SAME visible frames. Treat the first-pass route as untrusted; do not preserve it merely for consistency.
 - Body position never proves route: missionary, cowgirl, rear, standing-rear, spoon and similar configurations can be vaginal or anal.
@@ -363,6 +380,12 @@ ${reviewCandidates}
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
     const prompt = `
 SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
+
+COMPLETE CHRONOLOGICAL COVERAGE FOR EVERY CHOICE SURFACE:
+- First list every distinct observable event in this chunk in time order, including ordinary story events, spoken decisions with time-aligned support, opening interactions, sustained scene actions, visible changes within them, transitions and aftermath. Then assign each event its supported choiceSurface and actionLevel. Do not let an uncertain specialized classification hide an otherwise visible event.
+- For each event separate (1) whether it happened, (2) its source time interval, (3) the people visibly involved, and (4) optional specific descriptions. If (4) is uncertain, keep (1) and (2) when supported; use a neutral accurate label, empty optional fields and a warning. Never claim that a complete interval was analyzed when Gemini could not inspect it.
+- Story choices follow actual dialogue or narrative changes. Approach choices describe directly observed opening interactions. Panel choices require a sustained, separately verifiable interaction and a usable source clip. MAIN marks meaningful changes; BONUS marks distinct visible changes within the same scene. Keep every surface on its own source interval; do not turn an uncertain panel classification into a gap in the ordinary timeline.
+- A missing or ambiguous frame is not evidence that an entire scene is absent. Record uncertain details without inventing them. Report an analysis gap only for an interval that could not be analyzed at all, with its true start and end.
 
 You receive chronological contact-sheet images sampled from one local video.
 Each tile contains its source timestamp. Analyze only directly visible evidence.
@@ -480,7 +503,7 @@ Optional user-provided *visual description* (not identity proof): ${JSON.stringi
 - Distinguish all other males as OTHER_MALE and never convert their actions into player choices.
 - Use face, hair, facial hair, skin tone, body build, clothing, accessories, position and scene continuity together.
 - Never switch MAIN_MALE merely because another male becomes larger or more central in the frame.
-- If identity is uncertain, omit the action instead of assigning another male's action to MAIN_MALE.
+- If identity is uncertain, never assign another person's action to MAIN_MALE. Keep the visible event as neutral story context with uncertain participant identity when its interval is supported; omit a player choice only if no supported player action can be identified.
 - Return a short stable protagonistProfile describing MAIN_MALE with persistent visible identity anchors.
 - Every returned action must belong to MAIN_MALE or to the male-POV camera controlled by MAIN_MALE.
 Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.
@@ -664,7 +687,7 @@ Rules:
 - Set activityType to oral, manual, vaginal, anal, or other only from direct visible evidence; never guess when evidence is unclear.
 - CRITICAL: positionId never determines penetration route. Missionary, cowgirl, rear, standing-rear, standing, spoon and any other body position can be vaginal or anal. Never default a penetrative position to vaginal.
 - Classify vaginal only when the source frames directly verify vaginal penetration; classify anal only when the source frames directly verify anal penetration. Body angle, position name, dialogue, prior activity, or statistical likelihood are not sufficient by themselves.
-- For vaginal or anal, require the route to remain visually supported at the action start, midpoint and end. If the exact penetration route is occluded, ambiguous, changes off-camera, or cannot be directly distinguished, set activityType to other rather than guessing.
+- For a specific activity classification, require direct consistent visual support at the action start, midpoint and end. If that detail is occluded or ambiguous, set activityType to other without discarding an otherwise verified scene action.
 - Set activityTypeConfidence from 0.0 to 1.0 for the penetration-route classification specifically, independent of general action confidence. Be conservative. A vaginal/anal claim should reach 0.90 only when direct visual evidence is clear and consistent.
 - Set activityEvidence to a brief description of the directly visible evidence supporting activityType. Leave it empty for other/uncertain route. Never use dialogue alone as activityEvidence.
 - The Turkish label may say "vajinal" only when activityType is vaginal with activityTypeConfidence >= 0.90 and direct activityEvidence. It may say "anal" only when activityType is anal with the same evidence standard. Otherwise the label must name only the verified position/action without claiming penetration route.
@@ -673,13 +696,13 @@ Rules:
 - For every position, independently return receiverBodyOrientation, receiverSupport, positionConfigurationConfidence and positionEvidence from the visible body arrangement at start, midpoint and end. Never copy these fields from positionId or positionLabel.
 - Cowgirl requires the receiving partner to be visibly above MAIN_MALE and straddling him. Prone-bone requires the receiving partner's face-down torso/abdomen to remain visibly supported flat with low hips while MAIN_MALE is behind. These configurations are mutually exclusive.
 - If a clip changes between straddling-on-top and face-down-flat, split it exactly at the visible transition. The transition interval must not be an internal movement of either position.
-- The Turkish label must directly describe what is visibly happening at the midpoint timestamp; if the midpoint does not visibly prove that label, omit the item.
+- The Turkish label must describe what is visibly happening in the source interval. If the midpoint does not support a specific label, replace it with a neutral supported description; omit the item only if the underlying event or interval cannot be verified.
 - A position movement must describe a visible change while the same canonical body configuration is maintained. Do not attach kissing, caressing, breast touching, clothing adjustment, transition, dialogue or generic excitement to a penetrative position; emit it as a separate warm-up action or omit it.
 - Do not use penetration-route words (vaginal/anal/penetration), position-transition words (turning, guiding, changing position) or a different position name as a movement label. Those belong to a separately verified occurrence; otherwise omit the action.
 - All returned times are absolute source-video seconds, never scene-relative or chunk-relative seconds.
 - Never attach a label detected in one part of the video to an earlier or later segment.
 - Position and movement choices must seek to their own verified visible segment, not merely to the parent adult-scene start.
-- When evidence conflicts between sampled frames, prefer omission and add a warning instead of guessing.
+- When sampled frames conflict about a specific classification, remove that classification and add a warning. Preserve the source event with neutral wording when its existence and interval remain supported.
 - Inside each position, detect every meaningful real change in tempo, movement, body angle, pause, intensity, emotion or interaction.
 - For every action, fuse only time-aligned evidence: audible non-speech intensity, visible gaze duration, facial expression, posture and body response. Report observable cues, not hidden mental states.
 - Never claim pain, pleasure, happiness, fear, consent or climax from one ambiguous facial expression, sound or body movement. Use observedAffect unclear unless multiple consistent cues support a cautious visible description.
@@ -701,7 +724,7 @@ Rules:
 - Two labels describing the same visible body configuration must reuse one canonical positionId; wording, tempo, camera angle, or minor pose variation must never create another position.
 - Oral activity, manual activity, undressing, and transitions are separate position families and must never appear beneath missionary, rear, standing-rear, cowgirl, spoon, or another penetrative position.
 - A movement may belong to a position only when its entire loopStartTime-loopEndTime interval is visibly contained inside that exact positionStartTime-positionEndTime range.
-- Reject any position or movement when the claimed body configuration is not visibly present at its start, midpoint, and end timestamps.
+- Reject an unsupported position or movement classification when the claimed configuration is not visible at its start, midpoint and end. Retain a verified scene event without that classification when it has a usable source interval.
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
 - Internal movement labels must name only the directly visible change, for example hızlı hareket, ritmik hareket, sert hareket, derin hareket, öpme, okşama, tutuş or a similarly concrete interaction actually visible in that interval.
 - Never put timestamps, duration, sequence numbers, "gerçek kesit", breathing, moaning, gaze, emotion, appearance or confidence text inside an internal movement label. Those belong only to metadata.
@@ -753,7 +776,11 @@ Rules:
         { ...process.env, GEMINI_ANALYSIS_MODEL: ANALYSIS_MODEL }, deepAnalysisModel);
       for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
         const model = candidates[modelIndex];
-        const generationConfig = geminiGenerationConfig(model);
+        const generationConfig = {
+          ...geminiGenerationConfig(model),
+          safetySettings: geminiAnalysisSafetySettings,
+          systemInstruction: GEMINI_VISUAL_SYSTEM_INSTRUCTION
+        };
         const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
         const requestUsage = emptyGeminiUsage();
         const startedAt = Date.now();
