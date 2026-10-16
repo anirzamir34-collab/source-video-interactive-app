@@ -28,8 +28,8 @@ const definitions = [
   ['gelini', 'gelin', 'daughter-in-law'], ['damadı', 'damat', 'son-in-law'],
   ['eniştesi', 'enişte'], ['yengesi', 'yenge'], ['kayınbiraderi', 'kayınbirader'],
   ['baldızı', 'baldız'], ['görümcesi', 'görümce'], ['eltisi', 'elti'], ['bacanağı', 'bacanak'],
-  ['üvey annesi', 'üvey anne', 'stepmother', 'step-mother'],
-  ['üvey babası', 'üvey baba', 'stepfather', 'step-father'],
+  ['üvey annesi', 'üvey anne', 'stepmother', 'step-mother', 'stepmom', 'step-mom'],
+  ['üvey babası', 'üvey baba', 'stepfather', 'step-father', 'stepdad', 'step-dad'],
   ['üvey kızı', 'üvey kız', 'stepdaughter', 'step-daughter'],
   ['üvey oğlu', 'üvey oğul', 'stepson', 'step-son'],
   ['üvey çocuğu', 'üvey çocuk', 'stepchild'],
@@ -52,6 +52,7 @@ export function relationshipRoleNoun(value) {
 const inverse = new Map([
   ...['annesi', 'babası', 'ebeveyni'].map(role => [role, 'çocuğu']),
   ...['kızı', 'oğlu', 'çocuğu'].map(role => [role, 'ebeveyni']),
+  ...['üvey annesi', 'üvey babası'].map(role => [role, 'üvey çocuğu']),
   ...['dedesi', 'ninesi', 'büyükannesi', 'anneannesi', 'babaannesi'].map(role => [role, 'torunu']),
   ...['ablası', 'ağabeyi', 'erkek kardeşi', 'kız kardeşi'].map(role => [role, 'kardeşi']),
   ...['amcası', 'dayısı', 'halası', 'teyzesi'].map(role => [role, 'yeğeni']),
