@@ -34,7 +34,7 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
       timestamps: Array.from({ length: total * 12 }, (_, index) => index),
       duration: total * 12, interval: 1
     },
-    state: { dialogue: null }, session, modes: { quality: 'ultra' },
+    state: { dialogue: null }, session, modes: { quality: 'ultra', reviewMode: review ? 'manual' : 'off' },
     requestedProtagonist: '', // Supplied by the real analyzeVideo() closure.
     els: { analysisTitle: {}, analysisState: {}, analysisOutput: {} },
     protagonistProfile: '', storyContextMemory: {}, failureBody: null, failedChunk: null, body: null, response: null,
