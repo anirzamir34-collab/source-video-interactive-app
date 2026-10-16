@@ -536,7 +536,7 @@ test('a short answer borrows only verified silence without retranslation or resy
   assert.equal(result.dubSegments[1].start, 3.2);
 });
 
-test('unchanged overlong text is fitted adaptively without regeneration without failing the video', async t => {
+test('overlong dialogue never produces an unintelligible 3x–5x dub', async t => {
   const f = await fixture(t);
   const fit = f.audio.fitDubSegment;
   f.audio.fitDubSegment = async (file, options) => {
@@ -544,12 +544,10 @@ test('unchanged overlong text is fitted adaptively without regeneration without 
     const result = await fit(file, options);
     return { ...result, tempo: 8 / options.targetDuration };
   };
-  const result = await f.pipeline(f.input);
-  assert.equal(result.dubSegments.length, 2);
-  assert.equal(result.qualityReport.missingDubCount, 0);
-  assert.equal(result.qualityReport.adaptiveTempoCount, 2);
-  assert.equal(f.calls.translate.length, 1, 'no second translation');
-  assert.equal(f.calls.synthesize.length, 1, 'no repeated regeneration');
+  await assert.rejects(f.pipeline(f.input), { code: 'DUB_FIT_FAILED' });
+  assert.equal(f.calls.mix.length, 0, 'no corrupt final audio should be published');
+  assert.equal(f.calls.translate.length, 1, 'source translation stays intact');
+  assert.equal(f.calls.synthesize.length, 1, 'no repeated generation');
   assert.equal(f.limiter.activeCount, 0); assert.equal(f.limiter.pendingCount, 0);
 });
 
