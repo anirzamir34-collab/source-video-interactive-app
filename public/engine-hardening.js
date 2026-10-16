@@ -429,6 +429,7 @@ export function reviewAndHardenAnalysis(input = {}) {
     // Accept a directly sourced, high-confidence canonical configuration without
     // calling an external model again. Uncertain classifications still fail closed.
     const firstPassGrounded = action.sourceVerified === true &&
+      action.classificationReview === 'first_pass' &&
       Boolean(knownPositionId(action.positionId)) &&
       Number(action.confidence) >= SECOND_PASS_POSITION_CONFIDENCE &&
       Number(action.positionConfigurationConfidence) >= 0.78 &&
