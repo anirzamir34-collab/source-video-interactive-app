@@ -69,3 +69,19 @@ test('saved-game repair retains the selected Gemini tier and allows explicit sav
   assert.match(app, /form\.append\('analysisTier', previous\.analysisTier\)/);
   assert.match(app, /form\.append\('deepAnalysisModel', previous\.deepAnalysisModel\)/);
 });
+
+test('a downstream Turkish-media error preserves the completed visual game and its saved-game path', () => {
+  const beginning = app.indexOf('let sourceAudioOnly = false;');
+  const ending = app.indexOf("els.analysisState.textContent = body.partial ? 'PARTIAL_TIMELINE_READY'", beginning);
+  assert.ok(beginning > 0 && ending > beginning);
+  const media = app.slice(beginning, ending);
+  assert.match(media, /if \(error\?\.name === 'AbortError'\) throw error/);
+  assert.match(media, /sourceAudioOnly = true/);
+  assert.match(media, /session\.lastMediaError = \{ code: errorCode, message: errorMessage \}/);
+  assert.match(media, /session\.mediaManifest = null/);
+  assert.match(media, /mediaClient\.reset\(\{ cancelJob: false \}\)/);
+  const following = app.slice(ending, ending + 3500);
+  assert.match(following, /initializeInteractive\(normalized\)/);
+  assert.match(following, /state\.savedGameReady = true/);
+  assert.match(following, /savedGames\?\.saveCurrent\(true\)/);
+});
