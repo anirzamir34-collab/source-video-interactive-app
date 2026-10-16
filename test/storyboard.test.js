@@ -18,6 +18,15 @@ test('analysis chunks scale with video length and stay capped at twenty', () => 
   assert.ok(adaptiveAnalysisChunkPlan(40, 773, 'ultra').chunkCount <= 10);
 });
 
+test('Argon gives a 29-minute video finer independent analysis windows without dropping samples', () => {
+  const duration = 1729.548;
+  const plan = adaptiveAnalysisChunkPlan(40, duration, 'ultra', 'gemini-4-argon');
+  assert.equal(plan.chunkCount, 22);
+  assert.deepEqual(plan.chunks.flatMap(chunk =>
+    Array.from({ length: chunk.sheetCount }, (_, index) => chunk.firstSheet + index)),
+    Array.from({ length: 40 }, (_, index) => index));
+});
+
 test('a fifty-minute video no longer collapses nineteen sheets into ten broad requests', () => {
   const plan = adaptiveAnalysisChunkPlan(19, 3000, 'ultra');
   assert.equal(plan.chunkCount, 19);
