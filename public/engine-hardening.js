@@ -1,7 +1,7 @@
 import { hasDeclaredPartialCoverage } from './analysis-recovery.js';
 import { clipRange, sourceRangeForClip } from './sequence-integrity.js';
 import { mergeStoryContexts } from './story-engine.js';
-import { isClassificationCandidate, isVerifiedReviewWithinSource, knownPositionId } from './classification-integrity.js';
+import { isClassificationCandidate, isVerifiedReviewWithinSource, knownPositionId, verifiedBodyConfigurationFamily } from './classification-integrity.js';
 import { withChoiceSurface } from './choice-routing.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
@@ -279,6 +279,12 @@ export function isGroundedFirstPassClassification(action = {}) {
       Number(action.positionConfigurationConfidence) < 0.78) return false;
   const start = Number(action.startTime), end = Number(action.endTime);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 5) return false;
+  const observed = verifiedBodyConfigurationFamily(action);
+  if (observed && !['oral', 'manual'].includes(action.positionId) && observed !== action.positionId) return false;
+  if (action.partnerSwitch === true || String(action.actionType) === 'partner_transition') return false;
+  if (action.groupScene === true && (!String(action.partnerTrackId || '').trim() ||
+      !String(action.partnerEvidence || '').trim() ||
+      (Array.isArray(action.participantTrackIds) ? action.participantTrackIds.length : 0) < 3)) return false;
   return true;
 }
 
