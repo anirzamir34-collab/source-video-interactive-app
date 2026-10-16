@@ -4347,11 +4347,10 @@ function renderAdultApproachChoices(scene, later = false) {
       floor: projectedFloor,
       ceiling: Math.min(later || !Number.isFinite(firstCoreTime) ? Infinity : firstCoreTime,
         dialogueOnly || later ? decisionWindowEnd : boundedOpeningEnd),
-      replay: !dialogueOnly && !later
+      replay: false
     });
   const candidates = !dialogueOnly && !later
-    ? [...surfacePool].sort((a, b) => Number(a.playCount) - Number(b.playCount) ||
-        Number(a.startTime) - Number(b.startTime)).slice(0, 5)
+    ? surfacePool.slice(0, 5)
     : dialogueOnly ? surfacePool.slice(0, 5)
     : selectVerifiedChoiceQueue(surfacePool, {
     timelineFloor: projectedFloor,
@@ -4418,8 +4417,7 @@ function renderAdultApproachChoices(scene, later = false) {
     target.appendChild(button);
   });
 
-  // Replay cards can remain visible after the last opening clip. They must
-  // not hide the control that lets natural playback reach the verified core.
+  // Once the last source card has passed, natural playback can reach the next chapter.
   const hasForwardChoice = candidates.some(choice => Number(choice.endTime) > projectedFloor + 0.05);
   if (!hasForwardChoice) {
     const unlocked = flow >= 99.9 ? unlockNextAdultPositionFromLust() : null;
@@ -4916,9 +4914,17 @@ function applyAdultPreludeProgress(item) {
   const runtime = genericInteractionSnapshot();
   if (runtime.progressBudget) {
     if (!runtime.progressBudgetConsumed) {
+      const previousProgress = Number(state.femaleSceneProgress) || 0;
       state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
         choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
       if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
+      else if (state.femaleSceneProgress <= previousProgress + 0.001) {
+        // A skipped earlier interval may cap the coverage budget. A completed
+        // forward clip still earns its own intensity-weighted, discounted credit.
+        addFemaleLust(delta.female * currentWarmupLustScale());
+        state.interactionRuntime = { ...state.interactionRuntime,
+          progressionValue: Math.max(state.interactionRuntime.progressionValue, currentAdultFlow()) };
+      }
     } else if (!state.interactionMeterNeedsReset) {
       // The opening budget was already spent by actual playback. Never award
       // this same completed clip a second time while the next stage resets.
@@ -4932,6 +4938,7 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scenePreludeChoices(scene).find(entry => entry.id === preludeId);
   if (!item || item.sourceVerified !== true || !els.video || state.adultOutcomePhase !== 'idle') return;
+  if (Number(item.endTime) <= Number(state.adultTimelineFloor || 0) + 0.05) return;
   if (state.adultLoopSeeking && state.activeAdultPreludeId === preludeId) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
@@ -4982,12 +4989,18 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
   const runtime = genericInteractionSnapshot();
   if (isWarmupPosition(position) && runtime.progressBudget && movement) {
     if (!runtime.progressBudgetConsumed) {
+      const previousProgress = Number(state.femaleSceneProgress) || 0;
       state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
         choiceId: movement.id, startTime: Number(movement.loopStartTime),
         endTime: Number(movement.loopEndTime), playing: true,
         sourcePositionId: movement.sourcePositionId,
         sourceOccurrenceId: positionOccurrenceForMovement(position, movement)?.id || '' });
       if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
+      else if (state.femaleSceneProgress <= previousProgress + 0.001) {
+        addFemaleLust(delta.female * currentWarmupLustScale());
+        state.interactionRuntime = { ...state.interactionRuntime,
+          progressionValue: Math.max(state.interactionRuntime.progressionValue, currentAdultFlow()) };
+      }
     } else if (!state.interactionMeterNeedsReset) {
       addFemaleLust(delta.female * currentWarmupLustScale());
     }

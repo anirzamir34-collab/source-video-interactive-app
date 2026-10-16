@@ -418,7 +418,7 @@ test('an empty introduction menu leaves a visible source playback control', () =
   assert.equal(f.els.video.paused, true);
 });
 
-test('past opening cards leave a continue control for the next verified chapter', async () => {
+test('past opening cards retire and leave a continue control for the next verified chapter', async () => {
   const f = runtimeFixture();
   f.state.adultScene = { id: 'late-opening', startTime: 189, endTime: 410,
     positions: [chapter('main', 378)], dialogue: [], outcomes: [], foreplay: [
@@ -430,7 +430,7 @@ test('past opening cards leave a continue control for the next verified chapter'
   f.els.video.time = 374.7;
   f.els.video.pause();
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'last-opening'));
+  assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId === 'last-opening'), false);
   const continueButton = f.els.approachChoices.children.find(node => node.textContent === 'Videoya devam et');
   assert.ok(continueButton, 'replay cards cannot hide natural source continuation');
   continueButton.dispatchEvent(new Event('click'));
@@ -1222,7 +1222,7 @@ test('active introduction prepares upcoming choices without dropping the current
   assert.equal(f.els.video.playCalls, 0);
 });
 
-test('earlier verified opening choices remain available and seek back to their own start', async () => {
+test('earlier verified opening choices retire and cannot rewind through a stale selection', async () => {
   const f = runtimeFixture();
   f.state.adultScene.foreplay = [
     { id: 'opening-a', label: 'Step A', sourceVerified: true, startTime: 10, endTime: 20 },
@@ -1232,11 +1232,28 @@ test('earlier verified opening choices remain available and seek back to their o
   f.state.adultTimelineFloor = 30;
   f.els.video.time = 30;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['opening-a', 'opening-b']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), []);
   f.playAdultPrelude('opening-a');
   await flush();
-  assert.equal(f.els.video.currentTime, 10);
-  assert.equal(f.state.activeAdultPreludeId, 'opening-a');
+  assert.equal(f.els.video.currentTime, 30);
+  assert.equal(f.state.activeAdultPreludeId, null);
+});
+
+test('a completed later source choice still progresses when skipped intervals cap coverage', () => {
+  const f = runtimeFixture();
+  const later = { id: 'later-step', label: 'Later step', sourceVerified: true,
+    startTime: 30, endTime: 40, femaleProgressRate: 1.4 };
+  f.state.adultScene.positions = [chapter('main', 60)];
+  f.state.adultScene.foreplay = [
+    { id: 'earlier-step', label: 'Earlier step', sourceVerified: true,
+      startTime: 0, endTime: 10 }, later
+  ];
+  f.genericInteractionSnapshot();
+  f.state.femaleSceneProgress = 34.5;
+  f.state.interactionRuntime = { ...f.state.interactionRuntime, progressionValue: f.currentAdultFlow() };
+  f.applyAdultPreludeProgress(later);
+  assert.ok(f.state.adultSexUnlocked || f.state.femaleSceneProgress > 34.5,
+    'a completed source clip cannot leave a capped meter frozen');
 });
 
 test('unverified groups and clips cannot be revealed or explicitly selected', async () => {
