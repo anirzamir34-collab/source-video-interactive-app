@@ -12,9 +12,12 @@ export function repairableAnalysisGaps(analysis, duration) {
 
 // Preserve all declared gaps for reporting, but never spend tokens re-sending
 // intervals explicitly rejected by the provider's content restrictions.
-export function retryableAnalysisGaps(analysis, duration) {
+export function retryableAnalysisGaps(analysis, duration, { includeRestricted = false } = {}) {
+  // Provider-restricted chapters are never retried automatically. A user may
+  // explicitly request a standard retry from a saved game, without changing
+  // the original content or weakening provider refusal handling.
   return repairableAnalysisGaps(analysis, duration)
-    .filter(gap => gap.reason !== 'GEMINI_CONTENT_RESTRICTED');
+    .filter(gap => includeRestricted || gap.reason !== 'GEMINI_CONTENT_RESTRICTED');
 }
 
 export function mergeRepairedAnalysis(analysis, repairs, duration) {
