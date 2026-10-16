@@ -90,7 +90,7 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
       detail.textContent = `${durationText(row.duration)} · ${sizeText(row.totalBytes)} · ${row.sourceKind === 'url' ? 'URL videosu' : 'Cihaz videosu'}${savedGameHasDub(row) ? ' · Dublaj kayıtlı' : ''}${gapCount ? ` · ${gapCount} eksik aralık · kullanıcı isteğiyle yeniden dene` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'saved-game-actions';
-      for (const [label, action] of [['Baştan oyna', 'play'], ...(repairableCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
+      for (const [label, action] of [['Baştan oyna', 'play'], ...(gapCount ? [['Eksik sahneleri göster', 'inspect']] : []), ...(repairableCount && repairGame ? [['Eksik bölümleri analiz et', 'repair']] : []), ['Yedek indir', 'export'], ['Sil', 'delete']]) {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
@@ -118,6 +118,10 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
             message(analysis.analysisGaps?.length
               ? `${analysis.analysisGaps.length} aralık hâlâ eksik. Başarılı sonuçlar aynı kayda eklendi.`
               : 'Eksik aralıklar tamamlandı ve aynı kayda eklendi.');
+          } else if (action === 'inspect') {
+            await openGame(await store.load(row.id));
+            root.ownerDocument?.getElementById('analysisReview')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+            message('Eksik aralıkları ve kaynak sahnelerini analiz kartından inceleyebilirsin.');
           } else if (action === 'play') {
             message('Kayıtlı video açılıyor…');
             await openGame(await store.load(row.id));
