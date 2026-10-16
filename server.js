@@ -27,6 +27,7 @@ import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis
 import { geminiAnalysisSafetySettings, geminiGenerationConfig } from './lib/gemini-generation-config.js';
 import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
+import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -354,6 +355,14 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   try { reviewCandidates = serializeReviewCandidates(req.body?.reviewCandidates || '[]'); }
   catch { return res.status(400).json({ available: false, retryable: false, reason: 'INVALID_REVIEW_CANDIDATES', message: 'Doğrulama adayları okunamadı; geçerli analiz verisi gerekli.' }); }
   const storyContextMemory = String(req.body?.storyContextMemory || '{}').slice(0, 24000);
+  const isFamilyVideo = hasFamilyOrSpouseContext(dialogueContext, storyContextMemory);
+  const conditionalRelationshipInstructions = isFamilyVideo ? `
+FAMILY/SPOUSE CONTEXT — EXACT PARTICIPANT PAIR VALIDATION:
+- Keep every FACT relationship bound to its exact from/to participant IDs and evidence. A parent of a third person may independently be the spouse of another adult; never transfer a parent/child/sibling role to the spouse pair.
+- When original, time-aligned evidence establishes that the two participating adults are spouses (eşi/karısı/kocası), retain that exact spouse FACT in top-level storyContext.relationships, even when the same family has children or other relatives. Do not turn this fact into a different character identity.
+- For adult scenes, keep relationshipContext empty and use the proven participant name/ID in raw action wording. The app may separately render the verified spouse role for this exact pair. Never use other kinship roles for intimate choices or infer a spouse bond from appearance or proximity.
+- If subjectTrackId, primaryCharacterId or partnerTrackId conflict, preserve the independently observable event and time interval with a neutral label; leave uncertain identities unresolved rather than dropping the event or assigning it to a family member.
+` : '';
   const reviewInstructions = reviewMode ? `
 SECOND PASS VISUAL REVIEW MODE:
 - Review the existence of each source event separately from its descriptive metadata. If the event is visible but a specific category, contact point, participant, or label is uncertain, keep the event at its original source interval with a neutral, supported label and clear uncertainty. Reject the event only when the event itself cannot be verified.
@@ -413,6 +422,7 @@ Detected visual scene boundaries for this chunk: ${sceneBoundaries}
 - Prefer starting or ending an action near a boundary only when the adjacent frames visibly confirm the change.
 Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
 ${reviewInstructions}
+${conditionalRelationshipInstructions}
 DIALOGUE AND SCENE CONTEXT:
 Quality mode: ${qualityMode}
 Time-aligned dialogue segments:

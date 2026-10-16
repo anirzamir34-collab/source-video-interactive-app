@@ -72,6 +72,25 @@ const adultSocialRoles = new Set([
   'arkadaşı', 'dostu', 'yakın arkadaşı', 'eski eşi', 'eski sevgilisi'
 ]);
 
+// Vocabulary classification only. Verification remains bound to exact FACT
+// relationship edges and the two observed participant tracks.
+export function isSpouseRelationshipRole(value) {
+  return ['eşi', 'karısı', 'kocası'].includes(relationshipRoleNoun(value));
+}
+
+// Trigger extra *evidence* guidance only for contextual kinship/spouse cues;
+// a generic "kız" (girl) or a substring inside an unrelated word is not proof
+// that the scene contains a family relationship.
+const familyOrSpouseCue = /(?:^|[^\p{L}])(?:anne(?:m|n|si|sini|sinin|ye|yle|den|nin)?|baba(?:m|n|sı|sını|sının|ya|yla|dan|nın)?|kız(?:ı|ım|ın|ının|ları)|oğul|oğlu[\p{L}]{0,8}|üvey|teyze(?:si)?|amca(?:sı)?|dayı(?:sı)?|hala(?:sı)?|kardeş(?:i|im|in)?|yeğen(?:i)?|akraba(?:sı)?|aile(?:si)?|eş(?:i|im|in|ler|leri)|karı(?:sı|m)?|koca(?:sı|m)?|wife|husband|spouse|mother|father|daughter|son)(?=$|[^\p{L}])/u;
+
+export function hasFamilyOrSpouseContext(...contexts) {
+  return contexts.some(context => {
+    if (context == null) return false;
+    const value = typeof context === 'string' ? context : JSON.stringify(context);
+    return familyOrSpouseCue.test(value.toLocaleLowerCase('tr-TR'));
+  });
+}
+
 export function isAdultSocialRelationshipRole(value) {
   return adultSocialRoles.has(relationshipRoleNoun(value));
 }

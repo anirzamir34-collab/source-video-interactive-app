@@ -1,5 +1,5 @@
 import { resolveLeadingCharacterReference, verifiedRoleNoun, relationshipChoiceLabel } from './character-reference.js';
-import { inverseRelationshipRole, isAdultSocialRelationshipRole, isOrdinaryRelationshipAction } from './relationship-roles.js';
+import { inverseRelationshipRole, isAdultSocialRelationshipRole, isOrdinaryRelationshipAction, isSpouseRelationshipRole } from './relationship-roles.js';
 // Names come from source evidence and explicit tracks, never appearance or a relationship guess.
 const text = value => String(value || '').trim().replace(/\s+/g, ' ');
 const nameKey = value => text(value).toLocaleLowerCase('tr-TR');
@@ -141,15 +141,21 @@ function verifiedRelationship(context, subject, target) {
     return canonicalCharacterId(from) === canonicalCharacterId(subject) &&
       canonicalCharacterId(to) === canonicalCharacterId(target);
   });
-  const matches = direct.length ? direct : supported.flatMap(item => {
+  const reverse = supported.flatMap(item => {
     if (canonicalCharacterId(lookup(item.to)) !== canonicalCharacterId(subject) ||
         canonicalCharacterId(lookup(item.from)) !== canonicalCharacterId(target)) return [];
     const relation = inverseRelationshipRole(item.relation);
     return relation ? [{ ...item, from: item.to, to: item.from, relation }] : [];
   });
-  // Different chunks can record the same fact using an ID or its track alias.
-  // Repeated evidence is not a conflict; different roles still are.
-  if (new Set(matches.map(item => verifiedRoleNoun(item.relation) || nameKey(item.relation))).size !== 1) return null;
+  const matches = direct.length ? direct : reverse;
+  // Equivalent spouse terms ("eşi" / "karısı" / "kocası") may describe
+  // the same FACT-level pair without becoming an identity conflict. Unlike
+  // an unrelated family role, they never establish a different addressee.
+  const spouseOnly = matches.length > 0 && matches.every(item => isSpouseRelationshipRole(item.relation));
+  if (!spouseOnly && new Set(matches.map(item => verifiedRoleNoun(item.relation) || nameKey(item.relation))).size !== 1) return null;
+  // Do not silently prefer a spouse claim if the reverse FACT-level edge
+  // identifies this SAME pair as a sibling, child or other non-spouse role.
+  if (spouseOnly && [...direct, ...reverse].some(item => !isSpouseRelationshipRole(item.relation))) return null;
   return matches.reduce((best, item) => Number(item.confidence) > Number(best.confidence) ? item : best);
 }
 
@@ -268,7 +274,12 @@ export function bindActionCharacter(action, context = {}) {
       result.characterPairResolution = 'verified';
     }
     const relation = verifiedRelationship(context, subject, target);
-    const canShowRelationship = relation && (ordinaryRelationshipAction || isAdultSocialRelationshipRole(relation.relation));
+    // A directly evidenced spouse bond belongs to this exact subject-target
+    // pair, even when either adult is also another character's parent.
+    // All other kinship terms remain ordinary-story context only.
+    const verifiedSpousePair = Boolean(relation && isSpouseRelationshipRole(relation.relation));
+    const canShowRelationship = relation && (ordinaryRelationshipAction ||
+      verifiedSpousePair || isAdultSocialRelationshipRole(relation.relation));
     if (canShowRelationship) {
       targetRole = verifiedRoleNoun(relation.relation);
       result.relationshipRoleLabel = targetRole;
