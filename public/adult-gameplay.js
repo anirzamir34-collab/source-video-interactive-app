@@ -377,8 +377,14 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
     resolveVerifiedAdultPosition(action).family === canonicalId;
   // Match the activity dimension against its parent activity. A support/posture
   // classification must not contradict an already verified activity class.
+  const firstPassGrounded = action.sourceVerified === true &&
+    Number(action.confidence || 0) >= 0.84 &&
+    Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
+    String(action.positionEvidence || '').trim() &&
+    ['pending', 'first_pass'].includes(String(action.classificationReview || 'pending')) &&
+    action.partnerSwitch !== true;
   const verifiedParent = action.sourceVerified === true &&
-    action.classificationReview === 'verified' &&
+    (action.classificationReview === 'verified' || firstPassGrounded) &&
     Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
     String(action.positionEvidence || '').trim() &&
     (adultPositionFamily(action.positionId) === canonicalId ||
@@ -407,7 +413,7 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
   // Words describing the ongoing verified activity (vaginal, penetration,
   // kissing or touching) are legitimate position-local movement choices.
   const verifiedEntry = String(action.actionType || '').toLowerCase() === 'position' &&
-    action.classificationReview === 'verified' &&
+    (action.classificationReview === 'verified' || firstPassGrounded) &&
     String(action.positionId || '').toLowerCase() === canonicalId &&
     Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
     String(action.positionEvidence || '').trim();
