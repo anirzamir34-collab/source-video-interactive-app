@@ -22,6 +22,45 @@ import {
   normalizeChunkActionTimes
 } from '../public/engine-hardening.js';
 
+test('grounded first-pass classifications remain available without repeated review', () => {
+  const action = {
+    actionId: 'first-pass', label: 'Visible verified source movement', sourceVerified: true,
+    confidence: 0.94, actionType: 'position', adultScene: true, adultSceneId: 'scene-1',
+    positionId: 'missionary', positionLabel: 'Misyoner',
+    positionEvidence: 'Source frames at beginning, middle, and end establish the configuration',
+    positionConfigurationConfidence: 0.92,
+    positionStartTime: 10, positionEndTime: 23, loopStartTime: 10, loopEndTime: 23,
+    startTime: 10, endTime: 23, classificationReview: 'pending'
+  };
+  assert.deepEqual(secondPassReviewCandidates({ actions: [action] }), []);
+  const hardened = reviewAndHardenAnalysis({
+    schemaVersion: ANALYSIS_SCHEMA_VERSION, videoDuration: 40,
+    chunkCount: 1, expectedChunkCount: 1, actions: [action]
+  });
+  assert.deepEqual(hardened.analysis.actions.map(row => row.actionId), ['first-pass']);
+  assert.equal(hardened.analysis.actions[0].classificationReview, 'pending');
+  assert.equal(hardened.integrity.issues.some(row => row.code === 'UNVERIFIED_CLASSIFICATION'), false);
+
+  const weak = { ...action, actionId: 'weak', confidence: 0.63 };
+  assert.deepEqual(secondPassReviewCandidates({ actions: [weak] }).map(row => row.actionId), ['weak']);
+  const stillUnsafe = reviewAndHardenAnalysis({
+    schemaVersion: ANALYSIS_SCHEMA_VERSION, videoDuration: 40,
+    chunkCount: 1, expectedChunkCount: 1, actions: [weak]
+  });
+  assert.equal(stillUnsafe.analysis.actions.length, 0);
+});
+
+test('review omission retains auditable first-pass action instead of silently erasing it', () => {
+  const action = { actionId: 'first', sourceVerified: true, confidence: 0.94, startTime: 4, endTime: 15,
+    actionType: 'position', positionId: 'cowgirl', positionEvidence: 'stable source frames',
+    positionConfigurationConfidence: 0.91 };
+  const merged = mergeSecondPassReview({ actions: [action] }, { actions: [] }, [action]);
+  assert.equal(merged.actions.length, 1);
+  assert.equal(merged.actions[0].actionId, 'first');
+  assert.equal(merged.actions[0].classificationReview, 'first_pass');
+  assert.deepEqual(merged.classificationReviewRejectedIds, ['first']);
+});
+
 test('timeline validator rejects broken ranges and movement outside parent position', () => {
   assert.equal(validateActionInterval({ startTime: 5, endTime: 4 }, 20).valid, false);
   const action = {
