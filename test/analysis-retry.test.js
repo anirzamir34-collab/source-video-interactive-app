@@ -145,16 +145,19 @@ test('a Gemini quota failure with zero verified chapters does not fabricate a pl
   assert.equal(result.chunkResults.filter(Boolean).length, 0);
 });
 
-test('an exhausted review wait pauses once and resumes only the review using the completed first pass', async () => {
+test('an exhausted temporary review outage retains the completed first pass without resending the chapter', async () => {
   const paused = await runChunks({ review: true, fetch: request => request.review
     ? { available: false, retryable: false, reason: 'GEMINI_TEMPORARILY_UNAVAILABLE', message: 'Provider deadline expired' }
     : ordinaryChapter(0) });
   assert.deepEqual(paused.requests.map(request => request.review), [false, true]);
   assert.equal(paused.delays.length, 0);
-  assert.equal(paused.body.available, false);
-  assert.equal(paused.session.firstPassResults[0].available, true);
-  const resumed = await runChunks({ review: true, session: paused.session, fetch: () => ordinaryChapter(0) });
-  assert.deepEqual(resumed.requests.map(request => request.review), [true]);
+  assert.equal(paused.body.available, true);
+  assert.equal(paused.body.partial, false);
+  assert.equal(paused.session.chunkResults[0].secondPassDeferred, true);
+  assert.equal(paused.session.chunkResults[0].firstPassActionCount, 1);
+  const resumed = await runChunks({ review: true, session: paused.session,
+    fetch: () => { throw new Error('Verified initial chapter must not be re-billed'); } });
+  assert.deepEqual(resumed.requests, []);
   assert.equal(resumed.body.available, true);
 });
 
@@ -209,17 +212,30 @@ test('a temporarily unreadable chapter is retried alone while later successful c
   assert.equal(second.body.actions.length, 3);
 });
 
-test('a failed review keeps the first pass even across a manual retry', async () => {
+test('a retryable failed review keeps its first-pass actions after both review attempts', async () => {
   const first = await runChunks({ total: 2, review: true, fetch: request =>
     request.chunk === 0 && request.review
       ? { available: false, retryable: true, reason: 'SECOND_PASS_REVIEW_FAILED' }
       : ordinaryChapter(request.chunk) });
   assert.equal(first.requests.filter(request => request.chunk === 0 && !request.review).length, 1);
-  assert.equal(first.body.partial, true);
-  const second = await runChunks({ total: 2, review: true, session: first.session, fetch: request => ordinaryChapter(request.chunk) });
-  assert.deepEqual(second.requests.map(({ chunk, review }) => ({ chunk, review })),
-    [{ chunk: 0, review: true }]);
+  assert.equal(first.requests.filter(request => request.chunk === 0 && request.review).length, 2);
+  assert.equal(first.body.partial, false);
+  assert.equal(first.body.actions.length, 2);
+  assert.equal(first.chunkResults[0].secondPassDeferred, true);
+  const second = await runChunks({ total: 2, review: true, session: first.session,
+    fetch: () => { throw new Error('Completed first pass must not be reanalyzed'); } });
+  assert.deepEqual(second.requests, []);
   assert.equal(second.body.partial, false);
+});
+
+test('provider content refusal during review never silently promotes the refused chapter', async () => {
+  const result = await runChunks({ review: true, fetch: request =>
+    request.review ? { available: false, retryable: false, reason: 'GEMINI_CONTENT_RESTRICTED' }
+      : ordinaryChapter(0) });
+  assert.deepEqual(result.requests.map(request => request.review), [false, true]);
+  assert.equal(result.body.partial, true);
+  assert.equal(result.body.actions.length, 0);
+  assert.equal(result.body.analysisGaps[0].reason, 'GEMINI_CONTENT_RESTRICTED');
 });
 
 test('no refused interval produces a synthetic action or full coverage', async () => {
