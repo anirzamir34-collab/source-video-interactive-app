@@ -583,7 +583,7 @@ test('measured overlong dialogue may be shortened twice before extreme time stre
   const translate = f.translationProvider.translateScene;
   f.translationProvider.translateScene = async (scene, options = {}) => {
     const rows = await translate(scene, options);
-    return rows.map(row => row.translatedText !== 'Merhaba.' ? row : ({
+    return rows.map((row, index) => index !== 0 ? row : ({
       ...row,
       translatedText: !options.shorten
         ? 'Merhaba, bugün burada ne yapıyorsun acaba?'
