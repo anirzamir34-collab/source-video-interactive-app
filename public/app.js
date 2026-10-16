@@ -1645,7 +1645,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, modes.quality);
+    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration,
+      modes.quality, modes.analysisTier === 'deep' ? modes.deepAnalysisModel : '');
     const framesPerSheet = 12;
     const chunkCount = analysisPlan.chunkCount;
 
@@ -1656,7 +1657,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
     ].join('|');
     analysisModeKey = JSON.stringify({
-      pipelineVersion: 'chunk-protagonist-context-6',
+      pipelineVersion: 'chunk-protagonist-context-7',
       analysisTier: modes.analysisTier,
       deepAnalysisModel: modes.analysisTier === 'deep' ? modes.deepAnalysisModel : null,
       chunks: analysisPlan.chunks,
