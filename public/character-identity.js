@@ -17,6 +17,16 @@ export function verifiedCharacterName(character) {
   return name;
 }
 
+// Preserve verified source identities independently from player-facing labels.
+// A FACT relationship title is source metadata, not an inferred proper name.
+function factSourceDisplayName(character) {
+  const value = text(character?.displayName);
+  const confidence = Number(character?.confidence);
+  if (!value || character?.identityConflict || character?.evidenceLevel !== 'fact' ||
+      !Number.isFinite(confidence) || confidence < 0.68 || !text(character?.evidence)) return '';
+  return verifiedCharacterName(character) || (verifiedRoleNoun(value) ? value : '');
+}
+
 export function verifiedVisualDescription(character) {
   if (character?.identityConflict || character?.evidenceLevel !== 'fact' ||
       Number(character?.confidence) < 0.68) return '';
@@ -59,7 +69,10 @@ export function mergeCharacterRecords(records = []) {
     const conflict = old.identityConflict || record.identityConflict ||
       (oldName && newName && nameKey(oldName) !== nameKey(newName)) ||
       (oldRole && newRole && oldRole !== newRole);
+    // Do not overwrite an evidenced source role with a higher-confidence
+    // provider placeholder from a later chunk of the same track.
     const rank = value => verifiedCharacterName(value) ? 3 :
+      factSourceDisplayName(value) ? 2.5 :
       value.evidenceLevel === 'fact' && text(value.evidence) ? 2 : value.evidenceLevel === 'inference' ? 1 : 0;
     const better = rank(record) > rank(old) ||
       (rank(record) === rank(old) && Number(record.confidence) > Number(old.confidence));
@@ -225,6 +238,20 @@ export function bindActionCharacter(action, context = {}) {
   result.relationshipTargetId = '';
   result.characterPairLabel = '';
   result.characterPairResolution = 'unknown';
+  // Proven source display names survive as factual action metadata across
+  // normal/adult scene changes. They are deliberately NOT gameplay wording.
+  // Recompute all fields on every bind, so stale names cannot migrate to
+  // another participant or an ambiguous group scene.
+  result.primaryCharacterDisplayNameFact = target ? factSourceDisplayName(target) : '';
+  result.subjectDisplayNameFact = subject && !mismatch && (!declared.length || present.includes(subject))
+    ? factSourceDisplayName(subject) : '';
+  result.partnerDisplayNameFact = '';
+  if (!mismatch && action.partnerTrackId) {
+    const partnerForMetadata = lookup(action.partnerTrackId);
+    if (partnerForMetadata && (!declared.length || present.includes(partnerForMetadata))) {
+      result.partnerDisplayNameFact = factSourceDisplayName(partnerForMetadata);
+    }
+  }
   let targetRole = '';
   // Track aliases are private routing keys. Ordinary story/dialogue metadata
   // must not pretend that 'Karakter A' is a verified on-screen identity.
