@@ -378,6 +378,9 @@ Identify the recurring male protagonist. Describe only his directly visible
 actions in chronological order. Create a new action when visible movement,
 tempo, direction, posture, body orientation, contact point, interaction or
 scene changes. Never invent alternatives.
+Do not impose a fixed action count or collapse separately visible changes into one long summary.
+A continuous real action remains a real action when the camera angle changes; distinguish
+shot metadata from observable participant movement.
 
 Video duration: ${duration} seconds
 Timestamp metadata for this chunk: ${timestamps}
@@ -402,6 +405,9 @@ ${sensoryAudioContext}
 - Match a speakerId to a visual participantTrackId only with time-aligned visible speaking evidence. Never match by gender, list order, or the number of people. Record supported matches as speakerIds and voiceMatchEvidence on that character; otherwise leave speakerIds empty.
 - Scribe may split one real person into several speakerIds. When multiple speakerIds are each directly matched to the SAME visible recurring character at their own timestamps, put all of those IDs in that character's speakerIds array. This is an identity consolidation, not a new character. Never merge speakerIds merely because only two people are visible.
 - For each fact-level recurring character, also return gender as "male", "female" or "uncertain" when directly supported, plus voiceTone and voiceEmotion as short source-grounded descriptors when the audible/visible performance supports them. Use "uncertain" or empty text when not supported; do not infer personality or relationship from voice style.
+- Never attribute one speakerId to different people by list order or gender. If diarization merges two distinct speakers, mark the speaker-to-character relationship ambiguous until time-aligned evidence establishes it.
+- If no proper name is audible, keep the same visual participantTrackId in every chapter and preserve a short distinctive, directly observed visual description. Generic IDs are not proper names.
+- Return facts[], inferences[] and unknowns[] as readable text fields, never nested objects or serialized object placeholders.
 - Explicit names and relationship statements in originalText may establish identity even when subtitles and dubbing are disabled. Preserve the exact quotation and source timestamp in evidence. Bind each relationship to both exact character IDs; a quote about someone off-screen must not be assigned to a visible person.
 - Dialogue never overrides contradictory visual evidence.
 - Non-speech audio may support intensity only when its timestamp overlaps the action. Audio alone never proves pain, pleasure, consent, a relationship or an internal feeling.

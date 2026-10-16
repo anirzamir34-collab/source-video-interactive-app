@@ -1825,7 +1825,12 @@ els.analyzeBtn.addEventListener('click', async () => {
 
         try {
           if (firstPassBody) {
-            chunkBody = firstPassBody;
+            // A pending first pass from a transient retry is still a genuine
+            // successful initial response. Preserve its origin metadata.
+            chunkBody = { ...firstPassBody, actions: (firstPassBody.actions || []).map(action => ({
+              ...action, classificationReview: action.classificationReview === 'verified'
+                ? 'verified' : 'first_pass'
+            })) };
             response = { ok: true };
           } else {
             response = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
@@ -1844,7 +1849,11 @@ els.analyzeBtn.addEventListener('click', async () => {
               );
               chunkBody = {
                 ...chunkBody,
-                actions: normalizedChunk.actions,
+                // Mark only successful initial-response evidence; do not treat
+                // arbitrary unchecked imported records as verified.
+                actions: normalizedChunk.actions.map(action => ({ ...action,
+                  classificationReview: action.classificationReview === 'verified'
+                    ? 'verified' : 'first_pass' })),
                 chunkStart,
                 chunkEnd,
                 chunkTimeRebased: normalizedChunk.rebased
@@ -1864,7 +1873,11 @@ els.analyzeBtn.addEventListener('click', async () => {
               break;
             }
           } else {
-            const criticalReviewCandidates = secondPassReviewCandidates(chunkBody);
+            // Source-backed first-pass evidence is the default. Keep a second
+            // pass only for an explicitly requested diagnostic review mode;
+            // otherwise a separate provider call can discard a valid chapter.
+            const criticalReviewCandidates = modes.reviewMode === 'manual'
+              ? secondPassReviewCandidates(chunkBody) : [];
             if (criticalReviewCandidates.length) {
               form.set('reviewMode', '1');
               form.set('reviewCandidates', JSON.stringify(criticalReviewCandidates));
@@ -2206,12 +2219,15 @@ els.analyzeBtn.addEventListener('click', async () => {
   if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
     analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
+    const speakerCount = state.sourceContext?.speakers?.length || 0;
+    const uncertainVoices = Math.max(0, speakerCount - Object.keys(speakerHints).length);
     els.analysisState.textContent = 'PREPARING_TURKISH_MEDIA';
     els.analysisTitle.textContent = 'Konuşmacılar eşleştiriliyor ve Türkçe medya hazırlanıyor';
     els.analysisOutput.textContent = [
       `${Object.keys(speakerHints).length} kaynak konuşmacı kimliği görsel karakterlerle doğrulandı.`,
-      'Aynı kişiye ait parçalanmış konuşmacı kimlikleri tek sabit Türkçe sese bağlanıyor.',
-      'Ses seçimi; doğrulanmış karakter profili, Türkçe desteği ve mevcut duygu/ton etiketleriyle otomatik yapılıyor.'
+      ...(uncertainVoices ? [`${uncertainVoices} konuşmacının görüntüyle kimlik eşleşmesi kesin değil; otomatik ses tercihini sonradan kontrol et.`] : []),
+      'Doğrulanmış aynı kişiye ait parçalar tek Türkçe sese bağlanıyor.',
+      'Eşleşmeyen sesler tahminidir; ses yönetimi bölümünden dinleyerek düzeltilebilir.'
     ].join('\n');
     // A successful media retry has already completed the paid stages. Reuse
     // its manifest while rebuilding the game from saved visual chapters.
@@ -2459,7 +2475,8 @@ function normalizeAnalysis(body) {
       receiverSupport: String(a.receiverSupport || 'unclear'),
       positionConfigurationConfidence: Math.max(0, Math.min(1, Number(a.positionConfigurationConfidence) || 0)),
       positionEvidence: String(a.positionEvidence || ''),
-      classificationReview: a.classificationReview === 'verified' ? 'verified' : 'pending',
+      classificationReview: a.classificationReview === 'verified' ? 'verified'
+        : a.classificationReview === 'first_pass' ? 'first_pass' : 'pending',
       groupScene: a.groupScene === true,
       adultParticipantCount: Math.max(0, Math.floor(Number(a.adultParticipantCount) || 0)),
       participantTrackIds: Array.isArray(a.participantTrackIds)
@@ -7117,7 +7134,7 @@ async function repairSavedGame(game, onProgress = () => {}) {
   const savedSourceContext = sourceContextAdapter(game.turkishMedia?.manifest.sourceTranscript);
   const previous = game.payload.analysis;
   const gaps = retryableAnalysisGaps(previous, game.duration);
-  if (!gaps.length) throw new Error('Eksik bölümler Gemini içerik kısıtlaması nedeniyle reddedilmiş. Aynı aralıkları ücretli olarak tekrar göndermiyoruz.');
+  if (!gaps.length) throw new Error('Kayıtta yeniden denenebilecek doğrulanmış eksik analiz aralığı bulunmuyor.');
   // Older saved games did not retain their paid model choice. Never silently
   // downgrade a deep run to economy or unexpectedly bill an expensive model.
   if (!['economy', 'deep'].includes(previous.analysisTier) ||
@@ -7163,6 +7180,9 @@ async function repairSavedGame(game, onProgress = () => {}) {
         const corrected = normalizeChunkActionTimes(result.actions, gap.startTime, gap.endTime);
         result = { ...result, actions: corrected.actions };
         const normalized = normalizeAnalysis({ ...result,
+          actions: (result.actions || []).map(action => ({ ...action,
+            classificationReview: action.classificationReview === 'verified'
+              ? 'verified' : 'first_pass' })),
           storyContext: mergeStoryContexts([{ storyContext: previous.storyContext }, result]),
           videoDuration: game.duration });
         result.actions = normalized.actions.map((action, actionIndex) => ({

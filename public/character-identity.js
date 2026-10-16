@@ -23,11 +23,17 @@ export function verifiedVisualDescription(character) {
   const evidence = text(character?.evidence).replace(/\s*\(spk:\d+\)/giu, '');
   // Use only a directly supplied visual descriptor. Never turn a track ID,
   // generic gender, or a claimed relationship into a character name.
-  const first = value => value.match(/^([^,.;]{5,75})(?:[,.;]|$)/u)?.[1]?.trim() || '';
-  const phrase = [first(evidence), first(text(character?.description))]
-    .find(value => /(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü)(?=\s|$)/iu.test(value)) || '';
-  if (!/(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü)(?=\s|$)/iu.test(phrase)) return '';
-  return phrase.replace(/\s+(?:misafir\s+|diğer\s+)?(?:kadın|erkek|kişi|kız)$/iu, '').trim();
+  const descriptor = /(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü|dövmeli|gözlüklü|kel)(?=\s|,|$)/iu;
+  // Prefer the shortest directly observed distinguishing phrase, not a camera
+  // position or a generic relationship. Later comma-separated descriptors can
+  // still be used if the first phrase is not visually distinguishing.
+  for (const value of [evidence, text(character?.description)]) {
+    if (!/(?:kadın|erkek|kişi|woman|man)/iu.test(value)) continue;
+    const phrase = value.split(/[,.;]/u).map(item => item.trim())
+      .find(item => descriptor.test(item));
+    if (phrase) return phrase.replace(/\s+(?:misafir\s+|diğer\s+)?(?:kadın|erkek|kişi)$/iu, '').trim().slice(0, 75);
+  }
+  return '';
 }
 
 export function mergeCharacterRecords(records = []) {

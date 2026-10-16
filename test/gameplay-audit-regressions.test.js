@@ -63,3 +63,15 @@ test('standalone openings reuse only an explicit cast or a uniquely verified tar
   assert.equal(verifiedOpeningCast({ ...known, subjectTrackId: '' }, characters), '');
   assert.equal(verifiedOpeningCast({ ...known, partnerTrackId: 'MAIN_MALE' }, characters), '');
 });
+
+test('camera cut metadata cannot erase an independently verified continuous position loop', () => {
+  const shot = position({
+    adultScene: true, actionType: 'camera_transition', positionId: 'rear',
+    positionLabel: 'Rear', positionEvidence: 'Continuous identical pose across the recorded frames.',
+    movementType: 'measured movement', positionConfigurationConfidence: .95,
+    loopStartTime: 30, loopEndTime: 38
+  });
+  assert.equal(playableAdultPanelFamily(shot), 'rear');
+  assert.equal(playableAdultPanelFamily({ ...shot, classificationReview: 'pending' }), '');
+  assert.equal(playableAdultPanelFamily({ ...shot, loopEndTime: 32 }), '');
+});
