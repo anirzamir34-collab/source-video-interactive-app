@@ -53,13 +53,13 @@ export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityM
   // other models and previously selected fast mode.
   // Long Argon runs used to cap a 29-minute video at twelve broad chunks.
   // Preserve every original storyboard sheet but give Argon more independent windows.
-  const targetSeconds = fast ? 125 : compactFlash ? 70 : deepArgon ? 78 : 95;
+  const targetSeconds = fast ? 125 : compactFlash ? 48 : deepArgon ? 55 : 95;
   const durationCeiling = compactFlash
     ? seconds <= 180 ? 4 : seconds <= 480 ? 8 : seconds <= 900 ? 14
-      : seconds <= 1800 ? 24 : seconds <= 2400 ? 32 : 40
+      : seconds <= 1800 ? 40 : seconds <= 2400 ? 44 : 48
     : deepArgon
       ? seconds <= 180 ? 3 : seconds <= 480 ? 6 : seconds <= 900 ? 12
-        : seconds <= 1800 ? 22 : seconds <= 2400 ? 30 : 36
+        : seconds <= 1800 ? 36 : seconds <= 2400 ? 40 : 44
       : seconds <= 180 ? 3 : seconds <= 480 ? 6 : seconds <= 900 ? 10
         : seconds <= 1800 ? 12 : seconds <= 2400 ? 15 : 20;
   const chunkCount = Math.min(sheets, durationCeiling, Math.max(1, Math.ceil(seconds / targetSeconds)));
@@ -76,7 +76,11 @@ export function storyboardSamplingPlan(duration, remote = false) {
   const seconds = Math.max(0, Number(duration) || 0);
   if (!remote) {
     return {
-      baseCount: seconds <= 300 ? 144 : seconds <= 900 ? 192 : 228,
+      // Long local videos previously stopped at 228 frames. Sample roughly
+      // every 4.5 seconds so brief transitions are less likely to disappear
+      // between frames; cap the device decoding work at 480.
+      baseCount: seconds <= 300 ? 144 : seconds <= 900 ? 192
+        : Math.min(480, Math.max(228, Math.ceil(seconds / 4.5))),
       focusedCount: 0
     };
   }

@@ -43,7 +43,7 @@ test('operators retain optional overrides without changing the explicit paid cho
     [ARGON_ANALYSIS_MODEL]);
 });
 
-test('UI requires the user to opt into expensive Argon before analysis; frame coverage stays intact', () => {
+test('UI requires the user to opt into expensive Argon before analysis; long-video coverage grows', () => {
   assert.match(html, /id="deepAnalysisMode" type="checkbox"/);
   assert.match(html, /id="deepAnalysisModel"/);
   assert.match(html, /value="gemini-3\.8-flash" selected/);
@@ -57,7 +57,7 @@ test('UI requires the user to opt into expensive Argon before analysis; frame co
   assert.match(server, /isSupportedDeepAnalysisModel\(deepAnalysisModel\)/);
   assert.match(server, /storyboardRequestKey\(\{ apiKey, model,/);
   assert.match(server, /storyboardFailureReason\(error\) !== 'GEMINI_MODEL_UNAVAILABLE'/);
-  assert.deepEqual(storyboardSamplingPlan(1200, false), { baseCount: 228, focusedCount: 0 });
+  assert.deepEqual(storyboardSamplingPlan(1200, false), { baseCount: 267, focusedCount: 0 });
   assert.deepEqual(storyboardSamplingPlan(1200, true), { baseCount: 160, focusedCount: 56 });
   assert.equal(adaptiveAnalysisChunkPlan(19, 1200, 'ultra').chunkCount, 12);
 });
