@@ -1,5 +1,6 @@
 import { toggleFullscreen, revealFullscreenChoices } from './fullscreen.js';
 import { sourceOpeningTimeline } from './source-opening.js';
+import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
@@ -130,6 +131,7 @@ const cleanExpiredUrlVideos = () =>
 void cleanExpiredUrlVideos();
 setInterval(() => { void cleanExpiredUrlVideos(); }, 15 * 60 * 1000);
 let savedGames;
+let clearAnalysisReview = () => {};
 
 const $ = (id) => document.getElementById(id);
 
@@ -291,6 +293,7 @@ const els = {
   analysisTitle: $('analysisTitle'),
   analysisState: $('analysisState'),
   analysisOutput: $('analysisOutput'),
+  analysisReview: $('analysisReview'),
   playerSection: $('playerSection'),
   video: $('video'),
   subtitleOverlay: $('subtitleOverlay'),
@@ -2286,6 +2289,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     sourceAudioOnly ? mediaFailureMessage : ''
   ].join('\n');
   initializeInteractive(normalized);
+  clearAnalysisReview();
+  clearAnalysisReview = mountAnalysisReview(els.analysisReview, normalized, state.selectedFile, storyboard.duration);
   state.savedGameReady = true;
   analysisProgress.update('save', { detail: 'Analiz, seçimler ve Türkçe medya kaydediliyor.' });
   const saveCompleted = await savedGames?.saveCurrent(true);
@@ -6660,6 +6665,10 @@ setInterval(checkTurkishMediaCapabilities, 60 * 1000);
 renderDebug();
 
 function clearPreviousGameResidue() {
+  if (typeof clearAnalysisReview === 'function') {
+    clearAnalysisReview();
+    clearAnalysisReview = () => {};
+  }
   mediaClient.reset();
   state.mediaRevoice = null;
   state.voiceMappingGeneration = (Number(state.voiceMappingGeneration) || 0) + 1;
@@ -7131,6 +7140,7 @@ async function openSavedGame(game) {
   els.analysisState.textContent = 'SAVED_GAME_READY';
   els.analysisTitle.textContent = game.title;
   els.analysisOutput.textContent = 'Kayıtlı video ve analiz açıldı. Yeni analiz veya video indirmesi yapılmadı.';
+  clearAnalysisReview = mountAnalysisReview(els.analysisReview, state.analysis, file, game.duration);
   renderDebug();
   els.playerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
