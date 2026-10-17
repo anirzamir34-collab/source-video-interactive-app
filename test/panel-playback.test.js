@@ -452,7 +452,7 @@ test('70 percent reaches the source budget without making prior opening cards di
   f.state.adultTimelineFloor = 60;
   f.els.video.time = 60;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['old', 'new-a', 'new-b']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['old', 'new-a', 'new-b']);
   f.state.adultSelectionToken = 3;
   f.state.adultPendingSelectionProgress = { token: 3, kind: 'prelude',
     item: f.state.adultScene.foreplay[2], playStarted: true, observedSeconds: 20 };
@@ -514,7 +514,7 @@ test('opening renderer retains prior verified rooms and clothing cards across st
   f.els.video.time = 60;
   f.state.adultTimelineFloor = 60;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id),
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
     ['salon', 'room-dressed', 'room-changed']);
 });
 
