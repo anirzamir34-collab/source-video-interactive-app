@@ -26,6 +26,16 @@ export function choiceSurfaceForAction(action = {}, { panelFamily = '' } = {}) {
   // A model can call an observed approach a generic story event. Preserve a
   // directly evidenced, two-person source interval in the opening controls.
   if (visiblyApproachesPartner(action)) return 'approach';
+  // A camera cut or a broadly named touch can still contain a verified
+  // continuation of the same position. Require independent motion, body
+  // configuration and source timing; a camera change alone stays story.
+  const continuedPosition = ['touch', 'camera_transition'].includes(type) && panelFamily &&
+    text(action.positionId) === text(panelFamily) &&
+    Number(action.positionConfigurationConfidence) >= 0.9 &&
+    String(action.positionEvidence || '').trim() && String(action.movementType || '').trim() &&
+    ['slow', 'moderate', 'fast'].includes(text(action.movementTempo)) &&
+    Number(action.loopEndTime) - Number(action.loopStartTime) >= 5;
+  if (continuedPosition) return 'panel';
   // A verified dialogue range keeps its own category even when a broad parent
   // carries unrelated outcome metadata. Speech is not a performed event.
   if (storyTypes.has(type)) return 'story';

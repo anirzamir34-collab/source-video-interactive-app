@@ -286,6 +286,7 @@ test('real analysis normalization applies stable character mapping to main and e
   const begin = source.indexOf('function normalizeAnalysis(');
   const end = source.indexOf('\nfunction initializeInteractive(', begin);
   const scope = vm.createContext({ bindActionCharacter, mergeStoryContexts, partitionProtagonistActions, mergeUnownedIntervals, sourceOpeningTimeline,
+    verifiedActionSubsequences: () => [], sourceMotionProgressRate: () => 1,
     assignPositionOccurrenceIds() {}, normalizeOutcomeUnlockProgress: () => 82,
     ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test' });
   vm.runInContext(source.slice(begin, end), scope);

@@ -236,6 +236,18 @@ export function verifiedAdultPositionFamily(action = {}) {
   return resolveVerifiedAdultPosition(action).family;
 }
 
+function verifiedContinuousPositionMotion(action, family) {
+  return action.sourceVerified === true && action.adultScene === true &&
+    ['touch', 'camera_transition'].includes(String(action.actionType || '').toLowerCase()) &&
+    adultPositionFamily(action.positionId) === family &&
+    adultPositionFamily(action.movementType) === family &&
+    Number(action.confidence) >= 0.9 &&
+    Number(action.positionConfigurationConfidence) >= 0.9 &&
+    String(action.positionEvidence || '').trim() &&
+    ['slow', 'moderate', 'fast'].includes(String(action.movementTempo || '').toLowerCase()) &&
+    Number(action.loopEndTime) - Number(action.loopStartTime) >= 5;
+}
+
 export function playableAdultPanelFamily(action = {}) {
   // A generic posture, touch or dialogue line is not enough. However, when a
   // source-verified interval inside the encounter explicitly identifies a
@@ -277,19 +289,21 @@ export function playableAdultPanelFamily(action = {}) {
   // because of a close-up. Preserve the actual source-backed configuration
   // only when the reviewed position and a nontrivial loop are both evidenced.
   const cameraWithAction = type === 'camera_transition' &&
-    action.classificationReview === 'verified' &&
-    Number(action.positionConfigurationConfidence) >= 0.84 &&
-    String(action.positionEvidence || '').trim() &&
-    String(action.movementType || '').trim() &&
-    Number(action.loopEndTime) - Number(action.loopStartTime) >= 5 &&
-    Boolean(action.positionId);
+    (verifiedContinuousPositionMotion(action, family) || (
+      action.classificationReview === 'verified' &&
+      Number(action.positionConfigurationConfidence) >= 0.84 &&
+      String(action.positionEvidence || '').trim() &&
+      String(action.movementType || '').trim() &&
+      Number(action.loopEndTime) - Number(action.loopStartTime) >= 5 &&
+      Boolean(action.positionId)));
   if ((type === 'camera_transition' && !cameraWithAction) ||
       ['partner_transition', 'clothing', 'outcome', 'aftermath'].includes(type)) return '';
   // A provider's parent metadata can be stale. A visible kiss, ordinary touch,
   // or dialogue is never a panel position merely because activityType claims
   // otherwise. The observed action itself must name the claimed activity.
   if (['kiss', 'touch', 'dialogue', 'story', 'body_transition'].includes(type)) {
-    return explicitActivity && sourceLabelFamily === family ? family : '';
+    return verifiedContinuousPositionMotion(action, family) ||
+      (explicitActivity && sourceLabelFamily === family) ? family : '';
   }
   if (['other'].includes(type) && !explicitActivity) return '';
   if (!action.positionId && !action.positionLabel &&
@@ -376,11 +390,12 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
   const actionType = String(action.actionType || '').toLowerCase();
   if (actionType === 'partner_transition') return false;
   if (actionType === 'camera_transition' && !(
+    verifiedContinuousPositionMotion(action, canonicalId) || (
     action.sourceVerified === true && action.classificationReview === 'verified' &&
     Number(action.positionConfigurationConfidence) >= 0.84 &&
     String(action.positionEvidence || '').trim() &&
     String(action.movementType || '').trim() &&
-    Number(action.loopEndTime) - Number(action.loopStartTime) >= 5)) return false;
+    Number(action.loopEndTime) - Number(action.loopStartTime) >= 5))) return false;
   const resolvedFamily = resolveVerifiedAdultPosition(action).family;
   const verifiedSameFamilyBodyChange = actionType === 'body_transition' &&
     action?.sourceVerified === true &&
@@ -477,6 +492,19 @@ export function adultPlaybackProgressDelta({
   };
 }
 
+export function sourceMotionProgressRate(action = {}, suppliedRate = undefined) {
+  const explicit = Number(suppliedRate);
+  if (Number.isFinite(explicit) && explicit > 0 && explicit !== 1)
+    return clamp(explicit, 0.25, 2.5);
+  if (action.sourceVerified !== true || action.adultScene !== true) return 1;
+  const tempo = normalizeMovementTempo(action.movementTempo);
+  if (tempo === 'slow') return 0.72;
+  if (tempo === 'fast') return 1.28;
+  if (tempo === 'moderate' && /\b(?:hızlı|sert|derin|güçlü|fast|hard|deep)\b/iu.test(
+    String(action.movementType || ''))) return 1.15;
+  return 1;
+}
+
 export function shouldAdvanceMaleOrgasm(femaleProgress = 0, femaleOrgasmCount = 0) {
   return Math.max(0, Number(femaleOrgasmCount) || 0) > 0 ||
     clamp(femaleProgress, 0, 100) >= 35;
@@ -564,6 +592,24 @@ export function requiredCorePlaySecondsForOutcome(sceneDuration = 0) {
   return clamp(duration * 0.62, MIN_CORE_PLAY_SECONDS_FOR_OUTCOME, 300);
 }
 
+export function verifiedActionSubsequences(action = {}, minSeconds = 5) {
+  const source = clipRange(action);
+  const parts = action.verifiedSubsequences;
+  if (action.sourceVerified !== true || !source || !Array.isArray(parts) || parts.length < 2 ||
+      parts.length > 12) return [];
+  const ordered = [...parts].sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  if (!ordered.every((part, index) => part.sourceVerified === true &&
+      Number.isFinite(Number(part.startTime)) && Number.isFinite(Number(part.endTime)) &&
+      Number(part.endTime) - Number(part.startTime) >= minSeconds &&
+      Number(part.startTime) >= source.startTime - 0.05 &&
+      Number(part.endTime) <= source.endTime + 0.05 &&
+      (!part.positionId || part.positionId === action.positionId) &&
+      (!part.partnerTrackId || part.partnerTrackId === action.partnerTrackId) &&
+      (!part.subjectTrackId || part.subjectTrackId === action.subjectTrackId) &&
+      (!index || Number(part.startTime) >= Number(ordered[index - 1].endTime) - 0.05))) return [];
+  return ordered;
+}
+
 export function expandVerifiedMovementVariants(
   movements,
   positionStart,
@@ -601,9 +647,23 @@ export function expandVerifiedMovementVariants(
 
   if (!source.length || positionDuration < minimum) return [];
 
-  // One verified source action is one playable clip. Cutting a long action into
-  // equal slices creates apparent variety without any independent evidence.
-  return source;
+  // Only source-reported subranges may split an action. An unverified, invalid
+  // or incomplete list leaves the original exact playable interval intact.
+  return source.flatMap(item => {
+    const parts = verifiedActionSubsequences(item, minimum);
+    if (!parts.length) return [item];
+    return parts.map((part, index) => ({ ...item,
+      id: `${item.id}:source-${index + 1}`,
+      sourceActionId: item.sourceActionId || item.id,
+      loopStartTime: Number(part.startTime), loopEndTime: Number(part.endTime),
+      startTime: Number(part.startTime), endTime: Number(part.endTime),
+      movementTempo: part.movementTempo || item.movementTempo,
+      movementType: part.movementType || item.movementType,
+      femaleProgressRate: sourceMotionProgressRate({ ...item, ...part }, part.femaleProgressRate),
+      maleProgressRate: sourceMotionProgressRate({ ...item, ...part }, part.maleProgressRate),
+      verifiedSubsequences: undefined
+    }));
+  });
 }
 
 export const ADULT_PHASE_ORDER = Object.freeze({
@@ -943,7 +1003,22 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
           other.familyId !== position.familyId &&
           Number(other.startTime) >= Number(item.endTime) - 0.25 &&
           Number(other.startTime) < Number(position.startTime) - 0.05)) ||
-        Number(position.startTime) <= Number(item.endTime) + 0.25
+        Number(position.startTime) <= Number(item.endTime) + 0.25 ||
+        (Number(position.startTime) - Number(item.endTime) <= 6 &&
+          Number(position.startTime) >= Number(item.endTime) &&
+          ['receiverBodyOrientation', 'receiverSupport'].every(field =>
+            String(item[field] || 'unclear') !== 'unclear' && item[field] === position[field]) &&
+          Number(item.positionConfigurationConfidence) >= 0.8 &&
+          Number(position.positionConfigurationConfidence) >= 0.8 &&
+          (!item.sceneId || !position.sceneId || item.sceneId === position.sceneId) &&
+          (!item.locationId || !position.locationId || item.locationId === position.locationId) &&
+          (!item.beforeState?.clothing && !item.beforeState?.outfit ||
+            !position.beforeState?.clothing && !position.beforeState?.outfit ||
+            JSON.stringify(item.beforeState.clothing || item.beforeState.outfit) ===
+              JSON.stringify(position.beforeState.clothing || position.beforeState.outfit)) &&
+          !clusters.some(other => other !== item &&
+            Number(other.startTime) >= Number(item.endTime) - 0.05 &&
+            Number(other.startTime) < Number(position.startTime) - 0.05))
       )
     );
     if (!existing) {
@@ -1088,6 +1163,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
   };
   return groupSourceChoiceCards(verified, {
     preferredCount: maxChoices,
+    mergeEquivalentMotionTypes: true,
     contextFor: position ? item => {
       const occurrence = positionOccurrenceForMovement(position, item);
       return occurrence
@@ -1096,7 +1172,10 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     } : undefined,
     bandFor,
     mergeWithinContext: Boolean(position),
-    labelFor: item => sourceIdentityLabel(sourceActionLabel(clean(item.label || item.movementType || positionLabel))
+    labelFor: item => sourceIdentityLabel(sourceActionLabel(clean(
+      ['position', 'tempo_change'].includes(String(item.actionType || '').toLowerCase()) &&
+      ['ritmik hareket', 'yavaş hareket', 'hızlı hareket'].includes(normalize(item.movementType))
+        ? item.movementType : item.label || item.movementType || positionLabel))
       .split('·').map(part => part.trim())
       .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
       .join(' · ').trim(), item)
