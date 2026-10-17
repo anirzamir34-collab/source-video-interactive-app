@@ -7350,7 +7350,8 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
   }
   const merged = mergeRepairedAnalysis(previous, repairs, game.duration);
   const remaining = retryableAnalysisGaps(merged, game.duration);
-  const repaired = gaps.length - remaining.length;
+  const repaired = results.filter(item => item.outcome === 'processed' &&
+    !remaining.some(gap => gap.startTime < item.endTime && gap.endTime > item.startTime)).length;
   return { ...merged, lastRepairAttempt: {
     model: repairModel, checkedAt: new Date().toISOString(), total: gaps.length,
     recovered: repaired, remaining: remaining.length, results
