@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   adaptiveAnalysisChunkPlan,
+  adaptiveConversationActionChunkPlan,
   detectSceneBoundaries,
   extractStoryboard,
   selectFocusedTimestamps,
@@ -9,6 +10,79 @@ import {
   sheetsPerAnalysisChunk,
   storyboardSamplingPlan
 } from '../public/storyboard.js';
+
+
+function syntheticLongStoryboard(seconds = 2400, movingFrom = 1560, movingTo = 1860) {
+  const sheetCount = Math.ceil(seconds / 60);
+  const timestamps = Array.from({ length: sheetCount * 12 }, (_, i) => i * seconds / (sheetCount * 12));
+  return {
+    duration: seconds,
+    sheets: Array.from({ length: sheetCount }, () => new Blob(['source-frame-sheet'])),
+    timestamps,
+    motionProfile: timestamps.map(time => ({
+      time, score: time >= movingFrom && time < movingTo ? 72 : 6
+    })),
+    sceneBoundaries: [{ time: Math.min(480, seconds - 5), score: 85, kind: 'hard-cut' }]
+  };
+}
+
+test('short video deep analysis preserves the previous plan and exact original chapter boundaries', () => {
+  for (const duration of [90, 300, 600, 900, 1199]) {
+    const storyboard = syntheticLongStoryboard(duration);
+    const legacy = adaptiveAnalysisChunkPlan(storyboard.sheets.length, duration, 'ultra', 'gemini-3.8-flash');
+    const updated = adaptiveConversationActionChunkPlan(storyboard, {
+      qualityMode: 'ultra', analysisModel: 'gemini-3.8-flash',
+      dialogueRows: [{ startTime: 0, endTime: duration }]
+    });
+    assert.deepEqual(updated, legacy, `short video ${duration}s must not change`);
+  }
+});
+
+test('long dialogue gets 2-3 minute requests but source frames are never removed', () => {
+  const storyboard = syntheticLongStoryboard();
+  const legacy = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration, 'ultra', 'gemini-3.8-flash');
+  const plan = adaptiveConversationActionChunkPlan(storyboard, {
+    qualityMode: 'ultra', analysisModel: 'gemini-3.8-flash',
+    dialogueRows: [{ startTime: 0, endTime: storyboard.duration }]
+  });
+  assert.ok(plan.adaptive);
+  assert.ok(plan.chunkCount < legacy.chunkCount);
+  assert.ok(plan.chunks.some(chunk => chunk.sheetCount === 3 && chunk.focusTier === 'overview'));
+  assert.ok(plan.chunks.every(chunk => chunk.sheetCount <= 3));
+  const frames = plan.chunks.flatMap(chunk => Array.from({ length: chunk.sheetCount },
+    (_, i) => chunk.firstSheet + i));
+  assert.deepEqual(frames, Array.from({ length: storyboard.sheets.length }, (_, i) => i));
+  assert.equal(plan.chunks.reduce((total, chunk) => total + chunk.sheetCount, 0), storyboard.sheets.length);
+});
+
+test('moving scenes and nearby scene-cut sheets remain high-detail', () => {
+  const storyboard = syntheticLongStoryboard();
+  const plan = adaptiveConversationActionChunkPlan(storyboard, {
+    qualityMode: 'ultra', analysisModel: 'gemini-4-argon',
+    dialogueRows: [{ startTime: 0, endTime: storyboard.duration }]
+  });
+  const sheetToChapter = new Map();
+  for (const chunk of plan.chunks) for (let i = 0; i < chunk.sheetCount; i++)
+    sheetToChapter.set(chunk.firstSheet + i, chunk);
+  for (let i = 25; i <= 31; i++) assert.equal(sheetToChapter.get(i).sheetCount, 1,
+    `moving/neighbor sheet ${i} must remain detailed`);
+  for (let i = 7; i <= 9; i++) assert.equal(sheetToChapter.get(i).sheetCount, 1,
+    `hard cut neighboring sheet ${i} must remain detailed`);
+});
+
+test('unknown speech or missing motion measurements fall back to the exact legacy deep plan', () => {
+  const sb = syntheticLongStoryboard();
+  const baseline = adaptiveAnalysisChunkPlan(sb.sheets.length, sb.duration, 'ultra', 'gemini-3.8-flash');
+  assert.deepEqual(adaptiveConversationActionChunkPlan(sb, {
+    analysisModel: 'gemini-3.8-flash', dialogueRows: []
+  }), baseline);
+  assert.deepEqual(adaptiveConversationActionChunkPlan({ ...sb, motionProfile: [] }, {
+    analysisModel: 'gemini-3.8-flash', dialogueRows: [{ startTime: 0, endTime: sb.duration }]
+  }), baseline);
+  assert.deepEqual(adaptiveConversationActionChunkPlan(sb, {
+    analysisModel: '', qualityMode: 'fast', dialogueRows: [{ startTime: 0, endTime: sb.duration }]
+  }), adaptiveAnalysisChunkPlan(sb.sheets.length, sb.duration, 'fast', ''));
+});
 
 test('analysis chunks scale with video length and stay capped at twenty', () => {
   assert.equal(adaptiveAnalysisChunkPlan(12, 578, 'ultra').chunkCount, 7);

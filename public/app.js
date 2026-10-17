@@ -91,6 +91,7 @@ import {
 import { bindActionCharacter, canonicalizeActionTrackIds, verifiedCharacterName, verifiedVisualDescription } from './character-identity.js';
 import {
   adaptiveAnalysisChunkPlan,
+  adaptiveConversationActionChunkPlan,
   extractStoryboard
 } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
@@ -1699,22 +1700,30 @@ els.analyzeBtn.addEventListener('click', async () => {
     `${storyboard.timestamps.length} kare hazır • ${sourceSizeText}${storyboardMB} MB gönderiliyor`;
   els.analysisState.textContent = 'UPLOADING_STORYBOARD';
 
-    const analysisPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration,
-      modes.quality, modes.analysisTier === 'deep' ? modes.deepAnalysisModel : '');
-    const framesPerSheet = 12;
-    const chunkCount = analysisPlan.chunkCount;
-
     const dialogueRows = state.sourceContext?.segments || [];
+    const legacyPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration,
+      modes.quality, modes.analysisTier === 'deep' ? modes.deepAnalysisModel : '');
+    const proposedPlan = modes.analysisTier === 'deep' && storyboard.duration >= 1200
+      ? adaptiveConversationActionChunkPlan(storyboard, {
+          qualityMode: modes.quality, analysisModel: modes.deepAnalysisModel,
+          dialogueRows
+        })
+      : legacyPlan;
+    const sameBoundaries = JSON.stringify(proposedPlan.chunks.map(x => [x.firstSheet, x.sheetCount])) === JSON.stringify(legacyPlan.chunks.map(x => [x.firstSheet, x.sheetCount]));
+    let analysisPlan = sameBoundaries ? legacyPlan : proposedPlan;
+    const framesPerSheet = 12;
     const dialogueSample = [
       dialogueRows.length,
       ...dialogueRows.slice(0, 4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`),
       ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
     ].join('|');
-    analysisModeKey = JSON.stringify({
-      pipelineVersion: 'chunk-protagonist-context-7',
+    const modeForPlan = (plan, pipelineVersion = 'chunk-protagonist-context-7') => JSON.stringify({
+      pipelineVersion,
       analysisTier: modes.analysisTier,
       deepAnalysisModel: modes.analysisTier === 'deep' ? modes.deepAnalysisModel : null,
-      chunks: analysisPlan.chunks,
+      chunks: plan.chunks.map(chunk => ({
+        firstSheet: chunk.firstSheet, sheetCount: chunk.sheetCount
+      })),
       motion: modes.motion,
       quality: modes.quality,
       subtitles: modes.subtitles,
@@ -1722,11 +1731,37 @@ els.analyzeBtn.addEventListener('click', async () => {
       protagonist: requestedProtagonist,
       dialogue: dialogueSample
     });
+    // Keep an already paid deep-analysis plan unchanged. Different chunk
+    // boundaries must never make existing verified checkpoints invisible.
+    let recoveredLegacy = [];
+    let checkpointPrefixOverride = null;
+    if (proposedPlan.adaptive === true && !sameBoundaries) {
+      const oldMode = modeForPlan(legacyPlan);
+      const oldPrefix = await analysisCheckpointKey({
+        sheets: storyboard.sheets, timestamps: storyboard.timestamps,
+        duration: storyboard.duration, mode: oldMode
+      });
+      for (let index = 0; index < legacyPlan.chunkCount; index++) {
+        const previous = await analysisResponseCache.readCheckpoint(oldPrefix, index);
+        if (previous?.available === true) recoveredLegacy[index] = previous;
+      }
+      if (recoveredLegacy.some(result => result?.available)) {
+        analysisPlan = legacyPlan;
+        checkpointPrefixOverride = oldPrefix;
+        logEngineEvent('LEGACY_CHAPTERS_RESTORED', {
+          chapters: recoveredLegacy.filter(result => result?.available).length
+        });
+      }
+    }
+    analysisModeKey = modeForPlan(analysisPlan,
+      analysisPlan.adaptive ? 'chunk-protagonist-context-8-adaptive-dialogue' : 'chunk-protagonist-context-7');
+    const chunkCount = analysisPlan.chunkCount;
 
     if (session.analysisModeKey !== analysisModeKey || session.chunkCount !== chunkCount) {
       session.analysisModeKey = analysisModeKey;
       session.chunkCount = chunkCount;
-      session.chunkResults = [];
+      session.chunkResults = recoveredLegacy.length && checkpointPrefixOverride
+        ? recoveredLegacy : [];
       session.firstPassResults = {};
       session.protagonistProfile = '';
       session.storyContextMemory = null;
@@ -1735,11 +1770,11 @@ els.analyzeBtn.addEventListener('click', async () => {
     // must not re-bill the 15 already verified scene chapters. The persistent
     // identity includes every actual storyboard image, its timing, and the
     // source-context analysis settings; it never includes an API credential.
-    const checkpointPrefix = await analysisCheckpointKey({
+    const checkpointPrefix = checkpointPrefixOverride || await analysisCheckpointKey({
       sheets: storyboard.sheets, timestamps: storyboard.timestamps,
       duration: storyboard.duration, mode: analysisModeKey
     });
-    let restoredChapters = 0;
+    let restoredChapters = session.chunkResults.filter(result => result?.available).length;
     for (let index = 0; index < chunkCount; index++) {
       if (session.chunkResults[index]?.available === true) continue;
       const previous = await analysisResponseCache.readCheckpoint(checkpointPrefix, index);
