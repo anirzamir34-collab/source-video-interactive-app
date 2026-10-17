@@ -117,9 +117,9 @@ test('repair catalog prefers only tested general multimodal model families', () 
   ]), PREFERRED_REPAIR_ANALYSIS_MODELS);
   assert.match(server, /repairProbeImage/);
   assert.match(server, /maxOutputTokens: 256/);
-  assert.match(server, /parsed\\?\\.ok === true/);
+  assert.match(server, /parsed\?\.ok === true/);
   assert.match(server, /repairCatalogCache/);
-  assert.match(server, /const models = checks\\.filter\\(Boolean\\)/);
+  assert.match(server, /const models = checks\.filter\(Boolean\)/);
 });
 
 test('saved game repair displays per-gap errors and suppresses repeated provider rejection', () => {
@@ -127,9 +127,9 @@ test('saved game repair displays per-gap errors and suppresses repeated provider
   assert.match(app, /skipped_previous_rejection/);
   assert.match(app, /skipped_model_error/);
   assert.match(app, /lastRepairAttempt:/);
-  assert.match(app, /lastAttempt\\?\\.model === repairModel/);
-  assert.match(app, /technicalStop\\.has\\(reason\\)/);
-  assert.match(ui, /describeSavedGameRepair\\(analysis\\)/);
+  assert.match(app, /lastAttempt\?\.model === repairModel/);
+  assert.match(app, /technicalStop\.has\(reason\)/);
+  assert.match(ui, /describeSavedGameRepair\(analysis\)/);
   assert.match(ui, /saved-game-repair-report/);
   assert.match(ui, /HTTP/);
 });
