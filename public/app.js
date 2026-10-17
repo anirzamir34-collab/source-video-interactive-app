@@ -111,7 +111,7 @@ import { createTurkishMediaClient } from './turkish-media-client.js';
 import { sourceContextAdapter, sourceSpeechOverlaps } from './source-transcript.js';
 import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
-import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
+import { analysisRequestKey, analysisCheckpointKey, storyboardSourceKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
@@ -1549,6 +1549,30 @@ els.analyzeBtn.addEventListener('click', async () => {
   // The URL cache supplies one complete local source to both independent
   // pipelines. Frame preparation runs while the server processes source audio.
   file = await prepareStoryboardSource(session, file);
+  // Recover precisely the storyboard bytes that earlier paid Gemini chapters
+  // received. Regenerating 480 mobile video frames can change JPEG hashes and
+  // make valid chapter checkpoints unreachable after a browser refresh.
+  const sourceEvidenceKey = modes.motion ? await storyboardSourceKey(file) : null;
+  session.sourceEvidenceKey = sourceEvidenceKey;
+  if (sourceEvidenceKey && modes.motion) {
+    if (!session.storyboard) {
+      const previousStoryboard = await analysisResponseCache.readStoryboard(sourceEvidenceKey);
+      if (previousStoryboard) {
+        session.storyboard = previousStoryboard;
+        analysisProgress.update('frames', { status: 'reused',
+          detail: `${previousStoryboard.timestamps.length} kare ve özgün analiz görselleri cihazdan geri yüklendi.` });
+        logEngineEvent('STORYBOARD_RESTORED', { frames: previousStoryboard.timestamps.length });
+      }
+    }
+    if (!session.sourceTranscript) {
+      const priorSpeech = await analysisResponseCache.readSourceTranscript(sourceEvidenceKey);
+      if (priorSpeech) {
+        session.sourceTranscript = priorSpeech;
+        analysisProgress.update('transcript', { status: 'reused',
+          detail: 'Önceki konuşma çözümlemesi cihazdan geri alındı.' });
+      }
+    }
+  }
   const fastStoryboardPreparation = modes.motion && !session.storyboard
     ? extractStoryboard(file, framesProgress, analysisOwner.signal, { remoteSampling: Boolean(state.selectedRemoteVideo) })
       .then(value => {
@@ -1592,6 +1616,8 @@ els.analyzeBtn.addEventListener('click', async () => {
       session.mediaModeKey = mediaModeKey;
     }
     updateSourceTranscript(result.sourceTranscript);
+    if (sourceEvidenceKey && session.sourceTranscript)
+      await analysisResponseCache.saveSourceTranscript(sourceEvidenceKey, session.sourceTranscript);
     if (reusableMedia) onTurkishMediaStatus({ state: 'READY', sourceTranscript: result.sourceTranscript });
     renderMediaControls();
   } catch (error) {
@@ -1645,6 +1671,16 @@ els.analyzeBtn.addEventListener('click', async () => {
     remoteSampling: Boolean(remoteStoryboardSource)
   }));
   session.storyboard = storyboard;
+  if (sourceEvidenceKey) {
+    const saved = await analysisResponseCache.saveStoryboard(sourceEvidenceKey, storyboard);
+    // Refuse a new costly long-video run when its analysis evidence cannot
+    // survive a reload. A memory-only 40-chapter session is too fragile.
+    if (!saved && storyboard.duration >= 600) {
+      throw new Error('Cihazın analiz önbelleğine 480 karelik kaynak kayıtları yazılamadı. 10 dakika üzeri videolarda yeni ücretli Gemini istekleri başlatılmadı. Tarayıcı depolama iznini ve boş alanı kontrol et.');
+    }
+  } else if (storyboard.duration >= 600) {
+    throw new Error('Cihazda güvenli analiz kaydı anahtarı oluşturulamadı. Uzun video için yeniden ücretli Gemini analiz istekleri başlatılmadı.');
+  }
   analysisProgress.done('frames', storyboard.timestamps.length + ' kare hazır.');
   if (storyboard.performance) logEngineEvent('STORYBOARD_PREPARED', {
     ...storyboard.performance, downloadMs: session.sourceDownloadMs || 0
@@ -1942,7 +1978,15 @@ els.analyzeBtn.addEventListener('click', async () => {
             session.chunkResults = chunkResults;
             // Each successful chapter has its own atomic local checkpoint.
             // Concurrent chapters cannot overwrite one another's progress.
-            await analysisResponseCache.saveCheckpoint(checkpointPrefix, chunkIndex, chunkBody);
+            const stored = await analysisResponseCache.saveCheckpoint(checkpointPrefix, chunkIndex, chunkBody);
+            if (!stored && storyboard.duration >= 600) {
+              // Keep the successful paid result in the current session, but
+              // stop before launching another expensive chapter batch.
+              return { chunkIndex, failureBody: {
+                available: false, reason: 'ANALYSIS_CHECKPOINT_STORAGE_FAILED',
+                message: 'Bölüm tamamlandı ancak cihaz önbelleğine kaydedilemedi. Ücretli analiz durduruldu; aynı sekmeyi kapatma.'
+              }, failedChunk: chunkIndex + 1 };
+            }
             chunkSucceeded = true;
             analysisProgress.update('analysis', { loaded: chunkResults.filter(result => result?.available).length,
               total: chunkCount, unit: 'bölüm', detail: 'Bölüm ' + (chunkIndex + 1) + ' analiz edildi ve doğrulandı.' });
