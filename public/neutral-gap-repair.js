@@ -9,7 +9,13 @@ Do not describe sexual anatomy, sexual acts, or explicit sexual details.
 Do not infer invisible events or manufacture gameplay choices.
 When no ordinary event can be safely established, return an empty action array.`;
 
-const asSafeJson = (value, max = 8000) => JSON.stringify(value ?? []).slice(0, max);
+const asSafeJson = (value, max = 8000) => {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { parsed = []; }
+  }
+  return JSON.stringify(parsed ?? []).slice(0, max);
+};
 
 export function buildGapRepairPrompt({
   chunkStart, chunkEnd, timestamps = [], motionProfile = [], sceneBoundaries = []
@@ -74,4 +80,28 @@ export function verifiedNeutralRepairActions(actions = [], range = {}) {
       positionLabel: '', loopStartTime: null, loopEndTime: null,
       verifiedSubsequences: [], adultScene: false, outcomeType: 'none'
     }));
+}
+
+export function uncoveredNeutralRepairIntervals(gap, actions = []) {
+  const start = Number(gap?.startTime), end = Number(gap?.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+  const clips = (Array.isArray(actions) ? actions : [])
+    .filter(action => action?.sourceVerified === true &&
+      Number.isFinite(Number(action.startTime)) && Number.isFinite(Number(action.endTime)))
+    .map(action => ({ startTime: Math.max(start, Number(action.startTime)),
+      endTime: Math.min(end, Number(action.endTime)) }))
+    .filter(clip => clip.endTime > clip.startTime)
+    .sort((a, b) => a.startTime - b.startTime);
+  const gaps = [];
+  let cursor = start;
+  for (const clip of clips) {
+    if (clip.startTime > cursor + 0.05) gaps.push({
+      startTime: cursor, endTime: clip.startTime, reason: 'NEUTRAL_REPAIR_UNVERIFIED'
+    });
+    cursor = Math.max(cursor, clip.endTime);
+  }
+  if (end > cursor + 0.05) gaps.push({
+    startTime: cursor, endTime: end, reason: 'NEUTRAL_REPAIR_UNVERIFIED'
+  });
+  return gaps;
 }
