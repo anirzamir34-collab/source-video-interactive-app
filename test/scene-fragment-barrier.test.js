@@ -94,7 +94,9 @@ test('merged Android-style opening reaches a real next CORE group when progress 
   assert.deepEqual(Array.from(positions, item => context.isWarmupPosition(item)), [true,true,false]);
   const runtime = createInteractionState({ id: merged[0].id, groups: positions.map(item => ({
     id: item.id, sourceVerified: true, phase: context.isWarmupPosition(item) ? 'APPROACH' : 'CORE',
-    sourceRanges: item.sourceRanges, movements: []
+    sourceRanges: item.sourceRanges.map(range => ({
+      ...range, id: item.id, sourceVerified: true
+    })), movements: []
   })), choices: [] }, { currentTime: 110.6 });
   const full = transitionInteraction(runtime, { type: 'progress', value: 100 });
   assert.equal(full.currentPhase, 'CORE');
