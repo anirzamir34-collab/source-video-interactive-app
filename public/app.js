@@ -8,6 +8,7 @@ import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, uncoveredNeutr
 import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import { createServerRevisionReader } from './server-revision.js';
+import { createDeploymentGuard } from './deployment-guard.js';
 import {
   adultPositionFamily,
   assignAdultSceneOccurrenceIds,
@@ -1479,6 +1480,12 @@ function canReuseTurkishMedia(session, modeKey, modes) {
 els.analyzeBtn.addEventListener('click', async () => {
   if (state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
   if (!state.selectedFile && !state.selectedRemoteVideo) return;
+  if (await deploymentGuard.hasChanged()) {
+    els.analysisCard.classList.remove('hidden');
+    els.analysisState.textContent = 'GÜNCELLEME GEREKİYOR';
+    els.analysisOutput.textContent = 'Yeni sürüm yayınlandı. Sayfayı yenileyip videoyu yeniden seçerek analizi başlat.';
+    return;
+  }
   state.analysisInProgress = true;
   state.aiUsage = { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
   state.savedGameReady = false;
@@ -2465,6 +2472,9 @@ function assignPositionOccurrenceIds(actions) {
   });
 }
 
+const deploymentGuard = createDeploymentGuard();
+void deploymentGuard.loadedCommit().then(commit => { state.loadedDeploymentCommit = commit; });
+
 function normalizeAnalysis(body) {
   const storyContext = mergeStoryContexts([{ storyContext: body?.storyContext || {} }]);
   const actions = Array.isArray(body?.actions) ? body.actions : [];
@@ -2983,6 +2993,7 @@ function prepareAdultScenes() {
     reportVersion: 3,
     generatedAt: new Date().toISOString(),
     engineVersion: ENGINE_VERSION,
+    clientDeploymentCommit: state.loadedDeploymentCommit || null,
     analysisFingerprint: state.analysisFingerprint || '',
     sourceActionCount: actions.length,
     storyContext: state.analysis?.storyContext || null,
@@ -4549,10 +4560,12 @@ function renderAdultApproachChoices(scene, later = false) {
       }
     });
     target.appendChild(button);
-    if (!dialogueOnly && (choice.label !== compactChoiceLabel(choice.label) || choice.label.length > 65)) {
+    if (!dialogueOnly && (choice.label !== compactChoiceLabel(choice.label) || choice.label.length > 65 ||
+        sourceSequenceCount > 1)) {
       const detail = document.createElement('details');
       detail.className = 'choice-detail';
-      detail.innerHTML = `<summary>Açıklama</summary><p>${escapeHtml(choice.label)}</p>`;
+      const descriptions = [...new Set((choice.variants || [choice]).map(item => item.label || choice.label))];
+      detail.innerHTML = `<summary>Açıklama</summary><p>${descriptions.map(escapeHtml).join('<br>')}</p>`;
       target.appendChild(detail);
     }
   });
@@ -5438,10 +5451,11 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       selectAdultMovement(movement.id, true);
     });
     wrapper.appendChild(button);
-    if (choice.label.length > 65 || choice.label.includes(' · ')) {
+    if (choice.label.length > 65 || choice.label.includes(' · ') || choice.variants.length > 1) {
       const detail = document.createElement('details');
       detail.className = 'choice-detail';
-      detail.innerHTML = `<summary>Açıklama</summary><p>${escapeHtml(choice.label)}</p>`;
+      const descriptions = [...new Set(choice.variants.map(item => item.label || choice.label))];
+      detail.innerHTML = `<summary>Açıklama</summary><p>${descriptions.map(escapeHtml).join('<br>')}</p>`;
       wrapper.appendChild(detail);
     }
     if (choice.hasTempoShift && choice.tempoVariants?.length > 1) {

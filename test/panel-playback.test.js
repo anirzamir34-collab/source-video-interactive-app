@@ -751,6 +751,28 @@ test('an introduction without warmup-position metadata still keeps the gate clos
   assert.equal(f.state.adultUnlockedPositionIds.size, 0);
 });
 
+test('a full opening meter cannot leave verified core controls behind approach cards', () => {
+  const f = runtimeFixture();
+  f.state.adultScene.startTime = 71.5;
+  f.state.adultScene.endTime = 845;
+  f.state.adultScene.foreplay = [{ id: 'source-opening', label: 'Observed opening',
+    sourceVerified: true, choiceSurface: 'approach', startTime: 71.5, endTime: 96.5 }];
+  f.state.adultScene.positions = [{ ...chapter('oral-warmup', 96.5), progressionRole: 'foreplay', familyId: 'oral' },
+    chapter('verified-core', 391.7)];
+  f.els.video.time = 217;
+  f.state.adultTimelineFloor = 217;
+  f.state.femaleSceneProgress = 35;
+  f.genericInteractionSnapshot();
+  f.state.interactionRuntime = { ...f.state.interactionRuntime,
+    currentPhase: 'APPROACH', progressBudgetConsumed: true, progressionValue: 100 };
+  f.state.interactionMeterNeedsReset = true;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.state.adultSexUnlocked, true);
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
+  assert.ok(f.els.positionTabs.querySelectorAll('.position-tab').some(item =>
+    item.dataset.positionId === 'verified-core'));
+});
+
 test('natural playback reaching a verified chapter opens its panel despite a short introduction without seeking', () => {
   const f = runtimeFixture();
   f.state.femaleSceneProgress = 5;

@@ -76,6 +76,7 @@ test('analysis ignores duplicate starts and releases controls even if initial se
   const code = section("els.analyzeBtn.addEventListener('click', async () => {", '\nfunction assignPositionOccurrenceIds(');
   const f = fixture(code, {
     els, state, videoUrlInput: new Element(), resolveUrlBtn: new Element(),
+    deploymentGuard: { hasChanged: async () => false },
     setGameState() {}, renderDebug() {}, updateAnalyzeAvailability() { els.analyzeBtn.disabled = state.analysisInProgress; },
     selectedAnalysisModes() { setupCalls++; throw Error('setup failed'); }
   });

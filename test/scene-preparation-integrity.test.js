@@ -51,6 +51,40 @@ const action = (id, start, end, extra = {}) => ({
   loopStartTime: start, loopEndTime: end, ...extra
 });
 
+test('anonymous Android analysis retains ordinary choices and the later verified core in one encounter', () => {
+  const sample = JSON.parse(fs.readFileSync(new URL('./fixtures/live-analysis-anonymous.json', import.meta.url)));
+  const mergeStart = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
+  const mergeEnd = source.indexOf('\nfunction prepareAdultScenes()', mergeStart);
+  const mergeFragments = vm.runInNewContext(`${source.slice(mergeStart, mergeEnd)}\nmergeAdultSceneFragments;`);
+  const state = prepare(sample.actions, {
+    mergeAdultSceneFragments: mergeFragments,
+    verifiedAdultPositionFamily: item => item.positionId || '',
+    playableAdultPanelFamily: item => item.positionId || '',
+    canonicalAdultPosition: item => ({ id: item.positionId, label: item.positionLabel }),
+    adultCategoryFor: (_item, id) => ({ id, label: id }),
+    isWarmupPosition: item => item.familyId === 'oral',
+    movementBelongsToVerifiedPosition: item => item.sourceVerified === true
+  });
+  assert.equal(state.adultScenes.length, 1);
+  assert.deepEqual(Array.from(state.adultAnalysisTrace.actions.slice(0, 4), item => item.choiceSurface),
+    ['story', 'story', 'story', 'story']);
+  assert.deepEqual(Array.from(state.adultScenes[0].dialogue.slice(0, 2), item => item.sourceActionId),
+    ['tl-003', 'tl-004']);
+  assert.ok(state.adultScenes[0].positions.some(item => item.familyId === 'standing-rear'));
+  assert.ok(state.adultScenes[0].positions.some(item => item.familyId === 'reverse-cowgirl'));
+  const rhythmic = state.adultScenes[0].positions.filter(item =>
+    item.familyId === 'oral' || item.familyId === 'standing-rear');
+  const coreRhythm = rhythmic.find(position => position.familyId === 'standing-rear');
+  assert.equal(coreRhythm.movements.length, 12);
+  assert.equal(coreRhythm.movementChoices.length, 9,
+    'three compatible source pairs rotate within cards rather than making duplicate buttons');
+  assert.ok(rhythmic.some(position => position.movementChoices.some(card => card.variants.length > 1)));
+  for (const position of rhythmic) for (const card of position.movementChoices) {
+    assert.ok(card.variants.every(item => item.sourceVerified === true));
+    assert.ok(card.variants.every(item => item.movementTempo === card.variants[0].movementTempo));
+  }
+});
+
 function prepare(actions, overrides = {}, sourceContext = null, storyContext = {}) {
   const state = { analysis: { actions, storyContext }, analysisFingerprint: 'test', sourceContext };
   const scope = vm.createContext({

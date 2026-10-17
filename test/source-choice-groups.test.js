@@ -165,6 +165,36 @@ test('four minute opening groups repeated adjacent actions without inventing int
   assert.equal(groupVerifiedApproachChoices(clips.slice(0, 1))[0].variants.length, 1);
 });
 
+test('verified rhythmic cuts with compatible tempo share a replayable movement card', () => {
+  const movements = [
+    clip(0, { actionType: 'position', movementType: 'ritmik temas', label: 'İlk ritmik kesit' }),
+    clip(1, { actionType: 'position', movementType: 'ritmik hareket', label: 'Aynı ritmi sürdür',
+      loopStartTime: 9.6, loopEndTime: 14.6 }),
+    clip(2, { actionType: 'tempo_change', movementType: 'hızlı hareket', label: 'Hızlanan hareket',
+      movementTempo: 'fast', loopStartTime: 14.6, loopEndTime: 19.6 })
+  ];
+  const position = { id: 'observed-pose', occurrenceId: 'observed-occurrence',
+    startTime: 0, endTime: 19.6, sourceRanges: [
+      { id: 'trail-a', sourceVerified: true, startTime: 0, endTime: 5 },
+      { id: 'trail-a', sourceVerified: true, startTime: 9.6, endTime: 19.6 }
+    ], movements };
+  const cards = buildVerifiedMovementChoices(movements, 'Observed pose', 4, position);
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
+    [['clip-0', 'clip-1'], ['clip-2']]);
+  assert.deepEqual(cards[0].variants.map(item => [item.loopStartTime, item.loopEndTime]),
+    [[0, 5], [9.6, 14.6]]);
+  const differentCast = movements.map((item, index) => index === 1
+    ? { ...item, partnerTrackId: 'person-c' } : item);
+  assert.deepEqual(buildVerifiedMovementChoices(differentCast,
+    'Observed pose', 4, { ...position, movements: differentCast })
+    .map(card => card.variants.length), [1, 1, 1]);
+  const longGap = movements.map((item, index) => index === 1
+    ? { ...item, loopStartTime: 11, loopEndTime: 14.6 } : item);
+  assert.deepEqual(buildVerifiedMovementChoices(longGap,
+    'Observed pose', 4, { ...position, movements: longGap })
+    .map(card => card.variants.length), [1, 1, 1]);
+});
+
 test('opening variants separate a calm and an intense rendition of the same action', () => {
   const clips = [
     { id: 'calm', sourceVerified: true, label: 'Yakınlaşma', actionType: 'kiss',
