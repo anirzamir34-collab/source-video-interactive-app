@@ -94,13 +94,13 @@ test('repair report never describes refused five ranges as a successful analysis
 test('repair report shows disabled redundant retries and genuine success', () => {
   const report = describeSavedGameRepair({ lastRepairAttempt: {
     model: 'gemini-3.1-flash-lite', total: 2, recovered: 1, remaining: 1,
-    results: [{ startTime: 0, endTime: 10, outcome: 'processed' },
+    results: [{ startTime: 0, endTime: 10, outcome: 'processed', verifiedActions: 1 },
       { startTime: 10, endTime: 20, outcome: 'skipped_previous_rejection',
         reason: 'GEMINI_CONTENT_RESTRICTED' }]
   } });
   assert.match(report.summary, /1\/2 eksik bölüm tamamlandı/);
-  assert.match(report.details, /Tekrarlanan içerik reddi/);
-  assert.match(report.details, /Sonuç alındı/);
+  assert.match(report.details, /Önceki içerik reddi/);
+  assert.match(report.details, /Bölüm tamamlandı · 1 doğrulanmış olay/);
   assert.equal(report.error, true);
   assert.equal(describeSavedGameRepair({}), null);
 });
