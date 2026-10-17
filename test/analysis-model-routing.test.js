@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  analysisTierFromRequest, analysisModelCandidates, isSupportedDeepAnalysisModel,
+  analysisTierFromRequest, analysisModelCandidates, isSupportedDeepAnalysisModel, isGeminiModelName,
   DEEP_ANALYSIS_MODEL, ARGON_ANALYSIS_MODEL, ECONOMY_ANALYSIS_MODEL
 } from '../lib/analysis-model-routing.js';
 import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
@@ -62,10 +62,18 @@ test('UI requires the user to opt into expensive Argon before analysis; long-vid
   assert.equal(adaptiveAnalysisChunkPlan(19, 1200, 'ultra').chunkCount, 12);
 });
 
-test('saved-game repair retains the selected Gemini tier and skips content-restricted gaps', () => {
-  assert.match(app, /analysisTier: modes\.analysisTier,/);
-  assert.match(app, /deepAnalysisModel: modes\.analysisTier === 'deep' \? modes\.deepAnalysisModel : null,/);
+test('saved-game repairs offer the available Gemini model catalog and send the selected model', () => {
+  const ui = readFileSync(new URL('../public/saved-games-ui.js', import.meta.url), 'utf8');
+  assert.equal(isGeminiModelName('gemini-2.5-flash-lite'), true);
+  assert.equal(isGeminiModelName('gemini-4-argon'), true);
+  assert.equal(isGeminiModelName('other-provider'), false);
+  assert.match(ui, /button\.dataset\.action = action/);
+  assert.match(ui, /saved-game-model-picker/);
+  assert.match(ui, /repairGame\(game, update => message\(update\), model\)/);
   assert.match(app, /retryableAnalysisGaps\(previous, game\.duration\)/);
-  assert.match(app, /form\.append\('analysisTier', previous\.analysisTier\)/);
-  assert.match(app, /form\.append\('deepAnalysisModel', previous\.deepAnalysisModel\)/);
+  assert.match(app, /form\.append\('analysisTier', 'deep'\)/);
+  assert.match(app, /form\.append\('deepAnalysisModel', repairModel\)/);
+  assert.match(app, /form\.append\('repairMode', '1'\)/);
+  assert.match(server, /app\.get\('\/api\/gemini-analysis-models'/);
+  assert.match(server, /savedGameRepair \? \[deepAnalysisModel\]/);
 });
