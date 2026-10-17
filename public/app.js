@@ -4733,11 +4733,6 @@ function renderAdultOutcomes(scene) {
 function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel || state.adultOutcomePhase !== 'idle') return;
-  if (!state.adultLoopSeeking && !els.video?.seeking && !state.navigationSeeking &&
-      sceneSurfaceIsStale(scene, els.video?.currentTime)) {
-    reconcileInteractionSeek(Number(els.video.currentTime) || 0);
-    return;
-  }
   state.interactionRuntime = transitionInteraction(genericInteractionSnapshot(), { type: 'normalize' });
   // The source boundary spends the opening budget on the first core group.
   // Leaving its 100 on screen while blocking another unlock made the next
@@ -6033,16 +6028,24 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
-  // Source time, not the old panel unlock state, decides which scene owns
-  // the UI. This also handles native seeks that bypass manualSeeking flags.
-  if (sceneSurfaceIsStale(state.adultScene, mediaTime)) {
-    reconcileInteractionSeek(mediaTime);
+  observeInteractionProgress(mediaTime);
+  // Commit the last real source frame before closing the panel. A delayed
+  // playback tick may cross the scene envelope while the selected final clip
+  // still needs its completion/decision.
+  if (settleInteractionClipBoundary(mediaTime)) return;
+  const currentEnd = Number(state.adultScene?.endTime);
+  const hasPendingClip = Boolean(state.activeAdultPreludeId || state.activeMovementId ||
+    state.activeAdultEntryClip);
+  const pendingOutcome = state.adultOutcomePhase !== 'idle' || Boolean(state.adultOrgasmDecision);
+  const wellPastScene = Number.isFinite(currentEnd) && mediaTime > currentEnd + 3;
+  if (sceneSurfaceIsStale(state.adultScene, mediaTime) &&
+      ((wellPastScene && !state.adultOrgasmDecision) || (!hasPendingClip && !pendingOutcome))) {
+    const nextScene = findAdultSceneAt(mediaTime);
+    if (nextScene && nextScene.id !== state.adultScene?.id) reconcileInteractionSeek(mediaTime);
+    else finishAdultScene({ force: true, resumeAtCurrentTime: true });
     state.lastAdultFrameNow = now;
     return;
   }
-
-  observeInteractionProgress(mediaTime);
-  if (settleInteractionClipBoundary(mediaTime)) return;
   reconcileInteractionSource(mediaTime);
   // Hold the source frame while a decision is available. Otherwise playback
   // silently consumes the lookahead queue and a card can point behind the playhead.
