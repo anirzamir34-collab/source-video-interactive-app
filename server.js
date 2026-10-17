@@ -1217,10 +1217,20 @@ Rules:
     normalizerRejected.duplicates = Math.max(0, actions.length - dedupedActions.length);
     const analysisTelemetry = {
       modelRawActionsCount: Array.isArray(parsed.actions) ? parsed.actions.length : 0,
+      modelSourceVerifiedActionsCount: Array.isArray(parsed.actions)
+        ? parsed.actions.filter(action => action?.sourceVerified === true).length : 0,
       serverNormalizerAcceptedCount: dedupedActions.length,
+      serverSourceVerifiedActionsCount: dedupedActions.filter(action => action.sourceVerified === true).length,
       serverNormalizerRejected: { ...normalizerRejected },
       stageReached: dedupedActions.length ? 'SERVER_NORMALIZER_PASSED' : 'SERVER_NORMALIZER_EMPTY'
     };
+    // Count-only production telemetry. A successfully parsed model response
+    // may have no playable source actions; distinguish it from an API failure.
+    // Never write prompts, labels, identities, images or model output to logs.
+    console.info('[storyboard-action-coverage]', JSON.stringify({
+      chunkIndex, chunkCount, analysisTier,
+      ...analysisTelemetry
+    }));
     if (savedGameRepair) {
       repairTelemetry = { ...repairTelemetry,
         promptVersion: GAP_REPAIR_PROMPT_VERSION,
