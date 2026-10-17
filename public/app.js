@@ -7245,17 +7245,15 @@ async function openSavedGame(game) {
   els.playerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-async function repairSavedGame(game, onProgress = () => {}) {
+async function repairSavedGame(game, onProgress = () => {}, selectedModel = 'gemini-3.8-flash') {
   const savedSourceContext = sourceContextAdapter(game.turkishMedia?.manifest.sourceTranscript);
   const previous = game.payload.analysis;
   const gaps = retryableAnalysisGaps(previous, game.duration);
   if (!gaps.length) throw new Error('Kayıtta yeniden denenebilecek doğrulanmış eksik analiz aralığı bulunmuyor.');
-  // Older saved games did not retain their paid model choice. Never silently
-  // downgrade a deep run to economy or unexpectedly bill an expensive model.
-  if (!['economy', 'deep'].includes(previous.analysisTier) ||
-      (previous.analysisTier === 'deep' && !['gemini-3.8-flash', 'gemini-4-argon'].includes(previous.deepAnalysisModel))) {
-    throw new Error('Bu eski kayıtta kullanılan Gemini modeli bilinmiyor. Ücretli yanlış modele geçmemek için yeni bir analizde model seçimini açıkça yap.');
-  }
+  const repairModel = String(selectedModel || '').trim();
+  if (!/^gemini-[a-z0-9][a-z0-9._-]*$/i.test(repairModel))
+    throw new Error('Yeniden analiz için bir Gemini modeli seç.');
+
   const repairs = [];
   for (let index = 0; index < gaps.length; index++) {
     const gap = gaps[index];
@@ -7273,15 +7271,16 @@ async function repairSavedGame(game, onProgress = () => {}) {
     form.append('chunkIndex', String(index));
     form.append('chunkCount', String(gaps.length));
     form.append('qualityMode', 'ultra');
-    form.append('analysisTier', previous.analysisTier);
-    if (previous.analysisTier === 'deep') form.append('deepAnalysisModel', previous.deepAnalysisModel);
+    form.append('analysisTier', 'deep');
+    form.append('deepAnalysisModel', repairModel);
+    form.append('repairMode', '1');
     form.append('storyContextMemory', JSON.stringify(previous.storyContext || {}));
     form.append('dialogueContext', JSON.stringify((savedSourceContext?.segments || []).filter(item =>
       Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
     form.append('dialogueSpeakerContext', JSON.stringify(savedSourceContext?.speakers || []));
     form.append('sensoryAudioContext', JSON.stringify((savedSourceContext?.nonSpeechEvents || []).filter(item =>
       Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
-    onProgress(`Eksik bölüm ${index + 1}/${gaps.length} analiz ediliyor…`);
+    onProgress(`Eksik bölüm ${index + 1}/${gaps.length} · ${repairModel} ile analiz ediliyor…`);
     const headers = geminiRequestHeaders();
     let result;
     try {
@@ -7317,8 +7316,16 @@ async function repairSavedGame(game, onProgress = () => {}) {
   return mergeRepairedAnalysis(previous, repairs, game.duration);
 }
 
+async function loadSavedGameGeminiModels() {
+  const response = await fetch('/api/gemini-analysis-models', { headers: geminiRequestHeaders() });
+  if (!response.ok) throw new Error('Gemini model listesi şu an alınamadı.');
+  const result = await response.json();
+  return Array.isArray(result?.models) ? result.models : [];
+}
+
 savedGames = mountSavedGames({
-  root: $('savedGames'), capture: captureSavedGame, openGame: openSavedGame, repairGame: repairSavedGame,
+  root: $('savedGames'), capture: captureSavedGame, openGame: openSavedGame,
+  repairGame: repairSavedGame, loadRepairModels: loadSavedGameGeminiModels,
   isBusy: () => state.analysisInProgress || state.urlResolutionInProgress,
   onBusy: busy => { state.savedGameBusy = busy; updateAnalyzeAvailability(); },
   onSaved: record => { state.activeSavedGameId = record.id; },
