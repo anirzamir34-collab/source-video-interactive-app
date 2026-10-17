@@ -118,7 +118,7 @@ import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentC
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
-  openingSceneChoiceMenu, isForwardTimelineChoice } from './choice-routing.js';
+  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -129,7 +129,7 @@ import { assignVerifiedOpeningRoles } from './verified-scene-continuity.js';
 import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
   verifiedClipCompletionReady } from './interaction-completion.js';
 import { mountInteractionPanel, resetInteractionSelection,
-  syncInteractionSurfaces } from './interaction-panel.js';
+  sceneSurfaceIsStale, syncInteractionSurfaces } from './interaction-panel.js';
 
 const videoDownloads = createVideoDownloader();
 const urlVideoCache = createUrlVideoCache();
@@ -847,7 +847,7 @@ function selectedAnalysisModes() {
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
-    dubbingProvider: 'classic',
+    dubbingProvider: els.dubbingProvider?.value === 'elevenlabs_v1' ? 'elevenlabs_v1' : 'classic',
     quality: 'ultra',
     analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy',
     deepAnalysisModel: els.deepAnalysisModel?.value || 'gemini-3.8-flash'
@@ -2695,7 +2695,7 @@ function normalizeAnalysis(body) {
     storyContext,
     warnings: Array.isArray(body?.warnings) ? body.warnings : [],
     actions: ownership.playable,
-    unownedSourceIntervals: mergeUnownedIntervals(ownership.excluded.map(action => ({
+    unownedSourceIntervals: mergeUnownedIntervals(ownership.skippableExcluded.map(action => ({
       startTime: action.startTime, endTime: action.endTime
     }))),
   };
@@ -6029,7 +6029,23 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   observeInteractionProgress(mediaTime);
+  // Commit the last real source frame before closing the panel. A delayed
+  // playback tick may cross the scene envelope while the selected final clip
+  // still needs its completion/decision.
   if (settleInteractionClipBoundary(mediaTime)) return;
+  const currentEnd = Number(state.adultScene?.endTime);
+  const hasPendingClip = Boolean(state.activeAdultPreludeId || state.activeMovementId ||
+    state.activeAdultEntryClip);
+  const pendingOutcome = state.adultOutcomePhase !== 'idle' || Boolean(state.adultOrgasmDecision);
+  const wellPastScene = Number.isFinite(currentEnd) && mediaTime > currentEnd + 3;
+  if (sceneSurfaceIsStale(state.adultScene, mediaTime) &&
+      ((wellPastScene && !state.adultOrgasmDecision) || (!hasPendingClip && !pendingOutcome))) {
+    const nextScene = findAdultSceneAt(mediaTime);
+    if (nextScene && nextScene.id !== state.adultScene?.id) reconcileInteractionSeek(mediaTime);
+    else finishAdultScene({ force: true, resumeAtCurrentTime: true });
+    state.lastAdultFrameNow = now;
+    return;
+  }
   reconcileInteractionSource(mediaTime);
   // Hold the source frame while a decision is available. Otherwise playback
   // silently consumes the lookahead queue and a card can point behind the playhead.
@@ -6468,7 +6484,12 @@ function renderChoices() {
   const unowned = intervals.find(interval =>
     Number(interval.endTime) > state.gameCursorTime + 0.05 &&
     (routeTime === null || Number(interval.startTime) < routeTime - 0.05));
-  if (unowned) {
+  // Give an already verified ordinary decision priority over a generic
+  // unowned-source interval. Group videos can have a narrative decision even
+  // when no single playable protagonist was established for that interval.
+  let candidates = futureActions();
+  const verifiedInsideGap = verifiedStoryAheadOfGap(candidates, state.gameCursorTime, unowned);
+  if (unowned && !verifiedInsideGap) {
     const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration) || 0;
     if (Number(unowned.startTime) > state.gameCursorTime + 0.3) {
       void resumeAnalysisGap(Number(unowned.startTime));
@@ -6480,7 +6501,7 @@ function renderChoices() {
       els.choices.classList.remove('hidden');
       const message = document.createElement('div');
       message.className = 'meta';
-      message.textContent = 'Bu bölümde baş karakter doğrulanamadı.';
+      message.textContent = 'Bu aralıkta oynanabilir kaynak seçeneği doğrulanamadı. Video izlenebilir veya sonraki doğrulanmış bölüme geçilebilir.';
       const watch = document.createElement('button');
       watch.className = 'choice story-choice';
       watch.textContent = 'Bölümü izle';
@@ -6499,8 +6520,6 @@ function renderChoices() {
   els.choices.innerHTML = '';
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
-  let candidates = futureActions();
-
   // Membership is explicit; a wide scene envelope cannot consume story data.
   candidates = candidates.filter(isUnownedTimelineChoice);
 

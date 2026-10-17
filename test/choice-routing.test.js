@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneSurfaceChoices,
   distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice,
-  isForwardTimelineChoice, isUnroutedVerifiedApproach, openingSceneChoiceMenu } from '../public/choice-routing.js';
+  isForwardTimelineChoice, isUnroutedVerifiedApproach, openingSceneChoiceMenu, verifiedStoryAheadOfGap } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 
@@ -233,4 +233,17 @@ test('stale activity metadata cannot push observed opening actions into the posi
       activityTypeConfidence: 0.95, activityEvidence: 'Unverified provider claim' });
     assert.equal(choiceSurfaceForAction(source), 'approach');
   }
+});
+
+test('verified ordinary dialogue wins over a missing-protagonist interval', () => {
+  const candidates = [
+    action({ actionId: 'talk', choiceSurface: 'story', actionType: 'dialogue', startTime: 276.423, endTime: 287.38 }),
+    action({ actionId: 'position', choiceSurface: 'panel', actionType: 'position', startTime: 281, endTime: 288 }),
+    action({ actionId: 'unverified', sourceVerified: false, choiceSurface: 'story', startTime: 280, endTime: 285 })
+  ];
+  assert.equal(verifiedStoryAheadOfGap(candidates, 260, { startTime: 240, endTime: 300 }), true);
+  assert.equal(verifiedStoryAheadOfGap(candidates, 240, { startTime: 240, endTime: 250 }), false);
+  assert.equal(verifiedStoryAheadOfGap(candidates, 290, { startTime: 240, endTime: 300 }), false);
+  assert.equal(verifiedStoryAheadOfGap([candidates[1], candidates[2]], 260,
+    { startTime: 240, endTime: 300 }), false);
 });

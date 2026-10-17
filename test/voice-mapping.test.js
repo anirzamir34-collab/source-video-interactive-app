@@ -521,3 +521,10 @@ test('late completion of a previous voice regeneration cannot unlock a newer ana
   assert.deepEqual(f.els.video.seekWrites, []);
 });
 
+
+test('the video upload UI opts into ElevenLabs automatic dubbing without manual speaker selection', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="dubbingProvider" value="elevenlabs_v1"/);
+  assert.match(app, /dubbingProvider: els\.dubbingProvider\?\.value === 'elevenlabs_v1'/);
+  assert.match(app, /dubbingProvider: 'elevenlabs_v1'/);
+});

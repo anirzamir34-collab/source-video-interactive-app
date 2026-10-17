@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mountInteractionPanel, resetInteractionSelection,
-  syncInteractionSurfaces } from '../public/interaction-panel.js';
+  sceneSurfaceIsStale, syncInteractionSurfaces } from '../public/interaction-panel.js';
 
 class Element {
   constructor(id = '') { this.id = id; }
@@ -140,4 +140,15 @@ test('missing target never leaves an old panel visible and invalid states fail l
   assert.equal(overlay.classes.has('hidden'), true);
   assert.throws(() => syncInteractionSurfaces({ panel, overlay, surface: 'typo' }),
     /UNKNOWN_INTERACTION_SURFACE/);
+});
+
+test('an interaction surface releases ownership on the first unrelated source scene', () => {
+  const scene = { startTime: 138.212, endTime: 239.5 };
+  assert.equal(sceneSurfaceIsStale(scene, 160), false);
+  assert.equal(sceneSurfaceIsStale(scene, 239.5), false);
+  assert.equal(sceneSurfaceIsStale(scene, 240), true);
+  assert.equal(sceneSurfaceIsStale(scene, 276.423), true);
+  assert.equal(sceneSurfaceIsStale(scene, 100), true);
+  assert.equal(sceneSurfaceIsStale(scene, NaN), false);
+  assert.equal(sceneSurfaceIsStale(null, 100), false);
 });

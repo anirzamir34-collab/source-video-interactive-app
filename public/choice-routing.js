@@ -173,3 +173,18 @@ export function openingSceneChoiceMenu(items = [], { firstCoreStart = Infinity }
       end <= ceiling + 0.05;
   }).sort((a, b) => Number(a.startTime) - Number(b.startTime)));
 }
+
+/**
+ * An unowned-source interval is a lack-of-player-identity hint, not evidence
+ * that a separately verified normal decision must disappear from gameplay.
+ * Keep an already source-verified ordinary card visible within lookahead.
+ */
+export function verifiedStoryAheadOfGap(candidates = [], cursor = 0, interval = null) {
+  if (!interval || !Number.isFinite(Number(interval.endTime))) return false;
+  const now = Number(cursor) || 0, end = Number(interval.endTime);
+  return (Array.isArray(candidates) ? candidates : []).some(action =>
+    action?.sourceVerified === true && choiceSurfaceKey(action) === 'story' &&
+    Number.isFinite(Number(action.startTime)) &&
+    Number(action.startTime) >= now - 0.05 &&
+    Number(action.startTime) <= end + 0.05);
+}

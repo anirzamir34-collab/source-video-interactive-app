@@ -54,3 +54,13 @@ export function syncInteractionSurfaces({ panel, overlay, approach, surface = 'n
   return { surface: visible, panelVisible, overlayVisible, approachVisible,
     overlayCount: Number(panelVisible) + Number(overlayVisible) + Number(approachVisible) };
 }
+
+// Source playback owns the surface. An old interaction controller must never
+// remain actionable over a subsequent unrelated scene or a manual seek.
+export function sceneSurfaceIsStale(scene, mediaTime, tolerance = 0.15) {
+  const start = Number(scene?.startTime), end = Number(scene?.endTime);
+  const now = Number(mediaTime);
+  if (!scene || !Number.isFinite(start) || !Number.isFinite(end) || end <= start ||
+      !Number.isFinite(now)) return false;
+  return now < start - tolerance || now >= end + tolerance;
+}
