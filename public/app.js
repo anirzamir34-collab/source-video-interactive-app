@@ -4,6 +4,8 @@ import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
+import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
+import { mediaModeKeyFromOptions } from './media-mode-key.js';
 import { repairSavedAudio } from './saved-audio.js';
 import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, uncoveredNeutralRepairIntervals } from './neutral-gap-repair.js';
 import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
@@ -118,7 +120,8 @@ import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentC
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
-  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap } from './choice-routing.js';
+  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap,
+  boundedUnownedGapEnd } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -1352,8 +1355,7 @@ async function regenerateTurkishVoices(plan, retry = false) {
     updateSourceTranscript(result.sourceTranscript);
     if (plan.session && state.analysisSession === plan.session) {
       plan.session.mediaManifest = result;
-      plan.session.mediaModeKey = JSON.stringify({ dub: plan.options.outputs.dub,
-        subtitles: plan.options.outputs.subtitles, quality: plan.options.qualityMode });
+      plan.session.mediaModeKey = mediaModeKeyFromOptions(plan.options);
     }
     state.mediaRevoice = null;
     els.voiceMappingRows.replaceChildren();
@@ -1553,8 +1555,16 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Recover precisely the storyboard bytes that earlier paid Gemini chapters
   // received. Regenerating 480 mobile video frames can change JPEG hashes and
   // make valid chapter checkpoints unreachable after a browser refresh.
-  const sourceEvidenceKey = modes.motion ? await storyboardSourceKey(file) : null;
-  session.sourceEvidenceKey = sourceEvidenceKey;
+  // Audio-only uploads need the same content identity as video analyses.
+  // Otherwise two same-named clips could reuse an unrelated transcript/dub.
+  const sourceEvidenceKey = await storyboardSourceKey(file);
+  const sourceIdentity = reconcileAnalysisSessionEvidence(session, sourceEvidenceKey);
+  if (sourceIdentity.changed) {
+    updateSourceTranscript(null);
+    logEngineEvent('ANALYSIS_SOURCE_EVIDENCE_CHANGED', {
+      action: 'discard_stale_session_chapters'
+    });
+  }
   if (sourceEvidenceKey && modes.motion) {
     if (!session.storyboard) {
       const previousStoryboard = await analysisResponseCache.readStoryboard(sourceEvidenceKey);
@@ -1585,8 +1595,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Attach a handler immediately; await below still surfaces the frame error.
   fastStoryboardPreparation?.catch(() => {});
   session.audioContextStatus = 'pending';
-  const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality,
-    ...(modes.dubbingProvider === 'elevenlabs_v1' ? { provider: 'elevenlabs_v1' } : {}) });
+  const mediaModeKey = mediaModeKeyFromOptions({
+    outputs: { dub: modes.dubbing, subtitles: modes.subtitles, dubbingProvider: modes.dubbingProvider },
+    qualityMode: modes.dubQuality
+  });
   const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
   const reusableMedia = !contextualMedia && canReuseTurkishMedia(session, mediaModeKey, modes);
   // Do not stamp a previous media manifest with the newly requested mode.
@@ -6495,7 +6507,7 @@ function renderChoices() {
       void resumeAnalysisGap(Number(unowned.startTime));
       return;
     }
-    const end = Math.min(duration || Infinity, Number(unowned.endTime));
+    const end = boundedUnownedGapEnd(unowned, routeTime, duration || Infinity);
     if (end > state.gameCursorTime + 0.1) {
       els.choices.replaceChildren();
       els.choices.classList.remove('hidden');

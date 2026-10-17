@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createTurkishMediaClient } from '../public/turkish-media-client.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
+import { mediaModeKeyFromOptions } from '../public/media-mode-key.js';
 import { mapSpeakerVoices } from '../lib/turkish-media/voice-mapping.js';
 import { publicMediaError } from '../lib/turkish-media/errors.js';
 import { normalizeScribeTranscript } from '../lib/turkish-media/model.js';
@@ -310,6 +311,7 @@ function uiFixture({ start, retry, manual = true } = {}) {
     setSyncOffset: value => { calls.toggles.push(['syncOffset', value]); captured.syncOffset = value; }
   };
   const scope = vm.createContext({ state, els, Blob, DOMException, mediaClient, sourceContextAdapter,
+    mediaModeKeyFromOptions,
     document: { createElement: tag => new Element(tag) },
     savedGames: { saveCurrent: async forced => { calls.save.push(forced); }, resetCurrent() {} },
     updateAnalyzeAvailability: () => calls.availability.push(state.analysisInProgress),
