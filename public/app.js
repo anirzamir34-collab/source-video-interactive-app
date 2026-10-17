@@ -5,6 +5,7 @@ import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonis
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
+import { mediaModeKeyFromOptions } from './media-mode-key.js';
 import { repairSavedAudio } from './saved-audio.js';
 import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, uncoveredNeutralRepairIntervals } from './neutral-gap-repair.js';
 import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
@@ -1353,8 +1354,7 @@ async function regenerateTurkishVoices(plan, retry = false) {
     updateSourceTranscript(result.sourceTranscript);
     if (plan.session && state.analysisSession === plan.session) {
       plan.session.mediaManifest = result;
-      plan.session.mediaModeKey = JSON.stringify({ dub: plan.options.outputs.dub,
-        subtitles: plan.options.outputs.subtitles, quality: plan.options.qualityMode });
+      plan.session.mediaModeKey = mediaModeKeyFromOptions(plan.options);
     }
     state.mediaRevoice = null;
     els.voiceMappingRows.replaceChildren();
@@ -1592,8 +1592,10 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Attach a handler immediately; await below still surfaces the frame error.
   fastStoryboardPreparation?.catch(() => {});
   session.audioContextStatus = 'pending';
-  const mediaModeKey = JSON.stringify({ dub: modes.dubbing, subtitles: modes.subtitles, quality: modes.dubQuality,
-    ...(modes.dubbingProvider === 'elevenlabs_v1' ? { provider: 'elevenlabs_v1' } : {}) });
+  const mediaModeKey = mediaModeKeyFromOptions({
+    outputs: { dub: modes.dubbing, subtitles: modes.subtitles, dubbingProvider: modes.dubbingProvider },
+    qualityMode: modes.dubQuality
+  });
   const contextualMedia = modes.motion && (modes.dubbing || modes.subtitles);
   const reusableMedia = !contextualMedia && canReuseTurkishMedia(session, mediaModeKey, modes);
   // Do not stamp a previous media manifest with the newly requested mode.
