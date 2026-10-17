@@ -7245,7 +7245,7 @@ async function openSavedGame(game) {
   els.playerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-async function repairSavedGame(game, onProgress = () => {}, selectedModel = 'gemini-3.8-flash') {
+async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') {
   const savedSourceContext = sourceContextAdapter(game.turkishMedia?.manifest.sourceTranscript);
   const previous = game.payload.analysis;
   const gaps = retryableAnalysisGaps(previous, game.duration);
@@ -7255,39 +7255,63 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = 'gem
     throw new Error('Yeniden analiz için bir Gemini modeli seç.');
 
   const repairs = [];
+  const results = [];
+  const lastAttempt = previous.lastRepairAttempt;
+  let modelFailure = '';
+  const technicalStop = new Set(['GEMINI_MODEL_UNAVAILABLE', 'GEMINI_INVALID_REQUEST',
+    'GEMINI_AUTH_ERROR', 'GEMINI_CREDITS_DEPLETED', 'GEMINI_RATE_LIMITED', 'GEMINI_DAILY_LIMIT']);
+
   for (let index = 0; index < gaps.length; index++) {
     const gap = gaps[index];
+    const prior = lastAttempt?.model === repairModel
+      ? lastAttempt.results?.find(item => item.startTime === gap.startTime &&
+        item.endTime === gap.endTime && item.reason === 'GEMINI_CONTENT_RESTRICTED')
+      : null;
+    if (prior) {
+      results.push({ startTime: gap.startTime, endTime: gap.endTime,
+        reason: 'GEMINI_CONTENT_RESTRICTED', httpStatus: prior.httpStatus || null,
+        outcome: 'skipped_previous_rejection' });
+      onProgress(`Bölüm ${index + 1}/${gaps.length}: aynı modelin önceki içerik reddi nedeniyle tekrar gönderilmedi.`);
+      continue;
+    }
+    if (modelFailure) {
+      results.push({ startTime: gap.startTime, endTime: gap.endTime,
+        reason: modelFailure, httpStatus: null, outcome: 'skipped_model_error' });
+      continue;
+    }
     onProgress(`Eksik bölüm ${index + 1}/${gaps.length}: ${gap.startTime.toFixed(1)}–${gap.endTime.toFixed(1)} sn · kareler hazırlanıyor…`);
-    const storyboard = await extractStoryboard(game.video, () => {}, undefined, { timeRange: gap });
-    const form = new FormData();
-    storyboard.sheets.forEach((sheet, sheetIndex) => form.append('storyboards', sheet,
-      `repair-${index + 1}-${sheetIndex + 1}.jpg`));
-    form.append('duration', String(game.duration));
-    form.append('timestamps', JSON.stringify(storyboard.timestamps));
-    form.append('motionProfile', JSON.stringify(storyboard.motionProfile));
-    form.append('sceneBoundaries', JSON.stringify(storyboard.sceneBoundaries));
-    form.append('chunkStart', String(gap.startTime));
-    form.append('chunkEnd', String(gap.endTime));
-    form.append('chunkIndex', String(index));
-    form.append('chunkCount', String(gaps.length));
-    form.append('qualityMode', 'ultra');
-    form.append('analysisTier', 'deep');
-    form.append('deepAnalysisModel', repairModel);
-    form.append('repairMode', '1');
-    form.append('storyContextMemory', JSON.stringify(previous.storyContext || {}));
-    form.append('dialogueContext', JSON.stringify((savedSourceContext?.segments || []).filter(item =>
-      Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
-    form.append('dialogueSpeakerContext', JSON.stringify(savedSourceContext?.speakers || []));
-    form.append('sensoryAudioContext', JSON.stringify((savedSourceContext?.nonSpeechEvents || []).filter(item =>
-      Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
-    onProgress(`Eksik bölüm ${index + 1}/${gaps.length} · ${repairModel} ile analiz ediliyor…`);
-    const headers = geminiRequestHeaders();
-    let result;
+    let result = { available: false };
+    let reason = '';
+    let httpStatus = null;
     try {
+      const storyboard = await extractStoryboard(game.video, () => {}, undefined, { timeRange: gap });
+      const form = new FormData();
+      storyboard.sheets.forEach((sheet, sheetIndex) => form.append('storyboards', sheet,
+        `repair-${index + 1}-${sheetIndex + 1}.jpg`));
+      form.append('duration', String(game.duration));
+      form.append('timestamps', JSON.stringify(storyboard.timestamps));
+      form.append('motionProfile', JSON.stringify(storyboard.motionProfile));
+      form.append('sceneBoundaries', JSON.stringify(storyboard.sceneBoundaries));
+      form.append('chunkStart', String(gap.startTime));
+      form.append('chunkEnd', String(gap.endTime));
+      form.append('chunkIndex', String(index));
+      form.append('chunkCount', String(gaps.length));
+      form.append('qualityMode', 'ultra');
+      form.append('analysisTier', 'deep');
+      form.append('deepAnalysisModel', repairModel);
+      form.append('repairMode', '1');
+      form.append('storyContextMemory', JSON.stringify(previous.storyContext || {}));
+      form.append('dialogueContext', JSON.stringify((savedSourceContext?.segments || []).filter(item =>
+        Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
+      form.append('dialogueSpeakerContext', JSON.stringify(savedSourceContext?.speakers || []));
+      form.append('sensoryAudioContext', JSON.stringify((savedSourceContext?.nonSpeechEvents || []).filter(item =>
+        Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
+      onProgress(`Eksik bölüm ${index + 1}/${gaps.length} · ${repairModel} ile analiz ediliyor…`);
       const response = await fetch('/api/gemini-storyboard-analyze', {
-        method: 'POST', headers, body: form,
+        method: 'POST', headers: geminiRequestHeaders(), body: form,
         signal: AbortSignal.timeout(240000)
       });
+      httpStatus = response.status;
       result = await response.json();
       recordAiUsage(result?.aiUsage);
       if (response.ok && result?.available) {
@@ -7302,18 +7326,35 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = 'gem
         result.actions = normalized.actions.map((action, actionIndex) => ({
           ...action, actionId: `repair-${Math.round(gap.startTime * 1000)}-${actionIndex + 1}`
         }));
-      } else if (result?.reason === 'GEMINI_CREDITS_DEPLETED') {
-        throw Object.assign(new Error(result.message || 'Analiz kredisi tükendi; kayıt değiştirilmedi.'),
-          { code: 'GEMINI_CREDITS_DEPLETED' });
+        // Do not mark a previously missing range as recovered without any
+        // positively verified source action or an explicit remaining gap.
+        if (!result.actions.some(action => action.sourceVerified === true) &&
+            !(result.analysisGaps || []).length) {
+          result = { available: false, reason: 'NO_VERIFIED_ACTIONS' };
+        }
+      } else {
+        reason = String(result?.reason || 'ANALYSIS_FAILED');
       }
     } catch (error) {
-      if (error?.code === 'GEMINI_CREDITS_DEPLETED') throw error;
-      result = { available: false, message: error.message || 'Bağlantı hatası' };
-      onProgress(`Bölüm ${index + 1} tamamlanamadı; mevcut analiz korunuyor. Diğer eksik bölümler deneniyor…`);
+      reason = ['TimeoutError', 'AbortError'].includes(error?.name)
+        ? 'GEMINI_TEMPORARILY_UNAVAILABLE' : 'NETWORK_OR_ANALYSIS_ERROR';
+      result = { available: false, reason };
     }
+    reason = result?.available ? '' : String(result?.reason || reason || 'ANALYSIS_FAILED');
+    if (technicalStop.has(reason)) modelFailure = reason;
     repairs.push({ gap, result });
+    results.push({ startTime: gap.startTime, endTime: gap.endTime, reason,
+      httpStatus, outcome: result?.available ? 'processed' : 'failed',
+      verifiedActions: result?.available ? (result.actions || []).filter(a => a.sourceVerified === true).length : 0 });
+    onProgress(`Bölüm ${index + 1}/${gaps.length}: ${reason || 'doğrulanmış sonuç alındı'}`);
   }
-  return mergeRepairedAnalysis(previous, repairs, game.duration);
+  const merged = mergeRepairedAnalysis(previous, repairs, game.duration);
+  const remaining = retryableAnalysisGaps(merged, game.duration);
+  const repaired = gaps.length - remaining.length;
+  return { ...merged, lastRepairAttempt: {
+    model: repairModel, checkedAt: new Date().toISOString(), total: gaps.length,
+    recovered: repaired, remaining: remaining.length, results
+  } };
 }
 
 async function loadSavedGameGeminiModels() {
