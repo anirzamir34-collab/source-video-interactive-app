@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { parseStoryboardResponse, generateStoryboardWithRetry, storyboardFailureReason, isTerminalStoryboardFailure,
   hasDeclaredPartialCoverage, chunkGapResult } from '../public/analysis-recovery.js';
+import { buildGapRepairPrompt, GAP_REPAIR_SYSTEM_INSTRUCTION, verifiedNeutralRepairActions } from '../public/neutral-gap-repair.js';
 
 test('restricted source interval reports its provider reason and never fabricates choices', () => {
   const gap = chunkGapResult({ reason: 'GEMINI_CONTENT_RESTRICTED', retryable: false }, 1, 94.7, 189.3);
@@ -204,4 +205,55 @@ test('restriction diagnostics are logged without any additional paid Gemini call
   assert.match(source, /\[gemini-restriction-diagnostic\]/);
   assert.match(source, /stage: reviewMode \? 'review' : 'analysis'/);
   assert.match(source, /error\?\.safetyDiagnostic/);
+});
+
+test('empty saved-game repairs fail HTTP 422 and are not cached as successful analysis', async () => {
+  const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const route = source.indexOf("app.post('/api/gemini-storyboard-analyze'");
+  const start = source.indexOf('async (req, res) => {', route);
+  const end = source.indexOf("\napp.post('/api/external-analyze'", start);
+  const handlerSource = source.slice(start, end).trim().replace(/\\);$/, '');
+  let calls = 0;
+  const handler = vm.runInNewContext(`(${handlerSource})`, {
+    GoogleGenAI: class { models = { generateContent: async () => {
+      calls += 1;
+      return { text: '{"available":true,"actions":[],"analysisGaps":[],"warnings":[]}',
+        usageMetadata: { totalTokenCount: 80 } };
+    } }; },
+    resolveGeminiApiKey: () => 'test-only',
+    emptyGeminiUsage: () => ({ requests: 0 }),
+    addGeminiUsage: usage => { usage.requests += 1; },
+    storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure,
+    serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey,
+    geminiAnalysisSafetySettings: [], geminiGenerationConfig,
+    hasFamilyOrSpouseContext, analysisModelCandidates, analysisTierFromRequest,
+    isGeminiModelName: value => /^gemini-/.test(value),
+    storyboardRequestCache: createAnalysisRequestCache(),
+    GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'normal analysis instructions',
+    GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions,
+    ANALYSIS_MODEL: 'gemini-3.8-flash', process: { env: {} },
+    console: { warn() {}, error() {}, info() {} }
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const req = {
+      body: { repairMode: '1', analysisTier: 'deep',
+        deepAnalysisModel: 'gemini-3.8-flash', chunkIndex: 0,
+        chunkCount: 5, chunkStart: 276.5, chunkEnd: 331.8, duration: 900,
+        timestamps: '[276.5,279.5,282.5]', motionProfile: '[]',
+        sceneBoundaries: '[]' },
+      files: [{ buffer: Buffer.from('test neutral image'), mimetype: 'image/jpeg' }]
+    };
+    const res = { statusCode: 200,
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; } };
+    await handler(req, res);
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.available, false);
+    assert.equal(res.body.reason, 'GEMINI_NO_VERIFIED_EVENTS');
+    assert.equal(res.body.analysisGaps[0].startTime, 276.5);
+    assert.equal(res.body.aiUsage.requests, 1);
+    assert.equal(res.body.aiUsage.cacheHits || 0, 0);
+  }
+  // Two separate user invocations cannot reuse a falsely successful empty result.
+  assert.equal(calls, 2);
 });
