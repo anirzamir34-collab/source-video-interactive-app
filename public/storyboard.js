@@ -96,7 +96,7 @@ export function adaptiveConversationActionChunkPlan(storyboard = {}, {
     start: Number(item.startTime ?? item.sourceStart),
     end: Number(item.endTime ?? item.sourceEnd)
   })).filter(item => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
-    .sort((a, b) => a.start - b.end);
+    .sort((a, b) => a.start - b.start);
   if (!speech.length) return previous;
   const mergedSpeech = [];
   for (const interval of speech) {
