@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { assignVerifiedOpeningRoles } from '../public/verified-scene-continuity.js';
-import { isWarmupPosition } from '../public/adult-gameplay.js';
 import { createInteractionState, transitionInteraction } from '../public/interaction-engine.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -11,6 +10,9 @@ const start = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
 const end = source.indexOf('\nfunction prepareAdultScenes()', start);
 const context = vm.createContext({});
 vm.runInContext(source.slice(start, end), context);
+const warmupStart = source.indexOf('function isWarmupPosition(');
+const warmupEnd = source.indexOf('\nfunction isBonusPosition(', warmupStart);
+vm.runInContext(source.slice(warmupStart, warmupEnd), context);
 
 const chapter = (id, startTime, endTime) => ({ id, startTime, endTime,
   postSceneTime: endTime, foreplay: [], positions: [], outcomes: [] });
@@ -89,9 +91,9 @@ test('merged Android-style opening reaches a real next CORE group when progress 
   ]);
   assert.equal(merged.length, 1);
   const positions = assignVerifiedOpeningRoles(merged[0].positions);
-  assert.deepEqual(Array.from(positions, item => isWarmupPosition(item)), [true,true,false]);
+  assert.deepEqual(Array.from(positions, item => context.isWarmupPosition(item)), [true,true,false]);
   const runtime = createInteractionState({ id: merged[0].id, groups: positions.map(item => ({
-    id: item.id, phase: isWarmupPosition(item) ? 'APPROACH' : 'CORE',
+    id: item.id, phase: context.isWarmupPosition(item) ? 'APPROACH' : 'CORE',
     sourceRanges: item.sourceRanges, movements: []
   })), choices: [] }, { currentTime: 110.6 });
   const full = transitionInteraction(runtime, { type: 'progress', value: 100 });
