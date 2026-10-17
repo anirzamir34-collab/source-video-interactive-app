@@ -26,7 +26,7 @@ import { serializeReviewCandidates } from './public/classification-integrity.js'
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 import { geminiAnalysisSafetySettings, geminiGenerationConfig } from './lib/gemini-generation-config.js';
-import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName } from './lib/analysis-model-routing.js';
+import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 
@@ -1658,7 +1658,7 @@ app.get('/api/gemini-analysis-models', async (req, res) => {
     const found = new Set();
     for await (const model of pager) {
       const name = String(model.name || '').replace('models/', '');
-      if (isGeminiModelName(name)) found.add(name);
+      if (isVideoQuestAnalysisModel({ ...model, name })) found.add(name);
     }
     return res.json({ models: [...found].sort() });
   } catch (error) {
