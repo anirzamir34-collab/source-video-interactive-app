@@ -2790,14 +2790,30 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const merged = [];
+  // The source track pair, not incidental per-chunk participant metadata,
+  // owns scene continuity. A model may list the same two people in one clip's
+  // participantTrackIds and omit that redundant list in the next clip. That
+  // is not a verified cast change, and splitting there strands warmup Lust
+  // in a chapter without the next core position.
   const castFor = scene => [...new Set([
     ...(scene.positions || []), ...(scene.foreplay || []), ...(scene.partnerTransitions || [])
   ].flatMap(item => {
     const subject = String(item.subjectTrackId || '').trim();
     const partner = String(item.partnerTrackId || '').trim();
-    const participants = [...(item.participantTrackIds || [])]
-      .map(value => String(value || '').trim()).filter(Boolean).sort();
-    return subject || partner || participants.length ? [JSON.stringify([subject, partner, participants])] : [];
+    if (!subject || !partner || subject === partner) {
+      // Missing/conflicting track information is NOT permission to merge.
+      // Preserve a conservative identity barrier for incomplete cast metadata.
+      const participants = [...new Set((item.participantTrackIds || []).map(value =>
+        String(value || '').trim()).filter(Boolean))].sort();
+      return subject || partner || participants.length
+        ? [JSON.stringify(['incomplete', subject, partner, participants])] : [];
+    }
+    // Genuine group scenes must still agree on their additional participants.
+    const group = item.groupScene === true
+      ? [...new Set((item.participantTrackIds || []).map(value =>
+        String(value || '').trim()).filter(Boolean))].sort()
+      : [];
+    return [JSON.stringify([subject, partner, group])];
   }))].sort().join('|');
 
   for (const scene of sorted) {
@@ -6155,7 +6171,14 @@ function isUnownedTimelineChoice(action) {
   const surface = choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) });
   if (!['story', 'approach'].includes(surface)) return false;
   return !(state.adultScenes || []).some(scene => !state.completedAdultSceneIds?.has(scene.id) &&
-    (surface === 'story' ? sceneOwnsStoryChoice(scene, action) : sceneOwnsApproachChoice(scene, action)));
+    (surface === 'story'
+      // A scene can retain earlier dialogue as factual narrative context,
+      // but its playable opening begins at its first verified approach.
+      // Do not consume ordinary choices before that playable boundary:
+      // doing so made all pre-encounter story options disappear from gameplay.
+      ? Number(action.startTime) >= Number(scene.startTime) - 0.05 &&
+        sceneOwnsStoryChoice(scene, action)
+      : sceneOwnsApproachChoice(scene, action)));
 }
 
 function futureActions() {
