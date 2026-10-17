@@ -201,7 +201,12 @@ export function bundleAdjacentSourceCards(cards = [], { targetCount = 4, maxVari
     if (!last || !first || a.sourceVerified !== true || b.sourceVerified !== true ||
         left.variants.length + right.variants.length > capacity ||
         !text(left.sourcePositionId) || left.sourcePositionId !== right.sourcePositionId ||
-        text(left.occurrenceId) !== text(right.occurrenceId)) return false;
+        text(left.occurrenceId) !== text(right.occurrenceId) ||
+        text(left.intensityBand) !== text(right.intensityBand) ||
+        text(left.energyFlavor) !== text(right.energyFlavor) ||
+        text(left.tempo) !== text(right.tempo) ||
+        sourceActionLabel(left.label).toLocaleLowerCase('tr-TR') !==
+          sourceActionLabel(right.label).toLocaleLowerCase('tr-TR')) return false;
     for (const field of ['sourceOccurrenceId', 'positionOccurrenceId', 'routeNamespace',
       'subjectTrackId', 'partnerTrackId']) {
       if (text(a[field]) !== text(b[field])) return false;
@@ -230,4 +235,55 @@ export function bundleAdjacentSourceCards(cards = [], { targetCount = 4, maxVari
     });
   }
   return result.map((card, index) => ({ ...card, displayIndex: index + 1 }));
+}
+
+const visualState = value => typeof value === 'string' ? value.trim() :
+  value && typeof value === 'object' ? JSON.stringify(value) : '';
+const approachStage = clip => JSON.stringify([
+  text(clip.locationId),
+  visualState(clip.beforeState?.clothingState || clip.beforeState?.clothing ||
+    clip.beforeState?.outfit)
+]);
+
+// A source stage changes only on declared visual state. The same stage stays
+// replayable after its timeline has passed; an earlier room or outfit does not.
+export function approachStageChoices(clips = [], cursor = 0) {
+  const ordered = [...clips].sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const current = [...ordered].reverse().find(item => Number(item.startTime) <= Number(cursor) + 0.05) || ordered[0];
+  if (!current) return [];
+  const stage = approachStage(current);
+  const index = ordered.indexOf(current);
+  let first = index, last = index;
+  while (first > 0 && approachStage(ordered[first - 1]) === stage &&
+      Number(ordered[first].startTime) - Number(ordered[first - 1].endTime) <= 45) first -= 1;
+  while (last + 1 < ordered.length && approachStage(ordered[last + 1]) === stage &&
+      Number(ordered[last + 1].startTime) - Number(ordered[last].endTime) <= 45) last += 1;
+  return ordered.slice(first, last + 1);
+}
+
+export function groupVerifiedApproachChoices(clips = []) {
+  const cards = [];
+  for (const clip of clips) {
+    const range = clipRange(clip);
+    if (clip?.sourceVerified !== true || !clip.id || !range) continue;
+    const previous = cards.at(-1);
+    const priorClip = previous?.variants.at(-1);
+    const priorRange = clipRange(priorClip);
+    const sameAction = priorClip && clip.nonIntimate !== true && priorClip.nonIntimate !== true &&
+      choiceSurfaceKey(clip) !== 'story' && choiceSurfaceKey(priorClip) !== 'story' &&
+      sourceActionLabel(previous.label).toLocaleLowerCase('tr-TR') ===
+        sourceActionLabel(clip.label).toLocaleLowerCase('tr-TR') &&
+      text(priorClip.actionType) === text(clip.actionType) &&
+      text(priorClip.routeNamespace) === text(clip.routeNamespace) &&
+      text(priorClip.subjectTrackId) === text(clip.subjectTrackId) &&
+      text(priorClip.partnerTrackId) === text(clip.partnerTrackId) &&
+      approachStage(priorClip) === approachStage(clip) &&
+      priorRange && range.startTime >= priorRange.endTime - 0.05 &&
+      range.startTime <= priorRange.endTime + 1;
+    if (sameAction) {
+      previous.variants.push(clip);
+      previous.endTime = range.endTime;
+    } else cards.push({ ...clip, variants: [clip], startTime: range.startTime, endTime: range.endTime });
+  }
+  return cards;
 }

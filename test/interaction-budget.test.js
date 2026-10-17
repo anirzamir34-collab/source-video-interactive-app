@@ -185,6 +185,24 @@ test('after the active core family is unlocked, the next full meter unlocks the 
   assert.ok(!state.unlockedGroupIds.includes('spoon'));
 });
 
+test('two, three, five and seven source positions unlock one at a time and retain earlier destinations', () => {
+  for (const count of [2, 3, 5, 7]) {
+    const groups = Array.from({ length: count }, (_, index) =>
+      row(`position-${index}`, 20 + index * 30, 45 + index * 30, { phase: 'CORE' }));
+    let state = createInteractionState({ id: `source-${count}`,
+      choices: [row('opening', 0, 20)], groups });
+    for (let index = 0; index < count; index += 1) {
+      state = unlockNextCoreGroup({ ...state, progressionValue: 100 }, 'progress-full');
+      assert.deepEqual(state.unlockedGroupIds, groups.slice(0, index + 1).map(group => group.id));
+      state = { ...state, activeGroupId: groups[index].id, progressionValue: 0 };
+    }
+    assert.deepEqual(unlockNextCoreGroup({ ...state, progressionValue: 100 }).unlockedGroupIds,
+      groups.map(group => group.id));
+    assert.equal(selectInteractionGroup(state, groups[0].id).blockedReason, null);
+    assert.equal(selectInteractionGroup(state, groups.at(-1).id).blockedReason, null);
+  }
+});
+
 test('full progress repairs a stale approach phase and hidden panel without seeking', () => {
   const initial = budgetState(opening());
   const repaired = normalizeInteractionRuntime({ ...initial, progressionValue: 100,

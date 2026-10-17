@@ -12,7 +12,8 @@ import * as interaction from '../public/interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
 import * as panel from '../public/interaction-panel.js';
 import * as compat from '../public/interaction-compat.js';
-import { collapseConsecutiveEquivalentCards, bundleAdjacentSourceCards } from '../public/choice-groups.js';
+import { collapseConsecutiveEquivalentCards, bundleAdjacentSourceCards,
+  groupVerifiedApproachChoices, approachStageChoices } from '../public/choice-groups.js';
 import * as completion from '../public/interaction-completion.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
@@ -103,7 +104,8 @@ function fixture() {
     get(target, key) { return Object.hasOwn(target, key) ? target[key] : (target[key] = new Element()); }
   });
   const scope = vm.createContext({ ...choiceRouting, ...completion, collapseConsecutiveEquivalentCards,
-    bundleAdjacentSourceCards, state, els, AbortController, DOMException,
+    bundleAdjacentSourceCards, groupVerifiedApproachChoices, approachStageChoices,
+    state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
@@ -406,6 +408,69 @@ test('a grouped introduction card selects another existing clip on each click an
   assert.equal(f.state.activeMovementId, 'opening-1');
 });
 
+test('played opening cards remain selectable at 70 percent and replay starts real media', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'long-opening', startTime: 0, endTime: 310,
+    positions: [chapter('main', 270)], dialogue: [], outcomes: [], foreplay: [
+      { id: 'first', label: 'First observed action', actionType: 'kiss', sourceVerified: true,
+        startTime: 0, endTime: 70 },
+      { id: 'second', label: 'Second observed action', actionType: 'touch', sourceVerified: true,
+        startTime: 70, endTime: 140 },
+      { id: 'third', label: 'Third observed action', actionType: 'kiss', sourceVerified: true,
+        startTime: 140, endTime: 210 }
+    ] };
+  f.state.femaleSceneProgress = 24.5;
+  f.state.adultTimelineFloor = 210;
+  f.els.video.time = 210;
+  f.els.video.pause();
+  f.renderAdultApproachChoices(f.state.adultScene);
+  const cards = f.els.approachChoices.children.filter(node => node.dataset.clipId);
+  assert.deepEqual(cards.map(node => node.dataset.clipId), ['first', 'second', 'third']);
+  cards[0].dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.state.activeAdultPreludeId, 'first');
+  assert.equal(f.els.video.currentTime, 0);
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.femaleSceneProgress, 24.5, 'selection alone earns no Lust');
+});
+
+test('first, third, then first verified opening card can be selected in one stage', async () => {
+  const f = runtimeFixture();
+  const opening = chapter('opening', 0, 'opening', 'foreplay');
+  opening.movements.forEach((item, index) => { item.label = `Distinct action ${index}`; });
+  f.state.adultScene = { id: 'three-choices', startTime: 0, endTime: 90,
+    positions: [opening, chapter('main', 50)], foreplay: [], dialogue: [], outcomes: [] };
+  f.els.video.time = 30;
+  f.state.adultTimelineFloor = 30;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  const cards = f.els.approachChoices.children.filter(node => node.dataset.clipId);
+  assert.equal(cards.length, 3);
+  for (const [card, clip] of [[cards[0], 'opening-0'], [cards[2], 'opening-2'],
+    [cards[0], 'opening-0']]) {
+    card.dispatchEvent(new Event('click'));
+    await flush();
+    assert.equal(f.state.activeMovementId, clip);
+    assert.equal(f.els.video.paused, false);
+  }
+});
+
+test('opening renderer removes salon and old clothing cards at verified stage boundaries', () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'stages', startTime: 0, endTime: 150,
+    positions: [chapter('main', 110)], dialogue: [], outcomes: [], foreplay: [
+      { id: 'salon', label: 'Salon', actionType: 'touch', locationId: 'salon',
+        beforeState: { clothing: 'dressed' }, sourceVerified: true, startTime: 0, endTime: 25 },
+      { id: 'room-dressed', label: 'Oda', actionType: 'touch', locationId: 'bedroom',
+        beforeState: { clothing: 'dressed' }, sourceVerified: true, startTime: 25, endTime: 50 },
+      { id: 'room-changed', label: 'Kıyafet değişimi', actionType: 'clothing', locationId: 'bedroom',
+        beforeState: { clothing: 'changed' }, sourceVerified: true, startTime: 50, endTime: 75 }
+    ] };
+  f.els.video.time = 60;
+  f.state.adultTimelineFloor = 60;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['room-changed']);
+});
+
 test('an empty introduction menu leaves a visible source playback control', () => {
   const f = runtimeFixture();
   f.state.adultScene.foreplay = [];
@@ -418,7 +483,7 @@ test('an empty introduction menu leaves a visible source playback control', () =
   assert.equal(f.els.video.paused, true);
 });
 
-test('past opening cards retire and leave a continue control for the next verified chapter', async () => {
+test('played opening card remains available alongside source continuation', async () => {
   const f = runtimeFixture();
   f.state.adultScene = { id: 'late-opening', startTime: 189, endTime: 410,
     positions: [chapter('main', 378)], dialogue: [], outcomes: [], foreplay: [
@@ -430,7 +495,7 @@ test('past opening cards retire and leave a continue control for the next verifi
   f.els.video.time = 374.7;
   f.els.video.pause();
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId === 'last-opening'), false);
+  assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId === 'last-opening'), true);
   const continueButton = f.els.approachChoices.children.find(node => node.textContent === 'Videoya devam et');
   assert.ok(continueButton, 'replay cards cannot hide natural source continuation');
   continueButton.dispatchEvent(new Event('click'));
@@ -1222,7 +1287,7 @@ test('active introduction prepares upcoming choices without dropping the current
   assert.equal(f.els.video.playCalls, 0);
 });
 
-test('earlier verified opening choices retire and cannot rewind through a stale selection', async () => {
+test('earlier verified opening choices replay on explicit selection', async () => {
   const f = runtimeFixture();
   f.state.adultScene.foreplay = [
     { id: 'opening-a', label: 'Step A', sourceVerified: true, startTime: 10, endTime: 20 },
@@ -1232,11 +1297,11 @@ test('earlier verified opening choices retire and cannot rewind through a stale 
   f.state.adultTimelineFloor = 30;
   f.els.video.time = 30;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), []);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['opening-a', 'opening-b']);
   f.playAdultPrelude('opening-a');
   await flush();
-  assert.equal(f.els.video.currentTime, 30);
-  assert.equal(f.state.activeAdultPreludeId, null);
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.state.activeAdultPreludeId, 'opening-a');
 });
 
 test('a completed later source choice still progresses when skipped intervals cap coverage', () => {
@@ -1462,7 +1527,7 @@ test('unique opening clips fill the budget and open the core panel without repea
   }));
   f.els.video.time = 0;
   f.renderAdultProgressiveUI(true);
-  assert.equal(f.state.adultApproachChoices.length, 5);
+  assert.equal(f.state.adultApproachChoices.length, 6);
   for (let index = 0; index < 6; index += 1) {
     f.playAdultPrelude(`step-${index}`);
     await flush();
@@ -1638,7 +1703,7 @@ test('context-control clips stay visible as ordinary movement choices', () => {
   );
 });
 
-test('panel presents eight adjacent verified actions as four playable cards', () => {
+test('panel retains eight distinct verified movement cards without a fixed display count', () => {
   const f = runtimeFixture();
   const position = f.state.adultScene.positions[0];
   position.endTime = 100;
@@ -1654,9 +1719,9 @@ test('panel presents eight adjacent verified actions as four playable cards', ()
   f.renderAdultProgressiveUI(true);
   f.selectAdultPosition('one', false);
   const cards = position.activeMovementChoices;
-  assert.equal(cards.length, 4);
+  assert.equal(cards.length, 8);
   assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)),
     position.movements.map(item => item.id));
-  assert.ok(cards.every(card => card.variants.length === 2));
+  assert.ok(cards.every(card => card.variants.length === 1));
 });
 

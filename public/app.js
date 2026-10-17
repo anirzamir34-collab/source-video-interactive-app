@@ -108,7 +108,7 @@ import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
-  bundleAdjacentSourceCards } from './choice-groups.js';
+  bundleAdjacentSourceCards, groupVerifiedApproachChoices, approachStageChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices,
   isForwardTimelineChoice } from './choice-routing.js';
@@ -3175,6 +3175,8 @@ function prepareAdultScenes() {
           actionType: String(action.actionType || '').trim(),
           choiceSurface: action.choiceSurface,
           routeNamespace: activityOccurrenceNamespace(action),
+          locationId: action.locationId,
+          beforeState: action.beforeState,
           nonIntimate: sourceDialogue,
           subjectTrackId: String(action.subjectTrackId || '').trim(),
           partnerTrackId: String(action.partnerTrackId || '').trim(),
@@ -3237,6 +3239,8 @@ function prepareAdultScenes() {
       scene.positions.set(positionKey, {
         id: positionKey,
         sourceVerified: action.sourceVerified === true,
+        locationId: action.locationId,
+        beforeState: action.beforeState,
         familyId: canonical.id,
         occurrenceId,
         groupScene: action.groupScene === true,
@@ -4315,18 +4319,19 @@ function renderAdultApproachChoices(scene, later = false) {
   const flow = currentAdultFlow();
   const sceneCorePositions = (scene?.positions || []).filter(position => !isWarmupPosition(position));
   const verifiedPrelude = scenePreludeChoices(scene).filter(item => item.sourceVerified === true);
-  const approachPool = [
-    ...(later ? scenePreludeChoices(scene).filter(item => Number(item.startTime) >=
+  const openingPrelude = later ? scenePreludeChoices(scene).filter(item => Number(item.startTime) >=
       Math.min(...(scene?.positions || []).map(position => Number(position.startTime))))
       : sceneCorePositions.length
         ? initialWarmupBeforeFirstPosition(verifiedPrelude, sceneCorePositions)
-        : verifiedPrelude).map(item => ({
+        : verifiedPrelude;
+  const approachPool = [
+    ...groupVerifiedApproachChoices(openingPrelude).map(item => ({
       ...item, kind: 'foreplay', id: item.id, label: item.label,
       sourceVerified: item.sourceVerified === true,
       nonIntimate: item.nonIntimate === true || item.choiceSurface === 'story',
       choiceSurface: item.nonIntimate === true || item.choiceSurface === 'story' ? 'story' : 'approach',
       startTime: item.startTime, endTime: item.endTime,
-      playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
+      playCount: Math.min(...item.variants.map(clip => Number(state.adultPreludePlayCounts.get(clip.id) || 0)))
     })),
     ...(!later ? (scene?.positions || []).filter(isWarmupPosition) : []).flatMap(position => {
       const firstCoreStart = Math.min(...(scene.positions || []).filter(item => !isWarmupPosition(item)).map(item => Number(item.startTime)));
@@ -4338,6 +4343,8 @@ function renderAdultApproachChoices(scene, later = false) {
         sourceVerified: position.sourceVerified === true && card.variants.every(item => item.sourceVerified === true),
         kind: 'position', id: position.id,
         choiceSurface: 'approach',
+        locationId: position.locationId,
+        beforeState: position.beforeState,
         castIds: [position.subjectTrackId, position.partnerTrackId].filter(Boolean),
         movementId: card?.variants?.[0]?.id || movements[0]?.id || '',
         label: card?.label || card?.variants?.[0]?.label || movements[0]?.label || position.label || `Yakınlaşma ${index + 1}`,
@@ -4359,27 +4366,25 @@ function renderAdultApproachChoices(scene, later = false) {
   );
   // Existing source-role metadata chooses the surface. Dialogue choices stay
   // separate from progress-bearing opening choices, without changing labels.
-  const forwardApproach = approachPool.filter(item => item.sourceVerified === true &&
+  const stagePool = later ? approachPool : approachStageChoices(approachPool,
+    Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0));
+  const forwardApproach = stagePool.filter(item => item.sourceVerified === true &&
     Number(item.endTime) > projectedFloor + 0.05)
     .sort((left, right) => Number(left.startTime) - Number(right.startTime));
   // The next verified source action owns the surface. A later dialogue cannot
   // enter the approach cards, and an earlier dialogue cannot mask intimacy.
   const dialogueOnly = forwardApproach[0]?.nonIntimate === true;
   const firstCoreTime = Math.min(...sceneCorePositions.map(position => Number(position.startTime)));
-  const firstOpeningTime = Math.min(...approachPool.filter(item => item.sourceVerified && !item.nonIntimate)
-    .map(item => Number(item.startTime)).filter(Number.isFinite));
   const decisionWindowEnd = projectedFloor + 90;
-  const boundedOpeningEnd = Number.isFinite(firstOpeningTime)
-    ? Math.max(decisionWindowEnd, firstOpeningTime + 90) : decisionWindowEnd;
-  const surfacePool = sceneSurfaceChoices(approachPool,
+  const surfacePool = sceneSurfaceChoices(stagePool,
     dialogueOnly ? 'story' : 'approach', {
       floor: projectedFloor,
       ceiling: Math.min(later || !Number.isFinite(firstCoreTime) ? Infinity : firstCoreTime,
-        dialogueOnly || later ? decisionWindowEnd : boundedOpeningEnd),
-      replay: false
+        dialogueOnly || later ? decisionWindowEnd : Infinity),
+      replay: !dialogueOnly && !later
     });
   const candidates = !dialogueOnly && !later
-    ? surfacePool.slice(0, 5)
+    ? surfacePool
     : dialogueOnly ? surfacePool.slice(0, 5)
     : selectVerifiedChoiceQueue(surfacePool, {
     timelineFloor: projectedFloor,
@@ -4434,12 +4439,16 @@ function renderAdultApproachChoices(scene, later = false) {
         : ''
     }`;
     button.addEventListener('click', () => {
-      if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
+      if (choice.kind === 'foreplay') {
+        const next = pickNextVariant(choice.variants.map(item => ({ ...item,
+          loopStartTime: item.startTime, loopEndTime: item.endTime })),
+        state.activeAdultPreludeId, state.adultPreludePlayCounts);
+        if (next) playAdultPrelude(next.id);
+      }
       else {
         if (state.adultLoopSeeking && (choice.variants || []).some(item => item.id === state.activeMovementId)) return;
         selectAdultPosition(choice.id, false);
-        const variants = (choice.variants || []).filter(item => Number(item.loopEndTime) > state.adultTimelineFloor + 0.05);
-        const next = pickNextVariant(variants, state.activeMovementId, state.adultMovementPlayCounts);
+        const next = pickNextVariant(choice.variants, state.activeMovementId, state.adultMovementPlayCounts);
         if (next) selectAdultMovement(next.id, true);
       }
     });
@@ -4967,7 +4976,9 @@ function playAdultPrelude(preludeId) {
   const scene = state.adultScene;
   const item = scenePreludeChoices(scene).find(entry => entry.id === preludeId);
   if (!item || item.sourceVerified !== true || !els.video || state.adultOutcomePhase !== 'idle') return;
-  if (Number(item.endTime) <= Number(state.adultTimelineFloor || 0) + 0.05) return;
+  if (Number(item.endTime) <= Number(state.adultTimelineFloor || 0) + 0.05 &&
+      !state.adultApproachChoices?.some(choice => choice.id === item.id ||
+        choice.variants?.some(variant => variant.id === item.id))) return;
   if (state.adultLoopSeeking && state.activeAdultPreludeId === preludeId) return;
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
@@ -5395,9 +5406,11 @@ function selectAdultMovement(
   const alreadyPlayed = Number(state.adultMovementPlayCounts.get(movement.id) || 0) > 0;
   const sameOccurrenceReplay = alreadyPlayed &&
     (!state.activeAdultOccurrenceId || state.activeAdultOccurrenceId === movementOccurrence.id);
+  const visibleApproachChoice = !state.adultSexUnlocked &&
+    state.adultApproachChoices?.some(choice => choice.variants?.some(item => item.id === movement.id));
   const explicitUnlocked = !isWarmupPosition(position) &&
     state.adultUnlockedPositionIds.has(position.id);
-  if (shouldSeek && !forwardPlayable && !sameOccurrenceReplay && !explicitUnlocked) {
+  if (shouldSeek && !forwardPlayable && !sameOccurrenceReplay && !visibleApproachChoice && !explicitUnlocked) {
     state.interactionBlockedSeekReason = 'OUTSIDE_PASSIVE_LOOKAHEAD';
     logEngineEvent('MOVEMENT_FORWARD_RANGE_BLOCKED', { movementId: movement.id });
     return;
