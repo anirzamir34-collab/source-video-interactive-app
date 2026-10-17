@@ -6489,7 +6489,7 @@ function renderChoices() {
       els.choices.classList.remove('hidden');
       const message = document.createElement('div');
       message.className = 'meta';
-      message.textContent = 'Bu bölümde baş karakter doğrulanamadı.';
+      message.textContent = 'Bu aralıkta seçili baş karaktere ait kaynak-doğrulanmış oynanabilir seçenek yok. Video izlenebilir.';
       const watch = document.createElement('button');
       watch.className = 'choice story-choice';
       watch.textContent = 'Bölümü izle';
