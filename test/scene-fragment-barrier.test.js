@@ -99,3 +99,33 @@ test('merged Android-style opening reaches a real next CORE group when progress 
   assert.ok(full.unlockedGroupIds.includes('next-position'));
   assert.equal(full.panelVisible, true);
 });
+
+test('verified ordinary choices before the playable scene opening remain in the story UI', () => {
+  const beginning = source.indexOf('function isUnownedTimelineChoice(');
+  const ending = source.indexOf('\nfunction futureActions()', beginning);
+  assert.ok(beginning >= 0 && ending > beginning);
+  const scene = { id: 'merged', startTime: 71.5, endTime: 884.8,
+    dialogue: [{ id: 'opening-dialogue', sourceActionId: 'tl-001',
+      sourceVerified: true }, { id: 'within-scene', sourceActionId: 'tl-006',
+      sourceVerified: true }],
+    foreplay: [{ id: 'warmup-choice', sourceActionId: 'tl-005',
+      sourceVerified: true }] };
+  const state = { adultScenes: [scene], completedAdultSceneIds: new Set() };
+  const ctx = vm.createContext({ state,
+    choiceSurfaceForAction: action => action.choiceSurface,
+    playableAdultPanelFamily: () => '',
+    sceneOwnsStoryChoice: (row, action) => row.dialogue.some(item =>
+      item.sourceActionId === action.actionId),
+    sceneOwnsApproachChoice: (row, action) => row.foreplay.some(item =>
+      item.sourceActionId === action.actionId)
+  });
+  vm.runInContext(source.slice(beginning, ending), ctx);
+  assert.equal(ctx.isUnownedTimelineChoice({ actionId: 'tl-001', sourceVerified: true,
+    choiceSurface: 'story', startTime: 4.608, endTime: 21.5 }), true);
+  assert.equal(ctx.isUnownedTimelineChoice({ actionId: 'tl-006', sourceVerified: true,
+    choiceSurface: 'story', startTime: 82.5, endTime: 110.6 }), false);
+  assert.equal(ctx.isUnownedTimelineChoice({ actionId: 'tl-005', sourceVerified: true,
+    choiceSurface: 'approach', startTime: 71.5, endTime: 82.5 }), false);
+  assert.equal(ctx.isUnownedTimelineChoice({ actionId: 'tl-001', sourceVerified: false,
+    choiceSurface: 'story', startTime: 4.608, endTime: 21.5 }), false);
+});
