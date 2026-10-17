@@ -30,3 +30,7 @@
 .saved-game-model-picker { display: grid; gap: 6px; margin: 0 0 12px; color: #a6b8b2; font-size: 12px; }
 .saved-game-model-picker select { width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #34584c; border-radius: 10px; background: #050c09; color: #eefaf5; font: inherit; font-size: 13px; }
 .saved-game-model-picker select:focus-visible { outline: 2px solid #57e6b9; outline-offset: 3px; }
+
+.saved-game-repair-report { margin-top: 12px; padding: 10px; border: 1px solid #34584c; border-radius: 10px; color: #defff2; background: #08130f; }
+.saved-game-repair-report summary { cursor: pointer; font-size: 12px; line-height: 1.5; }
+.saved-game-repair-report pre { margin: 10px 0 0; color: #a6b8b2; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 11px; line-height: 1.5; }
