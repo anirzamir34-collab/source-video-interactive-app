@@ -6,11 +6,19 @@ export function reconcileAnalysisSessionEvidence(session, sourceEvidenceKey) {
   if (!session || typeof session !== 'object') return { changed: false };
   const previous = typeof session.sourceEvidenceKey === 'string' ? session.sourceEvidenceKey : '';
   const next = typeof sourceEvidenceKey === 'string' ? sourceEvidenceKey : '';
-  if (!previous || !next || previous === next) {
-    if (next) session.sourceEvidenceKey = next;
+  if (previous && next && previous === next) return { changed: false };
+  const hadPreviousEvidence = Boolean(session.storyboard ||
+    (Array.isArray(session.chunkResults) && session.chunkResults.length) ||
+    session.sourceTranscript || session.mediaManifest);
+  // A legacy in-memory analysis with no verified source key is not proof of
+  // identity. Likewise, a hash failure is not permission to reuse old frames.
+  const changed = hadPreviousEvidence &&
+    (!previous || !next || previous !== next);
+  if (!changed) {
+    session.sourceEvidenceKey = next || '';
     return { changed: false };
   }
-  session.sourceEvidenceKey = next;
+  session.sourceEvidenceKey = next || '';
   session.storyboard = null;
   session.sourceTranscript = null;
   session.mediaManifest = null;
