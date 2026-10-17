@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneSurfaceChoices,
   distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice,
-  isForwardTimelineChoice, isUnroutedVerifiedApproach, openingSceneChoiceMenu, verifiedStoryAheadOfGap } from '../public/choice-routing.js';
+  isForwardTimelineChoice, isUnroutedVerifiedApproach, openingSceneChoiceMenu, verifiedStoryAheadOfGap,
+  boundedUnownedGapEnd } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 
@@ -246,4 +247,24 @@ test('verified ordinary dialogue wins over a missing-protagonist interval', () =
   assert.equal(verifiedStoryAheadOfGap(candidates, 290, { startTime: 240, endTime: 300 }), false);
   assert.equal(verifiedStoryAheadOfGap([candidates[1], candidates[2]], 260,
     { startTime: 240, endTime: 300 }), false);
+});
+
+test('other-character skip stops before a verified normal choice inside the gap', () => {
+  const otherOnly = { startTime: 0, endTime: 120 };
+  const dialogueTime = 75;
+  assert.equal(boundedUnownedGapEnd(otherOnly, dialogueTime, 240), dialogueTime);
+  assert.equal(boundedUnownedGapEnd(otherOnly, 50, 240), 50,
+    'the first verified scene boundary outranks the unowned interval end');
+  assert.equal(boundedUnownedGapEnd(otherOnly, null, 240), 120);
+  assert.equal(boundedUnownedGapEnd(otherOnly, null, 85), 85);
+  assert.equal(boundedUnownedGapEnd(otherOnly, 140, 240), 120);
+  assert.equal(boundedUnownedGapEnd({}, 30, 240), null);
+});
+
+test('normal choice outside immediate lookahead still cannot be skipped', () => {
+  const pool = [action({ actionId: 'dialogue-75', choiceSurface: 'story',
+    actionType: 'dialogue', startTime: 75, endTime: 81 })];
+  assert.equal(verifiedStoryAheadOfGap([], 0, { endTime: 120 }), false);
+  assert.equal(boundedUnownedGapEnd({ startTime: 0, endTime: 120 },
+    pool[0].startTime, 120), 75);
 });
