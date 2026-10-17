@@ -1,5 +1,5 @@
 import { parseModelJson } from './public/model-json.js';
-import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions } from './public/neutral-gap-repair.js';
+import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions, inspectNeutralRepairActions } from './public/neutral-gap-repair.js';
 import { GoogleGenAI } from "@google/genai";
 import express from 'express';
 import multer from 'multer';
@@ -784,6 +784,7 @@ Rules:
       }],
       warnings: ['Bu aralık modelden doğrulanabilir sonuç alınamadığı için seçenek üretilmeden geçildi.']
     });
+    let repairTelemetry = null;
     const generateStoryboardJson = async (requestPrompt, requestFiles, retryLabel = 'full') => {
       const parts = [
         { text: requestPrompt },
@@ -803,7 +804,7 @@ Rules:
           safetySettings: geminiAnalysisSafetySettings,
           systemInstruction: savedGameRepair ? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION
         };
-        const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
+        const key = storyboardRequestKey({ apiKey, model, prompt: savedGameRepair ? `${GAP_REPAIR_VALIDATOR_VERSION}\n${requestPrompt}` : requestPrompt, files: requestFiles, generationConfig });
         const requestUsage = emptyGeminiUsage();
         const startedAt = Date.now();
         let attempts = 0;
@@ -830,10 +831,15 @@ Rules:
             // Empty or unsupported neutral output is not a verified analysis.
             // Reject it BEFORE cache insertion: a successful HTTP transport
             // must not freeze a zero-evidence response for subsequent retries.
-            if (savedGameRepair && !verifiedNeutralRepairActions(result?.actions,
-              { startTime: chunkStart, endTime: chunkEnd }).length) {
-              throw Object.assign(new Error('No verified neutral events in this source interval.'),
-                { code: 'GEMINI_NO_VERIFIED_EVENTS' });
+            if (savedGameRepair) {
+              const inspected = inspectNeutralRepairActions(result?.actions,
+                { startTime: chunkStart, endTime: chunkEnd });
+              repairTelemetry = { ...inspected.diagnostics, stageReached: inspected.actions.length
+                ? 'REPAIR_VALIDATOR_PASSED' : 'REPAIR_VALIDATOR_EMPTY' };
+              if (!inspected.actions.length) {
+                throw Object.assign(new Error('No verified neutral events in this source interval.'),
+                  { code: 'GEMINI_NO_VERIFIED_EVENTS', repairTelemetry });
+              }
             }
             return result;
           }));
@@ -918,7 +924,9 @@ Rules:
           message: `Bölüm ${chunkIndex + 1}/${chunkCount} için model analiz verisi döndürmedi. Bu aralık için seçenek üretilmedi; diğer bölümlere devam edilecek.`,
           chunkIndex, chunkCount, chunkStart, chunkEnd,
           analysisGaps: [{ startTime: chunkStart, endTime: chunkEnd, reason: fullFailureReason }],
-          aiUsage: analysisUsage
+          aiUsage: analysisUsage,
+          ...(savedGameRepair && (fullChunkError?.repairTelemetry || repairTelemetry)
+            ? { repairTelemetry: fullChunkError?.repairTelemetry || repairTelemetry } : {})
         });
       }
       // Splitting the same evidence cannot repair a provider outage. The
@@ -1015,10 +1023,13 @@ Rules:
       }
     }
     if (savedGameRepair) {
-      // Only validated, non-graphic ordinary observations can enter the
-      // saved-game repair. Model text is not proof of full missing coverage.
-      parsed = { ...parsed, actions: verifiedNeutralRepairActions(parsed?.actions,
-        { startTime: chunkStart, endTime: chunkEnd }) };
+      // Validate before normalizing and preserve aggregate reject reasons.
+      // No model text, images, labels or identifying source data in telemetry.
+      const inspection = inspectNeutralRepairActions(parsed?.actions,
+        { startTime: chunkStart, endTime: chunkEnd });
+      repairTelemetry = { ...inspection.diagnostics, stageReached:
+        inspection.actions.length ? 'REPAIR_VALIDATOR_PASSED' : 'REPAIR_VALIDATOR_EMPTY' };
+      parsed = { ...parsed, actions: inspection.actions };
     }
     const unresolvedGaps = Array.isArray(parsed?.analysisGaps)
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
@@ -1061,6 +1072,7 @@ Rules:
       Math.max(0, Number(parsed.introEndTime ?? parsed.playStartTime ?? 0))
     );
 
+    const normalizerRejected = { invalidStructure: 0, lowConfidence: 0, duplicates: 0 };
     const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
       .map((action, index) => ({
         ...action,
@@ -1162,15 +1174,17 @@ Rules:
         confidence: Number(action.confidence || 0)
       }))
       .map(action => withChoiceSurface(action))
-      .filter((action) =>
-        action.label &&
-        action.startTime + 0.05 >= introEndTime &&
-        Number.isFinite(action.startTime) &&
-        Number.isFinite(action.endTime) &&
-        action.startTime >= 0 &&
-        action.endTime > action.startTime &&
-        (!duration || action.endTime <= duration + 0.5)
-      )
+      .filter((action) => {
+        const valid = Boolean(action.label &&
+          action.startTime + 0.05 >= introEndTime &&
+          Number.isFinite(action.startTime) &&
+          Number.isFinite(action.endTime) &&
+          action.startTime >= 0 &&
+          action.endTime > action.startTime &&
+          (!duration || action.endTime <= duration + 0.5));
+        if (!valid && savedGameRepair) normalizerRejected.invalidStructure++;
+        return valid;
+      })
       .filter((action) => {
         const type = String(action.actionType || '').toLowerCase();
         const outcome = String(action.outcomeType || '').toLowerCase();
@@ -1188,7 +1202,9 @@ Rules:
         const minimum = reviewMode
           ? strictMinimum
           : Math.max(0.4, strictMinimum - 0.18);
-        return Number(action.confidence || 0) >= minimum;
+        const accepted = Number(action.confidence || 0) >= minimum;
+        if (!accepted && savedGameRepair) normalizerRejected.lowConfidence++;
+        return accepted;
       })
       .sort((a, b) => a.startTime - b.startTime);
 
@@ -1196,6 +1212,15 @@ Rules:
     // design. Remove only true duplicates; never discard a valid child
     // segment merely because it lives inside its parent interval.
     const dedupedActions = dedupeVerifiedTimelineActions(actions);
+    if (savedGameRepair) {
+      normalizerRejected.duplicates = Math.max(0, actions.length - dedupedActions.length);
+      repairTelemetry = { ...repairTelemetry,
+        promptVersion: GAP_REPAIR_PROMPT_VERSION,
+        validatorVersion: GAP_REPAIR_VALIDATOR_VERSION,
+        serverNormalizerAcceptedCount: dedupedActions.length,
+        serverNormalizerRejected: normalizerRejected,
+        stageReached: dedupedActions.length ? 'SERVER_NORMALIZER_PASSED' : 'SERVER_NORMALIZER_EMPTY' };
+    }
 
     // The normal action normalizer also imposes timing and confidence rules.
     // If it discarded every neutral observation, report a failed repair.
@@ -1206,7 +1231,8 @@ Rules:
         chunkIndex, chunkCount, chunkStart, chunkEnd,
         analysisGaps: [{ startTime: chunkStart, endTime: chunkEnd,
           reason: 'GEMINI_NO_VERIFIED_EVENTS' }],
-        aiUsage: analysisUsage
+        aiUsage: analysisUsage,
+        ...(savedGameRepair ? { repairTelemetry } : {})
       });
     }
 
@@ -1225,7 +1251,8 @@ Rules:
       analysisGaps: Array.isArray(parsed.analysisGaps) ? parsed.analysisGaps : [],
       restrictedRanges: Array.isArray(parsed.restrictedRanges) ? parsed.restrictedRanges : [],
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
-      aiUsage: analysisUsage
+      aiUsage: analysisUsage,
+      ...(savedGameRepair ? { repairTelemetry } : {})
     });
   } catch (error) {
     console.error('[gemini-storyboard-error]', error);
