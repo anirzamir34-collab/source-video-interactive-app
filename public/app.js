@@ -120,7 +120,8 @@ import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentC
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
-  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap } from './choice-routing.js';
+  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap,
+  boundedUnownedGapEnd } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -6506,7 +6507,7 @@ function renderChoices() {
       void resumeAnalysisGap(Number(unowned.startTime));
       return;
     }
-    const end = Math.min(duration || Infinity, Number(unowned.endTime));
+    const end = boundedUnownedGapEnd(unowned, routeTime, duration || Infinity);
     if (end > state.gameCursorTime + 0.1) {
       els.choices.replaceChildren();
       els.choices.classList.remove('hidden');
