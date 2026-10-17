@@ -85,7 +85,7 @@ test('repair report never describes refused five ranges as a successful analysis
       reason: 'GEMINI_CONTENT_RESTRICTED', httpStatus: 422, outcome: 'failed'
     }))
   } });
-  assert.match(report.summary, /0\\/5 eksik bölüm tamamlandı/);
+  assert.match(report.summary, /0\/5 eksik bölüm tamamlandı/);
   assert.match(report.details, /Gemini içerik kısıtlaması/);
   assert.match(report.details, /HTTP 422/);
   assert.equal(report.error, true);
@@ -98,7 +98,7 @@ test('repair report shows disabled redundant retries and genuine success', () =>
       { startTime: 10, endTime: 20, outcome: 'skipped_previous_rejection',
         reason: 'GEMINI_CONTENT_RESTRICTED' }]
   } });
-  assert.match(report.summary, /1\\/2 eksik bölüm tamamlandı/);
+  assert.match(report.summary, /1\/2 eksik bölüm tamamlandı/);
   assert.match(report.details, /Tekrarlanan içerik reddi/);
   assert.match(report.details, /Sonuç alındı/);
   assert.equal(report.error, true);
