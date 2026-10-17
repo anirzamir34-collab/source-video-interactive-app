@@ -4578,8 +4578,7 @@ function renderAdultApproachChoices(scene, later = false) {
   });
 
   // Once the last source card has passed, natural playback can reach the next chapter.
-  const hasForwardChoice = !later ? candidates.length > 0 :
-    candidates.some(choice => Number(choice.endTime) > projectedFloor + 0.05);
+  const hasForwardChoice = candidates.some(choice => Number(choice.endTime) > projectedFloor + 0.05);
   if (!hasForwardChoice) {
     const unlocked = flow >= 99.9 ? unlockNextAdultPositionFromLust() : null;
     if (unlocked) {
@@ -5103,10 +5102,15 @@ function completeCurrentApproachStage() {
   if (state.adultSexUnlocked || currentAdultFlow() < 60 ||
       state.interactionRuntime?.progressBudgetConsumed) return;
   const cards = (state.adultApproachChoices || []).filter(choice => !choice.nonIntimate);
-  if (!cards.length || cards.some(choice => !(choice.variants || []).length ||
-      choice.variants.some(clip => clip.sourceVerified !== true ||
-        !(choice.kind === 'foreplay' ? state.adultPreludePlayCounts : state.adultMovementPlayCounts)
-          .get(clip.id)))) return;
+  if (!cards.length) return;
+  // All opening cards stay visible, including earlier replay choices. Earning
+  // the next chapter must not require replaying *every* old scene-stage clip:
+  // the progress budget follows real completed footage and its source cursor.
+  const cursor = Math.max(Number(state.adultTimelineFloor) || 0,
+    Number(els.video?.currentTime) || 0);
+  if (cards.some(choice => !(choice.variants || []).length ||
+      choice.variants.some(clip => clip.sourceVerified !== true) ||
+      Number(choice.endTime) > cursor + 0.05)) return;
   const lastEnd = Math.max(...cards.map(choice => Number(choice.endTime)));
   const firstCore = Math.min(...(state.adultScene?.positions || [])
     .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)));
@@ -5116,8 +5120,6 @@ function completeCurrentApproachStage() {
   const laterWarmup = (state.adultScene.positions || []).some(position => isWarmupPosition(position) &&
     (position.movements || []).some(clip => clip.sourceVerified === true &&
       Number(clip.loopStartTime) > lastEnd + 0.05 && Number(clip.loopStartTime) < firstCore));
-  // A retired visual stage cannot be replayed to settle its old budget. Every
-  // currently valid source clip has instead completed real playback.
   if (!laterPrelude && !laterWarmup) addFemaleLust(ADULT_LUST_UNLOCK_THRESHOLD - state.femaleSceneProgress);
 }
 
