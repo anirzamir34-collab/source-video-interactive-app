@@ -26,7 +26,7 @@ import { serializeReviewCandidates } from './public/classification-integrity.js'
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 import { geminiAnalysisSafetySettings, geminiGenerationConfig } from './lib/gemini-generation-config.js';
-import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel } from './lib/analysis-model-routing.js';
+import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 
@@ -347,7 +347,9 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
   const qualityMode = 'ultra';
   const analysisTier = analysisTierFromRequest(req.body?.analysisTier);
   const deepAnalysisModel = String(req.body?.deepAnalysisModel || '').trim();
-  if (analysisTier === 'deep' && deepAnalysisModel && !isSupportedDeepAnalysisModel(deepAnalysisModel)) {
+  const savedGameRepair = String(req.body?.repairMode || '') === '1';
+  if (analysisTier === 'deep' && deepAnalysisModel &&
+      !(savedGameRepair ? isGeminiModelName(deepAnalysisModel) : isSupportedDeepAnalysisModel(deepAnalysisModel))) {
     return res.status(400).json({ available: false, retryable: false, reason: 'UNSUPPORTED_DEEP_ANALYSIS_MODEL',
       message: 'Yalnızca arayüzde sunulan güçlü Gemini modelleri seçilebilir.' });
   }
@@ -786,7 +788,7 @@ Rules:
           }
         }))
       ];
-      const candidates = analysisModelCandidates(analysisTier,
+      const candidates = savedGameRepair ? [deepAnalysisModel] : analysisModelCandidates(analysisTier,
         { ...process.env, GEMINI_ANALYSIS_MODEL: ANALYSIS_MODEL }, deepAnalysisModel);
       for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
         const model = candidates[modelIndex];
@@ -1646,6 +1648,23 @@ function quotaRetrySeconds(details) {
   if (!human) return 0;
   return Math.max(1, Math.ceil((Number(human[1]) || 0) * 3600 + (Number(human[2]) || 0) * 60 + (Number(human[3]) || 0)));
 }
+
+app.get('/api/gemini-analysis-models', async (req, res) => {
+  const apiKey = resolveGeminiApiKey(req);
+  if (!apiKey) return res.status(503).json({ models: [], message: 'Gemini API anahtarı bulunamadı.' });
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const pager = await ai.models.list({ config: { pageSize: 100 } });
+    const found = new Set();
+    for await (const model of pager) {
+      const name = String(model.name || '').replace(/^models\\//, '');
+      if (isGeminiModelName(name)) found.add(name);
+    }
+    return res.json({ models: [...found].sort() });
+  } catch (error) {
+    return res.status(502).json({ models: [], message: String(error?.message || 'Gemini model listesi alınamadı.') });
+  }
+});
 
 app.post('/api/gemini-key-status', async (req, res) => {
   const browserApiKey = clientGeminiApiKey(req);
