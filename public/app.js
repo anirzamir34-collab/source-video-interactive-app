@@ -2800,7 +2800,14 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
   ].flatMap(item => {
     const subject = String(item.subjectTrackId || '').trim();
     const partner = String(item.partnerTrackId || '').trim();
-    if (!subject || !partner || subject === partner) return [];
+    if (!subject || !partner || subject === partner) {
+      // Missing/conflicting track information is NOT permission to merge.
+      // Preserve a conservative identity barrier for incomplete cast metadata.
+      const participants = [...new Set((item.participantTrackIds || []).map(value =>
+        String(value || '').trim()).filter(Boolean))].sort();
+      return subject || partner || participants.length
+        ? [JSON.stringify(['incomplete', subject, partner, participants])] : [];
+    }
     // Genuine group scenes must still agree on their additional participants.
     const group = item.groupScene === true
       ? [...new Set((item.participantTrackIds || []).map(value =>
