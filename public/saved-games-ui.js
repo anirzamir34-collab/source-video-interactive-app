@@ -47,7 +47,15 @@ export function describeSavedGameRepair(analysis) {
         ? 'Önceki boş analiz nedeniyle aynı istek gönderilmedi'
       : item.outcome === 'skipped_model_error' ? 'Model hatası nedeniyle gönderilmedi'
       : repairErrorLabels[item.reason] || item.reason || 'Analiz başarısız';
-    return `${index + 1}. ${range}: ${result}${item.httpStatus ? ` · HTTP ${item.httpStatus}` : ''}`;
+    const t = item.repairTelemetry;
+    if (!t) return `${index + 1}. ${range}: ${result}${item.httpStatus ? ` · HTTP ${item.httpStatus}` : ''}`;
+    const number = value => Number.isFinite(Number(value)) ? String(Number(value)) : '?';
+    const counts = `Gemini: ${number(t.modelRawActionsCount)} · nötr kontrol: ${number(t.repairValidatorAcceptedCount)} · sunucu: ${number(t.serverNormalizerAcceptedCount)} · istemci: ${number(t.clientNormalizerAcceptedCount)} · kayda eklenen: ${number(t.mergedActionsCount)}`;
+    const rejections = [...Object.entries(t.repairValidatorRejected || {}),
+      ...Object.entries(t.serverNormalizerRejected || {})]
+      .filter(([, count]) => Number(count) > 0)
+      .map(([reason, count]) => `${reason}: ${count}`).join(', ');
+    return `${index + 1}. ${range}: ${result}${item.httpStatus ? ` · HTTP ${item.httpStatus}` : ''}\n   ${counts}${rejections ? `\n   Filtreler: ${rejections}` : ''}`;
   }).join('\n');
   return { summary, details, error: Number(run.remaining) > 0 };
 }
