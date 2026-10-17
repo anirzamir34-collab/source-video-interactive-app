@@ -1072,6 +1072,8 @@ Rules:
       Math.max(0, Number(parsed.introEndTime ?? parsed.playStartTime ?? 0))
     );
 
+    // Shared telemetry for both initial video analysis and saved-game repair.
+    // Counts only: no labels, frames, participant names or raw model output.
     const normalizerRejected = { invalidStructure: 0, lowConfidence: 0, duplicates: 0 };
     const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
       .map((action, index) => ({
@@ -1182,7 +1184,7 @@ Rules:
           action.startTime >= 0 &&
           action.endTime > action.startTime &&
           (!duration || action.endTime <= duration + 0.5));
-        if (!valid && savedGameRepair) normalizerRejected.invalidStructure++;
+        if (!valid) normalizerRejected.invalidStructure++;
         return valid;
       })
       .filter((action) => {
@@ -1203,7 +1205,7 @@ Rules:
           ? strictMinimum
           : Math.max(0.4, strictMinimum - 0.18);
         const accepted = Number(action.confidence || 0) >= minimum;
-        if (!accepted && savedGameRepair) normalizerRejected.lowConfidence++;
+        if (!accepted) normalizerRejected.lowConfidence++;
         return accepted;
       })
       .sort((a, b) => a.startTime - b.startTime);
@@ -1212,8 +1214,14 @@ Rules:
     // design. Remove only true duplicates; never discard a valid child
     // segment merely because it lives inside its parent interval.
     const dedupedActions = dedupeVerifiedTimelineActions(actions);
+    normalizerRejected.duplicates = Math.max(0, actions.length - dedupedActions.length);
+    const analysisTelemetry = {
+      modelRawActionsCount: Array.isArray(parsed.actions) ? parsed.actions.length : 0,
+      serverNormalizerAcceptedCount: dedupedActions.length,
+      serverNormalizerRejected: { ...normalizerRejected },
+      stageReached: dedupedActions.length ? 'SERVER_NORMALIZER_PASSED' : 'SERVER_NORMALIZER_EMPTY'
+    };
     if (savedGameRepair) {
-      normalizerRejected.duplicates = Math.max(0, actions.length - dedupedActions.length);
       repairTelemetry = { ...repairTelemetry,
         promptVersion: GAP_REPAIR_PROMPT_VERSION,
         validatorVersion: GAP_REPAIR_VALIDATOR_VERSION,
@@ -1252,6 +1260,7 @@ Rules:
       restrictedRanges: Array.isArray(parsed.restrictedRanges) ? parsed.restrictedRanges : [],
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
       aiUsage: analysisUsage,
+      analysisTelemetry,
       ...(savedGameRepair ? { repairTelemetry } : {})
     });
   } catch (error) {
