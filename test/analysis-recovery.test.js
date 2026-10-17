@@ -212,7 +212,7 @@ test('empty saved-game repairs fail HTTP 422 and are not cached as successful an
   const route = source.indexOf("app.post('/api/gemini-storyboard-analyze'");
   const start = source.indexOf('async (req, res) => {', route);
   const end = source.indexOf("\napp.post('/api/external-analyze'", start);
-  const handlerSource = source.slice(start, end).trim().replace(/\\);$/, '');
+  const handlerSource = source.slice(start, end).trim().replace(/\);$/, '');
   let calls = 0;
   const handler = vm.runInNewContext(`(${handlerSource})`, {
     GoogleGenAI: class { models = { generateContent: async () => {
