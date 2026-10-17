@@ -162,6 +162,26 @@ export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, 
         };
       }).then(() => true).catch(() => false);
     },
+    async readSourceTranscript(sourceKey) {
+      if (!sourceKey) return null;
+      return transaction('readonly', (store, done) => {
+        const request = store.get(`transcript:${sourceKey}`);
+        request.onsuccess = () => {
+          const row = request.result;
+          done(row?.transcript === true && row.expiresAt > now() &&
+            row.result && typeof row.result === 'object'
+            ? structuredClone(row.result) : null);
+        };
+      }).catch(() => null);
+    },
+    async saveSourceTranscript(sourceKey, sourceTranscript) {
+      if (!sourceKey || !sourceTranscript || typeof sourceTranscript !== 'object') return false;
+      return transaction('readwrite', store => {
+        store.put({ key: `transcript:${sourceKey}`, transcript: true,
+          result: structuredClone(sourceTranscript),
+          createdAt: now(), expiresAt: now() + ttlMs });
+      }).then(() => true).catch(() => false);
+    },
     async readCheckpoint(prefix, chunkIndex) {
       if (!prefix || !Number.isSafeInteger(chunkIndex) || chunkIndex < 0) return null;
       const key = `checkpoint:${prefix}:${chunkIndex}`;
