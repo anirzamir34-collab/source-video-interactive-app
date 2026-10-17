@@ -165,6 +165,27 @@ test('four minute opening groups repeated adjacent actions without inventing int
   assert.equal(groupVerifiedApproachChoices(clips.slice(0, 1))[0].variants.length, 1);
 });
 
+test('opening variants separate a calm and an intense rendition of the same action', () => {
+  const clips = [
+    { id: 'calm', sourceVerified: true, label: 'Yakınlaşma', actionType: 'kiss',
+      movementTempo: 'slow', femaleProgressRate: 0.5, startTime: 0, endTime: 10 },
+    { id: 'intense', sourceVerified: true, label: 'Yakınlaşma', actionType: 'kiss',
+      movementTempo: 'fast', femaleProgressRate: 1.8, startTime: 10, endTime: 20 }
+  ];
+  assert.deepEqual(groupVerifiedApproachChoices(clips).map(card => card.variants.map(item => item.id)),
+    [['calm'], ['intense']]);
+});
+
+test('minor analyzed rate variation within one steady motion keeps source cuts on one card', () => {
+  const clips = [0.94, 1.02, 1.08].map((femaleProgressRate, index) => ({
+    id: `steady-${index}`, sourceVerified: true, label: 'Yakınlaşma', actionType: 'kiss',
+    movementTempo: 'moderate', femaleProgressRate,
+    startTime: index * 10, endTime: (index + 1) * 10
+  }));
+  assert.deepEqual(groupVerifiedApproachChoices(clips).map(card => card.variants.map(item => item.id)),
+    [['steady-0', 'steady-1', 'steady-2']]);
+});
+
 test('location and clothing stages retire old cards without erasing current stage replays', () => {
   const clips = [
     { id: 'salon', startTime: 0, endTime: 30, locationId: 'salon', beforeState: { clothing: 'dressed' } },
@@ -175,6 +196,17 @@ test('location and clothing stages retire old cards without erasing current stag
   assert.deepEqual(approachStageChoices(clips, 75).map(item => item.id), ['room-changed']);
   assert.deepEqual(approachStageChoices([clips[0], { ...clips[0], id: 'again', startTime: 30, endTime: 60 }], 60)
     .map(item => item.id), ['salon', 'again']);
+});
+
+test('declared scene transition retires old cards when room and outfit data are absent', () => {
+  const clips = [
+    { id: 'old', sceneId: 'scene-a', actionType: 'kiss', startTime: 0, endTime: 10 },
+    { id: 'cut', sceneId: 'scene-a', actionType: 'scene_transition', startTime: 10, endTime: 12 },
+    { id: 'new', sceneId: 'scene-b', actionType: 'kiss', startTime: 12, endTime: 22 }
+  ];
+  assert.deepEqual(approachStageChoices(clips, 20).map(item => item.id), ['new']);
+  assert.deepEqual(approachStageChoices(clips.map(item => ({ ...item, sceneId: '' })), 20)
+    .map(item => item.id), ['new']);
 });
 
 test('the contextual control reserves later energetic source clips without duplicating cards', () => {

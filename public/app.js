@@ -3175,6 +3175,7 @@ function prepareAdultScenes() {
           actionType: String(action.actionType || '').trim(),
           choiceSurface: action.choiceSurface,
           routeNamespace: activityOccurrenceNamespace(action),
+          sceneId: action.sceneId,
           locationId: action.locationId,
           beforeState: action.beforeState,
           nonIntimate: sourceDialogue,
@@ -3239,6 +3240,7 @@ function prepareAdultScenes() {
       scene.positions.set(positionKey, {
         id: positionKey,
         sourceVerified: action.sourceVerified === true,
+        sceneId: action.sceneId,
         locationId: action.locationId,
         beforeState: action.beforeState,
         familyId: canonical.id,
@@ -3937,10 +3939,36 @@ function unlockNextAdultPositionFromLust() {
   });
   const next = eligible.find(position => unlocked.unlockedGroupIds.includes(position.id));
   if (!next) return null;
-  state.interactionRuntime = { ...unlocked, scene: snapshot.scene };
+  const coreCount = (state.adultScene?.positions || []).filter(position =>
+    position.sourceVerified === true && !isWarmupPosition(position) && !isBonusPosition(position)).length;
+  const following = eligible[eligible.indexOf(next) + 1];
+  const sharedContext = following && !isBonusPosition(next) && !isBonusPosition(following) &&
+    String(next.partnerTrackId || '') === String(following.partnerTrackId || '') &&
+    String(next.subjectTrackId || '') === String(following.subjectTrackId || '') &&
+    String(next.routeNamespace || '') === String(following.routeNamespace || '') &&
+    String(next.locationId || '') === String(following.locationId || '') &&
+    String(next.sceneId || '') === String(following.sceneId || '');
+  const adjacent = sharedContext && Number.isFinite(Number(next.endTime)) &&
+    Number.isFinite(Number(following.startTime)) &&
+    Number(following.startTime) >= Number(next.endTime) - 0.05 &&
+    Number(following.startTime) - Number(next.endTime) <= 0.25;
+  const interveningStory = adjacent && [...(state.adultScene?.dialogue || []),
+    ...(state.adultScene?.foreplay || [])].some(item => item.sourceVerified === true &&
+    Number(item.startTime) < Number(following.startTime) && Number(item.endTime) > Number(next.endTime));
+  // A long, continuous verified source can reveal one additional neighboring
+  // position on a later gate. Never batch the first gate or cross story/cast.
+  const extra = !firstUnlock && coreCount >= 5 && adjacent && !interveningStory &&
+    (following.movements || []).some(clip => clip.sourceVerified === true &&
+      positionOccurrenceForMovement(following, clip)) ? following : null;
+  state.interactionRuntime = { ...unlocked, scene: snapshot.scene,
+    unlockedGroupIds: extra ? [...unlocked.unlockedGroupIds, extra.id] : unlocked.unlockedGroupIds };
   state.interactionPhaseOverride = null;
   state.adultUnlockedPositionIds.add(next.id);
   state.adultRevealedPositionIds.add(next.id);
+  if (extra) {
+    state.adultUnlockedPositionIds.add(extra.id);
+    state.adultRevealedPositionIds.add(extra.id);
+  }
   state.adultSexUnlocked = true;
   // Completion of the current verified clip, not the unlock event, transfers
   // playback ownership to this newly earned source-backed destination.
@@ -4343,6 +4371,7 @@ function renderAdultApproachChoices(scene, later = false) {
         sourceVerified: position.sourceVerified === true && card.variants.every(item => item.sourceVerified === true),
         kind: 'position', id: position.id,
         choiceSurface: 'approach',
+        sceneId: position.sceneId,
         locationId: position.locationId,
         beforeState: position.beforeState,
         castIds: [position.subjectTrackId, position.partnerTrackId].filter(Boolean),
@@ -4956,10 +4985,12 @@ function applyAdultPreludeProgress(item) {
       state.interactionRuntime = transitionInteraction(runtime, { type: 'selection-complete',
         choiceId: item.id, startTime: Number(item.startTime), endTime: Number(item.endTime), playing: true });
       if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
-      else if (state.femaleSceneProgress <= previousProgress + 0.001) {
-        // A skipped earlier interval may cap the coverage budget. A completed
-        // forward clip still earns its own intensity-weighted, discounted credit.
-        addFemaleLust(delta.female * currentWarmupLustScale());
+      else {
+        // Source coverage owns the base meter; a small completion credit uses
+        // the analyzed intensity. Repeats and skipped intervals retain their
+        // existing discounted fallback only after verified playback.
+        const coverageAdvanced = state.femaleSceneProgress > previousProgress + 0.001;
+        addFemaleLust(delta.female * currentWarmupLustScale() * (coverageAdvanced ? 0.25 : 1));
         state.interactionRuntime = { ...state.interactionRuntime,
           progressionValue: Math.max(state.interactionRuntime.progressionValue, currentAdultFlow()) };
       }
@@ -4969,7 +5000,30 @@ function applyAdultPreludeProgress(item) {
       addFemaleLust(delta.female * currentWarmupLustScale());
     }
   } else addFemaleLust(delta.female * currentWarmupLustScale());
+  completeCurrentApproachStage();
   renderAdultProgress();
+}
+
+function completeCurrentApproachStage() {
+  if (state.adultSexUnlocked || currentAdultFlow() < 60 ||
+      state.interactionRuntime?.progressBudgetConsumed) return;
+  const cards = (state.adultApproachChoices || []).filter(choice => !choice.nonIntimate);
+  if (!cards.length || cards.some(choice => !(choice.variants || []).length ||
+      choice.variants.some(clip => clip.sourceVerified !== true ||
+        !(choice.kind === 'foreplay' ? state.adultPreludePlayCounts : state.adultMovementPlayCounts)
+          .get(clip.id)))) return;
+  const lastEnd = Math.max(...cards.map(choice => Number(choice.endTime)));
+  const firstCore = Math.min(...(state.adultScene?.positions || [])
+    .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)));
+  if (!Number.isFinite(firstCore)) return;
+  const laterPrelude = scenePreludeChoices(state.adultScene).some(clip => clip.sourceVerified === true &&
+    !clip.nonIntimate && Number(clip.startTime) > lastEnd + 0.05 && Number(clip.startTime) < firstCore);
+  const laterWarmup = (state.adultScene.positions || []).some(position => isWarmupPosition(position) &&
+    (position.movements || []).some(clip => clip.sourceVerified === true &&
+      Number(clip.loopStartTime) > lastEnd + 0.05 && Number(clip.loopStartTime) < firstCore));
+  // A retired visual stage cannot be replayed to settle its old budget. Every
+  // currently valid source clip has instead completed real playback.
+  if (!laterPrelude && !laterWarmup) addFemaleLust(ADULT_LUST_UNLOCK_THRESHOLD - state.femaleSceneProgress);
 }
 
 function playAdultPrelude(preludeId) {
@@ -5036,8 +5090,9 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
         sourcePositionId: movement.sourcePositionId,
         sourceOccurrenceId: positionOccurrenceForMovement(position, movement)?.id || '' });
       if (state.interactionRuntime.progressBudgetConsumed) state.interactionMeterNeedsReset = true;
-      else if (state.femaleSceneProgress <= previousProgress + 0.001) {
-        addFemaleLust(delta.female * currentWarmupLustScale());
+      else {
+        const coverageAdvanced = state.femaleSceneProgress > previousProgress + 0.001;
+        addFemaleLust(delta.female * currentWarmupLustScale() * (coverageAdvanced ? 0.25 : 1));
         state.interactionRuntime = { ...state.interactionRuntime,
           progressionValue: Math.max(state.interactionRuntime.progressionValue, currentAdultFlow()) };
       }
@@ -5051,6 +5106,7 @@ function applyAdultSelectionProgress(position, movement, { positionChanged = fal
     state.adultClimaxProgress = Math.min(100, state.adultClimaxProgress + climaxDelta);
     state.adultFemaleOrgasmProgress = 0;
   }
+  if (isWarmupPosition(position)) completeCurrentApproachStage();
   renderAdultProgress();
 }
 

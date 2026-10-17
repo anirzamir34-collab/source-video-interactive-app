@@ -326,7 +326,8 @@ const runtimeNames = [
   'renderAdultApproachChoices', 'renderAdultProgressiveUI', 'selectAdultCategory',
   'renderInteractionInterludeChoices',
   'selectAdultPosition', 'selectAdultMovement', 'refreshAdultCompactDock',
-  'playAdultPrelude', 'applyAdultPreludeProgress', 'applyAdultSelectionProgress',
+  'playAdultPrelude', 'applyAdultPreludeProgress', 'completeCurrentApproachStage',
+  'applyAdultSelectionProgress',
   'resetAdultTapRhythm', 'updateVariantButton', 'updateRhythmControl',
   'nextEnergeticPositionMovement', 'remainingPositionControlClips', 'selectMovementTempoVariant',
   'triggerAdultOrgasmDecision', 'openAdultOrgasmDecision', 'continueAfterAdultOrgasm',
@@ -432,6 +433,51 @@ test('played opening cards remain selectable at 70 percent and replay starts rea
   assert.equal(f.els.video.currentTime, 0);
   assert.equal(f.els.video.paused, false);
   assert.equal(f.state.femaleSceneProgress, 24.5, 'selection alone earns no Lust');
+});
+
+test('70 percent cannot strand a completed current stage behind retired source intervals', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'stage-budget', startTime: 0, endTime: 130,
+    positions: [chapter('main', 90)], dialogue: [], outcomes: [], foreplay: [
+      { id: 'old', label: 'Previous room', sourceVerified: true, actionType: 'touch',
+        locationId: 'salon', startTime: 0, endTime: 20 },
+      { id: 'new-a', label: 'Current action A', sourceVerified: true, actionType: 'touch',
+        locationId: 'oda', startTime: 20, endTime: 40 },
+      { id: 'new-b', label: 'Current action B', sourceVerified: true, actionType: 'touch',
+        locationId: 'oda', startTime: 40, endTime: 60 }
+    ] };
+  f.genericInteractionSnapshot();
+  f.state.femaleSceneProgress = 24.5;
+  f.state.adultPreludePlayCounts.set('new-a', 1);
+  f.state.adultTimelineFloor = 60;
+  f.els.video.time = 60;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['new-a', 'new-b']);
+  f.state.adultSelectionToken = 3;
+  f.state.adultPendingSelectionProgress = { token: 3, kind: 'prelude',
+    item: f.state.adultScene.foreplay[2], playStarted: true, observedSeconds: 20 };
+  assert.equal(f.commitAdultSelectionProgress(3, 60), true);
+  assert.equal(f.state.adultUnlockedPositionIds.has('main'), true);
+  assert.equal(f.state.adultPreludePlayCounts.has('old'), false);
+});
+
+test('verified opening completion rewards stronger analyzed motion more than calm motion', () => {
+  const progress = femaleProgressRate => {
+    const f = runtimeFixture();
+    f.state.adultScene = { id: 'rate-evidence', startTime: 0, endTime: 100,
+      positions: [chapter('main', 60)], dialogue: [], outcomes: [], foreplay: [
+        { id: 'first', label: 'Opening', sourceVerified: true, actionType: 'touch',
+          startTime: 0, endTime: 20, femaleProgressRate },
+        { id: 'second', label: 'Later opening', sourceVerified: true, actionType: 'touch',
+          startTime: 20, endTime: 40 }
+      ] };
+    f.genericInteractionSnapshot();
+    f.els.video.time = 20;
+    f.renderAdultApproachChoices(f.state.adultScene);
+    f.applyAdultPreludeProgress(f.state.adultScene.foreplay[0]);
+    return f.currentAdultFlow();
+  };
+  assert.ok(progress(0.45) < progress(1.8));
 });
 
 test('first, third, then first verified opening card can be selected in one stage', async () => {
@@ -758,6 +804,50 @@ test('each completed gate reveals exactly one next verified chapter without movi
   assert.equal(f.state.activePositionId, 'one');
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.playCalls, plays);
+});
+
+test('a later gate may reveal two adjacent verified chapters in a long source while retaining earlier tabs', () => {
+  const f = runtimeFixture();
+  f.state.adultScene.positions = [0, 30, 60, 90, 120, 150]
+    .map((start, index) => chapter(`chapter-${index}`, start));
+  f.state.adultScene.foreplay = [];
+  f.state.adultScene.dialogue = [];
+  f.state.adultScene.endTime = 180;
+  f.state.adultUnlockedPositionIds.add('chapter-0');
+  f.state.adultRevealedPositionIds.add('chapter-0');
+  f.state.adultSexUnlocked = true;
+  f.state.adultVisitedPositionIds.add('chapter-0');
+  f.addFemaleLust(35);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds],
+    ['chapter-0', 'chapter-1', 'chapter-2']);
+  assert.deepEqual([...f.state.adultRevealedPositionIds],
+    ['chapter-0', 'chapter-1', 'chapter-2']);
+  f.renderAdultProgressiveUI(true);
+  const tabs = f.els.positionTabs.querySelectorAll('.position-tab');
+  assert.ok(tabs.find(tab => tab.dataset.positionId === 'chapter-0' && !tab.disabled));
+  assert.ok(tabs.find(tab => tab.dataset.positionId === 'chapter-2' && !tab.disabled));
+  assert.equal(f.state.adultUnlockedPositionIds.has('chapter-3'), false);
+});
+
+test('a long source does not batch across a narrative gap or different participant', () => {
+  for (const separate of ['gap', 'partner']) {
+    const f = runtimeFixture();
+    f.state.adultScene.positions = [0, 30, 60, 90, 120]
+      .map((start, index) => chapter(`chapter-${index}`, start));
+    f.state.adultScene.foreplay = [];
+    f.state.adultScene.dialogue = [];
+    if (separate === 'gap') {
+      f.state.adultScene.positions[2] = chapter('chapter-2', 61);
+      f.state.adultScene.positions[3] = chapter('chapter-3', 91);
+      f.state.adultScene.positions[4] = chapter('chapter-4', 121);
+    }
+    else f.state.adultScene.positions[2].partnerTrackId = 'track-other';
+    f.state.adultUnlockedPositionIds.add('chapter-0');
+    f.state.adultSexUnlocked = true;
+    f.state.adultVisitedPositionIds.add('chapter-0');
+    f.addFemaleLust(35);
+    assert.deepEqual([...f.state.adultUnlockedPositionIds], ['chapter-0', 'chapter-1']);
+  }
 });
 
 test('a spent opening meter resets at the core boundary so the next full meter unlocks the next chapter', () => {

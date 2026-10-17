@@ -240,10 +240,12 @@ export function bundleAdjacentSourceCards(cards = [], { targetCount = 4, maxVari
 const visualState = value => typeof value === 'string' ? value.trim() :
   value && typeof value === 'object' ? JSON.stringify(value) : '';
 const approachStage = clip => JSON.stringify([
-  text(clip.locationId),
+  text(clip.locationId), text(clip.sceneId),
   visualState(clip.beforeState?.clothingState || clip.beforeState?.clothing ||
     clip.beforeState?.outfit)
 ]);
+const sceneBarrier = clip => ['scene_transition', 'camera_transition', 'body_transition',
+  'partner_transition'].includes(text(clip?.actionType).toLowerCase());
 
 // A source stage changes only on declared visual state. The same stage stays
 // replayable after its timeline has passed; an earlier room or outfit does not.
@@ -254,9 +256,11 @@ export function approachStageChoices(clips = [], cursor = 0) {
   const stage = approachStage(current);
   const index = ordered.indexOf(current);
   let first = index, last = index;
-  while (first > 0 && approachStage(ordered[first - 1]) === stage &&
+  while (first > 0 && !sceneBarrier(ordered[first]) && !sceneBarrier(ordered[first - 1]) &&
+      approachStage(ordered[first - 1]) === stage &&
       Number(ordered[first].startTime) - Number(ordered[first - 1].endTime) <= 45) first -= 1;
-  while (last + 1 < ordered.length && approachStage(ordered[last + 1]) === stage &&
+  while (last + 1 < ordered.length && !sceneBarrier(ordered[last]) &&
+      !sceneBarrier(ordered[last + 1]) && approachStage(ordered[last + 1]) === stage &&
       Number(ordered[last + 1].startTime) - Number(ordered[last].endTime) <= 45) last += 1;
   return ordered.slice(first, last + 1);
 }
@@ -268,12 +272,19 @@ export function groupVerifiedApproachChoices(clips = []) {
     if (clip?.sourceVerified !== true || !clip.id || !range) continue;
     const previous = cards.at(-1);
     const priorClip = previous?.variants.at(-1);
+    const firstClip = previous?.variants[0];
     const priorRange = clipRange(priorClip);
+    const closeRate = field => Math.abs(Number(firstClip?.[field] || 1) -
+      Number(clip[field] || 1)) <= 0.2;
     const sameAction = priorClip && clip.nonIntimate !== true && priorClip.nonIntimate !== true &&
       choiceSurfaceKey(clip) !== 'story' && choiceSurfaceKey(priorClip) !== 'story' &&
       sourceActionLabel(previous.label).toLocaleLowerCase('tr-TR') ===
         sourceActionLabel(clip.label).toLocaleLowerCase('tr-TR') &&
       text(priorClip.actionType) === text(clip.actionType) &&
+      text(priorClip.movementType) === text(clip.movementType) &&
+      text(priorClip.movementTempo) === text(clip.movementTempo) &&
+      text(priorClip.audioIntensity) === text(clip.audioIntensity) &&
+      closeRate('femaleProgressRate') && closeRate('maleProgressRate') &&
       text(priorClip.routeNamespace) === text(clip.routeNamespace) &&
       text(priorClip.subjectTrackId) === text(clip.subjectTrackId) &&
       text(priorClip.partnerTrackId) === text(clip.partnerTrackId) &&
