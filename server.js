@@ -395,9 +395,7 @@ ${reviewCandidates}
     const prompt = savedGameRepair
       ? buildGapRepairPrompt({
         chunkStart, chunkEnd,
-        timestamps: JSON.parse(timestamps),
-        motionProfile: JSON.parse(motionProfile),
-        sceneBoundaries: JSON.parse(sceneBoundaries)
+        timestamps, motionProfile, sceneBoundaries
       })
       : `
 SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
