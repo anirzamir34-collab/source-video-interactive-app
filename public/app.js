@@ -4,7 +4,7 @@ import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
-import { GAP_REPAIR_PROMPT_VERSION, uncoveredNeutralRepairIntervals } from './neutral-gap-repair.js';
+import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, uncoveredNeutralRepairIntervals } from './neutral-gap-repair.js';
 import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import { createServerRevisionReader } from './server-revision.js';
@@ -2101,6 +2101,19 @@ els.analyzeBtn.addEventListener('click', async () => {
         secondPassChunkCount: chunkResults.filter(result => result.secondPassReviewed).length,
         rebasedChunkCount: chunkResults.filter(result => result.chunkTimeRebased).length,
         analyzedThroughTime: Math.max(0, ...mergedActions.map(action => Number(action.endTime) || 0)),
+        analysisDiagnostics: {
+          chunkCount: completedResults.length,
+          modelRawActionsCount: completedResults.reduce((total, item) =>
+            total + Number(item.analysisTelemetry?.modelRawActionsCount || 0), 0),
+          serverNormalizerAcceptedCount: completedResults.reduce((total, item) =>
+            total + Number(item.analysisTelemetry?.serverNormalizerAcceptedCount || 0), 0),
+          serverNormalizerRejected: completedResults.reduce((totals, item) => {
+            for (const [reason, count] of Object.entries(item.analysisTelemetry?.serverNormalizerRejected || {}))
+              totals[reason] = (totals[reason] || 0) + Number(count || 0);
+            return totals;
+          }, {}),
+          stageReached: 'CHUNKS_MERGED'
+        },
         schemaVersion: ANALYSIS_SCHEMA_VERSION,
         engineVersion: ENGINE_VERSION
       };
@@ -2170,6 +2183,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   analysisProgress.done('review', (body.secondPassChunkCount || 0) + ' bölüm ikinci kontrolden geçti.');
   analysisProgress.update('integrity', { detail: 'Seçimler, sahneler ve kaynak zamanları kontrol ediliyor.' });
   let normalized = normalizeAnalysis(body);
+  const beforeHardeningCount = normalized.actions.length;
   const hardened = reviewAndHardenAnalysis({
     ...body,
     ...normalized,
@@ -2177,6 +2191,19 @@ els.analyzeBtn.addEventListener('click', async () => {
     expectedChunkCount: Number(body.expectedChunkCount || 0)
   });
   normalized = hardened.analysis;
+  // Diagnostics apply to both economy and deep first-pass analysis. A provider
+  // refusal still stays a refusal; normalizers never promote low confidence.
+  normalized.analysisDiagnostics = {
+    ...(body.analysisDiagnostics || {}),
+    clientNormalizerInputCount: Array.isArray(body.actions) ? body.actions.length : 0,
+    clientNormalizerAcceptedCount: beforeHardeningCount,
+    clientNormalizerDroppedCount: Math.max(0,
+      (Array.isArray(body.actions) ? body.actions.length : 0) - beforeHardeningCount),
+    hardeningAcceptedCount: normalized.actions.length,
+    hardeningDroppedCount: Math.max(0, beforeHardeningCount - normalized.actions.length),
+    stageReached: hardened.integrity.fatal ? 'INTEGRITY_FAILED'
+      : normalized.actions.length ? 'INITIAL_ANALYSIS_VERIFIED' : 'INITIAL_ANALYSIS_EMPTY'
+  };
   state.integrityReport = hardened.integrity;
   state.analysisFingerprint = analysisFingerprint(normalized);
   logEngineEvent('ANALYSIS_REVIEWED', {
@@ -2209,6 +2236,11 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   state.analysis = normalized;
   analysisProgress.done('integrity', normalized.actions.length + ' doğrulanmış aksiyon hazır.');
+  if (normalized.analysisDiagnostics.modelRawActionsCount != null) {
+    const d = normalized.analysisDiagnostics;
+    const summary = `Analiz aşamaları: Gemini ${d.modelRawActionsCount} · sunucu ${d.serverNormalizerAcceptedCount} · istemci ${d.clientNormalizerAcceptedCount} · bütünlük ${d.hardeningAcceptedCount}.`;
+    els.analysisOutput.textContent = [els.analysisOutput.textContent, summary].filter(Boolean).join('\n');
+  }
   try {
     // Analysis persistence intentionally disabled: refresh must start clean.
     localStorage.removeItem("videoquest:last-analysis");
@@ -7265,7 +7297,8 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
   for (let index = 0; index < gaps.length; index++) {
     const gap = gaps[index];
     const prior = lastAttempt?.model === repairModel &&
-      lastAttempt?.promptVersion === GAP_REPAIR_PROMPT_VERSION
+      lastAttempt?.promptVersion === GAP_REPAIR_PROMPT_VERSION &&
+      lastAttempt?.validatorVersion === GAP_REPAIR_VALIDATOR_VERSION
       ? lastAttempt.results?.find(item => item.startTime === gap.startTime &&
         item.endTime === gap.endTime &&
         ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS'].includes(item.reason))
@@ -7288,6 +7321,7 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     let result = { available: false };
     let reason = '';
     let httpStatus = null;
+    let repairTelemetry = null;
     try {
       const storyboard = await extractStoryboard(game.video, () => {}, undefined, { timeRange: gap });
       const form = new FormData();
@@ -7319,9 +7353,11 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
       httpStatus = response.status;
       result = await response.json();
       recordAiUsage(result?.aiUsage);
+      repairTelemetry = result?.repairTelemetry || null;
       if (response.ok && result?.available) {
         const corrected = normalizeChunkActionTimes(result.actions, gap.startTime, gap.endTime);
         result = { ...result, actions: corrected.actions };
+        const serverActionCount = (result.actions || []).length;
         const normalized = normalizeAnalysis({ ...result,
           actions: (result.actions || []).map(action => ({ ...action,
             classificationReview: action.classificationReview === 'verified'
@@ -7331,6 +7367,11 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
         result.actions = normalized.actions.map((action, actionIndex) => ({
           ...action, actionId: `repair-${Math.round(gap.startTime * 1000)}-${actionIndex + 1}`
         }));
+        repairTelemetry = { ...(repairTelemetry || {}),
+          clientNormalizerInputCount: serverActionCount,
+          clientNormalizerAcceptedCount: result.actions.length,
+          clientNormalizerDroppedCount: Math.max(0, serverActionCount - result.actions.length),
+          stageReached: result.actions.length ? 'CLIENT_NORMALIZER_PASSED' : 'CLIENT_NORMALIZER_EMPTY' };
         // Neutral recovery may establish a few ordinary story events without
         // observing the full original gap. Never mark unseen seconds analyzed.
         const unsupported = uncoveredNeutralRepairIntervals(gap, result.actions);
@@ -7356,17 +7397,31 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     const outcome = !result?.available ? 'failed'
       : (result.analysisGaps || []).length ? 'partial' : 'processed';
     results.push({ startTime: gap.startTime, endTime: gap.endTime, reason,
-      httpStatus, outcome, verifiedActions });
+      httpStatus, outcome, verifiedActions, ...(repairTelemetry ? { repairTelemetry } : {}) });
     onProgress(`Bölüm ${index + 1}/${gaps.length}: ${reason ||
       (outcome === 'partial' ? `${verifiedActions} olay doğrulandı, kalan aralık hâlâ eksik`
         : `${verifiedActions} olay doğrulandı, bölüm tamamlandı`)}`);
   }
   const merged = mergeRepairedAnalysis(previous, repairs, game.duration);
+  // Track what really reached the saved game, not merely what a provider returned.
+  const existingIds = new Set((previous.actions || []).map(action => String(action.actionId)));
+  const inserted = (merged.actions || []).filter(action => !existingIds.has(String(action.actionId)));
+  for (const record of results) {
+    if (!record.repairTelemetry) continue;
+    const count = inserted.filter(action => Number(action.startTime) >= record.startTime &&
+      Number(action.endTime) <= record.endTime).length;
+    record.repairTelemetry = { ...record.repairTelemetry, mergedActionsCount: count,
+      stageReached: count ? 'MERGE_PARTIAL_OR_COMPLETE'
+        : record.repairTelemetry.stageReached === 'CLIENT_NORMALIZER_PASSED'
+          ? 'MERGE_REJECTED_ALL' : record.repairTelemetry.stageReached };
+  }
   const remaining = retryableAnalysisGaps(merged, game.duration);
   const repaired = results.filter(item => item.outcome === 'processed' &&
     !remaining.some(gap => gap.startTime < item.endTime && gap.endTime > item.startTime)).length;
   return { ...merged, lastRepairAttempt: {
-    model: repairModel, promptVersion: GAP_REPAIR_PROMPT_VERSION, checkedAt: new Date().toISOString(), total: gaps.length,
+    model: repairModel, promptVersion: GAP_REPAIR_PROMPT_VERSION,
+    validatorVersion: GAP_REPAIR_VALIDATOR_VERSION,
+    checkedAt: new Date().toISOString(), total: gaps.length,
     recovered: repaired, remaining: remaining.length, results
   } };
 }

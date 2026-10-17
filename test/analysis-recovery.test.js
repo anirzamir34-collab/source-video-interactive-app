@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { parseStoryboardResponse, generateStoryboardWithRetry, storyboardFailureReason, isTerminalStoryboardFailure,
   hasDeclaredPartialCoverage, chunkGapResult } from '../public/analysis-recovery.js';
-import { buildGapRepairPrompt, GAP_REPAIR_SYSTEM_INSTRUCTION, verifiedNeutralRepairActions } from '../public/neutral-gap-repair.js';
+import { buildGapRepairPrompt, GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, GAP_REPAIR_SYSTEM_INSTRUCTION, inspectNeutralRepairActions, verifiedNeutralRepairActions } from '../public/neutral-gap-repair.js';
 
 test('restricted source interval reports its provider reason and never fabricates choices', () => {
   const gap = chunkGapResult({ reason: 'GEMINI_CONTENT_RESTRICTED', retryable: false }, 1, 94.7, 189.3);
@@ -230,7 +230,8 @@ test('empty saved-game repairs fail HTTP 422 and are not cached as successful an
     isGeminiModelName: value => /^gemini-/.test(value),
     storyboardRequestCache: createAnalysisRequestCache(),
     GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'normal analysis instructions',
-    GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions,
+    GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION,
+    GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions, inspectNeutralRepairActions,
     ANALYSIS_MODEL: 'gemini-3.8-flash', process: { env: {} },
     console: { warn() {}, error() {}, info() {} }
   });
@@ -253,7 +254,21 @@ test('empty saved-game repairs fail HTTP 422 and are not cached as successful an
     assert.equal(res.body.analysisGaps[0].startTime, 276.5);
     assert.equal(res.body.aiUsage.requests, 1);
     assert.equal(res.body.aiUsage.cacheHits || 0, 0);
+    assert.equal(res.body.repairTelemetry.modelRawActionsCount, 0);
+    assert.equal(res.body.repairTelemetry.repairValidatorAcceptedCount, 0);
+    assert.equal(res.body.repairTelemetry.stageReached, 'REPAIR_VALIDATOR_EMPTY');
   }
   // Two separate user invocations cannot reuse a falsely successful empty result.
   assert.equal(calls, 2);
+});
+
+test('repair endpoint tracks validator and server normalization drops without logging labels', () => {
+  const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const app = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(server, /serverNormalizerRejected: normalizerRejected/);
+  assert.match(server, /repairTelemetry = \{ \.\.\.inspection\.diagnostics/);
+  assert.match(server, /GAP_REPAIR_VALIDATOR_VERSION/);
+  assert.match(app, /clientNormalizerDroppedCount/);
+  assert.match(app, /mergedActionsCount: count/);
+  assert.match(app, /lastAttempt\?\.validatorVersion === GAP_REPAIR_VALIDATOR_VERSION/);
 });

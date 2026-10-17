@@ -134,3 +134,24 @@ test('partial observations and repeat-suppression have distinct truthful labels'
   assert.ok(report.details.includes('Önceki boş analiz nedeniyle aynı istek gönderilmedi'));
   assert.ok(!report.details.includes('Sonuç alındı'));
 });
+
+test('repair diagnostics reveal where each proposed source event disappeared', () => {
+  const report = describeSavedGameRepair({ lastRepairAttempt: {
+    model: 'gemini-3.8-flash', total: 1, recovered: 0, remaining: 1,
+    results: [{ startTime: 276.5, endTime: 331.8, outcome: 'failed',
+      reason: 'GEMINI_NO_VERIFIED_EVENTS', httpStatus: 422,
+      repairTelemetry: { modelRawActionsCount: 3,
+        repairValidatorAcceptedCount: 2,
+        repairValidatorRejected: { invalidTime: 1 },
+        serverNormalizerAcceptedCount: 1,
+        serverNormalizerRejected: { lowConfidence: 1 },
+        clientNormalizerAcceptedCount: 0, mergedActionsCount: 0 } }]
+  } });
+  assert.ok(report.details.includes('Gemini: 3'));
+  assert.ok(report.details.includes('nötr kontrol: 2'));
+  assert.ok(report.details.includes('sunucu: 1'));
+  assert.ok(report.details.includes('istemci: 0'));
+  assert.ok(report.details.includes('kayda eklenen: 0'));
+  assert.ok(report.details.includes('invalidTime: 1'));
+  assert.ok(report.details.includes('lowConfidence: 1'));
+});

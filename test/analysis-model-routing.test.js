@@ -133,3 +133,18 @@ test('saved game repair displays per-gap errors and suppresses repeated provider
   assert.match(ui, /saved-game-repair-report/);
   assert.match(ui, /HTTP/);
 });
+
+test('initial economy and deep storyboard analyses expose loss counters without changing provider policy', () => {
+  assert.match(server, /const analysisTelemetry = \{/);
+  assert.match(server, /modelRawActionsCount: Array\.isArray\(parsed\.actions\)/);
+  assert.match(server, /serverNormalizerAcceptedCount: dedupedActions\.length/);
+  assert.match(server, /serverNormalizerRejected: \{ \.\.\.normalizerRejected \}/);
+  assert.match(server, /analysisTelemetry,\s*\.\.\.\(savedGameRepair/);
+  assert.match(app, /analysisDiagnostics: \{/);
+  assert.match(app, /clientNormalizerAcceptedCount: beforeHardeningCount/);
+  assert.match(app, /hardeningAcceptedCount: normalized\.actions\.length/);
+  assert.match(app, /state\.analysis = normalized/);
+  assert.match(server, /safetySettings: geminiAnalysisSafetySettings/);
+  assert.match(server, /savedGameRepair \? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION/);
+  assert.match(server, /savedGameRepair \? \[deepAnalysisModel\] : analysisModelCandidates/);
+});
