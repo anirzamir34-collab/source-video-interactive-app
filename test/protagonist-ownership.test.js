@@ -55,7 +55,7 @@ test('verified main-character conversation stays playable with another male on s
   assert.deepEqual(result.excluded.map(item => item.actionId), ['other-replies']);
 });
 
-test('unknown protagonist or intimate source keeps the existing ownership barrier', () => {
+test('unknown actor stays excluded but independently verified main-actor clips survive a shared shot', () => {
   const cast = ['MAIN_MALE', 'OTHER_MALE'];
   const actions = [
     { actionId: 'no-actor', sourceVerified: true, actionType: 'dialogue',
@@ -74,9 +74,9 @@ test('unknown protagonist or intimate source keeps the existing ownership barrie
       actionType: 'dialogue', involvedCharacterIds: cast }
   ];
   const result = partitionProtagonistActions(actions);
-  assert.deepEqual(result.playable.map(item => item.actionId), ['verified-story']);
-  assert.deepEqual(result.excluded.map(item => item.actionId),
-    ['no-actor', 'unverified', 'intimate', 'position', 'explicit', 'outcome']);
+  assert.deepEqual(result.playable.map(item => item.actionId),
+    ['intimate', 'position', 'explicit', 'outcome', 'verified-story']);
+  assert.deepEqual(result.excluded.map(item => item.actionId), ['no-actor', 'unverified']);
 });
 
 test('ordinary choice with no other male is unaffected even with sparse metadata', () => {
