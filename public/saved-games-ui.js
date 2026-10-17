@@ -23,16 +23,28 @@ const repairErrorLabels = {
   GEMINI_DAILY_LIMIT: 'Günlük kota sınırı',
   GEMINI_TEMPORARILY_UNAVAILABLE: 'Gemini geçici olarak kullanılamıyor',
   NETWORK_OR_ANALYSIS_ERROR: 'Bağlantı veya analiz hatası',
-  NO_VERIFIED_ACTIONS: 'Doğrulanmış yeni eylem bulunamadı'
+  NO_VERIFIED_ACTIONS: 'Doğrulanmış yeni eylem bulunamadı',
+  GEMINI_NO_VERIFIED_EVENTS: 'Gemini yanıtladı, ancak doğrulanmış yeni olay üretemedi'
 };
 export function describeSavedGameRepair(analysis) {
   const run = analysis?.lastRepairAttempt;
   if (!run || !Array.isArray(run.results)) return null;
-  const summary = `${run.model}: ${run.recovered}/${run.total} eksik bölüm tamamlandı, ${run.remaining} aralık eksik.`;
+  const verified = run.results.reduce((count, item) =>
+    count + Math.max(0, Number(item?.verifiedActions) || 0), 0);
+  const summary = `${run.model}: ${run.recovered}/${run.total} eksik bölüm tamamlandı, ${run.remaining} aralık eksik` +
+    (verified ? ` · ${verified} doğrulanmış olay` : ' · yeni doğrulanmış olay yok') + '.';
   const details = run.results.map((item, index) => {
     const range = `${Number(item.startTime).toFixed(1)}–${Number(item.endTime).toFixed(1)} sn`;
-    const result = item.outcome === 'processed' ? 'Sonuç alındı'
-      : item.outcome === 'skipped_previous_rejection' ? 'Tekrarlanan içerik reddi, istek gönderilmedi'
+    const count = Math.max(0, Number(item.verifiedActions) || 0);
+    const result = item.outcome === 'processed'
+      ? count ? `Bölüm tamamlandı · ${count} doğrulanmış olay`
+        : 'Model yanıtladı, doğrulanmış olay yok; bölüm tamamlanmadı'
+      : item.outcome === 'partial'
+        ? `Kısmi gözlem · ${count} doğrulanmış olay, kalan saniyeler hâlâ eksik`
+      : item.outcome === 'skipped_previous_rejection'
+        ? 'Önceki içerik reddi nedeniyle tekrar gönderilmedi'
+      : item.outcome === 'skipped_previous_empty'
+        ? 'Önceki boş analiz nedeniyle aynı istek gönderilmedi'
       : item.outcome === 'skipped_model_error' ? 'Model hatası nedeniyle gönderilmedi'
       : repairErrorLabels[item.reason] || item.reason || 'Analiz başarısız';
     return `${index + 1}. ${range}: ${result}${item.httpStatus ? ` · HTTP ${item.httpStatus}` : ''}`;
