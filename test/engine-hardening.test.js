@@ -16,11 +16,25 @@ import {
   isCompatibleRuntimeSnapshot,
   mergeSecondPassReview,
   reviewAndHardenAnalysis,
+  integritySummaryText,
+  summarizeIntegrityIssues,
   secondPassReviewCandidates,
   shouldSecondPassReview,
   validateActionInterval,
   normalizeChunkActionTimes
 } from '../public/engine-hardening.js';
+
+test('source-grounded first-pass records are information, not warnings', () => {
+  const issues = [
+    ...Array.from({ length: 24 }, (_, index) => ({
+      severity: 'info', code: 'SOURCE_GROUNDED_FIRST_PASS', actionId: `source-${index}`
+    })),
+    { severity: 'warning', code: 'GROUNDED_STORY_CONFIDENCE_MARGIN' }
+  ];
+  assert.deepEqual(summarizeIntegrityIssues(issues), { information: 24, warnings: 1, repairs: 0, dropped: 0, fatal: 0 });
+  assert.equal(integritySummaryText({ issues: issues.slice(0, 24) }, 34),
+    'Bütünlük kontrolü: 0 uyarı · 24 kaynak doğrulama bilgisi · 34 güvenli aksiyon.');
+});
 
 test('timeline validator rejects broken ranges and movement outside parent position', () => {
   assert.equal(validateActionInterval({ startTime: 5, endTime: 4 }, 20).valid, false);

@@ -2,12 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneSurfaceChoices,
   distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice,
-  isForwardTimelineChoice } from '../public/choice-routing.js';
+  isForwardTimelineChoice, isUnroutedVerifiedApproach } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 
 const action = extra => ({ actionId: 'source-a', sourceVerified: true, confidence: 0.95,
   label: 'Observed source action', startTime: 10, endTime: 15, actionType: 'other', ...extra });
+
+test('a verified clip accepted as a position is not counted as a rejected approach', () => {
+  const opening = action({ actionId: 'opening' });
+  const owned = new Set(['opening']);
+  assert.equal(isUnroutedVerifiedApproach(opening, { route: 'POSITION', movementAccepted: true }, new Set(), true), false);
+  assert.equal(isUnroutedVerifiedApproach(opening, { route: 'POSITION', movementAccepted: false }, new Set(), true), true);
+  assert.equal(isUnroutedVerifiedApproach(opening, { route: 'FOREPLAY' }, owned, true), false);
+  assert.equal(isUnroutedVerifiedApproach(opening, { route: 'FOREPLAY' }, new Set(), true), true);
+});
 
 test('normal timeline choices never rewind to a partly played earlier clip', () => {
   const clip = action({ startTime: 10, endTime: 15 });

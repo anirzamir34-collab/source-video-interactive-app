@@ -239,6 +239,40 @@ test('declared scene transition retires old cards when room and outfit data are 
     .map(item => item.id), ['new']);
 });
 
+test('adjacent verified opening transitions offer the next source card without replaying the old stage', () => {
+  const clips = [
+    { id: 'wardrobe', sourceVerified: true, choiceSurface: 'approach',
+      sceneId: 'chapter-a', actionType: 'clothing', startTime: 71.5, endTime: 82.5 },
+    { id: 'approach', sourceVerified: true, choiceSurface: 'approach',
+      sceneId: 'chapter-a', actionType: 'body_transition', movementType: 'approach',
+      subjectTrackId: 'actor', partnerTrackId: 'partner', startTime: 82.5, endTime: 96 },
+    { id: 'pose', sourceVerified: true, choiceSurface: 'approach',
+      sceneId: 'chapter-a', actionType: 'body_transition', movementType: 'sit',
+      subjectTrackId: 'actor', partnerTrackId: 'partner', startTime: 96, endTime: 110.598 },
+    { id: 'different-room', sourceVerified: true, choiceSurface: 'approach',
+      sceneId: 'chapter-b', actionType: 'body_transition',
+      subjectTrackId: 'actor', partnerTrackId: 'partner', startTime: 110.598, endTime: 124 }
+  ];
+  assert.deepEqual(approachStageChoices(clips, 82.5).map(item => item.id), ['approach', 'pose']);
+  assert.deepEqual(approachStageChoices(clips, 96).map(item => item.id), ['pose']);
+  assert.deepEqual(approachStageChoices(clips, 110.598).map(item => item.id), ['different-room']);
+});
+
+test('a source gap, cast change or clothing change prevents a forward transition preview', () => {
+  const base = { sourceVerified: true, choiceSurface: 'approach', sceneId: 'chapter-a',
+    subjectTrackId: 'actor', partnerTrackId: 'partner', actionType: 'body_transition' };
+  const first = { ...base, id: 'first', startTime: 10, endTime: 20 };
+  for (const second of [
+    { startTime: 25, endTime: 30 },
+    { startTime: 20, endTime: 30, partnerTrackId: 'another' },
+    { startTime: 20, endTime: 30, actionType: 'clothing' },
+    { startTime: 20, endTime: 30, beforeState: { clothing: 'changed' } }
+  ]) {
+    assert.deepEqual(approachStageChoices([first, { ...base, id: 'second', ...second }], 10)
+      .map(item => item.id), ['first']);
+  }
+});
+
 test('the contextual control reserves later energetic source clips without duplicating cards', () => {
   const movements = [clip(0, { movementTempo: 'slow' }),
     clip(1, { movementTempo: 'fast' }), clip(2, { movementTempo: 'fast' }),
