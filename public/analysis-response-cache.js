@@ -35,8 +35,31 @@ export async function analysisCheckpointKey({ sheets, timestamps, duration, mode
   ])));
 }
 
+// A bounded, stable fingerprint of the original video bytes lets a refreshed
+// mobile browser recover the *identical contact-sheet blobs* it originally
+// analyzed. File names, freshly generated URL timestamps and provider keys
+// are intentionally not used as identities. This is a cache lookup proof,
+// not a cryptographic verification of every byte in the full video.
+export async function storyboardSourceKey(source, { crypto = globalThis.crypto } = {}) {
+  if (!(source instanceof Blob) || source.size <= 0 || !crypto?.subtle) return null;
+  const toHex = digest => Array.from(new Uint8Array(digest))
+    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+  const size = source.size;
+  const sampleLength = Math.min(65536, size);
+  const samples = [];
+  for (let index = 0; index < 9; index++) {
+    const offset = Math.floor((size - sampleLength) * index / 8);
+    const bytes = await source.slice(offset, offset + sampleLength).arrayBuffer();
+    samples.push([offset, toHex(await crypto.subtle.digest('SHA-256', bytes))]);
+  }
+  const evidence = new TextEncoder().encode(JSON.stringify([
+    'videoquest-storyboard-source-v1', size, samples
+  ]));
+  return toHex(await crypto.subtle.digest('SHA-256', evidence));
+}
+
 export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, now = Date.now,
-  ttlMs = 86400000, maxEntries = 64, maxCheckpoints = 128 } = {}) {
+  ttlMs = 30 * 86400000, maxEntries = 128, maxCheckpoints = 512, maxStoryboards = 8 } = {}) {
   let connection;
   const pending = new Map();
   async function open() {
@@ -92,7 +115,7 @@ export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, 
             const request = store.getAll();
             request.onsuccess = () => {
               const rows = request.result.filter(row => row.key !== key);
-              const live = rows.filter(row => !row.checkpoint && row.expiresAt > now())
+              const live = rows.filter(row => !row.checkpoint && !row.storyboard && row.expiresAt > now())
                 .sort((a, b) => a.createdAt - b.createdAt);
               for (const row of rows) if (row.expiresAt <= now()) store.delete(row.key);
               while (live.length >= maxEntries) store.delete(live.shift().key);
@@ -105,6 +128,39 @@ export function createAnalysisResponseCache({ indexedDB = globalThis.indexedDB, 
       pending.set(key, task);
       try { const result = await task; signal?.throwIfAborted(); return result; }
       finally { if (pending.get(key) === task) pending.delete(key); }
+    },
+    async readStoryboard(sourceKey) {
+      if (!sourceKey) return null;
+      return transaction('readonly', (store, done) => {
+        const request = store.get(`storyboard:${sourceKey}`);
+        request.onsuccess = () => {
+          const row = request.result;
+          const data = row?.result;
+          done(row?.storyboard === true && row.expiresAt > now() &&
+            Array.isArray(data?.sheets) && data.sheets.length > 0 &&
+            data.sheets.every(sheet => sheet instanceof Blob && sheet.size > 0) &&
+            Array.isArray(data?.timestamps) && Number(data?.duration) > 0
+            ? structuredClone(data) : null);
+        };
+      }).catch(() => null);
+    },
+    async saveStoryboard(sourceKey, storyboard) {
+      if (!sourceKey || !Array.isArray(storyboard?.sheets) || !storyboard.sheets.length ||
+          !storyboard.sheets.every(sheet => sheet instanceof Blob && sheet.size > 0) ||
+          !Array.isArray(storyboard.timestamps) || Number(storyboard.duration) <= 0) return false;
+      const key = `storyboard:${sourceKey}`;
+      return transaction('readwrite', store => {
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const rows = request.result;
+          for (const row of rows) if (row.expiresAt <= now()) store.delete(row.key);
+          const live = rows.filter(row => row.storyboard && row.key !== key && row.expiresAt > now())
+            .sort((a, b) => a.createdAt - b.createdAt);
+          while (live.length >= maxStoryboards) store.delete(live.shift().key);
+          store.put({ key, storyboard: true, result: structuredClone(storyboard),
+            createdAt: now(), expiresAt: now() + ttlMs });
+        };
+      }).then(() => true).catch(() => false);
     },
     async readCheckpoint(prefix, chunkIndex) {
       if (!prefix || !Number.isSafeInteger(chunkIndex) || chunkIndex < 0) return null;
