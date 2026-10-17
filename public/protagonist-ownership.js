@@ -19,6 +19,7 @@ export function partitionProtagonistActions(actions = [], context = {}, mainTrac
   }).map(character => canonical(character.participantTrackId || character.id)));
   const playable = [];
   const excluded = [];
+  const actionCast = new Map();
   for (const action of actions) {
     const subject = canonical(action.subjectTrackId);
     const participants = [action.subjectTrackId, action.primaryCharacterId, action.partnerTrackId,
@@ -33,12 +34,39 @@ export function partitionProtagonistActions(actions = [], context = {}, mainTrac
       !['oral', 'manual', 'vaginal', 'anal'].includes(String(action.activityType || '').toLowerCase()) &&
       !['climax', 'aftermath'].includes(String(action.outcomeType || '').toLowerCase());
     const foreignActor = Boolean(subject && subject !== protagonist);
-    const ambiguousCast = participants.some(id =>
-      id !== protagonist && (otherMaleTracks.has(id) || otherMaleTrack(id)));
-    if (foreignActor || (ambiguousCast && !ordinaryStory)) excluded.push(action);
-    else playable.push(action);
+    const anotherMaleInShot = participants.some(id =>
+      id !== protagonist && (otherMaleTracks.has(id) || otherMaleTrack(id) ||
+        /^(?:MALE|MAN|M)[_-]?[B-Z0-9]+$/i.test(id)));
+    const mainActorVerified = action.sourceVerified === true && subject === protagonist &&
+      participants.includes(protagonist);
+    // The other man appearing in the same frame never disqualifies a
+    // source-verified action belonging to the selected protagonist.
+    // An actor-less or unverified mixed-cast event still cannot grant a card.
+    const belongsToMain = !foreignActor &&
+      (!anotherMaleInShot || ordinaryStory || mainActorVerified);
+    actionCast.set(action, { protagonistVisible: participants.includes(protagonist),
+      sceneKey: String(action.adultSceneId || action.sceneId || '').trim(),
+      mainActorVerified });
+    if (belongsToMain) playable.push(action);
+    else excluded.push(action);
   }
-  return { playable, excluded };
+  const playableScenes = new Set(playable.flatMap(action => {
+    const key = actionCast.get(action)?.sceneKey;
+    return key && (action.sourceVerified === true) ? [key] : [];
+  }));
+  // Unowned placeholders only belong to a genuinely other-person section.
+  // A second man's action during a protagonist-owned group encounter remains
+  // watchable source footage but must not replace the main actor's panel with
+  // "skip / watch". Never convert that other actor's event into a main choice.
+  const skippableExcluded = excluded.filter(action => {
+    const record = actionCast.get(action);
+    if (record?.protagonistVisible || (record?.sceneKey && playableScenes.has(record.sceneKey)))
+      return false;
+    return !playable.some(mainAction => mainAction.sourceVerified === true &&
+      Number(mainAction.startTime) < Number(action.endTime) - 0.05 &&
+      Number(mainAction.endTime) > Number(action.startTime) + 0.05);
+  });
+  return { playable, excluded, skippableExcluded };
 }
 
 export function mergeUnownedIntervals(intervals = []) {
