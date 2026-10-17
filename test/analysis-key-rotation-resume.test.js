@@ -61,8 +61,10 @@ test('15 verified sections resume instantly across new cache instance and key re
   assert.equal((await newSession.readCheckpoint(prefix, 0)).actions[0].actionId, 'verified-action-0',
     'mutating a returned chapter cannot poison the stored checkpoint');
   now += 86400000;
+  assert.ok(await newSession.readCheckpoint(prefix, 3), 'verified chapters survive more than one day');
+  now += 30 * 86400000;
   assert.equal(await newSession.readCheckpoint(prefix, 3), null,
-    'checkpoint age is bounded to 24h');
+    'checkpoint age is bounded to 30 days');
 });
 
 test('checkpoint identity depends on actual source bytes and analysis settings, not filename or Gemini key', async () => {
