@@ -89,7 +89,11 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     analysisCheckpointKey: async () => null,
     storyboardSourceKey: async () => 'synthetic-source-evidence',
     reconcileAnalysisSessionEvidence, mediaModeKeyFromOptions,
-    analysisResponseCache: { readCheckpoint: async () => null, saveCheckpoint: async () => true },
+    analysisResponseCache: {
+      readCheckpoint: async () => null, saveCheckpoint: async () => true,
+      readStoryboard: async () => null, saveStoryboard: async () => true,
+      readSourceTranscript: async () => null, saveSourceTranscript: async () => true
+    },
     fetch: async (url, options) => {
       calls.visual.push({ url, options });
       if (visual) throw new DOMException('First request captured', 'AbortError');
