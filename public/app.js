@@ -113,10 +113,10 @@ import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, analysisCheckpointKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
-  bundleAdjacentSourceCards, groupVerifiedApproachChoices, approachStageChoices } from './choice-groups.js';
+  bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
-  isForwardTimelineChoice } from './choice-routing.js';
+  openingSceneChoiceMenu, isForwardTimelineChoice } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -221,6 +221,7 @@ const state = {
   adultClimaxProgress: 0,
   adultCorePlaySeconds: 0,
   adultTimelineFloor: 0,
+  adultOpeningMenuPinned: false,
   adultLastApproachRefreshAt: 0,
   adultOutcomePhase: 'idle',
   activeAdultOutcomeId: null,
@@ -3807,6 +3808,7 @@ function reconcileInteractionSource(mediaTime, { manual = false } = {}) {
   if (!state.adultScene || state.adultLoopSeeking || els.video?.seeking) return;
   const snapshot = genericInteractionSnapshot();
   const rewind = Number(mediaTime) < snapshot.currentTime - 0.05;
+  if (manual) state.adultOpeningMenuPinned = false;
   const next = transitionInteraction(snapshot, { type: 'source-time', currentTime: mediaTime,
     rewind: manual && rewind });
   const matching = [...next.scene.groups, ...next.scene.choices].find(record =>
@@ -3844,7 +3846,7 @@ function reconcileInteractionSource(mediaTime, { manual = false } = {}) {
   }
   const current = next.scene.groups.find(group => group.phase === 'CORE' &&
     group.sourceRanges.some(range => Number(mediaTime) >= range.startTime && Number(mediaTime) < range.endTime));
-  if (current) {
+  if (current && !state.adultOpeningMenuPinned) {
     const newlyUnlocked = !state.adultUnlockedPositionIds.has(current.id);
     state.adultUnlockedPositionIds.add(current.id);
     state.adultRevealedPositionIds.add(current.id);
@@ -4047,6 +4049,7 @@ function unlockNextAdultPositionFromLust() {
     state.adultRevealedPositionIds.add(extra.id);
   }
   state.adultSexUnlocked = true;
+  state.adultOpeningMenuPinned = false;
   // Completion of the current verified clip, not the unlock event, transfers
   // playback ownership to this newly earned source-backed destination.
   state.adultPendingAutoPositionId = next.id;
@@ -4351,6 +4354,7 @@ function resetAdultSceneGameplay() {
   state.adultClimaxProgress = 0;
   state.adultCorePlaySeconds = 0;
   state.adultTimelineFloor = Math.max(0, Number(state.adultScene?.startTime) || 0);
+  state.adultOpeningMenuPinned = false;
   state.adultLastApproachRefreshAt = 0;
   state.adultOutcomePhase = 'idle';
   state.activeAdultOutcomeId = null;
@@ -4473,35 +4477,33 @@ function renderAdultApproachChoices(scene, later = false) {
     Number(state.adultTimelineFloor) || 0,
     Number(els.video?.currentTime) || 0
   );
-  // Existing source-role metadata chooses the surface. Dialogue choices stay
-  // separate from progress-bearing opening choices, without changing labels.
-  const stagePool = later ? approachPool : approachStageChoices(approachPool,
-    Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0));
-  const forwardApproach = stagePool.filter(item => item.sourceVerified === true &&
-    Number(item.endTime) > projectedFloor + 0.05)
-    .sort((left, right) => Number(left.startTime) - Number(right.startTime));
-  // The next verified source action owns the surface. A later dialogue cannot
-  // enter the approach cards, and an earlier dialogue cannot mask intimacy.
-  const dialogueOnly = forwardApproach[0]?.nonIntimate === true;
   const firstCoreTime = Math.min(...sceneCorePositions.map(position => Number(position.startTime)));
-  const decisionWindowEnd = projectedFloor + 90;
-  const surfacePool = sceneSurfaceChoices(stagePool,
+  // First approach: one complete, replayable source menu for this scene.
+  // Neither playback time, stage boundaries, an arbitrary five-card limit nor
+  // earlier selections may retire any verified opening choice. Dialogue keeps
+  // its own source category and is displayed alongside opening actions.
+  const openingMenu = !later
+    ? openingSceneChoiceMenu(approachPool, { firstCoreStart: firstCoreTime })
+    : null;
+  // Later, between-core interludes still use their bounded lookahead and
+  // should not be pulled into the first opening scene.
+  const forwardApproach = later ? approachPool.filter(item => item.sourceVerified === true &&
+    Number(item.endTime) > projectedFloor + 0.05)
+    .sort((left, right) => Number(left.startTime) - Number(right.startTime)) : [];
+  const dialogueOnly = later && forwardApproach[0]?.nonIntimate === true;
+  const surfacePool = later ? sceneSurfaceChoices(approachPool,
     dialogueOnly ? 'story' : 'approach', {
       floor: projectedFloor,
-      ceiling: Math.min(later || !Number.isFinite(firstCoreTime) ? Infinity : firstCoreTime,
-        dialogueOnly || later ? decisionWindowEnd : Infinity),
-      replay: !dialogueOnly && !later
-    });
-  const candidates = !dialogueOnly && !later
-    ? surfacePool
-    : dialogueOnly ? surfacePool.slice(0, 5)
-    : selectVerifiedChoiceQueue(surfacePool, {
-    timelineFloor: projectedFloor,
-    limit: 5,
-    maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60,
-    firstCoreTime: later || !sceneCorePositions.length ? null : firstCoreTime,
-    activeChoiceId: state.activeAdultPreludeId || activeWarmupPosition?.id || null,
-    activeEndTime: Number(activePrelude?.endTime) || Number(activeWarmupMovement?.loopEndTime) || 0
+      ceiling: dialogueOnly ? projectedFloor + 90 : Infinity
+    }) : [];
+  const candidates = !later ? openingMenu : dialogueOnly ? surfacePool.slice(0, 5) :
+    selectVerifiedChoiceQueue(surfacePool, {
+      timelineFloor: projectedFloor,
+      limit: 5,
+      maxForwardSeconds: state.interactionConfig?.approachWindowSeconds ?? 60,
+      firstCoreTime: null,
+      activeChoiceId: state.activeAdultPreludeId || activeWarmupPosition?.id || null,
+      activeEndTime: Number(activePrelude?.endTime) || Number(activeWarmupMovement?.loopEndTime) || 0
     });
 
   state.adultApproachChoices = candidates;
@@ -4546,7 +4548,7 @@ function renderAdultApproachChoices(scene, later = false) {
     button.innerHTML = `${choice.nonIntimate ? '' : '<small class="choice-kind">YAKINLAŞMA</small>'}` +
       `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>${
       sourceSequenceCount > 1
-        ? `<small class="choice-meta">${sourceSequenceCount} doğrulanmış sekans · sırayla oynatılır</small>`
+        ? `<small class="choice-meta">${sourceSequenceCount} doğrulanmış kaynak kesiti</small>`
         : ''
     }`;
     button.addEventListener('click', () => {
@@ -4558,6 +4560,7 @@ function renderAdultApproachChoices(scene, later = false) {
       }
       else {
         if (state.adultLoopSeeking && (choice.variants || []).some(item => item.id === state.activeMovementId)) return;
+        if (!later) state.adultOpeningMenuPinned = true;
         selectAdultPosition(choice.id, false);
         const next = pickNextVariant(choice.variants, state.activeMovementId, state.adultMovementPlayCounts);
         if (next) selectAdultMovement(next.id, true);
@@ -4654,7 +4657,7 @@ function renderAdultProgressiveUI(force = false) {
   }
   if (state.interactionRuntime.currentPhase === 'CORE') state.interactionPhaseOverride = null;
 
-  if (!state.activeAdultPreludeId && !state.activeMovementId) {
+  if (!state.adultOpeningMenuPinned && !state.activeAdultPreludeId && !state.activeMovementId) {
     const current = sourcePositionAtTime((scene.positions || []).filter(position =>
       !isWarmupPosition(position) && !isBonusPosition(position)), Number(els.video?.currentTime));
     const currentOccurrence = current && positionOccurrenceGroups(current).find(group =>
@@ -4690,8 +4693,9 @@ function renderAdultProgressiveUI(force = false) {
   // A full meter must reveal their panel even when there is no new group left
   // for unlockNextAdultPositionFromLust() to unlock and clear that override.
   if (currentAdultFlow() >= 99.9 && hasCoreUnlocked) state.interactionPhaseOverride = null;
-  const phase = state.interactionRuntime.currentPhase === 'APPROACH'
-    ? 'foreplay' : setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
+  const phase = state.adultOpeningMenuPinned && !state.adultSexUnlocked
+    ? 'foreplay' : state.interactionRuntime.currentPhase === 'APPROACH'
+      ? 'foreplay' : setAdultMachinePhase(adultDiscoveryPhase({ hasCoreUnlocked, hasBonusUnlocked }));
   const videoTime = Number(els.video?.currentTime) || 0;
   const hasUnlockedFutureCore = availablePositions.some(position =>
     Number(position.startTime) > videoTime + 0.04);
@@ -5098,10 +5102,15 @@ function completeCurrentApproachStage() {
   if (state.adultSexUnlocked || currentAdultFlow() < 60 ||
       state.interactionRuntime?.progressBudgetConsumed) return;
   const cards = (state.adultApproachChoices || []).filter(choice => !choice.nonIntimate);
-  if (!cards.length || cards.some(choice => !(choice.variants || []).length ||
-      choice.variants.some(clip => clip.sourceVerified !== true ||
-        !(choice.kind === 'foreplay' ? state.adultPreludePlayCounts : state.adultMovementPlayCounts)
-          .get(clip.id)))) return;
+  if (!cards.length) return;
+  // All opening cards stay visible, including earlier replay choices. Earning
+  // the next chapter must not require replaying *every* old scene-stage clip:
+  // the progress budget follows real completed footage and its source cursor.
+  const cursor = Math.max(Number(state.adultTimelineFloor) || 0,
+    Number(els.video?.currentTime) || 0);
+  if (cards.some(choice => !(choice.variants || []).length ||
+      choice.variants.some(clip => clip.sourceVerified !== true) ||
+      Number(choice.endTime) > cursor + 0.05)) return;
   const lastEnd = Math.max(...cards.map(choice => Number(choice.endTime)));
   const firstCore = Math.min(...(state.adultScene?.positions || [])
     .filter(position => !isWarmupPosition(position)).map(position => Number(position.startTime)));
@@ -5111,8 +5120,6 @@ function completeCurrentApproachStage() {
   const laterWarmup = (state.adultScene.positions || []).some(position => isWarmupPosition(position) &&
     (position.movements || []).some(clip => clip.sourceVerified === true &&
       Number(clip.loopStartTime) > lastEnd + 0.05 && Number(clip.loopStartTime) < firstCore));
-  // A retired visual stage cannot be replayed to settle its old budget. Every
-  // currently valid source clip has instead completed real playback.
   if (!laterPrelude && !laterWarmup) addFemaleLust(ADULT_LUST_UNLOCK_THRESHOLD - state.femaleSceneProgress);
 }
 
@@ -5127,6 +5134,7 @@ function playAdultPrelude(preludeId) {
   const guard = guardPlayable('foreplay', item, { scene, unlocked: true });
   if (!guard.allowed) return;
   logEngineEvent('FOREPLAY_SELECTED', { id: item.id });
+  if (!state.adultSexUnlocked) state.adultOpeningMenuPinned = true;
 
   const token = beginAdultSelection();
   state.activeAdultPreludeId = item.id;
@@ -5937,7 +5945,9 @@ function updateAdultPlayback(now, mediaTime) {
       !state.activeAdultEntryClip && state.adultOutcomePhase === 'idle' &&
       mediaTime < Number(state.adultScene?.endTime) - 0.04) {
     renderAdultProgressiveUI(true);
-    const hasDecision = state.interactionRuntime?.currentPhase === 'APPROACH'
+    const hasDecision = state.adultOpeningMenuPinned && !state.adultSexUnlocked
+      ? Boolean(state.adultApproachChoices?.length)
+      : state.interactionRuntime?.currentPhase === 'APPROACH'
       ? Boolean(state.adultApproachChoices?.some(choice =>
         Number(choice.endTime) > Number(mediaTime) + 0.05))
       : Boolean(els.positionTabs?.querySelector('button:not(:disabled)'));

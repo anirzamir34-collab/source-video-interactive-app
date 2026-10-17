@@ -159,3 +159,17 @@ export function sceneSurfaceChoices(items, surface, { floor = 0, ceiling = Infin
     .sort((a, b) => Number(a.startTime) - Number(b.startTime)));
 }
 
+// The first approach menu is a scene-wide choice list, not a timeline queue.
+// Keep every distinct verified opening clip available before the first core
+// position, even when the viewer replays an older clip or moves the playhead.
+// Story-labelled source clips retain their original surface and label.
+export function openingSceneChoiceMenu(items = [], { firstCoreStart = Infinity } = {}) {
+  const ceiling = Number(firstCoreStart);
+  return distinctVerifiedSourceChoices((Array.isArray(items) ? items : []).filter(item => {
+    const start = Number(item?.startTime), end = Number(item?.endTime);
+    return item?.sourceVerified === true &&
+      ['approach', 'story'].includes(choiceSurfaceKey(item)) &&
+      Number.isFinite(start) && Number.isFinite(end) && end > start &&
+      end <= ceiling + 0.05;
+  }).sort((a, b) => Number(a.startTime) - Number(b.startTime)));
+}

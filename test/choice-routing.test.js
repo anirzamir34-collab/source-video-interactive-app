@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneSurfaceChoices,
   distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice,
-  isForwardTimelineChoice, isUnroutedVerifiedApproach } from '../public/choice-routing.js';
+  isForwardTimelineChoice, isUnroutedVerifiedApproach, openingSceneChoiceMenu } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 
@@ -16,6 +16,54 @@ test('a verified clip accepted as a position is not counted as a rejected approa
   assert.equal(isUnroutedVerifiedApproach(opening, { route: 'POSITION', movementAccepted: false }, new Set(), true), true);
   assert.equal(isUnroutedVerifiedApproach(opening, { route: 'FOREPLAY' }, owned, true), false);
   assert.equal(isUnroutedVerifiedApproach(opening, { route: 'FOREPLAY' }, new Set(), true), true);
+});
+
+
+test('the complete first approach menu never gates verified choices by stage, cursor, or card count', () => {
+  const opening = [
+    action({ id: 'clothing', actionId: 'clothing', choiceSurface: 'approach',
+      actionType: 'clothing', startTime: 55.299, endTime: 82.948 }),
+    action({ id: 'transition-a', actionId: 'transition-a', choiceSurface: 'approach',
+      actionType: 'body_transition', startTime: 82.948, endTime: 96.773 }),
+    action({ id: 'transition-b', actionId: 'transition-b', choiceSurface: 'approach',
+      actionType: 'touch', startTime: 96.773, endTime: 110.598 }),
+    action({ id: 'dialogue', actionId: 'dialogue', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 50, endTime: 55.299 }),
+    action({ id: 'core', actionId: 'core', choiceSurface: 'panel',
+      actionType: 'position', startTime: 110.598, endTime: 140 }),
+    action({ id: 'after-core', actionId: 'after-core', choiceSurface: 'approach',
+      actionType: 'touch', startTime: 150, endTime: 160 }),
+    action({ id: 'unverified', actionId: 'unverified', choiceSurface: 'approach',
+      sourceVerified: false, startTime: 70, endTime: 72 })
+  ];
+  const before = structuredClone(opening);
+  const expected = ['dialogue', 'clothing', 'transition-a', 'transition-b'];
+  // The same complete menu applies before playback, halfway through, and
+  // after any selected clip: play counts and the playhead do not filter it.
+  for (const cursor of [50, 85, 97, 110.598, 160]) {
+    const withPlaybackState = opening.map(item => ({ ...item, playCount: cursor > item.endTime ? 2 : 0 }));
+    assert.deepEqual(openingSceneChoiceMenu(withPlaybackState, { firstCoreStart: 110.598 })
+      .map(item => item.id), expected);
+  }
+  assert.deepEqual(opening, before);
+});
+
+test('opening cards preserve independently verified source cuts and exact original labels', () => {
+  const clips = [
+    { id: 'cut-a', sourceActionId: 'cut-a', sourceVerified: true, label: 'Recorded A',
+      choiceSurface: 'approach', actionType: 'body_transition', sceneId: 's',
+      startTime: 10, endTime: 20 },
+    { id: 'cut-b', sourceActionId: 'cut-b', sourceVerified: true, label: 'Recorded B',
+      choiceSurface: 'approach', actionType: 'body_transition', sceneId: 's',
+      startTime: 20, endTime: 30 },
+    { id: 'cut-c', sourceActionId: 'cut-c', sourceVerified: true, label: 'Recorded B',
+      choiceSurface: 'approach', actionType: 'body_transition', sceneId: 's',
+      startTime: 30, endTime: 40 }
+  ];
+  assert.deepEqual(openingSceneChoiceMenu(clips, { firstCoreStart: 40 })
+    .map(item => [item.label, item.startTime, item.endTime]), [
+      ['Recorded A', 10, 20], ['Recorded B', 20, 30], ['Recorded B', 30, 40]
+    ]);
 });
 
 test('normal timeline choices never rewind to a partly played earlier clip', () => {
