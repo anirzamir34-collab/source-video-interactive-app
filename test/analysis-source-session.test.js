@@ -46,11 +46,24 @@ test('same metadata and different source bytes never inherit another video’s c
   assert.equal(session.storyContextMemory, null);
 });
 
-test('absence of a source fingerprint cannot falsely claim that a video changed', () => {
+test('missing or legacy fingerprint cannot authorize reuse of earlier paid media results', () => {
   const session = retainedSession();
-  assert.deepEqual(reconcileAnalysisSessionEvidence(session, null), { changed: false });
-  assert.equal(session.sourceEvidenceKey, 'source-content-a');
+  assert.deepEqual(reconcileAnalysisSessionEvidence(session, null), { changed: true });
+  assert.deepEqual(session.chunkResults, []);
+  assert.equal(session.storyboard, null);
+  assert.equal(session.sourceTranscript, null);
+  const legacy = retainedSession();
+  legacy.sourceEvidenceKey = '';
+  assert.deepEqual(reconcileAnalysisSessionEvidence(legacy, 'new-content'), { changed: true });
+  assert.deepEqual(legacy.chunkResults, []);
+  assert.equal(legacy.sourceEvidenceKey, 'new-content');
   const blankSession = { storyboard: null };
   assert.deepEqual(reconcileAnalysisSessionEvidence(blankSession, 'first-content'), { changed: false });
   assert.equal(blankSession.sourceEvidenceKey, 'first-content');
+});
+
+test('new empty upload session does not invalidate a valid source key', () => {
+  const session = { sourceEvidenceKey: 'old', storyboard: null, chunkResults: [], sourceTranscript: null };
+  assert.deepEqual(reconcileAnalysisSessionEvidence(session, 'new'), { changed: false });
+  assert.equal(session.sourceEvidenceKey, 'new');
 });
