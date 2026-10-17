@@ -4,6 +4,7 @@ import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { repairSavedAudio } from './saved-audio.js';
+import { GAP_REPAIR_PROMPT_VERSION, uncoveredNeutralRepairIntervals } from './neutral-gap-repair.js';
 import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
 import { requestWithUploadProgress } from './progress-request.js';
 import { createServerRevisionReader } from './server-revision.js';
@@ -7263,7 +7264,8 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
 
   for (let index = 0; index < gaps.length; index++) {
     const gap = gaps[index];
-    const prior = lastAttempt?.model === repairModel
+    const prior = lastAttempt?.model === repairModel &&
+      lastAttempt?.promptVersion === GAP_REPAIR_PROMPT_VERSION
       ? lastAttempt.results?.find(item => item.startTime === gap.startTime &&
         item.endTime === gap.endTime && item.reason === 'GEMINI_CONTENT_RESTRICTED')
       : null;
@@ -7326,6 +7328,11 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
         result.actions = normalized.actions.map((action, actionIndex) => ({
           ...action, actionId: `repair-${Math.round(gap.startTime * 1000)}-${actionIndex + 1}`
         }));
+        // Neutral recovery may establish a few ordinary story events without
+        // observing the full original gap. Never mark unseen seconds analyzed.
+        const unsupported = uncoveredNeutralRepairIntervals(gap, result.actions);
+        result.analysisGaps = [...(Array.isArray(result.analysisGaps) ? result.analysisGaps : []),
+          ...unsupported];
         // Do not mark a previously missing range as recovered without any
         // positively verified source action or an explicit remaining gap.
         if (!result.actions.some(action => action.sourceVerified === true) &&
@@ -7353,7 +7360,7 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
   const repaired = results.filter(item => item.outcome === 'processed' &&
     !remaining.some(gap => gap.startTime < item.endTime && gap.endTime > item.startTime)).length;
   return { ...merged, lastRepairAttempt: {
-    model: repairModel, checkedAt: new Date().toISOString(), total: gaps.length,
+    model: repairModel, promptVersion: GAP_REPAIR_PROMPT_VERSION, checkedAt: new Date().toISOString(), total: gaps.length,
     recovered: repaired, remaining: remaining.length, results
   } };
 }
