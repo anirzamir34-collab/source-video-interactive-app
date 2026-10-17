@@ -2101,6 +2101,19 @@ els.analyzeBtn.addEventListener('click', async () => {
         secondPassChunkCount: chunkResults.filter(result => result.secondPassReviewed).length,
         rebasedChunkCount: chunkResults.filter(result => result.chunkTimeRebased).length,
         analyzedThroughTime: Math.max(0, ...mergedActions.map(action => Number(action.endTime) || 0)),
+        analysisDiagnostics: {
+          chunkCount: completedResults.length,
+          modelRawActionsCount: completedResults.reduce((total, item) =>
+            total + Number(item.analysisTelemetry?.modelRawActionsCount || 0), 0),
+          serverNormalizerAcceptedCount: completedResults.reduce((total, item) =>
+            total + Number(item.analysisTelemetry?.serverNormalizerAcceptedCount || 0), 0),
+          serverNormalizerRejected: completedResults.reduce((totals, item) => {
+            for (const [reason, count] of Object.entries(item.analysisTelemetry?.serverNormalizerRejected || {}))
+              totals[reason] = (totals[reason] || 0) + Number(count || 0);
+            return totals;
+          }, {}),
+          stageReached: 'CHUNKS_MERGED'
+        },
         schemaVersion: ANALYSIS_SCHEMA_VERSION,
         engineVersion: ENGINE_VERSION
       };
@@ -2170,6 +2183,7 @@ els.analyzeBtn.addEventListener('click', async () => {
   analysisProgress.done('review', (body.secondPassChunkCount || 0) + ' bölüm ikinci kontrolden geçti.');
   analysisProgress.update('integrity', { detail: 'Seçimler, sahneler ve kaynak zamanları kontrol ediliyor.' });
   let normalized = normalizeAnalysis(body);
+  const beforeHardeningCount = normalized.actions.length;
   const hardened = reviewAndHardenAnalysis({
     ...body,
     ...normalized,
@@ -2177,6 +2191,19 @@ els.analyzeBtn.addEventListener('click', async () => {
     expectedChunkCount: Number(body.expectedChunkCount || 0)
   });
   normalized = hardened.analysis;
+  // Diagnostics apply to both economy and deep first-pass analysis. A provider
+  // refusal still stays a refusal; normalizers never promote low confidence.
+  normalized.analysisDiagnostics = {
+    ...(body.analysisDiagnostics || {}),
+    clientNormalizerInputCount: Array.isArray(body.actions) ? body.actions.length : 0,
+    clientNormalizerAcceptedCount: beforeHardeningCount,
+    clientNormalizerDroppedCount: Math.max(0,
+      (Array.isArray(body.actions) ? body.actions.length : 0) - beforeHardeningCount),
+    hardeningAcceptedCount: normalized.actions.length,
+    hardeningDroppedCount: Math.max(0, beforeHardeningCount - normalized.actions.length),
+    stageReached: hardened.integrity.fatal ? 'INTEGRITY_FAILED'
+      : normalized.actions.length ? 'INITIAL_ANALYSIS_VERIFIED' : 'INITIAL_ANALYSIS_EMPTY'
+  };
   state.integrityReport = hardened.integrity;
   state.analysisFingerprint = analysisFingerprint(normalized);
   logEngineEvent('ANALYSIS_REVIEWED', {
@@ -2209,6 +2236,11 @@ els.analyzeBtn.addEventListener('click', async () => {
 
   state.analysis = normalized;
   analysisProgress.done('integrity', normalized.actions.length + ' doğrulanmış aksiyon hazır.');
+  if (normalized.analysisDiagnostics.modelRawActionsCount != null) {
+    const d = normalized.analysisDiagnostics;
+    const summary = `Analiz aşamaları: Gemini ${d.modelRawActionsCount} · sunucu ${d.serverNormalizerAcceptedCount} · istemci ${d.clientNormalizerAcceptedCount} · bütünlük ${d.hardeningAcceptedCount}.`;
+    els.analysisOutput.textContent = [els.analysisOutput.textContent, summary].filter(Boolean).join('\n');
+  }
   try {
     // Analysis persistence intentionally disabled: refresh must start clean.
     localStorage.removeItem("videoquest:last-analysis");
