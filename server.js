@@ -1,4 +1,5 @@
 import { parseModelJson } from './public/model-json.js';
+import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions } from './public/neutral-gap-repair.js';
 import { GoogleGenAI } from "@google/genai";
 import express from 'express';
 import multer from 'multer';
@@ -67,7 +68,7 @@ const analysisRevision = crypto.createHash('sha256').update(JSON.stringify([
   ANALYSIS_SCHEMA_VERSION, ANALYSIS_ENGINE_VERSION, analysisRouteSource,
   ...['lib/gemini-generation-config.js', 'public/choice-routing.js',
     'public/classification-integrity.js', 'public/analysis-recovery.js',
-    'public/gemini-quota.js', 'public/model-json.js'].map(file =>
+    'public/gemini-quota.js', 'public/model-json.js', 'public/neutral-gap-repair.js'].map(file =>
     fs.readFileSync(path.join(__dirname, file), 'utf8')),
   ANALYSIS_MODEL, analysisModelCandidates('economy'), geminiGenerationConfig(ANALYSIS_MODEL)
 ])).digest('hex');
@@ -391,7 +392,12 @@ ${reviewCandidates}
 - For groupScene, partnerSwitch or partner_transition candidates, independently re-identify every visible adult using stable neutral track IDs. Preserve a partner change only when the source frames visibly prove MAIN_MALE changes from one adult partner to another; otherwise omit it.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
-    const prompt = `
+    const prompt = savedGameRepair
+      ? buildGapRepairPrompt({
+        chunkStart, chunkEnd,
+        timestamps, motionProfile, sceneBoundaries
+      })
+      : `
 SOURCE VIDEO IS THE SINGLE SOURCE OF TRUTH.
 
 COMPLETE CHRONOLOGICAL COVERAGE FOR EVERY CHOICE SURFACE:
@@ -795,7 +801,7 @@ Rules:
         const generationConfig = {
           ...geminiGenerationConfig(model),
           safetySettings: geminiAnalysisSafetySettings,
-          systemInstruction: GEMINI_VISUAL_SYSTEM_INSTRUCTION
+          systemInstruction: savedGameRepair ? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION
         };
         const key = storyboardRequestKey({ apiKey, model, prompt: requestPrompt, files: requestFiles, generationConfig });
         const requestUsage = emptyGeminiUsage();
@@ -997,6 +1003,12 @@ Rules:
         ]
       };
       }
+    }
+    if (savedGameRepair) {
+      // Only validated, non-graphic ordinary observations can enter the
+      // saved-game repair. Model text is not proof of full missing coverage.
+      parsed = { ...parsed, actions: verifiedNeutralRepairActions(parsed?.actions,
+        { startTime: chunkStart, endTime: chunkEnd }) };
     }
     const unresolvedGaps = Array.isArray(parsed?.analysisGaps)
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
