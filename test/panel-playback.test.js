@@ -12,7 +12,8 @@ import * as interaction from '../public/interaction-engine.js';
 import * as timeline from '../public/interaction-timeline.js';
 import * as panel from '../public/interaction-panel.js';
 import * as compat from '../public/interaction-compat.js';
-import { collapseConsecutiveEquivalentCards, bundleAdjacentSourceCards } from '../public/choice-groups.js';
+import { collapseConsecutiveEquivalentCards, bundleAdjacentSourceCards,
+  groupVerifiedApproachChoices, approachStageChoices } from '../public/choice-groups.js';
 import * as completion from '../public/interaction-completion.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
@@ -103,7 +104,8 @@ function fixture() {
     get(target, key) { return Object.hasOwn(target, key) ? target[key] : (target[key] = new Element()); }
   });
   const scope = vm.createContext({ ...choiceRouting, ...completion, collapseConsecutiveEquivalentCards,
-    bundleAdjacentSourceCards, state, els, AbortController, DOMException,
+    bundleAdjacentSourceCards, groupVerifiedApproachChoices, approachStageChoices,
+    state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
@@ -324,7 +326,8 @@ const runtimeNames = [
   'renderAdultApproachChoices', 'renderAdultProgressiveUI', 'selectAdultCategory',
   'renderInteractionInterludeChoices',
   'selectAdultPosition', 'selectAdultMovement', 'refreshAdultCompactDock',
-  'playAdultPrelude', 'applyAdultPreludeProgress', 'applyAdultSelectionProgress',
+  'playAdultPrelude', 'applyAdultPreludeProgress', 'completeCurrentApproachStage',
+  'applyAdultSelectionProgress',
   'resetAdultTapRhythm', 'updateVariantButton', 'updateRhythmControl',
   'nextEnergeticPositionMovement', 'remainingPositionControlClips', 'selectMovementTempoVariant',
   'triggerAdultOrgasmDecision', 'openAdultOrgasmDecision', 'continueAfterAdultOrgasm',
@@ -406,6 +409,114 @@ test('a grouped introduction card selects another existing clip on each click an
   assert.equal(f.state.activeMovementId, 'opening-1');
 });
 
+test('played opening cards remain selectable at 70 percent and replay starts real media', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'long-opening', startTime: 0, endTime: 310,
+    positions: [chapter('main', 270)], dialogue: [], outcomes: [], foreplay: [
+      { id: 'first', label: 'First observed action', actionType: 'kiss', sourceVerified: true,
+        startTime: 0, endTime: 70 },
+      { id: 'second', label: 'Second observed action', actionType: 'touch', sourceVerified: true,
+        startTime: 70, endTime: 140 },
+      { id: 'third', label: 'Third observed action', actionType: 'kiss', sourceVerified: true,
+        startTime: 140, endTime: 210 }
+    ] };
+  f.state.femaleSceneProgress = 24.5;
+  f.state.adultTimelineFloor = 210;
+  f.els.video.time = 210;
+  f.els.video.pause();
+  f.renderAdultApproachChoices(f.state.adultScene);
+  const cards = f.els.approachChoices.children.filter(node => node.dataset.clipId);
+  assert.deepEqual(cards.map(node => node.dataset.clipId), ['first', 'second', 'third']);
+  cards[0].dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.state.activeAdultPreludeId, 'first');
+  assert.equal(f.els.video.currentTime, 0);
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.femaleSceneProgress, 24.5, 'selection alone earns no Lust');
+});
+
+test('70 percent cannot strand a completed current stage behind retired source intervals', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'stage-budget', startTime: 0, endTime: 130,
+    positions: [chapter('main', 90)], dialogue: [], outcomes: [], foreplay: [
+      { id: 'old', label: 'Previous room', sourceVerified: true, actionType: 'touch',
+        locationId: 'salon', startTime: 0, endTime: 20 },
+      { id: 'new-a', label: 'Current action A', sourceVerified: true, actionType: 'touch',
+        locationId: 'oda', startTime: 20, endTime: 40 },
+      { id: 'new-b', label: 'Current action B', sourceVerified: true, actionType: 'touch',
+        locationId: 'oda', startTime: 40, endTime: 60 }
+    ] };
+  f.genericInteractionSnapshot();
+  f.state.femaleSceneProgress = 24.5;
+  f.state.adultPreludePlayCounts.set('new-a', 1);
+  f.state.adultTimelineFloor = 60;
+  f.els.video.time = 60;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['new-a', 'new-b']);
+  f.state.adultSelectionToken = 3;
+  f.state.adultPendingSelectionProgress = { token: 3, kind: 'prelude',
+    item: f.state.adultScene.foreplay[2], playStarted: true, observedSeconds: 20 };
+  assert.equal(f.commitAdultSelectionProgress(3, 60), true);
+  assert.equal(f.state.adultUnlockedPositionIds.has('main'), true);
+  assert.equal(f.state.adultPreludePlayCounts.has('old'), false);
+});
+
+test('verified opening completion rewards stronger analyzed motion more than calm motion', () => {
+  const progress = femaleProgressRate => {
+    const f = runtimeFixture();
+    f.state.adultScene = { id: 'rate-evidence', startTime: 0, endTime: 100,
+      positions: [chapter('main', 60)], dialogue: [], outcomes: [], foreplay: [
+        { id: 'first', label: 'Opening', sourceVerified: true, actionType: 'touch',
+          startTime: 0, endTime: 20, femaleProgressRate },
+        { id: 'second', label: 'Later opening', sourceVerified: true, actionType: 'touch',
+          startTime: 20, endTime: 40 }
+      ] };
+    f.genericInteractionSnapshot();
+    f.els.video.time = 20;
+    f.renderAdultApproachChoices(f.state.adultScene);
+    f.applyAdultPreludeProgress(f.state.adultScene.foreplay[0]);
+    return f.currentAdultFlow();
+  };
+  assert.ok(progress(0.45) < progress(1.8));
+});
+
+test('first, third, then first verified opening card can be selected in one stage', async () => {
+  const f = runtimeFixture();
+  const opening = chapter('opening', 0, 'opening', 'foreplay');
+  opening.movements.forEach((item, index) => { item.label = `Distinct action ${index}`; });
+  f.state.adultScene = { id: 'three-choices', startTime: 0, endTime: 90,
+    positions: [opening, chapter('main', 50)], foreplay: [], dialogue: [], outcomes: [] };
+  f.els.video.time = 30;
+  f.state.adultTimelineFloor = 30;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  const cards = f.els.approachChoices.children.filter(node => node.dataset.clipId);
+  assert.equal(cards.length, 3);
+  for (const [card, clip] of [[cards[0], 'opening-0'], [cards[2], 'opening-2'],
+    [cards[0], 'opening-0']]) {
+    card.dispatchEvent(new Event('click'));
+    await flush();
+    assert.equal(f.state.activeMovementId, clip);
+    assert.equal(f.els.video.paused, false);
+  }
+});
+
+test('opening renderer removes salon and old clothing cards at verified stage boundaries', () => {
+  const f = runtimeFixture();
+  f.state.adultScene = { id: 'stages', startTime: 0, endTime: 150,
+    positions: [chapter('main', 110)], dialogue: [], outcomes: [], foreplay: [
+      { id: 'salon', label: 'Salon', actionType: 'touch', locationId: 'salon',
+        beforeState: { clothing: 'dressed' }, sourceVerified: true, startTime: 0, endTime: 25 },
+      { id: 'room-dressed', label: 'Oda', actionType: 'touch', locationId: 'bedroom',
+        beforeState: { clothing: 'dressed' }, sourceVerified: true, startTime: 25, endTime: 50 },
+      { id: 'room-changed', label: 'Kıyafet değişimi', actionType: 'clothing', locationId: 'bedroom',
+        beforeState: { clothing: 'changed' }, sourceVerified: true, startTime: 50, endTime: 75 }
+    ] };
+  f.els.video.time = 60;
+  f.state.adultTimelineFloor = 60;
+  f.renderAdultApproachChoices(f.state.adultScene);
+  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['room-changed']);
+});
+
 test('an empty introduction menu leaves a visible source playback control', () => {
   const f = runtimeFixture();
   f.state.adultScene.foreplay = [];
@@ -418,7 +529,7 @@ test('an empty introduction menu leaves a visible source playback control', () =
   assert.equal(f.els.video.paused, true);
 });
 
-test('past opening cards retire and leave a continue control for the next verified chapter', async () => {
+test('played opening card remains available alongside source continuation', async () => {
   const f = runtimeFixture();
   f.state.adultScene = { id: 'late-opening', startTime: 189, endTime: 410,
     positions: [chapter('main', 378)], dialogue: [], outcomes: [], foreplay: [
@@ -430,7 +541,7 @@ test('past opening cards retire and leave a continue control for the next verifi
   f.els.video.time = 374.7;
   f.els.video.pause();
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId === 'last-opening'), false);
+  assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId === 'last-opening'), true);
   const continueButton = f.els.approachChoices.children.find(node => node.textContent === 'Videoya devam et');
   assert.ok(continueButton, 'replay cards cannot hide natural source continuation');
   continueButton.dispatchEvent(new Event('click'));
@@ -693,6 +804,50 @@ test('each completed gate reveals exactly one next verified chapter without movi
   assert.equal(f.state.activePositionId, 'one');
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.playCalls, plays);
+});
+
+test('a later gate may reveal two adjacent verified chapters in a long source while retaining earlier tabs', () => {
+  const f = runtimeFixture();
+  f.state.adultScene.positions = [0, 30, 60, 90, 120, 150]
+    .map((start, index) => chapter(`chapter-${index}`, start));
+  f.state.adultScene.foreplay = [];
+  f.state.adultScene.dialogue = [];
+  f.state.adultScene.endTime = 180;
+  f.state.adultUnlockedPositionIds.add('chapter-0');
+  f.state.adultRevealedPositionIds.add('chapter-0');
+  f.state.adultSexUnlocked = true;
+  f.state.adultVisitedPositionIds.add('chapter-0');
+  f.addFemaleLust(35);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds],
+    ['chapter-0', 'chapter-1', 'chapter-2']);
+  assert.deepEqual([...f.state.adultRevealedPositionIds],
+    ['chapter-0', 'chapter-1', 'chapter-2']);
+  f.renderAdultProgressiveUI(true);
+  const tabs = f.els.positionTabs.querySelectorAll('.position-tab');
+  assert.ok(tabs.find(tab => tab.dataset.positionId === 'chapter-0' && !tab.disabled));
+  assert.ok(tabs.find(tab => tab.dataset.positionId === 'chapter-2' && !tab.disabled));
+  assert.equal(f.state.adultUnlockedPositionIds.has('chapter-3'), false);
+});
+
+test('a long source does not batch across a narrative gap or different participant', () => {
+  for (const separate of ['gap', 'partner']) {
+    const f = runtimeFixture();
+    f.state.adultScene.positions = [0, 30, 60, 90, 120]
+      .map((start, index) => chapter(`chapter-${index}`, start));
+    f.state.adultScene.foreplay = [];
+    f.state.adultScene.dialogue = [];
+    if (separate === 'gap') {
+      f.state.adultScene.positions[2] = chapter('chapter-2', 61);
+      f.state.adultScene.positions[3] = chapter('chapter-3', 91);
+      f.state.adultScene.positions[4] = chapter('chapter-4', 121);
+    }
+    else f.state.adultScene.positions[2].partnerTrackId = 'track-other';
+    f.state.adultUnlockedPositionIds.add('chapter-0');
+    f.state.adultSexUnlocked = true;
+    f.state.adultVisitedPositionIds.add('chapter-0');
+    f.addFemaleLust(35);
+    assert.deepEqual([...f.state.adultUnlockedPositionIds], ['chapter-0', 'chapter-1']);
+  }
 });
 
 test('a spent opening meter resets at the core boundary so the next full meter unlocks the next chapter', () => {
@@ -1222,7 +1377,7 @@ test('active introduction prepares upcoming choices without dropping the current
   assert.equal(f.els.video.playCalls, 0);
 });
 
-test('earlier verified opening choices retire and cannot rewind through a stale selection', async () => {
+test('earlier verified opening choices replay on explicit selection', async () => {
   const f = runtimeFixture();
   f.state.adultScene.foreplay = [
     { id: 'opening-a', label: 'Step A', sourceVerified: true, startTime: 10, endTime: 20 },
@@ -1232,11 +1387,11 @@ test('earlier verified opening choices retire and cannot rewind through a stale 
   f.state.adultTimelineFloor = 30;
   f.els.video.time = 30;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), []);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['opening-a', 'opening-b']);
   f.playAdultPrelude('opening-a');
   await flush();
-  assert.equal(f.els.video.currentTime, 30);
-  assert.equal(f.state.activeAdultPreludeId, null);
+  assert.equal(f.els.video.currentTime, 10);
+  assert.equal(f.state.activeAdultPreludeId, 'opening-a');
 });
 
 test('a completed later source choice still progresses when skipped intervals cap coverage', () => {
@@ -1462,7 +1617,7 @@ test('unique opening clips fill the budget and open the core panel without repea
   }));
   f.els.video.time = 0;
   f.renderAdultProgressiveUI(true);
-  assert.equal(f.state.adultApproachChoices.length, 5);
+  assert.equal(f.state.adultApproachChoices.length, 6);
   for (let index = 0; index < 6; index += 1) {
     f.playAdultPrelude(`step-${index}`);
     await flush();
@@ -1638,7 +1793,7 @@ test('context-control clips stay visible as ordinary movement choices', () => {
   );
 });
 
-test('panel presents eight adjacent verified actions as four playable cards', () => {
+test('panel retains eight distinct verified movement cards without a fixed display count', () => {
   const f = runtimeFixture();
   const position = f.state.adultScene.positions[0];
   position.endTime = 100;
@@ -1654,9 +1809,9 @@ test('panel presents eight adjacent verified actions as four playable cards', ()
   f.renderAdultProgressiveUI(true);
   f.selectAdultPosition('one', false);
   const cards = position.activeMovementChoices;
-  assert.equal(cards.length, 4);
+  assert.equal(cards.length, 8);
   assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)),
     position.movements.map(item => item.id));
-  assert.ok(cards.every(card => card.variants.length === 2));
+  assert.ok(cards.every(card => card.variants.length === 1));
 });
 

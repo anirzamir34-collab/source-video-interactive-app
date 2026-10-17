@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { groupSourceChoiceCards, sourceIdentityLabel, sourceDisplayLabel,
-  bundleAdjacentSourceCards } from '../public/choice-groups.js';
+  bundleAdjacentSourceCards, groupVerifiedApproachChoices, approachStageChoices } from '../public/choice-groups.js';
 import { buildVerifiedMovementChoices, exclusiveControlClipIds, findAdultSceneForTimeline,
   forwardLocalMovementClips, splitSparseMovementChoiceCards } from '../public/adult-gameplay.js';
 
@@ -129,6 +129,84 @@ test('a rich verified occurrence forms truthful tempo cards with three or four m
   assert.deepEqual(cards.map(card => card.variants.length), [4, 4, 3, 3]);
   assert.equal(cards.flatMap(card => card.variants).length, movements.length);
   assert.ok(cards.every(card => new Set(card.variants.map(item => item.sourcePositionId)).size === 1));
+});
+
+test('five minute source keeps slow and intense movements in distinct cards despite a display target', () => {
+  const movements = Array.from({ length: 6 }, (_, index) => clip(index, {
+    label: index < 3 ? 'Yavaş hareket' : 'Hızlı hareket',
+    movementTempo: index < 3 ? 'slow' : 'fast',
+    sourcePositionId: 'one-position',
+    loopStartTime: index * 50, loopEndTime: (index + 1) * 50
+  }));
+  const position = { id: 'one-position', startTime: 0, endTime: 300, movements,
+    sourceRanges: [{ id: 'one-position', startTime: 0, endTime: 300 }] };
+  const cards = bundleAdjacentSourceCards(buildVerifiedMovementChoices(movements, 'Pozisyon', 4, position),
+    { targetCount: 1 });
+  assert.equal(cards.length, 2);
+  assert.deepEqual(cards.map(card => card.intensityBand), ['slow', 'intense']);
+  assert.deepEqual(cards.map(card => card.variants.length), [3, 3]);
+});
+
+test('a requested card count does not merge different observed movements', () => {
+  const clips = [clip(0, { label: 'Başını çevir' }), clip(1, { label: 'Elini uzat' })];
+  const cards = bundleAdjacentSourceCards(groupSourceChoiceCards(clips), { targetCount: 1 });
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)), [['clip-0'], ['clip-1']]);
+});
+
+test('four minute opening groups repeated adjacent actions without inventing intervals', () => {
+  const clips = Array.from({ length: 8 }, (_, index) => ({
+    id: `opening-${index}`, sourceVerified: true, actionType: index < 4 ? 'kiss' : 'touch',
+    label: index < 4 ? 'Yakınlaşma' : 'Temas', locationId: 'salon',
+    startTime: index * 30, endTime: (index + 1) * 30
+  }));
+  const cards = groupVerifiedApproachChoices(clips);
+  assert.deepEqual(cards.map(card => card.variants.length), [4, 4]);
+  assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)), clips.map(item => item.id));
+  assert.equal(groupVerifiedApproachChoices(clips.slice(0, 1))[0].variants.length, 1);
+});
+
+test('opening variants separate a calm and an intense rendition of the same action', () => {
+  const clips = [
+    { id: 'calm', sourceVerified: true, label: 'Yakınlaşma', actionType: 'kiss',
+      movementTempo: 'slow', femaleProgressRate: 0.5, startTime: 0, endTime: 10 },
+    { id: 'intense', sourceVerified: true, label: 'Yakınlaşma', actionType: 'kiss',
+      movementTempo: 'fast', femaleProgressRate: 1.8, startTime: 10, endTime: 20 }
+  ];
+  assert.deepEqual(groupVerifiedApproachChoices(clips).map(card => card.variants.map(item => item.id)),
+    [['calm'], ['intense']]);
+});
+
+test('minor analyzed rate variation within one steady motion keeps source cuts on one card', () => {
+  const clips = [0.94, 1.02, 1.08].map((femaleProgressRate, index) => ({
+    id: `steady-${index}`, sourceVerified: true, label: 'Yakınlaşma', actionType: 'kiss',
+    movementTempo: 'moderate', femaleProgressRate,
+    startTime: index * 10, endTime: (index + 1) * 10
+  }));
+  assert.deepEqual(groupVerifiedApproachChoices(clips).map(card => card.variants.map(item => item.id)),
+    [['steady-0', 'steady-1', 'steady-2']]);
+});
+
+test('location and clothing stages retire old cards without erasing current stage replays', () => {
+  const clips = [
+    { id: 'salon', startTime: 0, endTime: 30, locationId: 'salon', beforeState: { clothing: 'dressed' } },
+    { id: 'room-dressed', startTime: 30, endTime: 60, locationId: 'bedroom', beforeState: { clothing: 'dressed' } },
+    { id: 'room-changed', startTime: 60, endTime: 90, locationId: 'bedroom', beforeState: { clothing: 'changed' } }
+  ];
+  assert.deepEqual(approachStageChoices(clips, 40).map(item => item.id), ['room-dressed']);
+  assert.deepEqual(approachStageChoices(clips, 75).map(item => item.id), ['room-changed']);
+  assert.deepEqual(approachStageChoices([clips[0], { ...clips[0], id: 'again', startTime: 30, endTime: 60 }], 60)
+    .map(item => item.id), ['salon', 'again']);
+});
+
+test('declared scene transition retires old cards when room and outfit data are absent', () => {
+  const clips = [
+    { id: 'old', sceneId: 'scene-a', actionType: 'kiss', startTime: 0, endTime: 10 },
+    { id: 'cut', sceneId: 'scene-a', actionType: 'scene_transition', startTime: 10, endTime: 12 },
+    { id: 'new', sceneId: 'scene-b', actionType: 'kiss', startTime: 12, endTime: 22 }
+  ];
+  assert.deepEqual(approachStageChoices(clips, 20).map(item => item.id), ['new']);
+  assert.deepEqual(approachStageChoices(clips.map(item => ({ ...item, sceneId: '' })), 20)
+    .map(item => item.id), ['new']);
 });
 
 test('the contextual control reserves later energetic source clips without duplicating cards', () => {
@@ -290,7 +368,7 @@ test('adjacent changes stay distinct while adjacent matching cuts share one boun
     ['Patikada yürü', 'Dur ve etrafa bak', 'Patikada yürü', 'Patikada yürü']);
 });
 
-test('eight adjacent source actions become four cards with two exact clips each', () => {
+test('eight distinct source actions remain eight cards even with a smaller display target', () => {
   const clips = Array.from({ length: 8 }, (_, index) => clip(index, {
     label: `Recorded action ${index + 1}`,
     sourceOccurrenceId: 'one-occurrence',
@@ -300,8 +378,8 @@ test('eight adjacent source actions become four cards with two exact clips each'
   const atomic = groupSourceChoiceCards(clips);
   const cards = bundleAdjacentSourceCards(atomic, { targetCount: 4 });
   assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
-    [['clip-0', 'clip-1'], ['clip-2', 'clip-3'], ['clip-4', 'clip-5'], ['clip-6', 'clip-7']]);
-  assert.deepEqual(cards[0].sourceLabels, ['Recorded action 1', 'Recorded action 2']);
+    clips.map(item => [item.id]));
+  assert.deepEqual(cards[0].sourceLabels, ['Recorded action 1']);
   assert.deepEqual(cards.flatMap(card => card.variants), clips);
 });
 
@@ -314,7 +392,7 @@ test('card density never joins a source gap or a different occurrence', () => {
   }));
   const cards = bundleAdjacentSourceCards(groupSourceChoiceCards(clips), { targetCount: 2 });
   assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
-    [['clip-0', 'clip-1', 'clip-2'], ['clip-3', 'clip-4', 'clip-5']]);
+    clips.map(item => [item.id]));
   const distant = clips.map((item, index) => ({ ...item,
     loopStartTime: item.loopStartTime + index * 3,
     loopEndTime: item.loopEndTime + index * 3 }));
