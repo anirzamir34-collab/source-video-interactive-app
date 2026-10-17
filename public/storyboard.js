@@ -72,6 +72,102 @@ export function adaptiveAnalysisChunkPlan(sheetCount = 0, duration = 0, qualityM
   return { sheetsPerChunk: Math.ceil(sheets / chunkCount), chunkCount, chunks };
 }
 
+// Long-video deep analysis groups only *clearly speech-led and visually calm*
+// neighboring sheets. Every source frame remains present; coarse analysis
+// means fewer model requests, not skipping footage or fabricating activity.
+// Movement, scene cuts and their immediate surroundings remain one sheet per
+// request. When speech/motion evidence is missing, use the established
+// dense plan rather than assume a quiet interval.
+export function adaptiveConversationActionChunkPlan(storyboard = {}, {
+  qualityMode = 'ultra', analysisModel = '', dialogueRows = []
+} = {}) {
+  const totalSheets = Array.isArray(storyboard.sheets) ? storyboard.sheets.length : 0;
+  const duration = Number(storyboard.duration) || 0;
+  const previous = adaptiveAnalysisChunkPlan(totalSheets, duration, qualityMode, analysisModel);
+  if (duration < 1200 || totalSheets < 8 ||
+      !['gemini-3.8-flash', 'gemini-4-argon'].includes(String(analysisModel).toLowerCase()) ||
+      !Array.isArray(dialogueRows) || !dialogueRows.length ||
+      !Array.isArray(storyboard.timestamps) || !storyboard.timestamps.length ||
+      !Array.isArray(storyboard.motionProfile) || !storyboard.motionProfile.length) {
+    return previous;
+  }
+  const framesPerSheet = 12;
+  const speech = dialogueRows.map(item => ({
+    start: Number(item.startTime ?? item.sourceStart),
+    end: Number(item.endTime ?? item.sourceEnd)
+  })).filter(item => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+    .sort((a, b) => a.start - b.end);
+  if (!speech.length) return previous;
+  const mergedSpeech = [];
+  for (const interval of speech) {
+    const current = mergedSpeech.at(-1);
+    if (current && interval.start <= current.end) current.end = Math.max(current.end, interval.end);
+    else mergedSpeech.push({ ...interval });
+  }
+  const moments = storyboard.motionProfile
+    .filter(item => Number.isFinite(Number(item.time)) && Number.isFinite(Number(item.score)))
+    .map(item => ({ time: Number(item.time), score: Math.max(0, Number(item.score)) }));
+  const cuts = Array.isArray(storyboard.sceneBoundaries) ? storyboard.sceneBoundaries : [];
+  const signals = Array.from({ length: totalSheets }, (_, index) => {
+    const start = Number(storyboard.timestamps[index * framesPerSheet]);
+    const end = Number(storyboard.timestamps[(index + 1) * framesPerSheet] ?? duration);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return { start: 0, end: 0, quiet: false, motion: true, cuts: 0 };
+    }
+    const speechSeconds = mergedSpeech.reduce((total, item) =>
+      total + Math.max(0, Math.min(end, item.end) - Math.max(start, item.start)), 0);
+    const present = moments.filter(item => item.time >= start && item.time < end);
+    const scores = present.map(item => item.score);
+    const average = scores.reduce((sum, score) => sum + score, 0) / Math.max(1, scores.length);
+    const peak = Math.max(0, ...scores);
+    const sustained = scores.some((score, j) => j > 0 && score >= 22 && scores[j - 1] >= 22);
+    const hardCuts = cuts.filter(cut => Number(cut.time) >= start && Number(cut.time) < end &&
+      Number(cut.score || 0) >= 48).length;
+    // A quiet claim needs enough source frames and extensive spoken context.
+    // One-frame motion spikes or uncertain evidence cannot certify an interval
+    // as static; keep it in the more detailed path.
+    const motion = scores.length < 3 || average >= 18 || peak >= 52 || sustained || hardCuts > 0;
+    const quiet = !motion && speechSeconds / (end - start) >= 0.65;
+    return { start, end, quiet, motion, cuts: hardCuts };
+  });
+  const detailed = new Set();
+  for (let index = 0; index < signals.length; index++) {
+    if (signals[index].motion || !signals[index].quiet) {
+      detailed.add(index);
+      // Protect the start/end of an observed change even when its neighboring
+      // source sheet looks quiet and dialogue-led.
+      if (signals[index].motion) {
+        if (index > 0) detailed.add(index - 1);
+        if (index + 1 < totalSheets) detailed.add(index + 1);
+      }
+    }
+  }
+  // Initial cast identity and the final source boundary deserve independent
+  // high-detail requests even if the source is visually stationary.
+  detailed.add(0);
+  detailed.add(totalSheets - 1);
+  const chunks = [];
+  for (let start = 0; start < totalSheets;) {
+    let width = 1;
+    if (!detailed.has(start)) {
+      while (width < 3 && start + width < totalSheets && !detailed.has(start + width) &&
+        signals[start + width].quiet &&
+        signals[start + width].end - signals[start].start <= 180 + 0.1) width++;
+    }
+    chunks.push({ firstSheet: start, sheetCount: width,
+      focusTier: width > 1 ? 'overview' : 'detailed' });
+    start += width;
+  }
+  return {
+    sheetsPerChunk: Math.max(...chunks.map(chunk => chunk.sheetCount)),
+    chunkCount: chunks.length,
+    chunks,
+    adaptive: true,
+    overviewChunkCount: chunks.filter(chunk => chunk.focusTier === 'overview').length,
+    detailedChunkCount: chunks.filter(chunk => chunk.focusTier === 'detailed').length
+  };
+}
+
 export function storyboardSamplingPlan(duration, remote = false) {
   const seconds = Math.max(0, Number(duration) || 0);
   if (!remote) {
