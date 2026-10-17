@@ -103,7 +103,7 @@ function fixture() {
   const els = new Proxy({ video, panelPlaybackRecovery: null }, {
     get(target, key) { return Object.hasOwn(target, key) ? target[key] : (target[key] = new Element()); }
   });
-  const scope = vm.createContext({ ...choiceRouting, ...completion, collapseConsecutiveEquivalentCards,
+  const scope = vm.createContext({ ...choiceRouting, ...completion, sceneSurfaceIsStale: panel.sceneSurfaceIsStale, collapseConsecutiveEquivalentCards,
     bundleAdjacentSourceCards, groupVerifiedApproachChoices, approachStageChoices,
     state, els, AbortController, DOMException,
     performance, clearTimeout, sceneExitTime,
