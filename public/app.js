@@ -1554,7 +1554,9 @@ els.analyzeBtn.addEventListener('click', async () => {
   // Recover precisely the storyboard bytes that earlier paid Gemini chapters
   // received. Regenerating 480 mobile video frames can change JPEG hashes and
   // make valid chapter checkpoints unreachable after a browser refresh.
-  const sourceEvidenceKey = modes.motion ? await storyboardSourceKey(file) : null;
+  // Audio-only uploads need the same content identity as video analyses.
+  // Otherwise two same-named clips could reuse an unrelated transcript/dub.
+  const sourceEvidenceKey = await storyboardSourceKey(file);
   const sourceIdentity = reconcileAnalysisSessionEvidence(session, sourceEvidenceKey);
   if (sourceIdentity.changed) {
     updateSourceTranscript(null);
