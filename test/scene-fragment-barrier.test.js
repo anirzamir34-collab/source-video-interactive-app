@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { assignVerifiedOpeningRoles } from '../public/verified-scene-continuity.js';
+import { isWarmupPosition } from '../public/adult-gameplay.js';
+import { createInteractionState, transitionInteraction } from '../public/interaction-engine.js';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const start = source.indexOf('const ADULT_FRAGMENT_MERGE_GAP_SECONDS =');
@@ -64,4 +67,35 @@ test('an actually different partner and group cast still separate chapters', () 
     positions: [{ ...pair('PARTNER_A', ['PARTNER_A', 'PARTNER_B'], true),
       startTime: 20, endTime: 30 }] };
   assert.equal(context.mergeAdultSceneFragments([a, group]).length, 2);
+});
+
+test('merged Android-style opening reaches a real next CORE group when progress fills', () => {
+  const warmup = { id: 'warmup', familyId: 'oral', startTime: 110.6, endTime: 387.1,
+    sourceVerified: true, subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    movements: [{ sourceVerified: true, movementTempo: 'moderate' }],
+    sourceRanges: [{ startTime: 110.6, endTime: 387.1 }] };
+  const core = { id: 'next-position', familyId: 'standing-rear',
+    startTime: 387.1, endTime: 769.6, sourceVerified: true,
+    subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    movements: [{ sourceVerified: true, movementTempo: 'moderate' }],
+    sourceRanges: [{ startTime: 387.1, endTime: 769.6 }] };
+  const merged = context.mergeAdultSceneFragments([
+    { ...chapter('early', 71.5, 188), positions: [{ ...warmup,
+      endTime: 188, sourceRanges: [{ startTime: 110.6, endTime: 188 }],
+      participantTrackIds: ['MAIN_MALE','PARTNER_A'] }] },
+    { ...chapter('late', 188, 884.8), positions: [{ ...warmup,
+      startTime: 188, sourceRanges: [{ startTime: 188, endTime: 387.1 }],
+      participantTrackIds: [] }, core] }
+  ]);
+  assert.equal(merged.length, 1);
+  const positions = assignVerifiedOpeningRoles(merged[0].positions);
+  assert.deepEqual(Array.from(positions, item => isWarmupPosition(item)), [true,true,false]);
+  const runtime = createInteractionState({ id: merged[0].id, groups: positions.map(item => ({
+    id: item.id, phase: isWarmupPosition(item) ? 'APPROACH' : 'CORE',
+    sourceRanges: item.sourceRanges, movements: []
+  })), choices: [] }, { currentTime: 110.6 });
+  const full = transitionInteraction(runtime, { type: 'progress', value: 100 });
+  assert.equal(full.currentPhase, 'CORE');
+  assert.ok(full.unlockedGroupIds.includes('next-position'));
+  assert.equal(full.panelVisible, true);
 });
