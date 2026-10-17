@@ -26,7 +26,7 @@ import { serializeReviewCandidates } from './public/classification-integrity.js'
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 import { geminiAnalysisSafetySettings, geminiGenerationConfig } from './lib/gemini-generation-config.js';
-import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel } from './lib/analysis-model-routing.js';
+import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel, preferredRepairAnalysisModels } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 
@@ -1649,20 +1649,58 @@ function quotaRetrySeconds(details) {
   return Math.max(1, Math.ceil((Number(human[1]) || 0) * 3600 + (Number(human[2]) || 0) * 60 + (Number(human[3]) || 0)));
 }
 
+// Confirm model access with a tiny, non-user image and structured JSON;
+// listing a model alone does not prove that GenerateContent can use images.
+const repairProbeImage = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMB/DXemwAAAABJRU5ErkJggg==';
+const repairCatalogCache = new Map();
+
 app.get('/api/gemini-analysis-models', async (req, res) => {
   const apiKey = resolveGeminiApiKey(req);
   if (!apiKey) return res.status(503).json({ models: [], message: 'Gemini API anahtarı bulunamadı.' });
+  const key = crypto.createHash('sha256').update(apiKey).digest('hex');
+  const cached = repairCatalogCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return res.json({ models: cached.models });
   try {
     const ai = new GoogleGenAI({ apiKey });
     const pager = await ai.models.list({ config: { pageSize: 100 } });
-    const found = new Set();
+    const catalog = [];
     for await (const model of pager) {
       const name = String(model.name || '').replace('models/', '');
-      if (isVideoQuestAnalysisModel({ ...model, name })) found.add(name);
+      if (isVideoQuestAnalysisModel({ ...model, name })) catalog.push({ ...model, name });
     }
-    return res.json({ models: [...found].sort() });
+    const candidates = preferredRepairAnalysisModels(catalog);
+    const checks = await Promise.all(candidates.map(async model => {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [
+            { text: 'Inspect the image and return only this JSON object: {"ok":true}' },
+            { inlineData: { mimeType: 'image/png', data: repairProbeImage } }
+          ] }],
+          config: {
+            ...geminiGenerationConfig(model),
+            maxOutputTokens: 256,
+            httpOptions: { timeout: 12000, retryOptions: { attempts: 1 } }
+          }
+        });
+        const parsed = parseModelJson(String(response?.text || ''));
+        return parsed?.ok === true ? model : null;
+      } catch (error) {
+        console.info('[gemini-repair-model-probe]', JSON.stringify({
+          model, outcome: 'unavailable', reason: storyboardFailureReason(error)
+        }));
+        return null;
+      }
+    }));
+    const models = checks.filter(Boolean);
+    // Cache only confirmed results, and never hold or log user video frames.
+    if (models.length) {
+      repairCatalogCache.set(key, { models, expiresAt: Date.now() + 10 * 60 * 1000 });
+      if (repairCatalogCache.size > 60) repairCatalogCache.delete(repairCatalogCache.keys().next().value);
+    }
+    return res.json({ models });
   } catch (error) {
-    return res.status(502).json({ models: [], message: String(error?.message || 'Gemini model listesi alınamadı.') });
+    return res.status(502).json({ models: [], message: 'Gemini model kataloğu doğrulanamadı.' });
   }
 });
 
