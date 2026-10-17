@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  analysisTierFromRequest, analysisModelCandidates, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel,
+  analysisTierFromRequest, analysisModelCandidates, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel, preferredRepairAnalysisModels, PREFERRED_REPAIR_ANALYSIS_MODELS,
   DEEP_ANALYSIS_MODEL, ARGON_ANALYSIS_MODEL, ECONOMY_ANALYSIS_MODEL
 } from '../lib/analysis-model-routing.js';
 import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
@@ -104,4 +104,32 @@ test('saved-game repairs offer the available Gemini model catalog and send the s
   assert.match(app, /form\.append\('repairMode', '1'\)/);
   assert.match(server, /app\.get\('\/api\/gemini-analysis-models'/);
   assert.match(server, /savedGameRepair \? \[deepAnalysisModel\]/);
+});
+
+test('repair catalog prefers only tested general multimodal model families', () => {
+  const meta = name => ({ name: 'models/' + name, supportedActions: ['generateContent'],
+    inputModalities: ['IMAGE', 'TEXT'], outputModalities: ['TEXT'], outputTokenLimit: 16384 });
+  assert.deepEqual(PREFERRED_REPAIR_ANALYSIS_MODELS,
+    ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-4-argon']);
+  assert.deepEqual(preferredRepairAnalysisModels([
+    meta('gemini-2.5-flash'), meta('gemini-4-argon'), meta('gemini-3.1-flash-lite'),
+    meta('gemini-3.8-flash'), meta('gemini-2.5-flash-preview-tts')
+  ]), PREFERRED_REPAIR_ANALYSIS_MODELS);
+  assert.match(server, /repairProbeImage/);
+  assert.match(server, /maxOutputTokens: 256/);
+  assert.match(server, /parsed\?\.ok === true/);
+  assert.match(server, /repairCatalogCache/);
+  assert.match(server, /const models = checks\.filter\(Boolean\)/);
+});
+
+test('saved game repair displays per-gap errors and suppresses repeated provider rejection', () => {
+  const ui = readFileSync(new URL('../public/saved-games-ui.js', import.meta.url), 'utf8');
+  assert.match(app, /skipped_previous_rejection/);
+  assert.match(app, /skipped_model_error/);
+  assert.match(app, /lastRepairAttempt:/);
+  assert.match(app, /lastAttempt\?\.model === repairModel/);
+  assert.match(app, /technicalStop\.has\(reason\)/);
+  assert.match(ui, /describeSavedGameRepair\(analysis\)/);
+  assert.match(ui, /saved-game-repair-report/);
+  assert.match(ui, /HTTP/);
 });
