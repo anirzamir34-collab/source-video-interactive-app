@@ -435,7 +435,7 @@ test('played opening cards remain selectable at 70 percent and replay starts rea
   assert.equal(f.state.femaleSceneProgress, 24.5, 'selection alone earns no Lust');
 });
 
-test('70 percent cannot strand a completed current stage behind retired source intervals', async () => {
+test('70 percent reaches the source budget without making prior opening cards disappear', async () => {
   const f = runtimeFixture();
   f.state.adultScene = { id: 'stage-budget', startTime: 0, endTime: 130,
     positions: [chapter('main', 90)], dialogue: [], outcomes: [], foreplay: [
@@ -452,7 +452,7 @@ test('70 percent cannot strand a completed current stage behind retired source i
   f.state.adultTimelineFloor = 60;
   f.els.video.time = 60;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['new-a', 'new-b']);
+  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['old', 'new-a', 'new-b']);
   f.state.adultSelectionToken = 3;
   f.state.adultPendingSelectionProgress = { token: 3, kind: 'prelude',
     item: f.state.adultScene.foreplay[2], playStarted: true, observedSeconds: 20 };
@@ -500,7 +500,7 @@ test('first, third, then first verified opening card can be selected in one stag
   }
 });
 
-test('opening renderer removes salon and old clothing cards at verified stage boundaries', () => {
+test('opening renderer retains prior verified rooms and clothing cards across stage boundaries', () => {
   const f = runtimeFixture();
   f.state.adultScene = { id: 'stages', startTime: 0, endTime: 150,
     positions: [chapter('main', 110)], dialogue: [], outcomes: [], foreplay: [
@@ -514,7 +514,8 @@ test('opening renderer removes salon and old clothing cards at verified stage bo
   f.els.video.time = 60;
   f.state.adultTimelineFloor = 60;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id), ['room-changed']);
+  assert.deepEqual(f.state.adultApproachChoices.map(item => item.id),
+    ['salon', 'room-dressed', 'room-changed']);
 });
 
 test('an empty introduction menu leaves a visible source playback control', () => {
@@ -1382,7 +1383,7 @@ test('verified range fallback entry seeks one source start and does not autoplay
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
 });
 
-test('active introduction prepares upcoming choices without dropping the current choice or exposing distant data', () => {
+test('active introduction lists every verified source choice before the first core boundary', () => {
   const f = runtimeFixture();
   f.state.adultScene.foreplay = [
     { id: 'opening-a', label: 'Step A', sourceVerified: true, startTime: 0, endTime: 40 },
@@ -1394,7 +1395,7 @@ test('active introduction prepares upcoming choices without dropping the current
   f.state.activeAdultPreludeId = 'opening-a';
   f.els.video.time = 10;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, choice => choice.id), ['opening-a', 'opening-b']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, choice => choice.id), ['opening-a', 'opening-b', 'distant']);
   assert.equal(f.els.video.currentTime, 10);
   assert.equal(f.els.video.playCalls, 0);
 });
@@ -1523,7 +1524,7 @@ test('an inactive scene trace excludes retained group unlocks and source ranges'
   assert.equal(trace.activeOccurrenceId, null);
 });
 
-test('verified normal dialogue has its own choices and earns no progress before the opening choices appear', async () => {
+test('verified normal dialogue remains visible beside opening cards without earning Lust', async () => {
   const f = runtimeFixture();
   f.state.adultScene.dialogue = [
     { id: 'source-dialogue', label: 'Existing line', sourceVerified: true, nonIntimate: true, choiceSurface: 'story', startTime: 0, endTime: 10 }
@@ -1533,9 +1534,11 @@ test('verified normal dialogue has its own choices and earns no progress before 
   ];
   f.els.video.time = 0;
   f.renderAdultPanel(f.state.adultScene);
-  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-dialogue']);
-  assert.equal(f.els.choices.children[0].html, '<span data-choice-label>Existing line</span>');
+  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
+    ['source-dialogue', 'source-opening']);
+  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-dialogue'));
+  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-opening'));
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
   f.playAdultPrelude('source-dialogue');
   await flush();
@@ -1545,11 +1548,12 @@ test('verified normal dialogue has its own choices and earns no progress before 
   f.els.video.time = 5;
   f.updateAdultPlayback(1250, 5);
   assert.equal(f.state.femaleSceneProgress, 0);
-  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
+  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
   f.els.video.time = 10;
   f.updateAdultPlayback(1500, 10);
   assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-opening']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
+    ['source-dialogue', 'source-opening']);
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
   assert.equal(f.els.choices.classes.has('hidden'), true);
   assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId), true);
@@ -1558,7 +1562,7 @@ test('verified normal dialogue has its own choices and earns no progress before 
   assert.equal(f.els.video.playCalls, 1);
 });
 
-test('a dialogue between verified opening clips owns a separate story surface, then source core shows controls', () => {
+test('a dialogue between verified opening clips stays visible with both opening cards until source core', () => {
   const f = runtimeFixture();
   f.state.adultScene.startTime = 28;
   f.state.adultScene.endTime = 330;
@@ -1579,14 +1583,16 @@ test('a dialogue between verified opening clips owns a separate story surface, t
   f.renderAdultPanel(f.state.adultScene);
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
   assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-opening', 'reported-next']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
+    ['reported-opening', 'reported-dialogue', 'reported-next']);
   f.els.video.time = 91;
   f.state.adultTimelineFloor = 91;
   f.renderAdultProgressiveUI(true);
-  assert.equal(f.els.choices.classList.contains('hidden'), false);
+  assert.equal(f.els.choices.classList.contains('hidden'), true);
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
-  assert.equal(f.els.approachChoices.classList.contains('hidden'), true);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-dialogue']);
+  assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
+    ['reported-opening', 'reported-dialogue', 'reported-next']);
   f.els.video.time = 295;
   f.state.adultTimelineFloor = 295;
   f.renderAdultProgressiveUI(true);
