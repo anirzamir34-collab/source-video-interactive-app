@@ -6164,7 +6164,14 @@ function isUnownedTimelineChoice(action) {
   const surface = choiceSurfaceForAction(action, { panelFamily: playableAdultPanelFamily(action) });
   if (!['story', 'approach'].includes(surface)) return false;
   return !(state.adultScenes || []).some(scene => !state.completedAdultSceneIds?.has(scene.id) &&
-    (surface === 'story' ? sceneOwnsStoryChoice(scene, action) : sceneOwnsApproachChoice(scene, action)));
+    (surface === 'story'
+      // A scene can retain earlier dialogue as factual narrative context,
+      // but its playable opening begins at its first verified approach.
+      // Do not consume ordinary choices before that playable boundary:
+      // doing so made all pre-encounter story options disappear from gameplay.
+      ? Number(action.startTime) >= Number(scene.startTime) - 0.05 &&
+        sceneOwnsStoryChoice(scene, action)
+      : sceneOwnsApproachChoice(scene, action)));
 }
 
 function futureActions() {
