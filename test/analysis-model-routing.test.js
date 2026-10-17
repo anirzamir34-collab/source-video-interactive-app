@@ -67,7 +67,7 @@ test('saved-game repairs offer the available Gemini model catalog and send the s
   assert.equal(isGeminiModelName('gemini-2.5-flash-lite'), true);
   assert.equal(isGeminiModelName('gemini-4-argon'), true);
   assert.equal(isGeminiModelName('other-provider'), false);
-  assert.match(ui, /data-action = action/);
+  assert.match(ui, /button\.dataset\.action = action/);
   assert.match(ui, /saved-game-model-picker/);
   assert.match(ui, /repairGame\(game, update => message\(update\), model\)/);
   assert.match(app, /retryableAnalysisGaps\(previous, game\.duration\)/);
