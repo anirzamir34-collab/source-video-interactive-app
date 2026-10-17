@@ -1657,7 +1657,7 @@ app.get('/api/gemini-analysis-models', async (req, res) => {
     const pager = await ai.models.list({ config: { pageSize: 100 } });
     const found = new Set();
     for await (const model of pager) {
-      const name = String(model.name || '').replace(/^models\\//, '');
+      const name = String(model.name || '').replace('models/', '');
       if (isGeminiModelName(name)) found.add(name);
     }
     return res.json({ models: [...found].sort() });
