@@ -14,3 +14,16 @@ test('review includes provider gaps and discarded source evidence in time order'
   assert.equal(items[1].title, 'Eksik bölüm 8');
   assert.match(items[1].detail, /Hangi tek karenin/);
 });
+
+test('empty neutral repair gaps are explained in Turkish without raw codes', () => {
+  const items = analysisReviewItems({
+    analysisGaps: [
+      { startTime: 276.5, endTime: 331.8, reason: 'NEUTRAL_REPAIR_UNVERIFIED' },
+      { startTime: 497.7, endTime: 553, reason: 'GEMINI_NO_VERIFIED_EVENTS' }
+    ]
+  }, 900);
+  assert.equal(items.length, 2);
+  assert.match(items[0].detail, /doğrulanabilir bir olay bulunamadı/);
+  assert.match(items[1].detail, /doğrulanmış yeni sahne olayı üretemedi/);
+  assert.ok(items.every(item => !item.detail.includes('NEUTRAL_REPAIR_UNVERIFIED')));
+});
