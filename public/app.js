@@ -129,7 +129,7 @@ import { assignVerifiedOpeningRoles } from './verified-scene-continuity.js';
 import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
   verifiedClipCompletionReady } from './interaction-completion.js';
 import { mountInteractionPanel, resetInteractionSelection,
-  syncInteractionSurfaces } from './interaction-panel.js';
+  sceneSurfaceIsStale, syncInteractionSurfaces } from './interaction-panel.js';
 
 const videoDownloads = createVideoDownloader();
 const urlVideoCache = createUrlVideoCache();
@@ -847,7 +847,7 @@ function selectedAnalysisModes() {
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
-    dubbingProvider: 'classic',
+    dubbingProvider: els.dubbingProvider?.value === 'elevenlabs_v1' ? 'elevenlabs_v1' : 'classic',
     quality: 'ultra',
     analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy',
     deepAnalysisModel: els.deepAnalysisModel?.value || 'gemini-3.8-flash'
@@ -4733,6 +4733,11 @@ function renderAdultOutcomes(scene) {
 function renderAdultProgressiveUI(force = false) {
   const scene = state.adultScene;
   if (!scene || !els.adultInteractionPanel || state.adultOutcomePhase !== 'idle') return;
+  if (!state.adultLoopSeeking && !els.video?.seeking && !state.navigationSeeking &&
+      sceneSurfaceIsStale(scene, els.video?.currentTime)) {
+    reconcileInteractionSeek(Number(els.video.currentTime) || 0);
+    return;
+  }
   state.interactionRuntime = transitionInteraction(genericInteractionSnapshot(), { type: 'normalize' });
   // The source boundary spends the opening budget on the first core group.
   // Leaving its 100 on screen while blocking another unlock made the next
@@ -6028,6 +6033,14 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
+  // Source time, not the old panel unlock state, decides which scene owns
+  // the UI. This also handles native seeks that bypass manualSeeking flags.
+  if (sceneSurfaceIsStale(state.adultScene, mediaTime)) {
+    reconcileInteractionSeek(mediaTime);
+    state.lastAdultFrameNow = now;
+    return;
+  }
+
   observeInteractionProgress(mediaTime);
   if (settleInteractionClipBoundary(mediaTime)) return;
   reconcileInteractionSource(mediaTime);
@@ -6468,7 +6481,15 @@ function renderChoices() {
   const unowned = intervals.find(interval =>
     Number(interval.endTime) > state.gameCursorTime + 0.05 &&
     (routeTime === null || Number(interval.startTime) < routeTime - 0.05));
-  if (unowned) {
+  // Give an already verified ordinary decision priority over a generic
+  // unowned-source interval. Group videos can have a narrative decision even
+  // when no single playable protagonist was established for that interval.
+  let candidates = futureActions();
+  const verifiedInsideGap = candidates.some(action =>
+    choiceSurfaceForAction(action) === 'story' &&
+    Number(action.startTime) >= Number(state.gameCursorTime) - 0.05 &&
+    Number(action.startTime) <= Number(unowned?.endTime) + 0.05);
+  if (unowned && !verifiedInsideGap) {
     const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration) || 0;
     if (Number(unowned.startTime) > state.gameCursorTime + 0.3) {
       void resumeAnalysisGap(Number(unowned.startTime));
@@ -6480,7 +6501,7 @@ function renderChoices() {
       els.choices.classList.remove('hidden');
       const message = document.createElement('div');
       message.className = 'meta';
-      message.textContent = 'Bu bölümde baş karakter doğrulanamadı.';
+      message.textContent = 'Bu aralıkta oynanabilir kaynak seçeneği doğrulanamadı. Video izlenebilir veya sonraki doğrulanmış bölüme geçilebilir.';
       const watch = document.createElement('button');
       watch.className = 'choice story-choice';
       watch.textContent = 'Bölümü izle';
@@ -6499,8 +6520,6 @@ function renderChoices() {
   els.choices.innerHTML = '';
   document.querySelector('.choice-navigation')?.classList.remove('hidden');
   els.cursorText.textContent = `cursor: ${state.gameCursorTime.toFixed(3)}`;
-  let candidates = futureActions();
-
   // Membership is explicit; a wide scene envelope cannot consume story data.
   candidates = candidates.filter(isUnownedTimelineChoice);
 
