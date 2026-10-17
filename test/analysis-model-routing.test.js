@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  analysisTierFromRequest, analysisModelCandidates, isSupportedDeepAnalysisModel, isGeminiModelName,
+  analysisTierFromRequest, analysisModelCandidates, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel,
   DEEP_ANALYSIS_MODEL, ARGON_ANALYSIS_MODEL, ECONOMY_ANALYSIS_MODEL
 } from '../lib/analysis-model-routing.js';
 import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
@@ -61,6 +61,34 @@ test('UI requires the user to opt into expensive Argon before analysis; long-vid
   assert.deepEqual(storyboardSamplingPlan(1200, true), { baseCount: 160, focusedCount: 56 });
   assert.equal(adaptiveAnalysisChunkPlan(19, 1200, 'ultra').chunkCount, 12);
 });
+
+
+test('saved-game catalog lists only Gemini visual JSON-capable general analysis models', () => {
+  const eligible = name => ({ name: 'models/' + name, supportedActions: ['generateContent'],
+    inputModalities: ['TEXT', 'IMAGE'], outputModalities: ['TEXT'], outputTokenLimit: 16384 });
+  for (const name of ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.6-flash',
+    'gemini-3.8-flash', 'gemini-4-argon', 'gemini-3.1-pro-preview']) {
+    assert.equal(isVideoQuestAnalysisModel(eligible(name)), true, name);
+  }
+  for (const name of ['gemini-3.8-flash-tts', 'gemini-3.8-live', 'gemini-3.1-flash-image',
+    'gemini-embedding-001', 'gemini-2.5-computer-use', 'gemini-3.5-audio',
+    'gemini-omni-flash', 'imagen-4', 'gemini-2.5-flash-native-audio']) {
+    assert.equal(isVideoQuestAnalysisModel(eligible(name)), false, name);
+  }
+  assert.equal(isVideoQuestAnalysisModel({ ...eligible('gemini-3.8-flash'), supportedActions: ['embedContent'] }), false);
+  assert.equal(isVideoQuestAnalysisModel({ ...eligible('gemini-3.8-flash'), inputModalities: ['TEXT'] }), false);
+  assert.equal(isVideoQuestAnalysisModel({ ...eligible('gemini-3.8-flash'), outputModalities: ['IMAGE'] }), false);
+  assert.equal(isVideoQuestAnalysisModel({ ...eligible('gemini-3.8-flash'), outputTokenLimit: 1024 }), false);
+  assert.equal(isVideoQuestAnalysisModel({
+    ...eligible('gemini-3.8-flash'), supportedActions: undefined,
+    supportedGenerationMethods: ['generateContent']
+  }), true);
+  assert.match(server, /isVideoQuestAnalysisModel\(\{ \.\.\.model, name \}\)/);
+  const ui = readFileSync(new URL('../public/saved-games-ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /let repairModels = \[\]/);
+  assert.doesNotMatch(ui, /\.\.\.models, \.\.\.repairModels/);
+});
+
 
 test('saved-game repairs offer the available Gemini model catalog and send the selected model', () => {
   const ui = readFileSync(new URL('../public/saved-games-ui.js', import.meta.url), 'utf8');

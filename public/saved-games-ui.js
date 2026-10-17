@@ -22,7 +22,9 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
   let busy = false;
   let rows = [];
   let controlsGeneration = 0;
-  let repairModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite', 'gemini-3.8-flash', 'gemini-4-argon'];
+  let repairModels = [];
+  let repairModelsLoaded = false;
+  let repairModelsError = '';
   const chosenModelByGame = new Map();
 
   function message(text, error = false) {
@@ -32,7 +34,9 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
   async function refreshControls() {
     const generation = ++controlsGeneration;
     const locked = busy || isBusy();
-    for (const el of root.querySelectorAll('button,input,select')) el.disabled = locked;
+    for (const el of root.querySelectorAll('button,input,select'))
+      el.disabled = locked || (!repairModels.length &&
+        (el.dataset?.action === 'repair' || el.matches?.('.saved-game-model-picker select')));
     const save = root.querySelector('[data-game-save]');
     const backup = root.querySelector('[data-game-export-current]');
     save.disabled = backup.disabled = title.disabled = true;
@@ -98,6 +102,14 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
         modelPicker.textContent = 'Eksik analiz için Gemini modeli';
         modelSelect = document.createElement('select');
         modelSelect.setAttribute('aria-label', row.title + ' · Gemini modeli');
+        if (!repairModels.length) {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = repairModelsError ||
+            (repairModelsLoaded ? 'Uygun Gemini modeli bulunamadı' : 'Uygun modeller yükleniyor…');
+          modelSelect.append(option);
+          modelSelect.disabled = true;
+        }
         for (const model of repairModels) {
           const option = document.createElement('option');
           option.value = model;
@@ -105,8 +117,9 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
           modelSelect.append(option);
         }
         const savedChoice = chosenModelByGame.get(row.id);
-        modelSelect.value = repairModels.includes(savedChoice) ? savedChoice : 'gemini-3.8-flash';
-        if (!repairModels.includes(modelSelect.value)) modelSelect.value = repairModels[0];
+        const preferred = repairModels.includes('gemini-3.8-flash')
+          ? 'gemini-3.8-flash' : repairModels[0] || '';
+        modelSelect.value = repairModels.includes(savedChoice) ? savedChoice : preferred;
         modelSelect.addEventListener('change', () => chosenModelByGame.set(row.id, modelSelect.value));
         modelPicker.append(modelSelect);
       }
@@ -117,6 +130,7 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
         button.type = 'button';
         button.textContent = label;
         button.dataset.action = action;
+        if (action === 'repair' && !repairModels.length) button.disabled = true;
         button.addEventListener('click', () => void run(async () => {
           if (action === 'delete') {
             if (!confirm(`“${row.title}” kaydını ve kayıtlı videosunu bu cihazdan silmek istiyor musun?`)) return;
@@ -128,7 +142,9 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
             const game = await store.load(row.id);
             const missing = retryableAnalysisGaps(game.payload.analysis, game.duration);
             if (!missing.length) throw new Error('Bu kayıtta doğrulanmış eksik analiz aralığı yok.');
-            const model = modelSelect?.value || repairModels[0];
+            const model = modelSelect?.value;
+            if (!model || !repairModels.includes(model))
+              throw new Error('Önce kullanılabilir bir Gemini analiz modeli seç.');
             message(`${missing.length} eksik aralık ${model} ile yeniden analiz ediliyor…`);
             const analysis = await repairGame(game, update => message(update), model);
             const updated = { ...game, payload: { ...game.payload, analysis } };
@@ -211,11 +227,17 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
   void refresh().catch(error => message(storageError(error), true));
   if (loadRepairModels) {
     void Promise.resolve().then(loadRepairModels).then(models => {
-      if (!Array.isArray(models) || !models.length) return;
-      repairModels = [...new Set([...models, ...repairModels])]
+      repairModels = [...new Set(Array.isArray(models) ? models : [])]
         .filter(name => /^gemini-[a-z0-9][a-z0-9._-]*$/i.test(name)).sort();
+      repairModelsLoaded = true;
+      repairModelsError = '';
       if (!busy) return refresh();
-    }).catch(() => {});
+    }).catch(() => {
+      repairModels = [];
+      repairModelsLoaded = true;
+      repairModelsError = 'Modeller alınamadı; sayfayı yenile';
+      if (!busy) return refresh();
+    });
   }
   void storageStatus();
   return {
