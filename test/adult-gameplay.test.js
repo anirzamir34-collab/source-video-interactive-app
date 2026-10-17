@@ -996,6 +996,23 @@ test('keeps verified activity and contact actions inside their position panel', 
   }, 'prone-bone'), false);
 });
 
+test('source-backed guidance inside one verified position remains a movement choice', () => {
+  const source = {
+    sourceVerified: true, classificationReview: 'first_pass', confidence: 0.96,
+    positionId: 'oral', positionConfigurationConfidence: 0.98,
+    positionEvidence: 'The same visible participants and position continue across this source interval.',
+    receiverBodyOrientation: 'kneeling', receiverSupport: 'floor',
+    label: 'Partneri yönlendir', movementType: 'ritmik hareket',
+    loopStartTime: 276.495, loopEndTime: 304.144
+  };
+  assert.equal(movementBelongsToVerifiedPosition({ ...source, actionType: 'position' }, 'oral'), true);
+  assert.equal(movementBelongsToVerifiedPosition({ ...source, actionType: 'tempo_change',
+    loopStartTime: 304.144, loopEndTime: 331.794 }, 'oral'), true);
+  assert.equal(movementBelongsToVerifiedPosition({ ...source, classificationReview: 'pending' }, 'oral'), false);
+  assert.equal(movementBelongsToVerifiedPosition({ ...source,
+    label: 'Başka pozisyona geçiş', movementType: 'transition' }, 'oral'), false);
+});
+
 test('movement cards keep concrete action text and remove sensory metadata', () => {
   const choices = buildVerifiedMovementChoices([{
     id: 'fast-kiss',

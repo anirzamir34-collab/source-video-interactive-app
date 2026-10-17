@@ -10,6 +10,25 @@ export const ANALYSIS_SCHEMA_VERSION = 6;
 export const ENGINE_VERSION = 'videoquest-story-v1';
 export const SAVE_VERSION = 9;
 
+export function summarizeIntegrityIssues(issues = []) {
+  const result = { information: 0, warnings: 0, repairs: 0, dropped: 0, fatal: 0 };
+  for (const issue of Array.isArray(issues) ? issues : []) {
+    if (issue?.severity === 'info') result.information += 1;
+    else if (issue?.severity === 'warning') result.warnings += 1;
+    else if (issue?.severity === 'repair') result.repairs += 1;
+    else if (issue?.severity === 'drop') result.dropped += 1;
+    else if (issue?.severity === 'fatal') result.fatal += 1;
+  }
+  return result;
+}
+
+export function integritySummaryText(report, acceptedActionCount = 0) {
+  const summary = summarizeIntegrityIssues(report?.issues);
+  const warnings = summary.warnings + summary.repairs + summary.dropped + summary.fatal;
+  return `Bütünlük kontrolü: ${warnings} uyarı${summary.information
+    ? ` · ${summary.information} kaynak doğrulama bilgisi` : ''} · ${acceptedActionCount} güvenli aksiyon.`;
+}
+
 export const ADULT_PHASE_ORDER = Object.freeze({
   foreplay: 0,
   positions: 1,

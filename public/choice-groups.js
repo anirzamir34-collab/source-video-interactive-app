@@ -267,7 +267,24 @@ export function approachStageChoices(clips = [], cursor = 0) {
   while (last + 1 < ordered.length && !sceneBarrier(ordered[last]) &&
       !sceneBarrier(ordered[last + 1]) && approachStage(ordered[last + 1]) === stage &&
       Number(ordered[last + 1].startTime) - Number(ordered[last].endTime) <= 45) last += 1;
-  return ordered.slice(first, last + 1);
+  const stageChoices = ordered.slice(first, last + 1);
+  const prior = ordered[last], next = ordered[last + 1];
+  // A body motion can end a replay stage without making the immediately
+  // following verified motion disappear from the decision. Preview only the
+  // forward clip: once playback reaches it, the old stage remains retired.
+  if (next && text(prior.actionType).toLowerCase() === 'body_transition' &&
+      prior.sourceVerified === true && next.sourceVerified === true &&
+      choiceSurfaceKey(prior) === 'approach' && choiceSurfaceKey(next) === 'approach' &&
+      text(prior.sceneId) && text(prior.sceneId) === text(next.sceneId) &&
+      approachStage(prior) === approachStage(next) &&
+      text(prior.subjectTrackId) && text(prior.subjectTrackId) === text(next.subjectTrackId) &&
+      text(prior.partnerTrackId) && text(prior.partnerTrackId) === text(next.partnerTrackId) &&
+      !['clothing', 'scene_transition', 'partner_transition'].includes(text(next.actionType).toLowerCase()) &&
+      Number(next.startTime) >= Number(prior.endTime) - 0.05 &&
+      Number(next.startTime) <= Number(prior.endTime) + 0.25) {
+    stageChoices.push(next);
+  }
+  return stageChoices;
 }
 
 export function groupVerifiedApproachChoices(clips = []) {

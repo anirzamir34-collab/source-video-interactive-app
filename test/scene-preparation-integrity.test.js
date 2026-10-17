@@ -85,6 +85,31 @@ test('anonymous Android analysis retains ordinary choices and the later verified
   }
 });
 
+test('two adjacent verified guidance cuts enter source-backed cards instead of vanishing', () => {
+  const common = { actionType: 'position', positionId: 'oral', positionLabel: 'Observed activity',
+    positionOccurrenceId: 'occurrence-a', positionStartTime: 276.495,
+    positionEndTime: 331.794, adultSceneStartTime: 276.495,
+    adultSceneEndTime: 389, subjectTrackId: 'actor', partnerTrackId: 'partner',
+    classificationReview: 'first_pass', positionConfigurationConfidence: .98,
+    positionEvidence: 'Same verified participants and activity continue across this source range.',
+    movementType: 'ritmik hareket', movementTempo: 'moderate',
+    receiverBodyOrientation: 'kneeling', receiverSupport: 'floor',
+    label: 'Partneri yönlendir' };
+  const rows = [action('cut-a', 276.495, 304.144, common),
+    action('cut-b', 304.144, 331.794, { ...common, actionType: 'tempo_change' })];
+  const state = prepare(rows, {
+    playableAdultPanelFamily: () => 'oral',
+    canonicalAdultPosition: () => ({ id: 'oral', label: 'Observed activity' }),
+    adultCategoryFor: () => ({ id: 'oral', label: 'Observed activity' }),
+    isWarmupPosition: () => true,
+    movementBelongsToVerifiedPosition: gameplay.movementBelongsToVerifiedPosition
+  });
+  const cards = state.adultScenes.flatMap(scene => scene.positions)
+    .flatMap(position => position.movementChoices);
+  assert.deepEqual(Array.from(cards.flatMap(card => card.variants.map(item => item.sourceActionId))),
+    ['cut-a', 'cut-b']);
+});
+
 function prepare(actions, overrides = {}, sourceContext = null, storyContext = {}) {
   const state = { analysis: { actions, storyContext }, analysisFingerprint: 'test', sourceContext };
   const scope = vm.createContext({

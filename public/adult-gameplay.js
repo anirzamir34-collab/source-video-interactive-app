@@ -443,7 +443,17 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
     String(action.positionId || '').toLowerCase() === canonicalId &&
     Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
     String(action.positionEvidence || '').trim();
-  if (!verifiedEntry && /\b(gecis|transition|pozisyon(?:una|a)?\s+gec|pozisyon\s+degistir|ustune\s+cik|yuzustu\s+don|donerken|yonlendir)\b/.test(text)) return false;
+  if (!verifiedEntry && /\b(gecis|transition|pozisyon(?:una|a)?\s+gec|pozisyon\s+degistir|ustune\s+cik|yuzustu\s+don|donerken)\b/.test(text)) return false;
+  // Guidance can be part of an unchanged activity. Only a source-grounded,
+  // same-family first-pass position may ignore this ambiguous word.
+  const groundedGuidance = action.sourceVerified === true &&
+    ['position', 'tempo_change', 'movement', 'rhythm'].includes(actionType) &&
+    action.classificationReview === 'first_pass' &&
+    Number(action.confidence) >= 0.84 &&
+    Number(action.positionConfigurationConfidence) >= 0.78 &&
+    String(action.positionEvidence || '').trim().length >= 15 &&
+    adultPositionFamily(action.positionId) === canonicalId;
+  if (!verifiedEntry && /\byonlendir\b/.test(text) && !groundedGuidance) return false;
   const family = adultPositionFamily(source);
   if (family && family !== canonicalId) {
     // Generic direction prose cannot override a verified specific parent.

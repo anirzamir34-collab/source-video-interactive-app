@@ -102,6 +102,13 @@ export function sceneOwnsApproachChoice(scene, action) {
     item.sourceVerified === true && [item.id, item.sourceActionId].includes(id)));
 }
 
+export function isUnroutedVerifiedApproach(action, trace, acceptedApproachIds, isIntroduction) {
+  const id = String(action?.sourceActionId || action?.actionId || '');
+  return action?.sourceVerified === true && isIntroduction === true &&
+    !acceptedApproachIds?.has(id) &&
+    !(trace?.route === 'POSITION' && trace?.movementAccepted === true);
+}
+
 // Collapse only evidence-identical observations across the same source,
 // route, cast and timestamp. Equal labels alone never prove duplication.
 export function distinctVerifiedSourceChoices(items = []) {

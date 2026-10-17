@@ -74,6 +74,7 @@ import {
   canPlayAction,
   createRuntimeSnapshot,
   isCompatibleRuntimeSnapshot,
+  integritySummaryText,
   mergeSecondPassReview,
   normalizeChunkActionTimes,
   reviewAndHardenAnalysis,
@@ -114,7 +115,7 @@ import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, ve
 import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
   bundleAdjacentSourceCards, groupVerifiedApproachChoices, approachStageChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
-  sceneOwnsApproachChoice, choiceSurfaceWindow, sceneSurfaceChoices,
+  sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
   isForwardTimelineChoice } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
@@ -2324,7 +2325,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       ? `${Number(body.skippedFrameCount)} okunamayan kare atlandı; analiz kalan doğrulanmış karelerle tamamlandı.`
       : 'Bütün örnek kareler başarıyla hazırlandı.',
     `Son doğrulanmış aksiyon ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyede bitiyor.`,
-    `Bütünlük kontrolü: ${state.integrityReport?.issueCount || 0} uyarı · ${normalized.actions.length} güvenli aksiyon.`,
+    integritySummaryText(state.integrityReport, normalized.actions.length),
     `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Eksik bölgelerden seçenek uydurulmadı.' : 'Oyun modu kullanıma hazır.',
     creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : '',
@@ -3595,8 +3596,8 @@ function prepareAdultScenes() {
   const acceptedApproachIds = new Set(state.adultScenes.flatMap(scene =>
     [...scene.foreplay, ...scene.dialogue])
     .map(item => item.sourceActionId || item.id));
-  const rejectedApproaches = actions.filter(action => action.sourceVerified === true && isIntroduction(action) &&
-    !acceptedApproachIds.has(String(action.sourceActionId || action.actionId || ''))).map(action => {
+  const rejectedApproaches = actions.filter(action => isUnroutedVerifiedApproach(
+    action, traceByAction.get(action), acceptedApproachIds, isIntroduction(action))).map(action => {
     const row = traceByAction.get(action);
     if (row.membershipReason === 'NOT_ASSIGNED') row.membershipReason = 'NO_VERIFIED_SCENE_MEMBERSHIP';
     return { code: 'VERIFIED_APPROACH_REJECTED', actionId: row.actionId,
@@ -4448,6 +4449,9 @@ function renderAdultApproachChoices(scene, later = false) {
         kind: 'position', id: position.id,
         choiceSurface: 'approach',
         sceneId: position.sceneId,
+        subjectTrackId: position.subjectTrackId,
+        partnerTrackId: position.partnerTrackId,
+        actionType: card?.variants?.[0]?.actionType,
         locationId: position.locationId,
         beforeState: position.beforeState,
         castIds: [position.subjectTrackId, position.partnerTrackId].filter(Boolean),

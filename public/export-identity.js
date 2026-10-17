@@ -38,6 +38,7 @@ function fixTurkishSuffixes(t) {
 export function synchronizeExportIdentity(analysis) {
   if (!analysis?.actions) return analysis;
   const chars = analysis.storyContext?.characters || [];
+  if (!chars.length) return analysis;
   const lookup = characterLookup(chars);
 
   return {
@@ -46,18 +47,27 @@ export function synchronizeExportIdentity(analysis) {
       if (!action) return action;
       const primary = lookup(action.primaryCharacterId);
       const partner = lookup(action.partnerTrackId);
-      const target = primary || partner;
+      const subject = lookup(action.subjectTrackId);
+      const missing = (text(action.primaryCharacterId) && !primary) ||
+        (text(action.partnerTrackId) && !partner);
+      const primaryIsSubject = primary && subject && primary === subject;
+      const conflict = primary && partner && primary !== partner && !primaryIsSubject;
+      const target = missing || conflict ? null :
+        (primaryIsSubject && partner ? partner : primary || partner);
       const targetFact = factName(target);
 
       const result = {
         ...action,
         primaryCharacterDisplayNameFact: targetFact,
-        partnerDisplayNameFact: factName(partner),
-        subjectDisplayNameFact: factName(lookup(action.subjectTrackId))
+        partnerDisplayNameFact: missing || conflict ? '' : factName(partner),
+        subjectDisplayNameFact: factName(subject)
       };
 
-      // SANSÜRÜ TÜM SAHNELERDE VE TÜM AİLE ROLLERİNDE KÖKÜNDEN KALDIRAN KATMAN
-      if (target && targetFact) {
+      const intimate = action.adultScene === true ||
+        ['approach', 'panel'].includes(text(action.choiceSurface)) ||
+        ['position', 'touch', 'kiss', 'clothing', 'tempo_change', 'rhythm', 'outcome', 'aftermath']
+          .includes(text(action.actionType));
+      if (!intimate && targetFact) {
         for (const field of ['label', 'narrativeChoiceLabel', 'primaryCharacterLabel']) {
           if (result[field]) {
             result[field] = replaceTargetPlaceholder(result[field], targetFact);
