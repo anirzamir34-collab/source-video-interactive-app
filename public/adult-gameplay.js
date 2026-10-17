@@ -1161,7 +1161,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       energyLabel: energyFlavor === 'steady' && !explicitRhythmic ? '' : energyLabel
     };
   };
-  return groupSourceChoiceCards(verified, {
+  const cards = groupSourceChoiceCards(verified, {
     preferredCount: maxChoices,
     mergeEquivalentMotionTypes: true,
     contextFor: position ? item => {
@@ -1180,6 +1180,40 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
       .join(' · ').trim(), item)
   });
+  // Verified clips can describe the same steady rhythm with different prose.
+  // Keep their exact ranges as variants; only an explicit common rhythmic
+  // motion, unchanged source pose/cast/tempo and a short camera cut qualify.
+  const rhythm = item => /\b(?:ritmik|ritim|tempolu|rhythmic|rhythm)\b/u.test(
+    normalize(item?.movementType));
+  const fastMotion = item => /\b(?:fast|hizli)\b/u.test(normalize(item?.movementType));
+  const visualState = item => JSON.stringify([
+    item?.locationId || '', item?.sceneId || '',
+    item?.beforeState?.clothingState || item?.beforeState?.clothing || item?.beforeState?.outfit || ''
+  ]);
+  const grouped = [];
+  for (const card of cards) {
+    const previous = grouped.at(-1);
+    const prior = previous?.variants?.at(-1), current = card.variants[0];
+    const priorRange = prior && clipRange(prior), currentRange = clipRange(current);
+    const gap = priorRange && currentRange ? currentRange.startTime - priorRange.endTime : Infinity;
+    const sameSource = position && prior && current &&
+      prior.sourcePositionId && prior.sourcePositionId === current.sourcePositionId &&
+      positionOccurrenceForMovement(position, prior)?.id ===
+        positionOccurrenceForMovement(position, current)?.id &&
+      ['subjectTrackId', 'partnerTrackId', 'routeNamespace'].every(field =>
+        String(prior[field] || '') === String(current[field] || '')) &&
+      visualState(prior) === visualState(current);
+    if (position && previous && prior?.sourceVerified === true && current?.sourceVerified === true &&
+        sameSource && ((rhythm(prior) && rhythm(current) && gap <= 5) ||
+          ((rhythm(prior) || fastMotion(prior)) && (rhythm(current) || fastMotion(current)) &&
+            previous.tempo === 'fast' && gap <= 0.25)) &&
+        previous.tempo === card.tempo && previous.intensityBand === card.intensityBand &&
+        previous.energyFlavor === card.energyFlavor && gap >= -0.05) {
+      previous.variants.push(...card.variants);
+      previous.sourceLabels = [...new Set([...(previous.sourceLabels || [previous.label]), card.label])];
+    } else grouped.push({ ...card });
+  }
+  return grouped.map((card, index) => ({ ...card, displayIndex: index + 1 }));
 }
 
 export function splitSparseMovementChoiceCards(choices = []) {
