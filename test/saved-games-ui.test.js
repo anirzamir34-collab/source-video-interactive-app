@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { savedGameOperationError, savedGameHasDub, mountSavedGames } from '../public/saved-games-ui.js';
+import { savedGameOperationError, savedGameHasDub, mountSavedGames, describeSavedGameRepair } from '../public/saved-games-ui.js';
 
 test('analysis quota failure is described as analysis failure, not lost storage', () => {
   const error = Object.assign(new Error('Provider reported a quota error'),
@@ -75,4 +75,32 @@ test('late asynchronous capture cannot reenable controls after a newer source ha
   assert.equal(f.elements.get('[data-game-save]').disabled, true);
   assert.equal(f.elements.get('[data-game-export-current]').disabled, true);
   assert.equal(f.elements.get('[data-game-title]').disabled, true);
+});
+
+test('repair report never describes refused five ranges as a successful analysis', () => {
+  const report = describeSavedGameRepair({ lastRepairAttempt: {
+    model: 'gemini-3.8-flash', total: 5, recovered: 0, remaining: 5,
+    results: Array.from({ length: 5 }, (_, i) => ({
+      startTime: i * 10, endTime: (i + 1) * 10,
+      reason: 'GEMINI_CONTENT_RESTRICTED', httpStatus: 422, outcome: 'failed'
+    }))
+  } });
+  assert.match(report.summary, /0\\/5 eksik bölüm tamamlandı/);
+  assert.match(report.details, /Gemini içerik kısıtlaması/);
+  assert.match(report.details, /HTTP 422/);
+  assert.equal(report.error, true);
+});
+
+test('repair report shows disabled redundant retries and genuine success', () => {
+  const report = describeSavedGameRepair({ lastRepairAttempt: {
+    model: 'gemini-3.1-flash-lite', total: 2, recovered: 1, remaining: 1,
+    results: [{ startTime: 0, endTime: 10, outcome: 'processed' },
+      { startTime: 10, endTime: 20, outcome: 'skipped_previous_rejection',
+        reason: 'GEMINI_CONTENT_RESTRICTED' }]
+  } });
+  assert.match(report.summary, /1\\/2 eksik bölüm tamamlandı/);
+  assert.match(report.details, /Tekrarlanan içerik reddi/);
+  assert.match(report.details, /Sonuç alındı/);
+  assert.equal(report.error, true);
+  assert.equal(describeSavedGameRepair({}), null);
 });
