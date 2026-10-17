@@ -4,6 +4,7 @@ import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
+import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
 import { repairSavedAudio } from './saved-audio.js';
 import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, uncoveredNeutralRepairIntervals } from './neutral-gap-repair.js';
 import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
@@ -1554,7 +1555,13 @@ els.analyzeBtn.addEventListener('click', async () => {
   // received. Regenerating 480 mobile video frames can change JPEG hashes and
   // make valid chapter checkpoints unreachable after a browser refresh.
   const sourceEvidenceKey = modes.motion ? await storyboardSourceKey(file) : null;
-  session.sourceEvidenceKey = sourceEvidenceKey;
+  const sourceIdentity = reconcileAnalysisSessionEvidence(session, sourceEvidenceKey);
+  if (sourceIdentity.changed) {
+    updateSourceTranscript(null);
+    logEngineEvent('ANALYSIS_SOURCE_EVIDENCE_CHANGED', {
+      action: 'discard_stale_session_chapters'
+    });
+  }
   if (sourceEvidenceKey && modes.motion) {
     if (!session.storyboard) {
       const previousStoryboard = await analysisResponseCache.readStoryboard(sourceEvidenceKey);
