@@ -552,3 +552,37 @@
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
 }
+
+@media (orientation: landscape) {
+  #playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+    left: max(10px, env(safe-area-inset-left)) !important;
+    right: auto !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    max-height: calc(100dvh - 28px) !important;
+    overflow-y: auto !important;
+    background: transparent !important;
+  }
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#approachChoices, #adultInteractionPanel) [data-choice-label] {
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices button {
+  min-height: 40px !important;
+  touch-action: manipulation;
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#approachChoices, #adultInteractionPanel) .choice-detail {
+  font-size: 10px;
+  line-height: 1.25;
+  max-height: 120px;
+  overflow-y: auto;
+  text-shadow: 0 1px 3px #000;
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#approachChoices, #adultInteractionPanel) .choice-detail summary {
+  min-height: 30px;
+  cursor: pointer;
+  touch-action: manipulation;
+}

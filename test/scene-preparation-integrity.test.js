@@ -76,6 +76,24 @@ function prepare(actions, overrides = {}, sourceContext = null, storyContext = {
   return state;
 }
 
+test('source-backed opening subranges retain exact clips under one replayable card', () => {
+  const opening = action('opening', 0, 20, {
+    actionType: 'touch', positionId: '', positionLabel: '', choiceSurface: 'approach',
+    subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    verifiedSubsequences: [
+      { startTime: 0, endTime: 10, sourceVerified: true, movementTempo: 'slow' },
+      { startTime: 10, endTime: 20, sourceVerified: true, movementTempo: 'slow' }
+    ]
+  });
+  const core = action('core', 30, 60, {
+    subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    positionStartTime: 30, positionEndTime: 60
+  });
+  const state = prepare([opening, core]);
+  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => [item.id, item.startTime, item.endTime]),
+    [['opening:source-1', 0, 10], ['opening:source-2', 10, 20]]);
+});
+
 test('reported first approach and away-facing movement become separate playable source choices', () => {
   const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A' };
   const opening = action('opening', 94.667, 112.417, {

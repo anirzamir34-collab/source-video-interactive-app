@@ -25,6 +25,8 @@ import {
   computeWarmupSelectionDelta,
   warmupLustScale,
   expandVerifiedMovementVariants,
+  sourceMotionProgressRate,
+  verifiedActionSubsequences,
   exclusiveControlClipIds,
   findAdultSceneForTimeline,
   forwardLocalMovementClips,
@@ -2516,8 +2518,9 @@ function normalizeAnalysis(body) {
       sensoryConfidence: Math.max(0, Math.min(1, Number(a.sensoryConfidence) || 0)),
       loopStartTime: Number(a.loopStartTime ?? a.startTime),
       loopEndTime: Number(a.loopEndTime ?? a.endTime),
-      maleProgressRate: Math.min(2.5, Math.max(0.25, Number(a.maleProgressRate) || 1)),
-      femaleProgressRate: Math.min(2.5, Math.max(0.25, Number(a.femaleProgressRate) || 1)),
+      verifiedSubsequences: verifiedActionSubsequences(a),
+      maleProgressRate: sourceMotionProgressRate(a, a.maleProgressRate),
+      femaleProgressRate: sourceMotionProgressRate(a, a.femaleProgressRate),
       outcomeType: ['climax', 'aftermath'].includes(String(a.outcomeType || '').toLowerCase())
         ? String(a.outcomeType).toLowerCase()
         : 'none',
@@ -3166,13 +3169,16 @@ function prepareAdultScenes() {
         traceRow.route = sourceDialogue
           ? (actionType === 'body_transition' ? 'STORY_TRANSITION' : 'DIALOGUE') : 'FOREPLAY';
         traceRow.routeReason = sourceDialogue ? 'INDEPENDENT_STORY_CATEGORY' : 'VERIFIED_APPROACH_CATEGORY';
-        (sourceDialogue ? scene.dialogue : scene.foreplay).push({
+        const prelude = {
           id: action.actionId || `${sceneId}:warmup-${index}`,
           label: sourceIdentityLabel(action.narrativeChoiceLabel || action.label,
             { ...action, primaryCharacterLabel: action.partnerLabel || action.primaryCharacterLabel }),
           sourceVerified: true,
           sourceActionId: String(action.sourceActionId || action.actionId || '').trim(),
           actionType: String(action.actionType || '').trim(),
+          movementType: String(action.movementType || '').trim(),
+          movementTempo: String(action.movementTempo || '').trim(),
+          audioIntensity: String(action.audioIntensity || '').trim(),
           choiceSurface: action.choiceSurface,
           routeNamespace: activityOccurrenceNamespace(action),
           sceneId: action.sceneId,
@@ -3185,7 +3191,17 @@ function prepareAdultScenes() {
           endTime,
           maleProgressRate: Number(action.maleProgressRate || 1),
           femaleProgressRate: Number(action.femaleProgressRate || 1)
-        });
+        };
+        const parts = sourceDialogue ? [] : verifiedActionSubsequences(action);
+        (sourceDialogue ? scene.dialogue : scene.foreplay).push(...(parts.length
+          ? parts.map((part, partIndex) => ({ ...prelude,
+            id: `${prelude.id}:source-${partIndex + 1}`,
+            startTime: Number(part.startTime), endTime: Number(part.endTime),
+            movementTempo: part.movementTempo || action.movementTempo,
+            movementType: part.movementType || action.movementType,
+            maleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.maleProgressRate),
+            femaleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.femaleProgressRate)
+          })) : [prelude]));
       }
       if (traceRow.route === 'NOT_ROUTED') {
         traceRow.route = 'REJECTED';
@@ -4443,7 +4459,7 @@ function renderAdultApproachChoices(scene, later = false) {
     .replace(/\s+sekansını oynat/giu, '')
     .replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/giu, '')
     .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
-    .trim();
+    .split(' · ')[0].trim();
 
   candidates.forEach(choice => {
     const button = document.createElement('button');
@@ -4461,6 +4477,8 @@ function renderAdultApproachChoices(scene, later = false) {
       button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     }
     const sourceSequenceCount = Array.isArray(choice.variants) ? choice.variants.length : 1;
+    button.setAttribute('aria-label', choice.label);
+    button.title = choice.label;
     button.innerHTML = `${choice.nonIntimate ? '' : '<small class="choice-kind">YAKINLAŞMA</small>'}` +
       `<span data-choice-label>${escapeHtml(compactChoiceLabel(choice.label))}</span>${
       sourceSequenceCount > 1
@@ -4482,6 +4500,12 @@ function renderAdultApproachChoices(scene, later = false) {
       }
     });
     target.appendChild(button);
+    if (!dialogueOnly && (choice.label !== compactChoiceLabel(choice.label) || choice.label.length > 65)) {
+      const detail = document.createElement('details');
+      detail.className = 'choice-detail';
+      detail.innerHTML = `<summary>Açıklama</summary><p>${escapeHtml(choice.label)}</p>`;
+      target.appendChild(detail);
+    }
   });
 
   // Once the last source card has passed, natural playback can reach the next chapter.
@@ -5339,6 +5363,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
     button.type = 'button';
     button.className = 'movement-choice-card';
     button.title = choice.label;
+    button.setAttribute('aria-label', choice.label);
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
     const energyBadge = choice.energyLabel
@@ -5364,6 +5389,12 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       selectAdultMovement(movement.id, true);
     });
     wrapper.appendChild(button);
+    if (choice.label.length > 65 || choice.label.includes(' · ')) {
+      const detail = document.createElement('details');
+      detail.className = 'choice-detail';
+      detail.innerHTML = `<summary>Açıklama</summary><p>${escapeHtml(choice.label)}</p>`;
+      wrapper.appendChild(detail);
+    }
     if (choice.hasTempoShift && choice.tempoVariants?.length > 1) {
       const tempoButton = document.createElement('button');
       tempoButton.type = 'button';

@@ -44,7 +44,8 @@ export function groupSourceChoiceCards(clips, {
   contextFor,
   bandFor,
   labelFor,
-  mergeWithinContext = false
+  mergeWithinContext = false,
+  mergeEquivalentMotionTypes = false
 } = {}) {
   // Deduplicate only identical source records. The same title at different
   // verified timestamps is not a duplicate and must retain its own playback
@@ -95,6 +96,10 @@ export function groupSourceChoiceCards(clips, {
     const sameObservedAction = stableContext &&
       ['position', 'movement', 'tempo_change', 'rhythm'].includes(text(clip.actionType).toLowerCase()) &&
       Boolean(label);
+    const motionKind = text(clip.actionType).toLowerCase();
+    const actionKind = mergeEquivalentMotionTypes && text(clip.movementType) &&
+      ['position', 'tempo_change', 'movement', 'rhythm'].includes(motionKind)
+      ? ['verified-motion', text(clip.movementType)] : actionType;
     const key = JSON.stringify([
       choiceSurfaceKey(clip),
       occurrence || declaredScope,
@@ -106,7 +111,7 @@ export function groupSourceChoiceCards(clips, {
       stableContext ? '' : text(clip.receiverSupport), band,
       // Even a trusted display context cannot erase the provider's declared
       // action kind or the origin of parts split from one observed action.
-      hasScope && hasType ? [actionType, label.toLocaleLowerCase('tr-TR')] : label,
+      hasScope && hasType ? [actionKind, label.toLocaleLowerCase('tr-TR')] : label,
       sameObservedAction ? '' : declaredOrigin,
       hasScope ? '' : text(clip.derivedFromVerifiedSegment || clip.id)
     ]);

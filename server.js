@@ -11,7 +11,8 @@ import { runVideoExtractor } from './lib/video-extractor.js';
 import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure, videoErrorDetail, videoErrorDiagnostic } from './lib/video-url.js';
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
-import { dedupeVerifiedTimelineActions } from './public/adult-gameplay.js';
+import { dedupeVerifiedTimelineActions, sourceMotionProgressRate,
+  verifiedActionSubsequences } from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 import { loadMediaConfig } from './lib/turkish-media/config.js';
 import { createMediaCache } from './lib/turkish-media/cache.js';
@@ -376,6 +377,7 @@ ${reviewCandidates}
 - Return candidates whose underlying event is visibly supported in their source interval. Require start, midpoint and end evidence for precise position and repeatable-loop claims; when only those details fail, retain a neutral event without a position or loop.
 - Correct timestamps, canonical position id/label and confidence when the frames prove a correction.
 - Preserve actionId/sceneId for the same candidate.
+- Independently verify each proposed verifiedSubsequences boundary against the supplied frames. Preserve only source-backed 5+ second intervals of the same action and participants; an unsupported list must be empty.
 - Do not add a new action merely because it sounds plausible.
 - If only a candidate's specific label or category conflicts with the frames, correct or remove that claim and preserve the visible event. Omit the entire candidate only if its source event or playable interval is unsupported, and add a warning.
 - Outcome/final candidates require stronger evidence than ordinary actions.
@@ -613,6 +615,7 @@ Return ONLY valid JSON with this exact shape:
       "movementType": "",
       "loopStartTime": 0,
       "loopEndTime": 0,
+      "verifiedSubsequences": [{ "startTime": 0, "endTime": 0, "sourceVerified": true, "movementTempo": "slow|moderate|fast", "movementType": "brief observed motion" }],
       "maleProgressRate": 1,
       "femaleProgressRate": 1,
       "outcomeType": "none|climax|aftermath",
@@ -743,11 +746,12 @@ Rules:
 - These explicit movementTempo and movementType observations control the optional on-screen sex interaction button. If no source-verified fast, hard or deep interval exists, do not manufacture one and allow the button to remain unavailable for the entire video.
 - Do not force a fixed number of internal changes. Return exactly as many distinct changes as the source visibly contains.
 - Do not split tiny repetitions into fake choices and do not merge genuinely different changes.
+- For a long continuous action, return verifiedSubsequences only when source frames independently establish natural start and end boundaries for 5+ second playable segments. Use stable body configuration, participants, camera continuity and observed motion. Return [] if the supplied frames cannot support at least two separate boundaries. Never divide an interval at equal time steps or claim a camera cut alone changes the action.
 - loopStartTime and loopEndTime must define a naturally repeatable real interval inside the action and position.
 - A position and every selectable movement loop must each be at least 5.0 seconds long; omit anything shorter. Require source frames to verify the start, midpoint and end of the whole interval. It may be extended only across visibly continuous footage of the same movement and position; otherwise omit that internal choice.
 - Never return one-frame, frozen-frame, transition, cut, camera-change or seek-unstable loops.
 - adultSceneStartTime and adultSceneEndTime must cover the real scene; postSceneTime must point to its first real continuation.
-- maleProgressRate and femaleProgressRate are game pacing weights from 0.25 to 2.5 based on visible motion intensity and duration.
+- maleProgressRate and femaleProgressRate are game pacing weights from 0.25 to 2.5 based on visible motion intensity and duration. Use measured slow, moderate and fast movement conservatively; do not fill every action with 1 by default when its visible tempo differs.
 - When the source visibly contains a real climax/final segment inside the adult scene, emit it as actionType "outcome", outcomeType "climax", with exact outcomeStartTime/outcomeEndTime and a short outcomeLabel. Do not assign positionId to an outcome.
 - When the source visibly contains a distinct post-final continuation inside the same adult scene, emit it as actionType "aftermath", outcomeType "aftermath", with exact outcomeStartTime/outcomeEndTime. Do not convert aftermath into a position or movement loop.
 - outcomeUnlockProgress is a gameplay hint only; use 82 by default and never use it to invent or extend footage. If no verified outcome or aftermath exists, keep outcomeType "none" and do not fabricate one.
@@ -1096,8 +1100,15 @@ Rules:
           sensoryConfidence: Math.max(0, Math.min(1, Number(action.sensoryConfidence) || 0)),
           loopStartTime: Number(action.loopStartTime ?? action.startTime),
           loopEndTime: Number(action.loopEndTime ?? action.endTime),
-          maleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.maleProgressRate) || 1)),
-          femaleProgressRate: Math.min(2.5, Math.max(0.25, Number(action.femaleProgressRate) || 1)),
+          verifiedSubsequences: verifiedActionSubsequences(action).map(part => ({
+            startTime: Number(part.startTime), endTime: Number(part.endTime), sourceVerified: true,
+            movementTempo: String(part.movementTempo || action.movementTempo || 'unclear'),
+            movementType: String(part.movementType || action.movementType || ''),
+            maleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.maleProgressRate),
+            femaleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.femaleProgressRate)
+          })),
+          maleProgressRate: sourceMotionProgressRate(action, action.maleProgressRate),
+          femaleProgressRate: sourceMotionProgressRate(action, action.femaleProgressRate),
           outcomeType: ['climax', 'aftermath'].includes(String(action.outcomeType || '').toLowerCase())
             ? String(action.outcomeType).toLowerCase()
             : 'none',

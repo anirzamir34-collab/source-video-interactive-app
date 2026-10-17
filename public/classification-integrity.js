@@ -58,6 +58,7 @@ const reviewFields = new Set([
   'sourceVerified', 'confidence', 'adultScene', 'adultSceneId', 'adultSceneStartTime',
   'adultSceneEndTime', 'positionId', 'positionLabel', 'positionOccurrenceId',
   'positionStartTime', 'positionEndTime', 'loopStartTime', 'loopEndTime',
+  'verifiedSubsequences',
   'receiverBodyOrientation', 'receiverSupport', 'positionConfigurationConfidence', 'positionEvidence',
   'movementType', 'movementTempo', 'activityType', 'activityTypeConfidence', 'activityEvidence',
   'groupScene', 'adultParticipantCount', 'participantTrackIds', 'partnerTrackId', 'partnerLabel',
