@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createAnalysisProgress } from '../public/analysis-progress.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
+import { reconcileAnalysisSessionEvidence } from '../public/analysis-source-session.js';
+import { mediaModeKeyFromOptions } from '../public/media-mode-key.js';
 
 const appSource = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
@@ -65,6 +67,8 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
   const completeFile = new Blob(['complete cached source video'], { type: 'video/mp4' });
   completeFile.name = 'cached-source.mp4';
   const session = suppliedSession || { file: null, sourceTranscript: null, mediaManifest: null, storyboard: null };
+  // VM fixtures always refer to the same source bytes; old source evidence is verified.
+  session.sourceEvidenceKey ??= 'synthetic-source-evidence';
   const state = { analysisSession: session, sourceTranscript: null, sourceContext: null, savedGameReady: false,
     gameState: 'ANALYZING', analysis: { prior: 'analysis' }, selectedRemoteVideo: remote ? { pageUrl: 'https://source.example/video' } : null };
   const els = new Proxy({}, { get(target, key) { return target[key] ||= new Element(); } });
@@ -83,7 +87,8 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}),
     geminiRequestHeaders: () => ({}),
     analysisCheckpointKey: async () => null,
-    storyboardSourceKey: async () => null, // Short synthetic source: persistence is tested independently.
+    storyboardSourceKey: async () => 'synthetic-source-evidence',
+    reconcileAnalysisSessionEvidence, mediaModeKeyFromOptions,
     analysisResponseCache: { readCheckpoint: async () => null, saveCheckpoint: async () => true },
     fetch: async (url, options) => {
       calls.visual.push({ url, options });
