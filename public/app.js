@@ -2695,7 +2695,7 @@ function normalizeAnalysis(body) {
     storyContext,
     warnings: Array.isArray(body?.warnings) ? body.warnings : [],
     actions: ownership.playable,
-    unownedSourceIntervals: mergeUnownedIntervals(ownership.excluded.map(action => ({
+    unownedSourceIntervals: mergeUnownedIntervals(ownership.skippableExcluded.map(action => ({
       startTime: action.startTime, endTime: action.endTime
     }))),
   };
