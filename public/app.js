@@ -2790,14 +2790,23 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
   const sorted = [...(Array.isArray(scenes) ? scenes : [])]
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
   const merged = [];
+  // The source track pair, not incidental per-chunk participant metadata,
+  // owns scene continuity. A model may list the same two people in one clip's
+  // participantTrackIds and omit that redundant list in the next clip. That
+  // is not a verified cast change, and splitting there strands warmup Lust
+  // in a chapter without the next core position.
   const castFor = scene => [...new Set([
     ...(scene.positions || []), ...(scene.foreplay || []), ...(scene.partnerTransitions || [])
   ].flatMap(item => {
     const subject = String(item.subjectTrackId || '').trim();
     const partner = String(item.partnerTrackId || '').trim();
-    const participants = [...(item.participantTrackIds || [])]
-      .map(value => String(value || '').trim()).filter(Boolean).sort();
-    return subject || partner || participants.length ? [JSON.stringify([subject, partner, participants])] : [];
+    if (!subject || !partner || subject === partner) return [];
+    // Genuine group scenes must still agree on their additional participants.
+    const group = item.groupScene === true
+      ? [...new Set((item.participantTrackIds || []).map(value =>
+        String(value || '').trim()).filter(Boolean))].sort()
+      : [];
+    return [JSON.stringify([subject, partner, group])];
   }))].sort().join('|');
 
   for (const scene of sorted) {
