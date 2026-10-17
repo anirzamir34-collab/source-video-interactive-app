@@ -95,6 +95,7 @@ import {
   extractStoryboard
 } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
+import { sourceOutsideScene } from './scene-source-boundary.js';
 import { recoverVerifiedChunksOnCreditExhaustion } from './partial-analysis-recovery.js';
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
 import { repairableAnalysisGaps, retryableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
@@ -847,7 +848,7 @@ function selectedAnalysisModes() {
     subtitles: Boolean(els.subtitleMode?.checked),
     dubbing: Boolean(els.dubMode?.checked),
     dubQuality: String(els.dubQualityMode?.value || 'quality'),
-    dubbingProvider: 'classic',
+    dubbingProvider: els.dubMode?.checked ? 'elevenlabs_v1' : 'classic',
     quality: 'ultra',
     analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy',
     deepAnalysisModel: els.deepAnalysisModel?.value || 'gemini-3.8-flash'
@@ -6024,6 +6025,14 @@ function updateAdultPlayback(now, mediaTime) {
   if (!els.video) return;
 
   if (state.adultLoopSeeking || els.video.seeking) {
+    state.lastAdultFrameNow = now;
+    return;
+  }
+
+  // A previously selected card never owns playback in a different room,
+  // source chapter, or ordinary interlude.
+  if (sourceOutsideScene(state.adultScene, mediaTime)) {
+    reconcileInteractionSeek(mediaTime);
     state.lastAdultFrameNow = now;
     return;
   }
