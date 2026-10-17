@@ -89,3 +89,63 @@ test('ordinary choice with no other male is unaffected even with sparse metadata
   assert.deepEqual(result.playable.map(item => item.actionId), ['legacy', 'modern']);
   assert.deepEqual(result.excluded, []);
 });
+
+test('verified main actor stays playable when two or three men share one frame', () => {
+  const context = { characters: [
+    { id: 'main', participantTrackId: 'MAIN_MALE' },
+    { id: 'second', participantTrackId: 'MALE_B' },
+    { id: 'third', participantTrackId: 'MALE_C' }
+  ] };
+  const actions = [
+    { actionId: 'main-contact', sourceVerified: true, subjectTrackId: 'main',
+      adultSceneId: 'room-one', actionType: 'position', positionId: 'main-position',
+      involvedCharacterIds: ['main', 'second', 'third'], startTime: 100, endTime: 120 },
+    { actionId: 'main-speaks', sourceVerified: true, subjectTrackId: 'MAIN_MALE',
+      actionType: 'dialogue', choiceSurface: 'story', adultSceneId: 'room-one',
+      involvedCharacterIds: ['main', 'second', 'third'], startTime: 122, endTime: 135 },
+    { actionId: 'other-contact', sourceVerified: true, subjectTrackId: 'second',
+      adultSceneId: 'room-one', actionType: 'position', positionId: 'other-position',
+      involvedCharacterIds: ['second', 'third'], startTime: 136, endTime: 160 },
+    { actionId: 'shared-other-speaks', sourceVerified: true, subjectTrackId: 'MALE_B',
+      adultSceneId: 'room-one', actionType: 'dialogue', choiceSurface: 'story',
+      involvedCharacterIds: ['main', 'second'], startTime: 165, endTime: 172 },
+    { actionId: 'other-only-scene', sourceVerified: true, subjectTrackId: 'MALE_C',
+      adultSceneId: 'room-two', actionType: 'position', positionId: 'other-only',
+      involvedCharacterIds: ['third'], startTime: 190, endTime: 213 }
+  ];
+  const result = partitionProtagonistActions(actions, context);
+  assert.deepEqual(result.playable.map(item => item.actionId), ['main-contact', 'main-speaks']);
+  assert.deepEqual(result.excluded.map(item => item.actionId),
+    ['other-contact', 'shared-other-speaks', 'other-only-scene']);
+  assert.deepEqual(result.skippableExcluded.map(item => item.actionId), ['other-only-scene']);
+});
+
+test('user-specified protagonist track becomes the sole actor even with the earlier automatic main present', () => {
+  const context = { characters: [
+    { id: 'old', participantTrackId: 'MAIN_MALE' },
+    { id: 'chosen', participantTrackId: 'MALE_C' }
+  ] };
+  const { playable, excluded, skippableExcluded } = partitionProtagonistActions([
+    { actionId: 'chosen', subjectTrackId: 'chosen', sourceVerified: true,
+      actionType: 'position', participantTrackIds: ['chosen', 'old'],
+      startTime: 32, endTime: 40, adultSceneId: 'group' },
+    { actionId: 'old-actor', subjectTrackId: 'old', sourceVerified: true,
+      actionType: 'position', participantTrackIds: ['old', 'chosen'],
+      startTime: 40, endTime: 48, adultSceneId: 'group' },
+    { actionId: 'separate-old', subjectTrackId: 'old', sourceVerified: true,
+      participantTrackIds: ['old'], startTime: 60, endTime: 65, adultSceneId: 'separate' }
+  ], context, 'chosen');
+  assert.deepEqual(playable.map(item => item.actionId), ['chosen']);
+  assert.deepEqual(excluded.map(item => item.actionId), ['old-actor', 'separate-old']);
+  assert.deepEqual(skippableExcluded.map(item => item.actionId), ['separate-old']);
+});
+
+test('mixed-cast core with no verified main actor remains unplayable without manufacturing a skip', () => {
+  const { playable, excluded, skippableExcluded } = partitionProtagonistActions([
+    { actionId: 'ambiguous', subjectTrackId: 'MAIN_MALE', sourceVerified: false,
+      participantTrackIds: ['MAIN_MALE', 'OTHER_MALE'], startTime: 10, endTime: 20 }
+  ]);
+  assert.deepEqual(playable, []);
+  assert.equal(excluded.length, 1);
+  assert.equal(skippableExcluded.length, 0);
+});
