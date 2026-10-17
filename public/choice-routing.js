@@ -188,3 +188,17 @@ export function verifiedStoryAheadOfGap(candidates = [], cursor = 0, interval = 
     Number(action.startTime) >= now - 0.05 &&
     Number(action.startTime) <= end + 0.05);
 }
+
+// Never let "watch/skip other-character footage" jump across an independently
+// verified choice or the start of the next playable scene. The surrounding
+// unowned interval only authorizes navigation until the earliest real route.
+export function boundedUnownedGapEnd(interval, nextVerifiedTime, videoDuration = Infinity) {
+  const end = Number(interval?.endTime);
+  if (!Number.isFinite(end)) return null;
+  const boundaries = [end];
+  if (nextVerifiedTime != null && Number.isFinite(Number(nextVerifiedTime)))
+    boundaries.push(Number(nextVerifiedTime));
+  if (videoDuration != null && Number.isFinite(Number(videoDuration)) &&
+      Number(videoDuration) > 0) boundaries.push(Number(videoDuration));
+  return Math.min(...boundaries);
+}
