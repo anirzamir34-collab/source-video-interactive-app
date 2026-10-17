@@ -1709,7 +1709,8 @@ els.analyzeBtn.addEventListener('click', async () => {
           dialogueRows
         })
       : legacyPlan;
-    let analysisPlan = proposedPlan;
+    const sameBoundaries = JSON.stringify(proposedPlan.chunks.map(x => [x.firstSheet, x.sheetCount])) === JSON.stringify(legacyPlan.chunks.map(x => [x.firstSheet, x.sheetCount]));
+    let analysisPlan = sameBoundaries ? legacyPlan : proposedPlan;
     const framesPerSheet = 12;
     const dialogueSample = [
       dialogueRows.length,
@@ -1734,9 +1735,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     // boundaries must never make existing verified checkpoints invisible.
     let recoveredLegacy = [];
     let checkpointPrefixOverride = null;
-    if (proposedPlan.adaptive === true &&
-        JSON.stringify(proposedPlan.chunks.map(chunk => [chunk.firstSheet, chunk.sheetCount])) !==
-        JSON.stringify(legacyPlan.chunks.map(chunk => [chunk.firstSheet, chunk.sheetCount]))) {
+    if (proposedPlan.adaptive === true && !sameBoundaries) {
       const oldMode = modeForPlan(legacyPlan);
       const oldPrefix = await analysisCheckpointKey({
         sheets: storyboard.sheets, timestamps: storyboard.timestamps,
