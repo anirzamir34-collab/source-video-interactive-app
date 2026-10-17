@@ -118,7 +118,7 @@ import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentC
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
-  openingSceneChoiceMenu, isForwardTimelineChoice } from './choice-routing.js';
+  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
@@ -6485,10 +6485,7 @@ function renderChoices() {
   // unowned-source interval. Group videos can have a narrative decision even
   // when no single playable protagonist was established for that interval.
   let candidates = futureActions();
-  const verifiedInsideGap = candidates.some(action =>
-    choiceSurfaceForAction(action) === 'story' &&
-    Number(action.startTime) >= Number(state.gameCursorTime) - 0.05 &&
-    Number(action.startTime) <= Number(unowned?.endTime) + 0.05);
+  const verifiedInsideGap = verifiedStoryAheadOfGap(candidates, state.gameCursorTime, unowned);
   if (unowned && !verifiedInsideGap) {
     const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration) || 0;
     if (Number(unowned.startTime) > state.gameCursorTime + 0.3) {
