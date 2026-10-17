@@ -24,11 +24,15 @@ export function partitionProtagonistActions(actions = [], context = {}, mainTrac
     const subject = canonical(action.subjectTrackId);
     const participants = [action.subjectTrackId, action.primaryCharacterId, action.partnerTrackId,
       ...(action.involvedCharacterIds || []), ...(action.participantTrackIds || [])].map(canonical).filter(Boolean);
+    const witnessedCast = [...(action.involvedCharacterIds || []),
+      ...(action.participantTrackIds || [])].map(canonical).filter(Boolean);
+    const mainWitnessed = !witnessedCast.length || witnessedCast.includes(protagonist);
     // A verified conversation or story event belongs to its observed actor,
     // not to every person in the same frame. Another male may listen, answer,
     // or stand nearby without transferring the player's agency to him.
     // Keep the stronger cast ownership barrier for intimate/core scenes.
     const ordinaryStory = action.sourceVerified === true && subject === protagonist &&
+      mainWitnessed &&
       ['dialogue', 'story', 'scene_transition', 'camera_transition'].includes(String(action.actionType || '').toLowerCase()) &&
       action.adultScene !== true && !action.positionId && !action.positionLabel &&
       !['oral', 'manual', 'vaginal', 'anal'].includes(String(action.activityType || '').toLowerCase()) &&
@@ -38,13 +42,14 @@ export function partitionProtagonistActions(actions = [], context = {}, mainTrac
       id !== protagonist && (otherMaleTracks.has(id) || otherMaleTrack(id) ||
         /^(?:MALE|MAN|M)[_-]?[B-Z0-9]+$/i.test(id)));
     const mainActorVerified = action.sourceVerified === true && subject === protagonist &&
-      participants.includes(protagonist);
+      mainWitnessed;
     // The other man appearing in the same frame never disqualifies a
     // source-verified action belonging to the selected protagonist.
     // An actor-less or unverified mixed-cast event still cannot grant a card.
     const belongsToMain = !foreignActor &&
       (!anotherMaleInShot || ordinaryStory || mainActorVerified);
-    actionCast.set(action, { protagonistVisible: participants.includes(protagonist),
+    actionCast.set(action, { protagonistVisible: witnessedCast.length
+      ? witnessedCast.includes(protagonist) : participants.includes(protagonist),
       sceneKey: String(action.adultSceneId || action.sceneId || '').trim(),
       mainActorVerified });
     if (belongsToMain) playable.push(action);
