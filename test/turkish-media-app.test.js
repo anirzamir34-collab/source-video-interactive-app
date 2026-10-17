@@ -83,6 +83,7 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}),
     geminiRequestHeaders: () => ({}),
     analysisCheckpointKey: async () => null,
+    storyboardSourceKey: async () => null, // Short synthetic source: persistence is tested independently.
     analysisResponseCache: { readCheckpoint: async () => null, saveCheckpoint: async () => true },
     fetch: async (url, options) => {
       calls.visual.push({ url, options });
