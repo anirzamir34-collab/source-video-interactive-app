@@ -3,6 +3,7 @@ import { sourceOpeningTimeline } from './source-opening.js';
 import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { createAnalysisProgress } from './analysis-progress.js';
+import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { repairSavedAudio } from './saved-audio.js';
 import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, uncoveredNeutralRepairIntervals } from './neutral-gap-repair.js';
 import { isRecoverableTurkishMediaFailure, mediaFallbackMessage } from './media-failure-recovery.js';
@@ -2114,8 +2115,12 @@ els.analyzeBtn.addEventListener('click', async () => {
           chunkCount: completedResults.length,
           modelRawActionsCount: completedResults.reduce((total, item) =>
             total + Number(item.analysisTelemetry?.modelRawActionsCount || 0), 0),
+          modelSourceVerifiedActionsCount: completedResults.reduce((total, item) =>
+            total + Number(item.analysisTelemetry?.modelSourceVerifiedActionsCount || 0), 0),
           serverNormalizerAcceptedCount: completedResults.reduce((total, item) =>
             total + Number(item.analysisTelemetry?.serverNormalizerAcceptedCount || 0), 0),
+          serverSourceVerifiedActionsCount: completedResults.reduce((total, item) =>
+            total + Number(item.analysisTelemetry?.serverSourceVerifiedActionsCount || 0), 0),
           serverNormalizerRejected: completedResults.reduce((totals, item) => {
             for (const [reason, count] of Object.entries(item.analysisTelemetry?.serverNormalizerRejected || {}))
               totals[reason] = (totals[reason] || 0) + Number(count || 0);
@@ -2205,6 +2210,8 @@ els.analyzeBtn.addEventListener('click', async () => {
   normalized.analysisDiagnostics = {
     ...(body.analysisDiagnostics || {}),
     clientNormalizerInputCount: Array.isArray(body.actions) ? body.actions.length : 0,
+    clientSourceVerifiedInputCount: Array.isArray(body.actions)
+      ? body.actions.filter(action => action?.sourceVerified === true).length : 0,
     clientNormalizerAcceptedCount: beforeHardeningCount,
     clientNormalizerDroppedCount: Math.max(0,
       (Array.isArray(body.actions) ? body.actions.length : 0) - beforeHardeningCount),
@@ -2233,13 +2240,19 @@ els.analyzeBtn.addEventListener('click', async () => {
   }
 
   if (!normalized.actions.length) {
+    const diagnosis = explainNoVerifiedActions(normalized.analysisDiagnostics);
     els.analysisState.textContent = 'NO_ACTIONS';
-    els.analysisTitle.textContent = 'Doğrulanmış action bulunmadı';
-    els.analysisOutput.textContent = body.partial
-      ? ['Modelden oynanabilir analiz verisi alınamadı. Okunamayan bölümler başarı sayılmadı.', ...(body.warnings || [])].join('\n')
-      : 'Analiz edilen görüntülerde doğrulanmış seçenek bulunamadı.';
+    els.analysisTitle.textContent = 'Doğrulanmış aksiyon elde edilemedi';
+    els.analysisOutput.textContent = [
+      diagnosis.reason,
+      diagnosis.detail,
+      ...(body.partial
+        ? ['Okunamayan bölümler başarı sayılmadı.', ...(body.warnings || [])] : []),
+      'Aynı video ve ayarlar ile yeniden denersen tamamlanmış bölümlerin cihaz önbelleğinden kullanılabildiğini kontrol et; gereksiz yeni ücretli istek başlatma.'
+    ].join('\n');
     setGameState('ERROR');
-    renderDebug({ lastAnalyzeBody: body });
+    renderDebug({ analysisDiagnostics: normalized.analysisDiagnostics,
+      lastAnalyzeBody: body });
     return;
   }
 
