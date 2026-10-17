@@ -7267,13 +7267,16 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     const prior = lastAttempt?.model === repairModel &&
       lastAttempt?.promptVersion === GAP_REPAIR_PROMPT_VERSION
       ? lastAttempt.results?.find(item => item.startTime === gap.startTime &&
-        item.endTime === gap.endTime && item.reason === 'GEMINI_CONTENT_RESTRICTED')
+        item.endTime === gap.endTime &&
+        ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS'].includes(item.reason))
       : null;
     if (prior) {
+      const restricted = prior.reason === 'GEMINI_CONTENT_RESTRICTED';
       results.push({ startTime: gap.startTime, endTime: gap.endTime,
-        reason: 'GEMINI_CONTENT_RESTRICTED', httpStatus: prior.httpStatus || null,
-        outcome: 'skipped_previous_rejection' });
-      onProgress(`Bölüm ${index + 1}/${gaps.length}: aynı modelin önceki içerik reddi nedeniyle tekrar gönderilmedi.`);
+        reason: prior.reason, httpStatus: prior.httpStatus || null,
+        outcome: restricted ? 'skipped_previous_rejection' : 'skipped_previous_empty' });
+      onProgress(`Bölüm ${index + 1}/${gaps.length}: aynı model ve talimattaki önceki ${restricted
+        ? 'içerik reddi' : 'boş analiz yanıtı'} nedeniyle yeniden gönderilmedi.`);
       continue;
     }
     if (modelFailure) {
@@ -7333,11 +7336,9 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
         const unsupported = uncoveredNeutralRepairIntervals(gap, result.actions);
         result.analysisGaps = [...(Array.isArray(result.analysisGaps) ? result.analysisGaps : []),
           ...unsupported];
-        // Do not mark a previously missing range as recovered without any
-        // positively verified source action or an explicit remaining gap.
-        if (!result.actions.some(action => action.sourceVerified === true) &&
-            !(result.analysisGaps || []).length) {
-          result = { available: false, reason: 'NO_VERIFIED_ACTIONS' };
+        // An HTTP 200 response is not analysis evidence by itself.
+        if (!result.actions.some(action => action.sourceVerified === true)) {
+          result = { available: false, reason: 'GEMINI_NO_VERIFIED_EVENTS' };
         }
       } else {
         reason = String(result?.reason || 'ANALYSIS_FAILED');
@@ -7350,10 +7351,15 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     reason = result?.available ? '' : String(result?.reason || reason || 'ANALYSIS_FAILED');
     if (technicalStop.has(reason)) modelFailure = reason;
     repairs.push({ gap, result });
+    const verifiedActions = result?.available
+      ? (result.actions || []).filter(action => action.sourceVerified === true).length : 0;
+    const outcome = !result?.available ? 'failed'
+      : (result.analysisGaps || []).length ? 'partial' : 'processed';
     results.push({ startTime: gap.startTime, endTime: gap.endTime, reason,
-      httpStatus, outcome: result?.available ? 'processed' : 'failed',
-      verifiedActions: result?.available ? (result.actions || []).filter(a => a.sourceVerified === true).length : 0 });
-    onProgress(`Bölüm ${index + 1}/${gaps.length}: ${reason || 'doğrulanmış sonuç alındı'}`);
+      httpStatus, outcome, verifiedActions });
+    onProgress(`Bölüm ${index + 1}/${gaps.length}: ${reason ||
+      (outcome === 'partial' ? `${verifiedActions} olay doğrulandı, kalan aralık hâlâ eksik`
+        : `${verifiedActions} olay doğrulandı, bölüm tamamlandı`)}`);
   }
   const merged = mergeRepairedAnalysis(previous, repairs, game.duration);
   const remaining = retryableAnalysisGaps(merged, game.duration);

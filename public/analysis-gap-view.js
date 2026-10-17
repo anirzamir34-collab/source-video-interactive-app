@@ -4,6 +4,8 @@ const descriptions = {
   GEMINI_CONTENT_RESTRICTED: 'Gemini bu bölüm için içerik kısıtlaması bildirdi. Hangi tek karenin neden olduğu servis yanıtında belirtilmiyor.',
   MODEL_UNSTRUCTURED_RESPONSE: 'Model kullanılabilir yapılandırılmış analiz döndürmedi.',
   GEMINI_EMPTY_RESPONSE: 'Model boş yanıt döndürdü.',
+  GEMINI_NO_VERIFIED_EVENTS: 'Gemini isteğe yanıt verdi ancak bu aralık için doğrulanmış yeni sahne olayı üretemedi. Eksik bölüm tamamlanmadı.',
+  NEUTRAL_REPAIR_UNVERIFIED: 'Bu aralıkta sıradan, doğrulanabilir bir olay bulunamadı; görsel devamlılık ve oyun seçenekleri hâlâ doğrulanmadı.',
   GEMINI_INVALID_JSON: 'Model yanıtı okunabilir analiz biçiminde değildi.',
   GEMINI_CREDITS_DEPLETED: 'Analiz kredisi veya kota tükendi.',
   CHUNK_ANALYSIS_GAP: 'Bu bölümün analizi tamamlanamadı.'

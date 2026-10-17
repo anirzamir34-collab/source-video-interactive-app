@@ -826,6 +826,16 @@ Rules:
               code: typeof error?.code === 'number' ? error.code : String(error?.code || '').slice(0, 64),
               name: String(error?.name || '').slice(0, 64)
             }))
+          }).then(result => {
+            // Empty or unsupported neutral output is not a verified analysis.
+            // Reject it BEFORE cache insertion: a successful HTTP transport
+            // must not freeze a zero-evidence response for subsequent retries.
+            if (savedGameRepair && !verifiedNeutralRepairActions(result?.actions,
+              { startTime: chunkStart, endTime: chunkEnd }).length) {
+              throw Object.assign(new Error('No verified neutral events in this source interval.'),
+                { code: 'GEMINI_NO_VERIFIED_EVENTS' });
+            }
+            return result;
           }));
           outcome = cached.outcome;
           if (outcome !== 'completed') {
@@ -1186,6 +1196,19 @@ Rules:
     // design. Remove only true duplicates; never discard a valid child
     // segment merely because it lives inside its parent interval.
     const dedupedActions = dedupeVerifiedTimelineActions(actions);
+
+    // The normal action normalizer also imposes timing and confidence rules.
+    // If it discarded every neutral observation, report a failed repair.
+    if (savedGameRepair && !dedupedActions.length) {
+      return res.status(422).json({
+        available: false, retryable: false, reason: 'GEMINI_NO_VERIFIED_EVENTS',
+        message: 'Gemini yanıt verdi ancak kaynak karelerden doğrulanmış yeni bir olay bulunamadı.',
+        chunkIndex, chunkCount, chunkStart, chunkEnd,
+        analysisGaps: [{ startTime: chunkStart, endTime: chunkEnd,
+          reason: 'GEMINI_NO_VERIFIED_EVENTS' }],
+        aiUsage: analysisUsage
+      });
+    }
 
     return res.json({
       available: true,

@@ -94,13 +94,43 @@ test('repair report never describes refused five ranges as a successful analysis
 test('repair report shows disabled redundant retries and genuine success', () => {
   const report = describeSavedGameRepair({ lastRepairAttempt: {
     model: 'gemini-3.1-flash-lite', total: 2, recovered: 1, remaining: 1,
-    results: [{ startTime: 0, endTime: 10, outcome: 'processed' },
+    results: [{ startTime: 0, endTime: 10, outcome: 'processed', verifiedActions: 1 },
       { startTime: 10, endTime: 20, outcome: 'skipped_previous_rejection',
         reason: 'GEMINI_CONTENT_RESTRICTED' }]
   } });
   assert.match(report.summary, /1\/2 eksik bölüm tamamlandı/);
-  assert.match(report.details, /Tekrarlanan içerik reddi/);
-  assert.match(report.details, /Sonuç alındı/);
+  assert.match(report.details, /Önceki içerik reddi/);
+  assert.match(report.details, /Bölüm tamamlandı · 1 doğrulanmış olay/);
   assert.equal(report.error, true);
   assert.equal(describeSavedGameRepair({}), null);
+});
+
+test('old HTTP 200 without verified events is not presented as completed analysis', () => {
+  const report = describeSavedGameRepair({ lastRepairAttempt: {
+    model: 'gemini-3.1-flash-lite', total: 5, recovered: 0, remaining: 5,
+    results: Array.from({ length: 5 }, (_, index) => ({
+      startTime: index * 30, endTime: index * 30 + 30,
+      reason: '', httpStatus: 200, outcome: 'processed', verifiedActions: 0
+    }))
+  } });
+  assert.equal(report.error, true);
+  assert.ok(report.summary.includes('0/5 eksik bölüm tamamlandı'));
+  assert.ok(report.summary.includes('yeni doğrulanmış olay yok'));
+  assert.ok(report.details.includes('Model yanıtladı, doğrulanmış olay yok; bölüm tamamlanmadı'));
+  assert.ok(report.details.includes('HTTP 200'));
+  assert.ok(!report.details.includes('Sonuç alındı'));
+});
+
+test('partial observations and repeat-suppression have distinct truthful labels', () => {
+  const report = describeSavedGameRepair({ lastRepairAttempt: {
+    model: 'gemini-3.8-flash', total: 2, recovered: 0, remaining: 2,
+    results: [{ startTime: 0, endTime: 50, reason: '',
+      httpStatus: 200, outcome: 'partial', verifiedActions: 2 },
+      { startTime: 50, endTime: 100, reason: 'GEMINI_NO_VERIFIED_EVENTS',
+        outcome: 'skipped_previous_empty', httpStatus: 422 }]
+  } });
+  assert.ok(report.summary.includes('2 doğrulanmış olay'));
+  assert.ok(report.details.includes('Kısmi gözlem'));
+  assert.ok(report.details.includes('Önceki boş analiz nedeniyle aynı istek gönderilmedi'));
+  assert.ok(!report.details.includes('Sonuç alındı'));
 });
