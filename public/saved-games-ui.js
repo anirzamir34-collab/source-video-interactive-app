@@ -13,6 +13,33 @@ export function savedGameOperationError(error) {
   return storageError(error);
 }
 
+const repairErrorLabels = {
+  GEMINI_CONTENT_RESTRICTED: 'Gemini içerik kısıtlaması',
+  GEMINI_MODEL_UNAVAILABLE: 'Model bu API anahtarında kullanılamıyor (404)',
+  GEMINI_INVALID_REQUEST: 'Model bu analiz biçimini desteklemiyor (400)',
+  GEMINI_AUTH_ERROR: 'API anahtarı veya erişim hatası',
+  GEMINI_CREDITS_DEPLETED: 'API kredi/kota hatası',
+  GEMINI_RATE_LIMITED: 'Hız sınırı / kota',
+  GEMINI_DAILY_LIMIT: 'Günlük kota sınırı',
+  GEMINI_TEMPORARILY_UNAVAILABLE: 'Gemini geçici olarak kullanılamıyor',
+  NETWORK_OR_ANALYSIS_ERROR: 'Bağlantı veya analiz hatası',
+  NO_VERIFIED_ACTIONS: 'Doğrulanmış yeni eylem bulunamadı'
+};
+export function describeSavedGameRepair(analysis) {
+  const run = analysis?.lastRepairAttempt;
+  if (!run || !Array.isArray(run.results)) return null;
+  const summary = `${run.model}: ${run.recovered}/${run.total} eksik bölüm tamamlandı, ${run.remaining} aralık eksik.`;
+  const details = run.results.map((item, index) => {
+    const range = `${Number(item.startTime).toFixed(1)}–${Number(item.endTime).toFixed(1)} sn`;
+    const result = item.outcome === 'processed' ? 'Sonuç alındı'
+      : item.outcome === 'skipped_previous_rejection' ? 'Tekrarlanan içerik reddi, istek gönderilmedi'
+      : item.outcome === 'skipped_model_error' ? 'Model hatası nedeniyle gönderilmedi'
+      : repairErrorLabels[item.reason] || item.reason || 'Analiz başarısız';
+    return `${index + 1}. ${range}: ${result}${item.httpStatus ? ` · HTTP ${item.httpStatus}` : ''}`;
+  }).join('\n');
+  return { summary, details, error: Number(run.remaining) > 0 };
+}
+
 export function mountSavedGames({ root, capture, getCurrentGame = capture, store = createGameStore(), openGame, repairGame, loadRepairModels, isBusy, onBusy, onSaved, onDeleted }) {
   const list = root.querySelector('[data-games-list]');
   const status = root.querySelector('[data-games-status]');
@@ -26,6 +53,7 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
   let repairModelsLoaded = false;
   let repairModelsError = '';
   const chosenModelByGame = new Map();
+  const recentRepairReports = new Map();
 
   function message(text, error = false) {
     status.textContent = text;
@@ -136,6 +164,7 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
             if (!confirm(`“${row.title}” kaydını ve kayıtlı videosunu bu cihazdan silmek istiyor musun?`)) return;
             await store.remove(row.id);
             onDeleted(row.id);
+            recentRepairReports.delete(row.id);
             await refresh();
             message('Kayıt silindi. İndirdiğin yedek dosyaları silinmedi.');
           } else if (action === 'repair') {
@@ -149,14 +178,18 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
             const analysis = await repairGame(game, update => message(update), model);
             const updated = { ...game, payload: { ...game.payload, analysis } };
             await store.save(updated, row.id);
+            const report = describeSavedGameRepair(analysis);
+            if (report) recentRepairReports.set(row.id, report);
             await openGame(updated);
             title.value = row.title;
             await refresh();
-            message(analysis.analysisGaps?.length
-              ? `${analysis.analysisGaps.length} aralık hâlâ eksik. Başarılı sonuçlar aynı kayda eklendi.`
-              : 'Eksik aralıklar tamamlandı ve aynı kayda eklendi.');
+            message(report?.summary || 'Eksik analiz sonucu kaydedildi.', report?.error || false);
           } else if (action === 'inspect') {
-            await openGame(await store.load(row.id));
+            const inspected = await store.load(row.id);
+            const report = describeSavedGameRepair(inspected.payload.analysis);
+            if (report) recentRepairReports.set(row.id, report);
+            await openGame(inspected);
+            await refresh();
             root.ownerDocument?.getElementById('analysisReview')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
             message('Eksik aralıkları ve kaynak sahnelerini analiz kartından inceleyebilirsin.');
           } else if (action === 'play') {
@@ -173,6 +206,18 @@ export function mountSavedGames({ root, capture, getCurrentGame = capture, store
         actions.append(button);
       }
       card.append(name, detail, ...(modelPicker ? [modelPicker] : []), actions);
+      const report = recentRepairReports.get(row.id);
+      if (report) {
+        const details = document.createElement('details');
+        details.className = 'saved-game-repair-report';
+        details.open = report.error;
+        const summary = document.createElement('summary');
+        summary.textContent = report.summary;
+        const body = document.createElement('pre');
+        body.textContent = report.details;
+        details.append(summary, body);
+        card.append(details);
+      }
       list.append(card);
     }
     refreshControls();
