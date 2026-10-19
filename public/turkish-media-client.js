@@ -665,6 +665,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   events.forEach(event => video.addEventListener(event, onMedia));
   clearCaptions();
   return { start, loadResult, setDubEnabled, setSubtitleTrack, setSyncOffset, sync, reset, capture, conversationEndAt, materializeAudio,
+    requestedOutputs: () => lastStart ? jsonCopy(lastStart.options.outputs) : null,
     getCapabilities: () => request(`${API}/capabilities`),
     async getVoices() {
       const body = await request(`${API}/voices`);

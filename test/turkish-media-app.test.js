@@ -22,6 +22,7 @@ const handlerFailure = section("  } catch (error) {\n    console.error('Analysis
 const updateTranscript = section('function updateSourceTranscript(', '\nfunction onTurkishMediaStatus(');
 const selectedModes = section('function selectedAnalysisModes(', '\nfunction updateAnalysisModesUI(');
 const mediaCacheRule = section('function canReuseTurkishMedia(', "\nels.analyzeBtn.addEventListener('click'");
+const mediaRetryHandler = section("els.mediaJobRetryBtn?.addEventListener('click', async () => {", '\nfunction renderVoiceMappingPanel()');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const copy = value => JSON.parse(JSON.stringify(value));
 
@@ -44,6 +45,23 @@ class Element {
     toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name)
   };
 }
+
+test('retry with dubbing now off starts a new analysis instead of retrying the old dubbing job', async () => {
+  let retryHandler;
+  let freshStarts = 0;
+  let oldRetries = 0;
+  const scope = vm.createContext({
+    els: { mediaJobRetryBtn: { addEventListener: (event, handler) => { retryHandler = handler; } },
+      analyzeBtn: { click: () => { freshStarts++; } } },
+    state: { analysisInProgress: false, savedGameBusy: false, mediaRevoice: null, analysisSession: {} },
+    mediaClient: { requestedOutputs: () => ({ dub: true, subtitles: false }), retry: () => { oldRetries++; } },
+    selectedAnalysisModes: () => ({ dubbing: false, subtitles: false })
+  });
+  vm.runInContext(mediaRetryHandler, scope);
+  await retryHandler();
+  assert.equal(freshStarts, 1);
+  assert.equal(oldRetries, 0);
+});
 
 function sourceManifest() {
   return {
