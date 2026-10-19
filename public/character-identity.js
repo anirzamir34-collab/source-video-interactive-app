@@ -27,13 +27,25 @@ function factSourceDisplayName(character) {
   return verifiedCharacterName(character) || (verifiedRoleNoun(value) ? value : '');
 }
 
+// A short look-based display name such as "Esmer kadın" or "Bıyıklı adam" is
+// a stable visual description, not a proper name and not a relationship.
+const visualAdjectives = /^(?:esmer|sarışın|kumral|kızıl|siyah saçlı|sarı saçlı|kahverengi saçlı|kısa saçlı|uzun saçlı|kıvırcık saçlı|bıyıklı|sakallı|kel|dövmeli|gözlüklü|uzun boylu|kısa boylu|kaslı|zayıf|dolgun|balıketli|esmer tenli|beyaz tenli|siyahi|kumral saçlı)$/iu;
+function visualDisplayName(character) {
+  const name = text(character?.displayName);
+  const match = name.match(/^(.{2,40}?)\s+(kadın|erkek|adam)$/iu);
+  if (!match || !visualAdjectives.test(match[1].trim())) return '';
+  return name.slice(0, 1).toLocaleUpperCase('tr-TR') + name.slice(1);
+}
+
 export function verifiedVisualDescription(character) {
   if (character?.identityConflict || character?.evidenceLevel !== 'fact' ||
       Number(character?.confidence) < 0.68) return '';
+  const lookName = visualDisplayName(character);
+  if (lookName) return lookName;
   const evidence = text(character?.evidence).replace(/\s*\(spk:\d+\)/giu, '');
   // Use only a directly supplied visual descriptor. Never turn a track ID,
   // generic gender, or a claimed relationship into a character name.
-  const descriptor = /(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü|dövmeli|gözlüklü|kel)(?=\s|,|$)/iu;
+  const descriptor = /(?:^|\s)(?:\S+\s+)?(?:üstlü|kazaklı|gömlekli|ceketli|saçlı|elbiseli|tişörtlü|dövmeli|gözlüklü|kel|bıyıklı|sakallı|büstiyerli|etekli|bikinili|sabahlıklı|takım elbiseli|esmer|sarışın|kızıl)(?=\s|,|$)/iu;
   // Prefer the shortest directly observed distinguishing phrase, not a camera
   // position or a generic relationship. Later comma-separated descriptors can
   // still be used if the first phrase is not visually distinguishing.

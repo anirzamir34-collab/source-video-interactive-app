@@ -3914,8 +3914,9 @@ function prepareAdultScenes() {
     ...(state.adultAnalysisTrace.audioContext.status === 'unavailable'
       ? [{ code: 'AUDIO_CONTEXT_UNAVAILABLE', message: 'Karakter eşleştirmesi için konuşma verisi bulunmuyor.' }] : []),
     ...graph.duplicateFamilies.map(item => ({
-      code: 'DUPLICATE_POSITION_FAMILY_TABS',
-      message: `${item.familyId} aynı sahnede ${item.tabCount} ayrı sekmeye bölündü.`,
+      // Informational: returns of one family share a single tab in the UI.
+      code: 'POSITION_FAMILY_RETURNS',
+      message: `${item.familyId} sahnede ${item.tabCount} kez geçiyor; tek sekmede, sırayla oynatılır.`,
       ...item
     })),
     ...graph.scenes.flatMap(scene => scene.positions
