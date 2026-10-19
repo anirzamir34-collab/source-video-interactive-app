@@ -31,7 +31,12 @@ export function describeSavedGameRepair(analysis) {
   if (!run || !Array.isArray(run.results)) return null;
   const verified = run.results.reduce((count, item) =>
     count + Math.max(0, Number(item?.verifiedActions) || 0), 0);
-  const summary = `${run.model}: ${run.recovered}/${run.total} eksik bölüm tamamlandı, ${run.remaining} aralık eksik` +
+  const skipped = run.results.filter(item => ['skipped_previous_rejection',
+    'skipped_previous_empty', 'skipped_model_error'].includes(item.outcome)).length;
+  const notStarted = run.results.length > 0 && skipped === run.results.length;
+  const summary = (notStarted ? 'Yeni analiz başlatılmadı. ' : '') +
+    `${run.model}: ${run.recovered}/${run.total} eksik bölüm tamamlandı, ${run.remaining} aralık eksik` +
+    (skipped ? ` · ${skipped} aralık yeniden gönderilmedi` : '') +
     (verified ? ` · ${verified} doğrulanmış olay` : ' · yeni doğrulanmış olay yok') + '.';
   const details = run.results.map((item, index) => {
     const range = `${Number(item.startTime).toFixed(1)}–${Number(item.endTime).toFixed(1)} sn`;
