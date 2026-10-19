@@ -2485,7 +2485,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     updateAnalyzeAvailability();
     // An unverified speaker can be selected after visual analysis finishes.
     // The picker may have loaded while analysis was still busy.
-    renderVoiceMappingPanel();
+    if (state.voiceMappingManualRequested) renderVoiceMappingPanel();
   }
 });
 
