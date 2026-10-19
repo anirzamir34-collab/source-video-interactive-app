@@ -13,6 +13,8 @@ otomatik kontrol eder.
 | İlk yakınlaşma (Lust) | Dokunma, masaj, öpüşme, sarılma, soyunma ve ilk seks pozisyonundan önceki oral/manuel | Konuşma kartları, seks pozisyonları |
 | Seks paneli | Pozisyon sekmeleri ve her pozisyonun gerçek hareket kartları; ilk pozisyondan sonra tekrar gelen oral kendi sekmesinde | Uydurma seçenek, yanlış sahne |
 
+- Yakınlaşma paneli ilk dokunma/öpüşme/soyunma/oral anında başlar; ondan
+  önceki konuşma ve hikâye normal panelde sırayla oynar.
 - Yakınlaşma arasındaki konuşma, kaynak zamanı gelince normal panelde açılır;
   ardından "Yakınlaşmaya dön" ile yakınlaşma menüsüne dönülür.
 - İlk yakınlaşma menüsü aynı anda en çok 4 seçenek gösterir, zaman sırasıyla;
@@ -35,8 +37,13 @@ otomatik kontrol eder.
 - Her pozisyon ailesi tek sekme. Aynı pozisyon videoda birkaç kez geçiyorsa
   ilk dokunuş videonun o anki yerine en yakın geçişi açar; o pozisyon oynarken
   tekrar dokunmak sonraki geçişe gider.
-- Uzun bir pozisyon (≈36 sn üstü) birkaç karta bölünür; her kart kendi gerçek
-  sekanslarını sırayla oynatır.
+- Uzun bir hareket (16 sn üstü) ~9 sn'lik ardışık gerçek sekanslara bölünür;
+  karta bir dokunuş bu sekansların hepsini kesintisiz oynatır, son sekanstan
+  sonra yeni seçim beklenir.
+- Oral temas (ağız-genital) her zaman Oral sekmesidir; görünür penetrasyon
+  olmadan kovboy/ters kovboy gibi bir pozisyon adı verilmez.
+- Kart yazısı o aralıkta gerçekten görünen hareketi söyler (bacaklarını kaldır,
+  ters çevir...); görünür bir değişim yeni kart/sekans başlatır.
 - Pozisyon adı vücut düzeninden gelir (kovboy / ters kovboy / doggy / ayakta
   doggy / prone-bone / misyoner ...).
 - Panel videonun genişliği boyunca altta; seçenekler kaydırmadan görünür.

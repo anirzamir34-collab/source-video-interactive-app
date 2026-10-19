@@ -3830,6 +3830,30 @@ function prepareAdultScenes() {
     });
   });
 
+  // The encounter begins at its first physical approach or position, never
+  // at the story before it. Earlier conversation/story stays an ordinary
+  // timeline choice in the normal panel, so the Lust panel takes over
+  // exactly when the first touch, kiss, undressing or oral act begins.
+  for (const scene of state.adultScenes) {
+    const intimateStarts = [
+      ...(scene.foreplay || []).filter(item => item.sourceVerified === true && item.nonIntimate !== true)
+        .map(item => Number(item.startTime)),
+      ...(scene.positions || []).map(position => Number(position.startTime))
+    ].filter(Number.isFinite);
+    if (!intimateStarts.length) continue;
+    const firstIntimate = Math.min(...intimateStarts);
+    if (!(Number(scene.startTime) < firstIntimate - 0.05)) continue;
+    const before = item => Number(item.endTime) <= firstIntimate + 0.05;
+    const released = [...(scene.dialogue || []), ...(scene.foreplay || []).filter(item => item.nonIntimate === true)]
+      .filter(before);
+    scene.dialogue = (scene.dialogue || []).filter(item => !before(item));
+    scene.foreplay = (scene.foreplay || []).filter(item => item.nonIntimate !== true || !before(item));
+    scene.startTime = firstIntimate;
+    for (const item of released) {
+      const row = traceByAction.get(actions.find(action => action.actionId === (item.sourceActionId || item.id)));
+      if (row) { row.route = 'NOT_ROUTED'; row.routeReason = 'STORY_BEFORE_FIRST_APPROACH'; row.finalSceneId = ''; }
+    }
+  }
   const graph = summarizeAdultSceneGraph(state.adultScenes);
   state.adultAnalysisTrace.graph = graph;
   const acceptedApproachIds = new Set(state.adultScenes.flatMap(scene =>
@@ -4174,6 +4198,20 @@ function settleInteractionClipBoundary(mediaTime) {
     commitAdultSelectionProgress(state.adultSelectionToken, mediaTime);
   }
   state.adultTimelineFloor = Math.max(Number(state.adultTimelineFloor) || 0, end);
+  // One tap plays the whole card: when its next real sequence directly
+  // continues this one, keep playing instead of stopping after each slice.
+  if (movement && !state.activeAdultEntryClip && !prelude) {
+    const card = (position?.activeMovementChoices || []).find(item => item.id === state.activeMovementChoiceId) ||
+      (position?.activeMovementChoices || []).find(item => item.variants?.some(clip => clip.id === movement.id));
+    const next = (card?.variants || []).filter(clip => clip.id !== movement.id && clip.sourceVerified !== false &&
+      Number(clip.loopStartTime) >= end - 0.5 && Number(clip.loopStartTime) - end <= 3)
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0];
+    if (next) {
+      logEngineEvent('CARD_SEQUENCE_CONTINUED', { choiceId: card.id, from: movement.id, to: next.id });
+      selectAdultMovement(next.id, true);
+      return true;
+    }
+  }
   if (state.activeAdultEntryClip) state.activeAdultEntryClip = null;
   else if (prelude) state.activeAdultPreludeId = null;
   else state.activeMovementId = null;

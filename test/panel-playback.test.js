@@ -1855,3 +1855,27 @@ test('clicking an opening card seeks to its source clip and plays it', async () 
   assert.equal(f.els.video.currentTime, 130);
   assert.equal(f.els.video.paused, false);
 });
+
+test('one tap plays every consecutive sequence of a card before waiting for a choice', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene.positions = [chapter('one', 20)];
+  const position = f.state.adultScene.positions[0];
+  position.activeMovementChoices = [{ id: 'card', label: 'Same action', variants: position.movements }];
+  f.state.adultUnlockedPositionIds.add('one');
+  f.state.adultSexUnlocked = true;
+  f.state.activePositionId = 'one';
+  f.state.activeMovementChoiceId = 'card';
+  f.selectAdultMovement('one-0', true);
+  await flush();
+  f.els.video.time = 30;
+  assert.equal(f.settleInteractionClipBoundary(30), true);
+  await flush();
+  assert.equal(f.state.activeMovementId, 'one-1', 'the next real sequence continues automatically');
+  f.els.video.time = 40;
+  f.settleInteractionClipBoundary(40);
+  await flush();
+  assert.equal(f.state.activeMovementId, 'one-2');
+  f.els.video.time = 50;
+  f.settleInteractionClipBoundary(50);
+  assert.equal(f.state.activeMovementId, null, 'after the last sequence the player chooses again');
+});
