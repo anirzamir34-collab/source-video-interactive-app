@@ -887,7 +887,8 @@ test('transcript-only requests preserve the backend output flag and use no Turki
     throw new Error(`Unexpected transcript-only request ${url}`);
   });
   t.after(() => f.client.destroy());
-  await f.client.start(sourceFile(), { outputs: { dub: false, subtitles: false, transcriptOnly: true }, qualityMode: 'quality' });
+  await f.client.start(sourceFile(), { outputs: { dub: false, subtitles: false, transcriptOnly: true,
+    dubbingProvider: 'elevenlabs_v1' }, qualityMode: 'quality' });
   const body = JSON.parse(f.requests.find(request => request.url.endsWith('/jobs')).init.body);
   assert.deepEqual(body.outputs, { dub: false, subtitles: false, transcriptOnly: true });
   assert.equal(f.audios.length, 0);
