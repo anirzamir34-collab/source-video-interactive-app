@@ -539,7 +539,7 @@ CHUNK RULES:
 - ADULT SCENE CHOICES: When a clearly consensual sexual interaction between visible adults is actually shown, write the label field in explicit, direct and natural Turkish, naming that exact verified sexual action without euphemism.
 - Name the visibly verified roles, position, contact, direction and tempo when they distinguish one real action from another.
 - Do not censor, soften, euphemize or replace verified adult actions with vague labels such as "devam et", "yakınlaş", "pozisyonu değiştir" or "hareketi sürdür".
-- Each adult choice must distinguish a genuinely different playable action or variation that exists inside this chunk and must seek to its exact startTime.
+- Each adult choice must distinguish a genuinely different playable action or variation that exists inside this chunk and must seek to its exact startTime. Name the visible actor and their particular observed movement or contact; a bare position name, tempo or generic "ritmik hareket" is not a complete player choice when the source verifies a more specific act.
 - Never invent an adult action, body contact, position, participant, consent, intensity or outcome that is not clearly visible in the source video.
 - If adulthood or the visible action is uncertain, keep the description neutral and limited to the clearly observable movement.
 - For chunks after the first one, introEndTime and playStartTime must equal chunkStart.
@@ -671,7 +671,7 @@ Return ONLY valid JSON with this exact shape:
 }
 
 Rules:
-- Assign exactly one choiceSurface to each source action: story for dialogue and ordinary narrative actions, approach for directly verified opening interactions, or panel for an already verified panel control. Supply choiceSurfaceEvidence and choiceSurfaceConfidence for that specific interval.
+- Assign exactly one choiceSurface to each source action: story for dialogue and ordinary narrative actions, approach for directly verified opening interactions, or panel for an already verified panel control. Supply choiceSurfaceEvidence and choiceSurfaceConfidence for that specific interval. A directly visible opening physical interaction before the first verified position belongs to approach even if dialogue accompanies it; a verbal command, a partner's reaction or a coercive exchange remains story. Never infer contact from dialogue or the later position.
 - Speech occurring during an action does not change its surface. Walking, sitting, watching, listening and camera changes stay story unless the supplied visual evidence independently proves another category.
 - Never combine separate source actions from different surfaces into one option or extend their timestamps across a category boundary. A conversation mentioning an action is not visual evidence that it happened.
 - timestamps must be within 0 and ${duration}
@@ -747,7 +747,7 @@ Rules:
 - A movement may belong to a position only when its entire loopStartTime-loopEndTime interval is visibly contained inside that exact positionStartTime-positionEndTime range.
 - Reject an unsupported position or movement classification when the claimed configuration is not visible at its start, midpoint and end. Retain a verified scene event without that classification when it has a usable source interval.
 - Every internal change must reuse its parent positionId and have a concise movementType and Turkish label.
-- Internal movement labels must name only the directly visible change, for example hızlı hareket, ritmik hareket, sert hareket, derin hareket, öpme, okşama, tutuş or a similarly concrete interaction actually visible in that interval.
+- Internal movement labels must name the actor and the directly visible change in what they do, including the particular hand placement or interaction only if verified in that exact interval. Tempo words such as hızlı or ritmik may qualify an observed action but must not replace the action itself. When the evidence supports only a stable pose or pace, say only what is observable; never invent contact to make a label more vivid.
 - Never put timestamps, duration, sequence numbers, "gerçek kesit", breathing, moaning, gaze, emotion, appearance or confidence text inside an internal movement label. Those belong only to metadata.
 - Set movementTempo from directly visible cadence only. Use slow, moderate or fast for stable segments; split a changing cadence into separate 5+ second verified segments when the source frames resolve the change and its boundaries. Use unclear when speed cannot be verified.
 - Use fast only when repeated motion is visibly and consistently fast across the complete interval. Put words such as sert, derin or güçlü in movementType/label only when that exact quality is directly visible throughout the same time-aligned segment; never infer it from dialogue, audio alone or the surrounding adult scene.
