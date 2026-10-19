@@ -77,6 +77,7 @@ function fixture() {
     orderedLockedAdultPositions: () => [], findAdultSceneAt: () => null,
     selectDiverseStoryActions, selectSameMomentStoryActions, findAdultSceneForTimeline: () => null,
     verifiedAdultPositionFamily: () => null, storyChoiceLabelForAction: action => action.label,
+    playAdultPrelude: id => { state.playedPreludeId = id; },
     playableAdultPanelFamily: () => '',
     escapeHtml: value => String(value)
   });
@@ -85,6 +86,21 @@ function fixture() {
   els.video.addEventListener('play', () => { if (state.gameState !== 'SEGMENT_PLAYING') els.video.pause(); });
   return scope;
 }
+
+test('a routed approach card starts its verified clip rather than only opening a paused panel', async () => {
+  const f = fixture();
+  const action = { actionId: 'observed-approach', sourceVerified: true,
+    choiceSurface: 'approach', actionType: 'touch', startTime: 20, endTime: 28,
+    label: 'Observed opening gesture' };
+  const scene = { id: 'chapter-approach', startTime: 20, endTime: 60, foreplay: [
+    { id: 'source-approach-1', sourceActionId: 'observed-approach',
+      startTime: 20, endTime: 28, sourceVerified: true }
+  ], dialogue: [], positions: [] };
+  f.findAdultSceneForTimeline = () => scene;
+  f.enterAdultScene = () => { f.state.adultMode = true; return true; };
+  await f.playAction(action);
+  assert.equal(f.state.playedPreludeId, 'source-approach-1');
+});
 
 test('scene exit resumes adjacent source footage when no choices remain', async () => {
   const f = fixture();

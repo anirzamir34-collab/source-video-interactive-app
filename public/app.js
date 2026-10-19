@@ -6088,7 +6088,12 @@ async function resumePanelPlayback(selectionToken = state.adultSelectionToken) {
   clearPanelPlaybackRecovery();
   setGameState('SEGMENT_PLAYING');
   try {
-    await els.video.play();
+    // The native play() promise can resolve before Android has a decodable
+    // frame. Use the same bounded readiness check as ordinary story choices.
+    await playMedia(els.video, {
+      signal: state.adultSeekController?.signal,
+      timeoutMs: 12000
+    });
     if (!state.adultMode || requestId !== state.adultSeekRequestId ||
         selectionToken !== state.adultSelectionToken) return false;
     const pending = state.adultPendingSelectionProgress;
@@ -6836,7 +6841,15 @@ async function playAction(action) {
     completedSceneIds: state.completedAdultSceneIds
   });
   if (adultScene) {
-    enterAdultScene(adultScene, { forceStart: true, reason: 'action-route-guard' });
+    const entered = enterAdultScene(adultScene, { forceStart: true, reason: 'action-route-guard' });
+    // A source-verified approach card represents a specific playable clip,
+    // not merely a request to open the interaction overlay. Playing only the
+    // scene entry left the source paused after the player's tap.
+    if (entered && choiceSurfaceForAction(action) === 'approach') {
+      const selected = scenePreludeChoices(adultScene).find(item =>
+        item.sourceActionId === action.actionId || item.id === action.actionId);
+      if (selected) playAdultPrelude(selected.id);
+    }
     return;
   }
 
