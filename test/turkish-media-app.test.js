@@ -81,6 +81,28 @@ test('retry with the classic voice provider does not repeat a previous direct du
   assert.equal(oldRetries, 0);
 });
 
+test('successful media retry records its mode so the completed mix is reused', async () => {
+  let retryHandler;
+  let analysisStarts = 0;
+  const session = {};
+  const result = sourceManifest();
+  const requested = { dub: true, subtitles: false };
+  const scope = vm.createContext({
+    els: { mediaJobRetryBtn: { addEventListener: (event, handler) => { retryHandler = handler; } },
+      analyzeBtn: { click: () => { analysisStarts++; } } },
+    state: { analysisInProgress: false, savedGameBusy: false, mediaRevoice: null, analysisSession: session },
+    mediaClient: { requestedOutputs: () => requested, retry: async () => result },
+    selectedAnalysisModes: () => ({ dubbing: true, subtitles: false, dubbingProvider: 'classic', dubQuality: 'quality' }),
+    mediaModeKeyFromOptions, updateAnalyzeAvailability() {}, setGameState() {},
+    updateSourceTranscript() {}, renderMediaControls() {}
+  });
+  vm.runInContext(mediaRetryHandler, scope);
+  await retryHandler();
+  assert.equal(session.mediaManifest, result);
+  assert.equal(session.mediaModeKey, mediaModeKeyFromOptions({ outputs: requested, qualityMode: 'quality' }));
+  assert.equal(analysisStarts, 1);
+});
+
 function sourceManifest() {
   return {
     version: 1,
