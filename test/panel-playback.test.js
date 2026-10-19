@@ -1524,7 +1524,7 @@ test('an inactive scene trace excludes retained group unlocks and source ranges'
   assert.equal(trace.activeOccurrenceId, null);
 });
 
-test('verified normal dialogue remains visible beside opening cards without earning Lust', async () => {
+test('verified normal dialogue uses the story overlay, never the opening cards or Lust', async () => {
   const f = runtimeFixture();
   f.state.adultScene.dialogue = [
     { id: 'source-dialogue', label: 'Existing line', sourceVerified: true, nonIntimate: true, choiceSurface: 'story', startTime: 0, endTime: 10 }
@@ -1534,12 +1534,11 @@ test('verified normal dialogue remains visible beside opening cards without earn
   ];
   f.els.video.time = 0;
   f.renderAdultPanel(f.state.adultScene);
-  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['source-dialogue', 'source-opening']);
-  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-dialogue'));
-  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-opening'));
-  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-dialogue']);
+  assert.ok(f.els.choices.children.some(node => node.dataset.clipId === 'source-dialogue'));
+  assert.equal(f.els.approachChoices.classList.contains('hidden'), true);
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
   f.playAdultPrelude('source-dialogue');
   await flush();
   assert.equal(f.state.activeAdultPreludeId, 'source-dialogue');
@@ -1548,21 +1547,21 @@ test('verified normal dialogue remains visible beside opening cards without earn
   f.els.video.time = 5;
   f.updateAdultPlayback(1250, 5);
   assert.equal(f.state.femaleSceneProgress, 0);
-  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
+  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
   f.els.video.time = 10;
   f.updateAdultPlayback(1500, 10);
   assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['source-dialogue', 'source-opening']);
-  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
-  assert.equal(f.els.choices.classes.has('hidden'), true);
-  assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId), true);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-opening']);
+  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
+  assert.equal(f.els.choices.classList.contains('hidden'), true);
+  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-opening'));
+  assert.ok(f.els.approachChoices.children.every(node => node.dataset.clipId !== 'source-dialogue'));
   assert.equal(f.state.femaleSceneProgress, 0);
   assert.equal(f.els.video.currentTime, 10);
   assert.equal(f.els.video.playCalls, 1);
 });
 
-test('a dialogue between verified opening clips stays visible with both opening cards until source core', () => {
+test('dialogue between opening clips switches to the story surface at its actual source time', () => {
   const f = runtimeFixture();
   f.state.adultScene.startTime = 28;
   f.state.adultScene.endTime = 330;
@@ -1584,15 +1583,21 @@ test('a dialogue between verified opening clips stays visible with both opening 
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
   assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['reported-opening', 'reported-dialogue', 'reported-next']);
+    ['reported-opening', 'reported-next']);
   f.els.video.time = 91;
   f.state.adultTimelineFloor = 91;
   f.renderAdultProgressiveUI(true);
-  assert.equal(f.els.choices.classList.contains('hidden'), true);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
+  assert.equal(f.els.choices.classList.contains('hidden'), false);
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
-  assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
+  assert.equal(f.els.approachChoices.classList.contains('hidden'), true);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-dialogue']);
+  f.els.video.time = 104;
+  f.state.adultTimelineFloor = 104;
+  f.renderAdultProgressiveUI(true);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['reported-opening', 'reported-dialogue', 'reported-next']);
+    ['reported-opening', 'reported-next']);
   f.els.video.time = 295;
   f.state.adultTimelineFloor = 295;
   f.renderAdultProgressiveUI(true);
