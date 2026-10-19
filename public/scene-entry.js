@@ -65,6 +65,11 @@ export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45,
                       : result.has(action) && result.get(action) !== sceneId ? 'SCENE_MEMBERSHIP_CONFLICT' : '';
       if (reason) {
         onDecision(action, reason, sceneId);
+        // A short excluded clip (e.g. one that may not be offered) between a
+        // verified opening and its position must not cut the opening off;
+        // the gap is still measured from the last accepted clip.
+        if (reason === 'INELIGIBLE_ACTION' && range && action.choiceSurface === 'approach' &&
+            end - start <= 30 && nextStart - start <= maxGap) continue;
         break;
       }
       result.set(action, sceneId);

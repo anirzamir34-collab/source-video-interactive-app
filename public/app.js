@@ -3732,6 +3732,29 @@ function prepareAdultScenes() {
     const firstCoreStart = scene.positions
       .filter(position => !isWarmupPosition(position))
       .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
+    // An opening oral/manual activity that returns after the first sex
+    // position: the opening part stays an approach choice, the later returns
+    // become their own sex-panel position instead of disappearing.
+    if (Number.isFinite(firstCoreStart)) {
+      const laterParts = [];
+      const late = row => Number(row?.startTime ?? row?.loopStartTime) >= firstCoreStart - 0.05;
+      scene.positions = scene.positions.map(position => {
+        if (!isWarmupPosition(position)) return position;
+        const lateRanges = (position.sourceRanges || []).filter(late);
+        if (!lateRanges.length) return position;
+        const lateMoves = (position.movements || []).filter(item =>
+          Number(item.loopStartTime ?? item.startTime) >= firstCoreStart - 0.05);
+        const earlyRanges = (position.sourceRanges || []).filter(row => !late(row));
+        laterParts.push({ ...position, id: `${position.id}:later`, progressionRole: 'core',
+          sourceRanges: lateRanges, movements: lateMoves,
+          startTime: Math.min(...lateRanges.map(row => Number(row.startTime))),
+          endTime: Math.max(...lateRanges.map(row => Number(row.endTime))) });
+        return earlyRanges.length ? { ...position, sourceRanges: earlyRanges,
+          movements: (position.movements || []).filter(item => !lateMoves.includes(item)),
+          endTime: Math.max(...earlyRanges.map(row => Number(row.endTime))) } : null;
+      }).filter(Boolean).concat(laterParts.filter(item => item.movements.length))
+        .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+    }
     // Merging source fragments must not move a later introduction into the
     // first-entry gate of this encounter. Oral/manual are opening activities,
     // not sex-position tabs, so they remain available as approach choices.
@@ -4257,8 +4280,17 @@ function unlockNextAdultPositionFromLust() {
   const extra = !firstUnlock && coreCount >= 5 && adjacent && !interveningStory &&
     (following.movements || []).some(clip => clip.sourceVerified === true &&
       positionOccurrenceForMovement(following, clip)) ? following : null;
+  // Lust 100 opens the whole sex panel at once: every verified position of
+  // the scene gets its tab. Unlocking one position per Lust refill left the
+  // video playing (e.g.) reverse cowgirl footage under a doggy-style tab.
+  const all = firstUnlock ? eligible.filter(position => !isBonusPosition(position)) : [];
+  for (const position of all) {
+    state.adultUnlockedPositionIds.add(position.id);
+    state.adultRevealedPositionIds.add(position.id);
+  }
   state.interactionRuntime = { ...unlocked, scene: snapshot.scene,
-    unlockedGroupIds: extra ? [...unlocked.unlockedGroupIds, extra.id] : unlocked.unlockedGroupIds };
+    unlockedGroupIds: [...new Set([...unlocked.unlockedGroupIds, ...(extra ? [extra.id] : []),
+      ...all.map(position => position.id)])] };
   state.interactionPhaseOverride = null;
   state.adultUnlockedPositionIds.add(next.id);
   state.adultRevealedPositionIds.add(next.id);
@@ -5259,8 +5291,12 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     button.addEventListener('click', () => {
       const ready = members.filter(playable);
       if (!ready.length) return;
-      const current = ready.findIndex(item => item.id === state.activePositionId);
-      const next = current >= 0 ? ready[(current + 1) % ready.length] : ready[0];
+      // A second tap while that position is actually playing moves to its
+      // next occurrence; a first tap opens the occurrence nearest the playhead.
+      const current = state.activeMovementId ? ready.findIndex(item => item.id === state.activePositionId) : -1;
+      const now = Number(els.video?.currentTime) || 0;
+      const nearest = ready.find(item => Number(item.endTime) > now + 0.05) || ready[0];
+      const next = current >= 0 ? ready[(current + 1) % ready.length] : nearest;
       button.dataset.positionId = next.id;
       selectAdultPosition(next.id, true);
     });

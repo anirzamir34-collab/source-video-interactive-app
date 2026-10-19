@@ -52,8 +52,8 @@ test('ordinary pose and early preparation actions precede first motion-backed co
       movements:[{sourceVerified:true,movementTempo:'moderate'}] }
   ];
   const classified=assignVerifiedOpeningRoles(items);
-  assert.deepEqual(classified.map(x=>x.progressionRole),['foreplay','core','core','core'],
-    'oral/manual are sex-panel activities; only a static preparatory pose stays in the opening');
+  assert.deepEqual(classified.map(x=>x.progressionRole),['foreplay','foreplay','core','core'],
+    'opening oral/manual belong to the first approach panel');
   assert.equal(items[0].progressionRole,undefined,'classification must not mutate providers');
 });
 

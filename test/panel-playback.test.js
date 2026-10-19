@@ -717,7 +717,9 @@ test('first unlock reveals a clickable chapter; only explicit selection plays it
   assert.equal(f.state.activeMovementId, 'one-0');
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.paused, false);
-  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one']);
+  assert.ok(f.state.adultUnlockedPositionIds.has('one'));
+  assert.ok(f.state.adultScene.positions.filter(item => item.progressionRole !== 'foreplay')
+    .every(item => f.state.adultUnlockedPositionIds.has(item.id)), 'Lust 100 opens every verified position tab');
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
   assert.ok(f.state.femaleSceneProgress < 35);
   const token = f.state.adultSelectionToken;
@@ -824,7 +826,7 @@ test('entry during a disjoint return binds that occurrence and a parent gap neve
   }
 });
 
-test('each completed gate reveals exactly one next verified chapter without moving the source clock', async () => {
+test('after the first gate every chapter is open and later Lust never moves the source clock', async () => {
   const f = runtimeFixture();
   await startFirstChapter(f);
   f.state.femaleSceneProgress = 0;
@@ -832,19 +834,13 @@ test('each completed gate reveals exactly one next verified chapter without movi
   const plays = f.els.video.playCalls;
   f.addFemaleLust(35);
   f.renderAdultProgressiveUI(true);
-  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one', 'two']);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds].sort(), ['one', 'three', 'two']);
   assert.equal(f.state.activePositionId, 'one');
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.playCalls, plays);
-  assert.equal(f.state.femaleSceneProgress, 0);
   const tab = f.els.positionTabs.querySelectorAll('.position-tab').find(button => button.dataset.positionId === 'two');
   assert.ok(tab);
   assert.equal(tab.disabled, false, 'an unlocked destination is clickable outside passive lookahead');
-  f.addFemaleLust(35);
-  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['one', 'two', 'three']);
-  assert.equal(f.state.activePositionId, 'one');
-  assert.equal(f.els.video.currentTime, 20);
-  assert.equal(f.els.video.playCalls, plays);
 });
 
 test('a later gate may reveal two adjacent verified chapters in a long source while retaining earlier tabs', () => {

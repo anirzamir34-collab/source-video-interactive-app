@@ -806,7 +806,7 @@ test('preparation keeps dialogue, opening activity, and first core position in o
   assert.equal(state.adultScenes.length, 1);
   const [scene] = state.adultScenes;
   assert.deepEqual(Array.from(scene.positions, item => [item.familyId, item.progressionRole]),
-    [['oral', 'core'], ['chapter', 'core']]);
+    [['oral', 'foreplay'], ['chapter', 'core']]);
   assert.equal(scene.dialogue.some(item => item.id === 'dialogue'), true);
   assert.equal(scene.foreplay.some(item => item.id === 'dialogue'), false);
   assert.equal(scene.positions.some(item => item.sourceRanges.some(range =>
@@ -894,7 +894,7 @@ test('one cut-heavy source encounter keeps normal dialogue in story, opening pre
   assert.equal(scene.startTime,211.158);
   assert.deepEqual(Array.from(scene.dialogue, item=>item.id),['narrative']);
   assert.deepEqual(scene.positions.map(p=>[p.familyId,p.progressionRole]),[
-    ['seated-facing','foreplay'],['oral','core'],['rear','core']]);
+    ['seated-facing','foreplay'],['oral','foreplay'],['rear','core']]);
   const core=scene.positions.find(item=>item.familyId==='rear');
   assert.equal(core.movements.length,3);
   assert.equal(positionOccurrenceGroups(core).length,1);
