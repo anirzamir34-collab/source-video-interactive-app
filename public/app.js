@@ -6605,7 +6605,6 @@ async function resumeAnalysisGap(target) {
   try {
     await playMedia(els.video, { signal: state.navigationSeekController?.signal });
   } catch (error) {
-    if (error?.name === 'AbortError') return;
     if (generation !== state.playbackGeneration || state.stopListener !== stop) return;
     els.video.removeEventListener('timeupdate', stop);
     state.stopListener = null;
@@ -6766,7 +6765,6 @@ async function resumeSourceVideo() {
   setGameState('SEGMENT_PLAYING');
   try { await playMedia(els.video, { signal: state.navigationSeekController?.signal }); }
   catch (error) {
-    if (error?.name === 'AbortError') return;
     if (generation !== state.playbackGeneration) return;
     setGameState('DECISION_PENDING');
     showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.', resumeSourceVideo, 'Videoya devam et');
@@ -6907,7 +6905,6 @@ async function resumeActionPlayback(action) {
   setGameState('SEGMENT_PLAYING');
   try { await playMedia(els.video, { signal: state.navigationSeekController?.signal }); }
   catch (error) {
-    if (error?.name === 'AbortError') return;
     if (state.activeAction !== action || generation !== state.playbackGeneration) return;
     setGameState('DECISION_PENDING');
     showPlaybackRecovery('Video oynatılamadı. Devam etmek için dokun.',
