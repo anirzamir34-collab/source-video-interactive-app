@@ -70,7 +70,13 @@ export function parseStoryboardResponse(response) {
     }
     // A prose response is not a truncated JSON document. Repeating or cropping
     // the same material cannot turn it into verified structured evidence.
-    throw responseError(/^[{\[]/.test(json) ? 'GEMINI_INVALID_JSON' : 'MODEL_UNSTRUCTURED_RESPONSE');
+    // A short, completed-but-broken JSON reply (Argon does this on material
+    // it will not describe) failed identically on every retry and split,
+    // costing minutes per chapter. Only a long or length-truncated reply is
+    // worth repeating.
+    const finish = String(response?.candidates?.[0]?.finishReason || '').toUpperCase();
+    const shortCompleted = raw.length < 1500 && finish === 'STOP';
+    throw responseError(/^[{\[]/.test(json) && !shortCompleted ? 'GEMINI_INVALID_JSON' : 'MODEL_UNSTRUCTURED_RESPONSE');
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.actions)) {
     throw responseError('GEMINI_INVALID_JSON');

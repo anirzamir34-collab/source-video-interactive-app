@@ -272,3 +272,18 @@ test('repair endpoint tracks validator and server normalization drops without lo
   assert.match(app, /mergedActionsCount: count/);
   assert.match(app, /planSavedGapRepair\(previous, gap, repairModel/);
 });
+
+test('a short reply the model deliberately finished as broken JSON is not repeated', async () => {
+  let requests = 0;
+  await assert.rejects(generateStoryboardWithRetry(async () => {
+    requests += 1;
+    return { text: '{"actions": [ {"label": "x", ', candidates: [{ finishReason: 'STOP' }] };
+  }, { wait: async () => {} }), error => error.code === 'MODEL_UNSTRUCTURED_RESPONSE');
+  assert.equal(requests, 1);
+  let truncated = 0;
+  await assert.rejects(generateStoryboardWithRetry(async () => {
+    truncated += 1;
+    return { text: '{"actions": [', candidates: [{ finishReason: 'MAX_TOKENS' }] };
+  }, { wait: async () => {} }), error => error.code === 'GEMINI_INVALID_JSON');
+  assert.equal(truncated, 2, 'a length-truncated reply keeps its retry');
+});

@@ -25,7 +25,7 @@ test('first intimate approach uses its own overlay instead of the core panel or 
   assert.match(source, /const target = dialogueOnly \? els\.choices : els\.approachChoices/);
   // The card renderer, not a parallel timestamp guess, chooses the surface.
   assert.match(source, /const selectedSurface = renderAdultApproachChoices\(scene, laterOverlay\)/);
-  assert.match(source, /setSurface\(selectedSurface\)/);
+  assert.match(source, /setSurface\(selectedSurface \|\| 'approach'\)/);
   assert.match(source, /surface: 'story'/);
   assert.doesNotMatch(source, /nextApproachSurface/);
 });
