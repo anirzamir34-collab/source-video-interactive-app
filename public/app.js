@@ -1800,8 +1800,13 @@ els.analyzeBtn.addEventListener('click', async () => {
       ...dialogueRows.slice(0, 4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`),
       ...dialogueRows.slice(-4).map(row => `${row.segmentId}:${row.startTime}:${row.gender}`)
     ].join('|');
+    // Saved chapters are valid only for the analysis rules that produced them.
+    // When the server's analysis prompt/rules change, re-analyse instead of
+    // silently replaying old chapters from this device.
+    const analysisRulesRevision = await readServerRevision({ signal: analysisOwner.signal }).catch(() => null) || 'unknown';
     const modeForPlan = (plan, pipelineVersion = 'chunk-protagonist-context-7') => JSON.stringify({
       pipelineVersion,
+      analysisRulesRevision,
       analysisTier: modes.analysisTier,
       deepAnalysisModel: modes.analysisTier === 'deep' ? modes.deepAnalysisModel : null,
       chunks: plan.chunks.map(chunk => ({
