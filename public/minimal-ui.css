@@ -192,3 +192,105 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #a
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) .hidden {
   display: none !important;
 }
+
+
+/* ===== v2: right-hand dock, readable labels, no badges or descriptions ===== */
+/* The panel never reserves a column: the video always fills the player. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #video,
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui:is(:fullscreen, :-webkit-full-screen):has(:is(#choices, #approachChoices, #adultInteractionPanel):not(.hidden)) #video {
+  position: absolute !important; inset: 0 !important; left: 0 !important; right: 0 !important;
+  width: 100% !important; max-width: 100% !important; height: 100% !important; max-height: 100% !important;
+  margin: 0 !important; transform: none !important; object-fit: contain !important; object-position: center !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel):not(.hidden) {
+  position: absolute !important;
+  left: auto !important; right: 10px !important; bottom: 10px !important; top: auto !important;
+  inset-inline: auto 10px !important;
+  width: auto !important; max-width: min(62%, 340px) !important;
+  height: auto !important; min-height: 0 !important; max-height: 46% !important;
+  margin: 0 !important; padding: 0 !important;
+  overflow-y: auto !important; overflow-x: hidden !important;
+  display: flex !important; flex-direction: column !important; flex-wrap: nowrap !important;
+  align-items: flex-end !important; justify-content: flex-start !important; gap: 6px !important;
+  background: transparent !important; border: 0 !important; box-shadow: none !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  transform: none !important; translate: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel:not(.hidden) > * {
+  flex: 0 0 auto !important; width: 100% !important; min-width: 0 !important;
+  margin: 0 !important; padding: 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel:not(.hidden) > .hidden { display: none !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.position-tabs, .category-tabs, .movement-choice-grid, .discovery-choice-grid, .outcome-choice-grid) {
+  display: flex !important; flex-wrap: wrap !important; justify-content: flex-end !important; gap: 6px !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-section, .position-section, .progressive-stage-section) {
+  display: flex !important; flex-direction: column !important; align-items: flex-end !important; gap: 6px !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices) { align-items: flex-end !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+  .choice, .choice-btn, .discovery-choice-card, .movement-choice-card, .position-tab, .category-tab, .dialogue-skip) {
+  max-width: 100% !important; padding: 7px 13px !important;
+  font-size: 14px !important; font-weight: 600 !important; line-height: 1.3 !important;
+  white-space: normal !important; text-align: right !important;
+  border-radius: 16px !important;
+  background: rgba(8, 10, 12, .74) !important; border-color: rgba(255, 255, 255, .2) !important;
+  color: #ffffff !important; text-shadow: 0 1px 2px rgba(0, 0, 0, .6) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+  .choice, .choice-btn, .discovery-choice-card, .movement-choice-card, .position-tab, .category-tab) :is(span, strong, .choice-title, [data-choice-label]) {
+  white-space: normal !important; overflow: hidden !important; text-overflow: clip !important;
+  display: -webkit-box !important; -webkit-line-clamp: 2 !important; -webkit-box-orient: vertical !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .position-tab { font-weight: 700 !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.position-tab.active, .movement-choice-card.active, .movement-choice-card[data-playback="playing"]) {
+  background: rgba(16, 64, 52, .82) !important; border-color: #8ff0cf !important; color: #c9fff0 !important;
+}
+/* No badges, tempo words, counters, descriptions or titles inside the dock. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+  .movement-energy-badge, .choice-kind, .choice-meta, .choice-detail, .movement-variant-status,
+  .movement-tempo-summary, [data-playback-status], .choice-subtitle, .choice-desc, .approach-overlay-heading,
+  .choice-section-heading, .adult-panel-header, .adult-stage-summary, #discoveryGate, .adult-variant-toolbar,
+  #rhythmControl, .adult-quick-choices, .adult-dock-more-btn, .adult-feel-toggle,
+  .adult-dock-phase, #adultDockTitle, .panel-playback-status, .adult-dock-bars) {
+  display: none !important;
+}
+/* Only the L / E values remain, right-aligned above the choices. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .adult-compact-dock,
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .adult-dock-state {
+  all: unset; display: flex !important; justify-content: flex-end !important; width: 100% !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .adult-dock-meters {
+  all: unset; display: inline-flex !important; gap: 8px !important;
+  padding: 3px 9px !important; border-radius: 999px !important; background: rgba(8, 10, 12, .6) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .adult-dock-meters span { all: unset; font-size: 12px !important; color: rgba(255, 255, 255, .75) !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .adult-dock-meters b { color: #fff !important; font-weight: 700 !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #finishAdultSceneBtn {
+  all: unset; align-self: flex-end !important; width: auto !important;
+  font-size: 12px !important; color: rgba(255, 255, 255, .7) !important; text-decoration: underline !important;
+  text-underline-offset: 3px !important; cursor: pointer !important; padding: 2px 4px !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .7) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui:has(:is(#choices, #approachChoices, #adultInteractionPanel):not(.hidden):not(:empty)) .cinema-shade {
+  background: linear-gradient(to left, rgba(0, 0, 0, .45) 0%, rgba(0, 0, 0, 0) 45%) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) .hidden { display: none !important; }
+@media (max-width: 560px) {
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel):not(.hidden) {
+    right: 8px !important; bottom: 8px !important; max-width: 80% !important; max-height: 52% !important;
+  }
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+    .choice, .choice-btn, .discovery-choice-card, .movement-choice-card, .position-tab, .category-tab) {
+    font-size: 13.5px !important; padding: 6px 12px !important;
+  }
+}
+
+/* Sections and grids size to their pills; nothing may overlap. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-section, .position-section, .progressive-stage-section, .outcome-section,
+  .position-tabs, .category-tabs, .movement-choice-grid, .discovery-choice-grid, .outcome-choice-grid, .movement-choice-wrap) {
+  position: static !important; height: auto !important; min-height: 0 !important; max-height: none !important;
+  overflow: visible !important; transform: none !important; inset: auto !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .movement-choice-wrap { display: contents !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-choice-card, .position-tab) { position: relative !important; inset: auto !important; }
