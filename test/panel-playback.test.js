@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as choiceRouting from '../public/choice-routing.js';
-import { sceneExitTime, seekMediaTo } from '../public/playback-logic.js';
+import { sceneExitTime, seekMediaTo, playMedia } from '../public/playback-logic.js';
 import * as gameplay from '../public/adult-gameplay.js';
 import { advanceAdultPhase, canPlayAction } from '../public/engine-hardening.js';
 import { compactPanelChoiceLabel, forwardVerifiedClips } from '../public/panel-feedback.js';
@@ -82,6 +82,7 @@ class Media extends Element {
     this.playCalls += 1;
     if (this.mode === 'blocked') throw new Error('NotAllowedError');
     if (this.mode === 'pending-play') return new Promise((_resolve, reject) => { this.rejectPlay = reject; });
+    if (this.mode === 'silent-play') return;
     this.paused = false;
     this.dispatchEvent(new Event('play'));
   }
@@ -110,6 +111,7 @@ function fixture() {
     performance, clearTimeout, sceneExitTime,
     // Only shorten the timer; the media readiness/abort implementation is real.
     seekMediaTo: (media, target, options) => seekMediaTo(media, target, { ...options, timeoutMs: 25 }),
+    playMedia: (media, options) => playMedia(media, { ...options, timeoutMs: 35 }),
     document: { createElement: () => new Element(), querySelector: () => new Element() },
     setGameState: value => { state.gameState = value; },
     logEngineEvent: (type, data) => state.events.push({ type, data }),
@@ -183,6 +185,20 @@ for (const mode of ['throw', 'error']) {
     assert.equal(f.stage.children.length, 0);
   });
 }
+
+test('panel play does not claim success when play resolves without starting video', async () => {
+  const f = fixture();
+  f.els.video.mode = 'silent-play';
+  assert.equal(await f.seekAdultLoop(40), false);
+  assert.equal(f.els.video.paused, true);
+  assert.equal(f.state.gameState, 'DECISION_PENDING');
+  assert.equal(f.els.panelPlaybackRecovery.querySelector('button').dataset.playbackRecovery, 'continue');
+  f.els.video.mode = 'ready';
+  f.els.panelPlaybackRecovery.querySelector('button').dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(f.els.video.paused, false);
+  assert.equal(f.state.gameState, 'SEGMENT_PLAYING');
+});
 
 test('blocked playback offers continue without losing the active clip or seeking again', async () => {
   const f = fixture();
