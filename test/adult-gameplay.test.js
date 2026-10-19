@@ -1174,13 +1174,14 @@ test('optional split request does not invent independently verified subclips', (
     splitEachMovement: true
   });
 
-  assert.equal(variants.length, 1);
+  // A long verified action plays as consecutive slices of its own range:
+  // nothing outside the source interval and no gap or overlap is invented.
+  assert.ok(variants.length >= 1);
   assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 5));
-  assert.equal(variants[0].id, 'fast-action');
-  assert.deepEqual(
-    variants.map(item => [item.loopStartTime, item.loopEndTime]),
-    [[100, 121]]
-  );
+  assert.ok(variants.every(item => item.label === 'Hızlı hareketi sürdür'));
+  assert.equal(variants[0].loopStartTime, 100);
+  assert.equal(variants.at(-1).loopEndTime, 121);
+  for (let i = 1; i < variants.length; i++) assert.equal(variants[i].loopStartTime, variants[i - 1].loopEndTime);
 });
 
 

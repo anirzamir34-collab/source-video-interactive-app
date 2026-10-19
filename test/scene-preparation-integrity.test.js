@@ -105,8 +105,8 @@ test('two adjacent verified guidance cuts enter source-backed cards instead of v
   });
   const cards = state.adultScenes.flatMap(scene => scene.positions)
     .flatMap(position => position.movementChoices);
-  assert.deepEqual(Array.from(cards.flatMap(card => card.variants.map(item => item.sourceActionId))),
-    ['cut-a', 'cut-b']);
+  assert.deepEqual([...new Set(cards.flatMap(card => card.variants.map(item => item.sourceActionId)))],
+    ['cut-a', 'cut-b'], 'both cuts stay playable (long ones as consecutive sequences)');
 });
 
 function prepare(actions, overrides = {}, sourceContext = null, storyContext = {}) {
@@ -896,8 +896,8 @@ test('one cut-heavy source encounter keeps normal dialogue in story, opening pre
   assert.deepEqual(scene.positions.map(p=>[p.familyId,p.progressionRole]),[
     ['seated-facing','foreplay'],['oral','foreplay'],['rear','core']]);
   const core=scene.positions.find(item=>item.familyId==='rear');
-  assert.equal(core.movements.length,3);
+  assert.ok(core.movements.length>=3,'long moves add consecutive sequences, never fewer clips');
   assert.equal(positionOccurrenceGroups(core).length,1);
-  assert.equal(movementsForPositionOccurrence(core,positionOccurrenceGroups(core)[0].id).length,3);
+  assert.equal(movementsForPositionOccurrence(core,positionOccurrenceGroups(core)[0].id).length,core.movements.length);
   assert.equal(prepared.adultAnalysisTrace.actions.find(row=>row.actionId==='narrative').route,'DIALOGUE');
 });

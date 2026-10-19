@@ -89,3 +89,16 @@ test('one diarization ID with both a man and a woman is split by utterance pitch
   assert.equal(transcript.utterances.find(row => row.segmentId === 'e').speakerId, 's3-f',
     'an unmeasured line follows the nearest measured line');
 });
+
+test('an unsure or contradicting speaker follows the nearest clearly separated voice', async () => {
+  const { resolveRelativeGenders } = await import('../lib/turkish-media/speaker-profile.js');
+  const out = resolveRelativeGenders({
+    man: { gender: 'male', medianHz: 118 }, woman: { gender: 'female', medianHz: 215 },
+    excitedMan: { gender: 'female', medianHz: 172 - 40 }, open: { gender: null, medianHz: 205 }
+  });
+  assert.equal(out.excitedMan.gender, 'male');
+  assert.equal(out.open.gender, 'female');
+  assert.equal(out.man.gender, 'male');
+  const alone = resolveRelativeGenders({ only: { gender: null, medianHz: 168 } });
+  assert.equal(alone.only, undefined, 'no evidence, no forced guess');
+});

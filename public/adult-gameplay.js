@@ -641,8 +641,8 @@ export function verifiedActionSubsequences(action = {}, minSeconds = 5) {
 // action. Play it as consecutive source sequences of the same card, so each
 // tap continues with the next part of that action instead of one long clip.
 // Nothing is relabelled or invented: every sequence keeps the action's label.
-const LONG_ACTION_SECONDS = 36;
-const SEQUENCE_TARGET_SECONDS = 14;
+const LONG_ACTION_SECONDS = 16;
+const SEQUENCE_TARGET_SECONDS = 9;
 export function longActionSequences(item = {}) {
   const range = clipRange(item);
   if (!range) return [item];

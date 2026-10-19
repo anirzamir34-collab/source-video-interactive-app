@@ -376,3 +376,17 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }
+
+/* ===== v5: the first-approach overlay always shows a live Lust meter ===== */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #approachChoices .approach-overlay-heading {
+  display: flex !important; justify-content: flex-end !important; width: 100% !important;
+  background: transparent !important; border: 0 !important; padding: 0 !important; margin: 0 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #approachChoices .approach-overlay-heading > :not(.approach-lust) { display: none !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #approachChoices .approach-lust {
+  display: inline-flex !important; align-items: center !important; gap: 4px !important;
+  font-style: normal !important; font-size: 11px !important; color: rgba(255, 255, 255, .8) !important;
+  padding: 3px 10px !important; border-radius: 999px !important;
+  background: linear-gradient(90deg, rgba(255, 92, 138, .55) var(--lust, 0%), rgba(8, 10, 12, .6) var(--lust, 0%)) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #approachChoices .approach-lust b { color: #fff !important; font-weight: 700 !important; }

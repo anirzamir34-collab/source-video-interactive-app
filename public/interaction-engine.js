@@ -139,7 +139,35 @@ export function approachLustWeight(row = {}) {
   // femaleProgressRate (0.25–2.5) is the model's own visible-motion pacing.
   const rate = Number(row.femaleProgressRate);
   const rateWeight = Number.isFinite(rate) && rate > 0 && rate !== 1 ? Math.sqrt(clamp(rate, 0.25, 2.5)) : 1;
-  return Number(clamp(tempoWeight * audioWeight * rateWeight, 0.4, 2.2).toFixed(3));
+  // motionFactor is measured from the video frames themselves (see
+  // motionIntensityFactors): busier footage than the scene's typical opening
+  // clip fills faster, calmer footage slower, even when the model calls
+  // every clip "moderate".
+  const motion = Number(row.motionFactor);
+  const motionWeight = Number.isFinite(motion) && motion > 0 ? clamp(motion, 0.5, 2) : 1;
+  return Number(clamp(tempoWeight * audioWeight * rateWeight * motionWeight, 0.35, 2.6).toFixed(3));
+}
+
+// Measured frame-to-frame visual change (storyboard motionProfile, 0-100) per
+// clip, relative to the median clip of the same set. Medians ignore single
+// camera cuts. Clips without enough samples stay neutral.
+export function motionIntensityFactors(clips = [], profile = []) {
+  const samples = (Array.isArray(profile) ? profile : [])
+    .map(row => [Number(row?.time ?? row?.[0]), Number(row?.score ?? row?.[1])])
+    .filter(([time, score]) => Number.isFinite(time) && Number.isFinite(score));
+  const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+  const perClip = new Map();
+  for (const clip of clips) {
+    const start = Number(clip?.loopStartTime ?? clip?.startTime);
+    const end = Number(clip?.loopEndTime ?? clip?.endTime);
+    const scores = samples.filter(([time]) => time >= start && time <= end).map(([, score]) => score);
+    if (clip?.id && scores.length >= 3) perClip.set(clip.id, median(scores));
+  }
+  const factors = new Map();
+  if (perClip.size < 2) return factors;
+  const reference = Math.max(1, median([...perClip.values()]));
+  for (const [id, value] of perClip) factors.set(id, clamp(value / reference, 0.5, 2));
+  return factors;
 }
 export function approachLustTargetSeconds(verifiedDuration, fraction = 0.65) {
   const total = Math.max(0, Number(verifiedDuration) || 0);

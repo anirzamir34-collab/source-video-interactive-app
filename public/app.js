@@ -129,7 +129,7 @@ import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOw
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
   selectInteractionGroup, interactionTrace, transitionInteraction,
-  selectVerifiedChoiceQueue } from './interaction-engine.js';
+  selectVerifiedChoiceQueue, motionIntensityFactors } from './interaction-engine.js';
 import { interactionEntryClip, interactionEntryGuard, interactionFamilyViews } from './interaction-timeline.js';
 import { bindInteractionRuntimeViews } from './interaction-compat.js';
 import { assignVerifiedOpeningRoles } from './verified-scene-continuity.js';
@@ -2525,6 +2525,11 @@ els.analyzeBtn.addEventListener('click', async () => {
     creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : '',
     sourceAudioOnly ? mediaFailureMessage : ''
   ].join('\n');
+  // Measured visual motion travels with the analysis (and its saved game) so
+  // Lust can follow the real intensity of each opening clip.
+  normalized.motionProfile = (Array.isArray(storyboard?.motionProfile) ? storyboard.motionProfile : [])
+    .map(row => [Number(Number(row?.time).toFixed(2)), Number(row?.score)])
+    .filter(([time, score]) => Number.isFinite(time) && Number.isFinite(score));
   initializeInteractive(normalized);
   clearAnalysisReview();
   clearAnalysisReview = mountAnalysisReview(els.analysisReview, normalized, state.selectedFile, storyboard.duration);
@@ -3942,14 +3947,18 @@ function genericInteractionScene(scene = state.adultScene) {
       sourceRanges, movements, sourceOccurrenceIds: occurrences.map(item => item.id),
       entryClip: position.entryClip || movements.find(item => item.id === position.entryMovementId) || movements[0] };
   });
-  const standalone = (items, phase) => (items || []).map(item => ({
+  const openingClips = [...(scene?.foreplay || []).filter(item => item.nonIntimate !== true),
+    ...groups.filter(group => group.phase === 'APPROACH').flatMap(group => group.movements)];
+  const motion = motionIntensityFactors(openingClips, state.analysis?.motionProfile);
+  const withMotion = item => motion.has(item.id) ? { ...item, motionFactor: motion.get(item.id) } : item;
+  const standalone = (items, phase) => (items || []).map(item => withMotion({
     ...item, phase, occurrenceId: item.id, progressionEnabled: item.nonIntimate !== true,
     sourceRanges: [{ id: item.id, startTime: item.startTime, endTime: item.endTime }]
   }));
   return { id: scene?.id || null, groups,
     choices: [...standalone(scene?.foreplay, 'APPROACH'),
       ...standalone(scene?.dialogue, 'APPROACH'),
-      ...groups.filter(group => group.phase === 'APPROACH').flatMap(group => group.movements),
+      ...groups.filter(group => group.phase === 'APPROACH').flatMap(group => group.movements).map(withMotion),
       ...standalone(scene?.outcomes, 'OUTCOME'),
       ...standalone(scene?.aftermath ? [scene.aftermath] : [], 'AFTERMATH')] };
 }
@@ -4518,6 +4527,12 @@ function renderAdultProgress() {
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${maleOrgasm}%`;
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${lust}%`;
   if (els.adultDockLustValue) els.adultDockLustValue.textContent = String(Math.round(lust));
+  // The first-approach overlay shows its own live Lust meter.
+  for (const meter of els.approachChoices?.querySelectorAll?.('.approach-lust') || []) {
+    meter.style.setProperty('--lust', `${Math.round(lust)}%`);
+    const value = meter.querySelector('b');
+    if (value) value.textContent = String(Math.round(lust));
+  }
   if (els.adultDockMaleValue) els.adultDockMaleValue.textContent = String(Math.round(maleOrgasm));
   renderAdultFlowStatus();
   persistRuntimeSnapshot('adult-progress');
@@ -4778,7 +4793,8 @@ function renderAdultApproachChoices(scene, later = false) {
   if (!dialogueOnly) {
     const heading = document.createElement('div');
     heading.className = 'approach-overlay-heading';
-    heading.innerHTML = `<span>YAKINLAŞMA</span><strong>Seçimini yap</strong><small>Lust ${Math.round(flow)}/100 · ${candidates.length} seçenek</small>`;
+    heading.innerHTML = `<span>YAKINLAŞMA</span><strong>Seçimini yap</strong><small>Lust ${Math.round(flow)}/100 · ${candidates.length} seçenek</small>` +
+      `<em class="approach-lust" style="--lust:${Math.round(flow)}%">Lust <b>${Math.round(flow)}</b></em>`;
     target.appendChild(heading);
   }
 
