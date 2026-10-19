@@ -58,6 +58,16 @@ otomatik kontrol eder.
 - Her analiz sıfırdan yapılır; eski analiz parçaları yeniden kullanılmaz.
 - Biten analiz otomatik olarak Kayıtlı oyunlar'a kaydedilir.
 
+## 4b. Hissiyat
+
+- Her seçim tuşu (hikâye, yakınlaşma, seks paneli) basınca titrer ve parmağın
+  altından dalga yayar. Hikâye seçimi kısa ve net, yakınlaşma/hareket kartı
+  derin bir vuruş, ya da o hareketin gerçek temposunda kısa bir ritim verir.
+- Lust her %25'te kalp atışı gibi titrer; 100 olunca uzun bir titreşim ve
+  sahnenin kenarında sıcak bir nabız görünür.
+- Titreşim gücü, titreşimin açık kalma süresiyle ayarlanır (PWM). Hareketi azaltma
+  ayarı açık cihazda animasyonlar kapanır.
+
 ## 5. Türkçe dublaj
 
 - Yalnız konuşmalar çevrilir ve seslendirilir. İnleme, nefes, "ah/oh/mmm",

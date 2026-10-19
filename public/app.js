@@ -4584,6 +4584,7 @@ function renderAdultProgress() {
     if (value) value.textContent = String(Math.round(lust));
   }
   if (els.adultDockMaleValue) els.adultDockMaleValue.textContent = String(Math.round(maleOrgasm));
+  if (typeof feelLustProgress === 'function') feelLustProgress(lust);
   renderAdultFlowStatus();
   persistRuntimeSnapshot('adult-progress');
   renderAdultProgressiveUI(false);
@@ -4833,6 +4834,8 @@ function renderAdultApproachChoices(scene, later = false) {
       `discovery-choice-card ${choice.nonIntimate ? 'dialogue-interlude-card' : 'approach-card'}`;
     button.dataset.choiceSurface = choice.nonIntimate ? 'story' : 'approach';
     button.dataset.clipId = choice.movementId || choice.id;
+    const cardTempo = choice.movementTempo || choice.variants?.[0]?.movementTempo;
+    if (cardTempo) button.dataset.tempo = String(cardTempo);
     if (!dialogueOnly) {
       button.dataset.discoveryId = choice.id;
       button.dataset.discoveryKind = choice.kind;
@@ -5634,6 +5637,7 @@ function handleAdultRhythmTap(timestamp = performance.now(), charged = false) {
   if (next) {
     selectAdultMovement(next.id, true, null, { awardProgress: false });
   }
+  if (typeof feelSexControl === 'function') feelSexControl(next);
   logEngineEvent('SEX_CONTROL_APPLIED', {
     positionId: position.id,
     occurrenceId: position.occurrenceId,
@@ -5778,6 +5782,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
     button.setAttribute('aria-label', choice.label);
     button.dataset.movementChoiceId = choice.id;
     button.dataset.variantIds = choice.variants.map(item => item.id).join(',');
+    if (choice.variants[0]?.movementTempo) button.dataset.tempo = String(choice.variants[0].movementTempo);
     const energyBadge = choice.energyLabel
       ? `<small class="movement-energy-badge" data-energy="${escapeHtml(choice.energyFlavor)}">${escapeHtml(choice.energyLabel)}</small>`
       : '';
@@ -6530,7 +6535,39 @@ state.interactionHoldControl = attachHoldReleaseControl({
   onActivate: ({ timestamp, charged }) => handleAdultRhythmTap(timestamp, charged)
 });
 
-attachTactileSurface({ root: els.adultInteractionPanel, engine: tactile });
+// Every choice surface (story, first approach, sex panel) shares one feel.
+// Before, only the sex panel vibrated; story and approach cards were silent.
+var feelStage = document.querySelector('.video-stage');
+attachTactileSurface({ root: feelStage || els.adultInteractionPanel, engine: tactile, stage: feelStage });
+
+function feelLustProgress(lust) {
+  const step = Math.floor(Math.max(0, Math.min(100, Number(lust) || 0)) / 25);
+  const previous = Number(state.feltLustStep) || 0;
+  if (step === previous) return;
+  const rising = step > previous;
+  state.feltLustStep = step;
+  if (!rising || !step) return;
+  // Each quarter of Lust is a heartbeat; reaching 100 is a full release.
+  tactile.pulse(step >= 4 ? 'unlock' : 'heartbeat');
+  const meters = [...(els.approachChoices?.querySelectorAll?.('.approach-lust') || []),
+    els.adultDockLustValue].filter(Boolean);
+  for (const meter of meters) {
+    meter.classList.remove('vq-beat'); void meter.offsetWidth; meter.classList.add('vq-beat');
+  }
+  if (step >= 4 && feelStage) {
+    feelStage.classList.remove('vq-unlock'); void feelStage.offsetWidth; feelStage.classList.add('vq-unlock');
+    setTimeout(() => feelStage.classList.remove('vq-unlock'), 1400);
+  }
+}
+
+function feelSexControl(movement) {
+  // Runs after the button's own confirm pulse, then follows the clip's tempo.
+  setTimeout(() => tactile.rhythm(movement?.movementTempo || 'fast'), 0);
+  if (feelStage) {
+    feelStage.classList.remove('vq-impact'); void feelStage.offsetWidth; feelStage.classList.add('vq-impact');
+    setTimeout(() => feelStage.classList.remove('vq-impact'), 650);
+  }
+}
 
 els.adultFeelToggle?.addEventListener('click', () => {
   tactile.toggle();

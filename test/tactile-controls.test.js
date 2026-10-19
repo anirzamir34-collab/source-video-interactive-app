@@ -160,3 +160,17 @@ test('a control disabled during a hold never activates on release', t => {
   assert.equal(f.button.classes.has('is-charged'), false);
   f.detach();
 });
+
+test('PWM emulates intensity and never emits sub-motor slivers', async () => {
+  const { pwm, rhythmPattern } = await import('../public/tactile-controls.js');
+  assert.deepEqual(pwm(30, 1), [30]);
+  assert.deepEqual(pwm(40, .5), [10, 10, 10]);
+  assert.deepEqual(pwm(10, 0), []);
+  for (const pattern of [...Object.values(TACTILE_PATTERNS), rhythmPattern('slow'), rhythmPattern('fast'), rhythmPattern('intense')]) {
+    assert.equal(pattern.length % 2, 1, 'patterns end on a vibration');
+    pattern.forEach((value, index) => { if (index % 2 === 0) assert.ok(value >= 5, `vibration ${value}ms`); });
+  }
+  // Faster real tempo answers with more beats.
+  const beats = tempo => rhythmPattern(tempo).filter((value, index) => index % 2 && value > 60).length + 1;
+  assert.ok(beats('fast') > beats('moderate') && beats('moderate') > beats('slow'));
+});
