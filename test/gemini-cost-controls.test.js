@@ -15,6 +15,8 @@ import { hasFamilyOrSpouseContext } from '../public/relationship-roles.js';
 import { storyboardFailureReason, generateStoryboardWithRetry } from '../public/analysis-recovery.js';
 import { isTerminalStoryboardFailure } from '../public/analysis-recovery.js';
 import { serializeReviewCandidates } from '../public/classification-integrity.js';
+import { buildAnalysisPrompt } from '../lib/analysis-prompt.js';
+import { buildLegacyAnalysisPrompt } from '../lib/analysis-prompt-legacy.js';
 
 const result = () => ({ status: 200, body: { available: true, actions: [{ actionId: 'walk', startTime: 0, endTime: 4 }],
   aiUsage: { requests: 1, inputTokens: 50, outputTokens: 20, totalTokens: 70 } } });
@@ -148,7 +150,7 @@ function serverHandler(generateContent) {
   const end = source.indexOf("\napp.post('/api/external-analyze'", start);
   return vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
     ...choiceRouting, hasFamilyOrSpouseContext, GoogleGenAI: class { models = { generateContent }; },
-    geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction',
+    geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction', buildAnalysisPrompt, buildLegacyAnalysisPrompt, ANALYSIS_PROMPT_STYLE: 'compact',
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
     storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,
@@ -237,9 +239,9 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
 
 
 test('visual-analysis prompt avoids unrelated relationship examples while retaining evidence and family safety controls', () => {
-  const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
-  const prompt = source.slice(source.indexOf('STORY ENGINE V1 — EVIDENCE-AWARE NARRATIVE UNDERSTANDING:'),
-    source.indexOf('PROTAGONIST IDENTITY LOCK:'));
+  const source = fs.readFileSync(new URL('../lib/analysis-prompt.js', import.meta.url), 'utf8');
+  const prompt = source.slice(source.indexOf('5. STORY CONTEXT AND RELATIONSHIPS'),
+    source.indexOf('6. TURKISH LABELS'));
   assert.ok(prompt.length > 0);
   assert.doesNotMatch(prompt, /A mother addressing her daughter|Include source-supported grandparents|Kızıyla sohbet et|stepfather/);
   assert.match(prompt, /A relationship or background label becomes FACT only when the source explicitly establishes it/);

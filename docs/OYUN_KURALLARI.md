@@ -107,5 +107,8 @@ otomatik kontrol eder.
   durumda o aralık analizsiz oynatılır, uygulama bunu aşamaz.
 - Analiz edilemeyen bölüm istenen modelle yeniden denenebilir; aynı model aynı
   bölümü iki kez reddederse o model için durur.
+- Analiz talimatı lib/analysis-prompt.js içindedir; her kural tek yerde ve
+  konu başlıkları altında durur. Eski uzun talimat lib/analysis-prompt-legacy.js
+  içinde saklıdır; Render'da ANALYSIS_PROMPT=legacy ayarıyla geri dönülür.
 - Model kısa ve bozuk bir yanıtla bölümü bitirirse o bölüm tekrar
   sorulmaz, boşluk olarak geçilir.
