@@ -345,6 +345,32 @@ test('blocked ordinary choice resumes with its original end boundary intact', as
   assert.equal(f.state.finishedAction, action);
 });
 
+for (const mode of ['choice', 'source', 'gap']) {
+  test(`browser-interrupted ${mode} playback exposes a working continue button`, async () => {
+    const f = fixture();
+    const action = { actionId: 'walk', label: 'Masaya yürü', startTime: 20, endTime: 30 };
+    const play = f.els.video.play.bind(f.els.video);
+    f.els.video.play = async () => { throw new DOMException('Playback interrupted', 'AbortError'); };
+    if (mode === 'choice') await f.playAction(action);
+    else if (mode === 'source') await f.resumeSourceVideo();
+    else await f.resumeAnalysisGap(30);
+    assert.equal(f.state.gameState, 'DECISION_PENDING');
+    assert.equal(f.els.choices.classes.has('hidden'), false);
+    const button = f.els.choices.children[1];
+    assert.equal(button.dataset.playbackRecovery, 'continue');
+    f.els.video.play = play;
+    button.dispatchEvent(new Event('click'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.els.video.paused, false);
+    assert.equal(f.state.gameState, 'SEGMENT_PLAYING');
+    if (mode === 'choice') {
+      f.els.video.time = 30;
+      f.els.video.dispatchEvent(new Event('timeupdate'));
+      assert.equal(f.state.finishedAction, action);
+    }
+  });
+}
+
 test('a new navigation cancels an ordinary choice still seeking', async () => {
   const f = fixture();
   const action = { actionId: 'walk', startTime: 20, endTime: 30 };
