@@ -175,6 +175,22 @@ export function openingSceneChoiceMenu(items = [], { firstCoreStart = Infinity }
 }
 
 /**
+ * Verified normal dialogue occurring inside an active opening scene still
+ * belongs to the story surface. Earlier dialogue is handled by the normal
+ * timeline renderer; future dialogue is offered only when its source time
+ * approaches, so it cannot be mixed into the replayable approach card list.
+ */
+export function openingSceneStoryWindow(items = [], {
+  floor = 0, sceneStart = 0, firstCoreStart = Infinity, lookAheadSeconds = 2
+} = {}) {
+  const now = Number(floor);
+  if (!Number.isFinite(now)) return [];
+  return sceneSurfaceChoices(items, 'story', { floor: now, ceiling: firstCoreStart })
+    .filter(item => Number(item.startTime) >= Number(sceneStart) - 0.05 &&
+      Number(item.startTime) <= now + Math.max(0, Number(lookAheadSeconds) || 0) + 0.05);
+}
+
+/**
  * An unowned-source interval is a lack-of-player-identity hint, not evidence
  * that a separately verified normal decision must disappear from gameplay.
  * Keep an already source-verified ordinary card visible within lookahead.
