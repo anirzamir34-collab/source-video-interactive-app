@@ -127,7 +127,7 @@ test('saved game repair displays per-gap errors and suppresses repeated provider
   assert.match(app, /skipped_previous_rejection/);
   assert.match(app, /skipped_model_error/);
   assert.match(app, /lastRepairAttempt:/);
-  assert.match(app, /lastAttempt\?\.model === repairModel/);
+  assert.match(app, /planSavedGapRepair\(previous, gap, repairModel/);
   assert.match(app, /technicalStop\.has\(reason\)/);
   assert.match(ui, /describeSavedGameRepair\(analysis\)/);
   assert.match(ui, /saved-game-repair-report/);

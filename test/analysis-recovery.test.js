@@ -270,5 +270,5 @@ test('repair endpoint tracks validator and server normalization drops without lo
   assert.match(server, /GAP_REPAIR_VALIDATOR_VERSION/);
   assert.match(app, /clientNormalizerDroppedCount/);
   assert.match(app, /mergedActionsCount: count/);
-  assert.match(app, /lastAttempt\?\.validatorVersion === GAP_REPAIR_VALIDATOR_VERSION/);
+  assert.match(app, /planSavedGapRepair\(previous, gap, repairModel/);
 });
