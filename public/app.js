@@ -2865,7 +2865,7 @@ function canonicalAdultPosition(action) {
     cowgirl: 'Kovboy Pozisyonu',
     spoon: 'Spooning',
     'reverse-spoon': 'Ters Kaşık Pozisyonu',
-    'standing-rear': 'Standing Doggy Style',
+    'standing-rear': 'Ayakta Doggy Style',
     rear: 'Doggy Style',
     seated: 'Oturarak Pozisyon',
     standing: 'Ayakta Pozisyon'
@@ -5145,26 +5145,42 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     els.positionCount.textContent = `${positions.length} açık`;
   }
 
-  positions.forEach((position, index) => {
+  // One tab per position family. Separate source returns of the same position
+  // (e.g. standing doggy before and after a reverse-cowgirl chapter) stay
+  // separate occurrences internally, but the player sees a single tab; tapping
+  // it again moves to that position's next unlocked occurrence.
+  const families = [];
+  for (const position of positions) {
+    const key = String(position.familyId || position.id);
+    const family = families.find(item => item.key === key);
+    if (family) family.members.push(position);
+    else families.push({ key, members: [position] });
+  }
+  const playable = position => Boolean(interactionEntryClip(
+    genericInteractionSnapshot().scene.groups.find(group => group.id === position.id)));
+  families.forEach(({ members }) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'position-tab';
-    const familyCount = positions.filter(item => item.familyId === position.familyId).length;
-    const familyOrder = positions.slice(0, index + 1).filter(item => item.familyId === position.familyId).length;
-    button.textContent = String(position.label || '').trim() +
-      (familyCount > 1 ? ` · ${familyOrder}` : '');
-    button.dataset.positionId = position.id;
-  const hasVerifiedEntry = Boolean(interactionEntryClip(
-      genericInteractionSnapshot().scene.groups.find(group => group.id === position.id)));
-    button.disabled = !hasVerifiedEntry;
-    if (!state.adultRevealedPositionIds.has(position.id)) {
-      state.adultRevealedPositionIds.add(position.id);
-      button.classList.add('unlock-reveal');
+    const lead = members.find(item => item.id === state.activePositionId) || members[0];
+    button.textContent = String(lead.label || '').trim();
+    button.dataset.positionId = lead.id;
+    button.dataset.familyPositionIds = members.map(item => item.id).join(',');
+    button.disabled = !members.some(playable);
+    for (const member of members) {
+      if (!state.adultRevealedPositionIds.has(member.id)) {
+        state.adultRevealedPositionIds.add(member.id);
+        button.classList.add('unlock-reveal');
+      }
     }
-    button.addEventListener(
-      'click',
-      () => selectAdultPosition(position.id, true)
-    );
+    button.addEventListener('click', () => {
+      const ready = members.filter(playable);
+      if (!ready.length) return;
+      const current = ready.findIndex(item => item.id === state.activePositionId);
+      const next = current >= 0 ? ready[(current + 1) % ready.length] : ready[0];
+      button.dataset.positionId = next.id;
+      selectAdultPosition(next.id, true);
+    });
     els.positionTabs?.appendChild(button);
   });
 
@@ -5584,7 +5600,8 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   if (changedPosition) resetAdultTapRhythm();
 
   els.positionTabs?.querySelectorAll('.position-tab').forEach(button => {
-    button.classList.toggle('active', button.dataset.positionId === position.id);
+    const members = String(button.dataset.familyPositionIds || button.dataset.positionId || '').split(',');
+    button.classList.toggle('active', members.includes(position.id));
   });
 
   // The main tab owns only the verified position entry. All later returns and

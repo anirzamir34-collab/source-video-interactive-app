@@ -294,3 +294,49 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
 }
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel .movement-choice-wrap { display: contents !important; }
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-choice-card, .position-tab) { position: relative !important; inset: auto !important; }
+
+
+/* ===== v3: smaller text, one tidy right-hand column ===== */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui { --mq-col: 230px; }
+@media (min-width: 900px) { html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui { --mq-col: 270px; } }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel):not(.hidden) {
+  width: var(--mq-col) !important; max-width: calc(100% - 20px) !important;
+  align-items: stretch !important; gap: 5px !important;
+}
+/* Every choice is a full-width row of the column: same width, same rhythm. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices) > :is(.choice, .choice-btn, .discovery-choice-card, .dialogue-skip),
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-choice-card, .discovery-choice-card, .outcome-choice-grid > button) {
+  display: flex !important; width: 100% !important; max-width: 100% !important;
+  justify-content: flex-start !important; text-align: left !important;
+  padding: 6px 10px !important; border-radius: 10px !important;
+  font-size: 12px !important; font-weight: 500 !important; line-height: 1.3 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(.choice, .choice-btn, .discovery-choice-card, .movement-choice-card) :is(span, strong, .choice-title, [data-choice-label]) {
+  -webkit-line-clamp: 2 !important; text-align: left !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-choice-grid, .discovery-choice-grid, .outcome-choice-grid) {
+  display: flex !important; flex-direction: column !important; align-items: stretch !important;
+  flex-wrap: nowrap !important; gap: 5px !important; width: 100% !important;
+}
+/* Positions: one compact segmented row above the movements. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .position-tabs {
+  display: flex !important; flex-direction: row !important; flex-wrap: wrap !important;
+  justify-content: flex-start !important; gap: 4px !important; width: 100% !important;
+  padding-bottom: 5px !important; border-bottom: 1px solid rgba(255, 255, 255, .14) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .position-tab {
+  flex: 0 0 auto !important; width: auto !important; padding: 4px 9px !important;
+  border-radius: 999px !important; font-size: 11px !important; font-weight: 600 !important;
+  white-space: nowrap !important; text-align: center !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-section, .position-section, .progressive-stage-section) {
+  align-items: stretch !important; width: 100% !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .adult-dock-meters span { font-size: 11px !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel #finishAdultSceneBtn,
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices) .dialogue-skip { font-size: 11px !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .movement-choice-card[data-playback="playing"]::after { display: none !important; }
+@media (max-width: 560px) {
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui { --mq-col: 210px; }
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel):not(.hidden) { right: 8px !important; bottom: 8px !important; }
+}
