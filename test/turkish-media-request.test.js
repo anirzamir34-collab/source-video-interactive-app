@@ -177,3 +177,20 @@ test('missing, duplicate and invented translation IDs cannot authorize generated
       ['TRANSLATION_MISSING_SEGMENTS', 'TRANSLATION_SEGMENT_MISMATCH'].includes(error.code));
   }
 });
+
+test('a concurrency-limit 429 waits for a free slot beyond the normal retry budget', async () => {
+  let calls = 0;
+  const delays = [];
+  const request = createMediaRequest({ maxRetries: 2, random: () => 0, sleep: async ms => delays.push(ms),
+    fetchImpl: async () => ++calls <= 5
+      ? new Response('{"detail":{"code":"concurrent_limit_exceeded","message":"Too many concurrent requests."}}', { status: 429 })
+      : new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }) });
+  assert.deepEqual(await request('https://api.test/x'), { ok: true });
+  assert.equal(calls, 6);
+  assert.ok(delays.every(ms => ms >= 4000));
+  let plain = 0;
+  const limited = createMediaRequest({ maxRetries: 2, random: () => 0, sleep: async () => {},
+    fetchImpl: async () => { plain += 1; return new Response('rate limited', { status: 429 }); } });
+  await assert.rejects(limited('https://api.test/y'), error => error.code === 'PROVIDER_HTTP_429');
+  assert.equal(plain, 3, 'an ordinary 429 keeps its normal retry budget');
+});
