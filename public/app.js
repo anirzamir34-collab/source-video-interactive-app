@@ -4635,8 +4635,7 @@ function renderAdultApproachChoices(scene, later = false) {
   const compactChoiceLabel = value => String(value || '')
     .replace(/\s+sekansını oynat/giu, '')
     .replace(/\s*·\s*(?:Sekans|Bölüm)\s+\d+$/giu, '')
-    .replace(/\s*·\s*(?:Vajinal|Anal)$/giu, '')
-    .split(' · ')[0].trim();
+    .trim();
 
   candidates.forEach(choice => {
     const button = document.createElement('button');
