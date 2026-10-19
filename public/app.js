@@ -4751,9 +4751,17 @@ function renderAdultApproachChoices(scene, later = false) {
   // The opening Lust menu holds approach actions only. Ordinary dialogue that
   // sits between approach clips is never mixed into it; it appears in the
   // normal story panel when its source time is reached (see interlude below).
-  const openingMenu = !later
+  // Show a short, chronological set: choices already played or already
+  // passed by the video leave the menu, and at most four upcoming ones are
+  // offered at a time, so a long opening never stacks ten cards.
+  const openingAll = !later
     ? openingSceneChoiceMenu(approachPool.filter(item => !item.nonIntimate), { firstCoreStart: firstCoreTime })
     : null;
+  const playing = item => item.id === state.activeAdultPreludeId ||
+    (item.variants || []).some(clip => clip.id === state.activeAdultPreludeId || clip.id === state.activeMovementId);
+  const openingFresh = openingAll?.filter(item => Number(item.playCount || 0) === 0 || playing(item))
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const openingMenu = openingAll ? (openingFresh.length ? openingFresh : openingAll).slice(0, 4) : null;
   const interludeIds = !later ? state.adultDialogueInterludeIds : null;
   const interludeChoices = interludeIds?.size
     ? approachPool.filter(item => item.nonIntimate && item.sourceVerified === true &&

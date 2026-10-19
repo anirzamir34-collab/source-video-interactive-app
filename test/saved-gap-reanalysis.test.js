@@ -22,10 +22,12 @@ test('saved game empty 422 receives exactly one fresh shifted-sampling retry', (
   assert.equal(updated.repairAttemptHistory.length, 2);
 });
 
-test('provider content restriction does not automatically repeat a rejected request', () => {
-  const previous = { lastRepairAttempt: { model, promptVersion: prompt,
-    validatorVersion: validator, results: [{ ...gap,
-      reason: 'GEMINI_CONTENT_RESTRICTED', outcome: 'skipped_previous_rejection', httpStatus: 422 }] } };
+test('one provider refusal may be retried with new frames; two refusals stop that model', () => {
+  const refusal = { ...gap, reason: 'GEMINI_CONTENT_RESTRICTED', outcome: 'skipped_previous_rejection', httpStatus: 422 };
+  const once = { lastRepairAttempt: { model, promptVersion: prompt, validatorVersion: validator, results: [refusal] } };
+  assert.deepEqual(plan(once), { samplingStrategy: 'shifted' });
+  const previous = { repairAttemptHistory: [1, 2].map(() => ({ ...refusal, outcome: 'processed', model,
+    promptVersion: prompt, validatorVersion: validator })) };
   assert.equal(plan(previous).skip, 'skipped_previous_rejection');
   assert.deepEqual(planSavedGapRepair(previous, gap, 'gemini-4-argon', prompt, validator),
     { samplingStrategy: 'baseline' });

@@ -469,7 +469,8 @@ test('70 percent reaches the source budget without making prior opening cards di
   f.state.adultTimelineFloor = 60;
   f.els.video.time = 60;
   f.renderAdultApproachChoices(f.state.adultScene);
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['old', 'new-a', 'new-b']);
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['old', 'new-b'],
+    'a played opening card leaves the menu; unplayed ones stay');
   f.state.adultSelectionToken = 3;
   f.state.adultPendingSelectionProgress = { token: 3, kind: 'prelude',
     item: f.state.adultScene.foreplay[2], playStarted: true, observedSeconds: 20 };
@@ -1593,7 +1594,7 @@ test('a dialogue between opening clips appears in the normal panel when its sour
   assert.equal(f.state.femaleSceneProgress, lustBeforeDialogue, 'dialogue never earns Lust');
   assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['reported-opening', 'reported-next'], 'the opening menu returns after the dialogue');
+    ['reported-next'], 'the opening menu returns after the dialogue without the played card');
   f.els.video.time = 295;
   f.state.adultTimelineFloor = 295;
   f.state.adultOpeningMenuPinned = false;
@@ -1640,7 +1641,7 @@ test('opening clips fill Lust and open the sex panel before every clip is mandat
   }));
   f.els.video.time = 0;
   f.renderAdultProgressiveUI(true);
-  assert.equal(f.state.adultApproachChoices.length, 6);
+  assert.equal(f.state.adultApproachChoices.length, 4, 'at most four upcoming opening cards at a time');
   let played = 0;
   for (let index = 0; index < 6 && !f.state.adultSexUnlocked; index += 1) {
     f.playAdultPrelude(`step-${index}`);

@@ -27,9 +27,13 @@ export function savedGapRepairHistory(analysis = {}) {
 export function planSavedGapRepair(analysis, gap, model, promptVersion, validatorVersion) {
   const attempts = savedGapRepairHistory(analysis).filter(item =>
     matched(item, gap, model, promptVersion, validatorVersion));
-  const blocked = attempts.find(item => item.reason === 'GEMINI_CONTENT_RESTRICTED');
-  if (blocked) return { skip: 'skipped_previous_rejection', reason: blocked.reason,
-    httpStatus: blocked.httpStatus || null };
+  // A provider refusal is not final: a repeat (or a different frame
+  // sampling) may pass, and the user asked for this retry explicitly.
+  // Only two refusals with this exact model and prompt stop further tries.
+  const blocked = attempts.filter(item => item.reason === 'GEMINI_CONTENT_RESTRICTED');
+  if (blocked.length >= 2) return { skip: 'skipped_previous_rejection', reason: blocked[0].reason,
+    httpStatus: blocked[0].httpStatus || null };
+  if (blocked.length) return { samplingStrategy: 'shifted' };
   const empty = attempts.filter(item => item.reason === 'GEMINI_NO_VERIFIED_EVENTS');
   if (empty.some(item => item.samplingStrategy === 'shifted')) {
     return { skip: 'skipped_previous_empty', reason: 'GEMINI_NO_VERIFIED_EVENTS',

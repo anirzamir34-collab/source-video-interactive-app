@@ -15,6 +15,8 @@ otomatik kontrol eder.
 
 - Yakınlaşma arasındaki konuşma, kaynak zamanı gelince normal panelde açılır;
   ardından "Yakınlaşmaya dön" ile yakınlaşma menüsüne dönülür.
+- İlk yakınlaşma menüsü aynı anda en çok 4 seçenek gösterir, zaman sırasıyla;
+  oynanan seçenek menüden çıkar. Menünün üstünde canlı Lust göstergesi vardır.
 - Hiçbir panelde videoda olmayan bir seçenek üretilmez.
 
 ## 2. Lust
@@ -65,5 +67,7 @@ otomatik kontrol eder.
 
 - 25 dk ve üstü videolarda önce ucuz bir ön tarama, sonra yalnız yakınlaşma
   ve seks bölümlerinde ayrıntılı analiz.
+- Analiz edilemeyen bölüm istenen modelle yeniden denenebilir; aynı model aynı
+  bölümü iki kez reddederse o model için durur.
 - Model kısa ve bozuk bir yanıtla bölümü bitirirse o bölüm tekrar
   sorulmaz, boşluk olarak geçilir.
