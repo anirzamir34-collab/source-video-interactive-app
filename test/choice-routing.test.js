@@ -38,7 +38,7 @@ test('the complete first approach menu never gates verified choices by stage, cu
       sourceVerified: false, startTime: 70, endTime: 72 })
   ];
   const before = structuredClone(opening);
-  const expected = ['dialogue', 'clothing', 'transition-a', 'transition-b'];
+  const expected = ['clothing', 'transition-a', 'transition-b'];
   // The same complete menu applies before playback, halfway through, and
   // after any selected clip: play counts and the playhead do not filter it.
   for (const cursor of [50, 85, 97, 110.598, 160]) {
@@ -47,6 +47,25 @@ test('the complete first approach menu never gates verified choices by stage, cu
       .map(item => item.id), expected);
   }
   assert.deepEqual(opening, before);
+});
+
+test('normal dialogue before a verified opening is reserved for the story surface', () => {
+  const clips = [
+    action({ id: 'early-talk', actionId: 'early-talk', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 20, endTime: 30 }),
+    action({ id: 'first-approach', actionId: 'first-approach', choiceSurface: 'approach',
+      actionType: 'kiss', startTime: 30, endTime: 45 }),
+    action({ id: 'between-talk', actionId: 'between-talk', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 45, endTime: 50 }),
+    action({ id: 'next-approach', actionId: 'next-approach', choiceSurface: 'approach',
+      actionType: 'touch', startTime: 50, endTime: 60 })
+  ];
+  assert.deepEqual(openingSceneChoiceMenu(clips, { firstCoreStart: 70 }).map(clip => clip.id),
+    ['first-approach', 'next-approach']);
+  assert.deepEqual(sceneSurfaceChoices(clips, 'story', { floor: 0, ceiling: 70 }).map(clip => clip.id),
+    ['early-talk', 'between-talk']);
+  assert.deepEqual(clips.map(clip => clip.choiceSurface),
+    ['story', 'approach', 'story', 'approach'], 'source categories stay unchanged');
 });
 
 test('opening cards preserve independently verified source cuts and exact original labels', () => {
