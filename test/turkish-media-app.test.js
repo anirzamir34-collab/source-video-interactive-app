@@ -46,6 +46,35 @@ class Element {
   };
 }
 
+test('unverified source voice automatically opens the manual recovery picker', () => {
+  const picker = { open: false, classList: { contains: () => false } };
+  const els = new Proxy({ voiceMappingPanel: picker }, {
+    get(target, key) { return target[key] ||= new Element(); }
+  });
+  const state = { analysisInProgress: false, voiceMappingManualRequested: false };
+  let renders = 0;
+  const scope = vm.createContext({
+    state, els, analysisProgress: { observe() {} }, logEngineEvent() {},
+    updateSourceTranscript(transcript) { state.sourceTranscript = transcript; },
+    renderVoiceMappingPanel() { renders++; }
+  });
+  vm.runInContext(section('function onTurkishMediaStatus(', '\nfunction renderMediaControls()'), scope);
+  const transcript = { speakers: [{ speakerId: 'speaker-003', gender: 'unknown' }] };
+  scope.onTurkishMediaStatus({ state: 'FAILED', error: { code: 'VOICE_PROFILE_UNVERIFIED',
+    message: 'Source speaker is ambiguous.' }, sourceTranscript: transcript });
+  assert.equal(state.voiceMappingManualRequested, true);
+  assert.equal(picker.open, true);
+  assert.equal(state.sourceTranscript, transcript);
+  assert.equal(renders, 1);
+
+  picker.open = false;
+  state.voiceMappingManualRequested = false;
+  scope.onTurkishMediaStatus({ state: 'FAILED', error: { code: 'ELEVENLABS_PERMISSION_DENIED',
+    message: 'Permission missing.' } });
+  assert.equal(picker.open, false, 'unrelated failures do not open the picker');
+  assert.equal(state.voiceMappingManualRequested, false);
+});
+
 test('retry with dubbing now off starts a new analysis instead of retrying the old dubbing job', async () => {
   let retryHandler;
   let freshStarts = 0;
