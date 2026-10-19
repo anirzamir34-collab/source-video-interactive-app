@@ -9,7 +9,13 @@ export function savedGapRepairHistory(analysis = {}) {
   const history = Array.isArray(analysis.repairAttemptHistory) ? [...analysis.repairAttemptHistory] : [];
   const last = analysis.lastRepairAttempt;
   for (const item of Array.isArray(last?.results) ? last.results : []) {
-    if (['skipped_previous_rejection', 'skipped_previous_empty', 'skipped_model_error'].includes(item.outcome)) continue;
+    if (item.outcome === 'skipped_model_error') continue;
+    // Older saves kept only the skipped report, losing the actual previous
+    // rejection. Its reason is still evidence of a completed baseline attempt.
+    if (item.outcome === 'skipped_previous_empty' &&
+        item.reason !== 'GEMINI_NO_VERIFIED_EVENTS') continue;
+    if (item.outcome === 'skipped_previous_rejection' &&
+        item.reason !== 'GEMINI_CONTENT_RESTRICTED') continue;
     const entry = { ...item, model: last.model, promptVersion: last.promptVersion,
       validatorVersion: last.validatorVersion, samplingStrategy: item.samplingStrategy || 'baseline' };
     if (!history.some(old => matched(old, entry, entry.model, entry.promptVersion, entry.validatorVersion) &&
