@@ -4817,7 +4817,9 @@ function renderAdultApproachChoices(scene, later = false) {
     });
     target.appendChild(back);
     refreshAdultCompactDock?.();
-    return;
+    // The interlude lives on the story surface; returning nothing hid every
+    // surface and left a paused video with no visible choice.
+    return 'story';
   }
 
   // Once the last source card has passed, natural playback can reach the next chapter.
@@ -5008,7 +5010,7 @@ function renderAdultProgressiveUI(force = false) {
     els.discoveryGate?.classList.add('hidden');
     els.adultPanelToggleBtn?.classList.add('hidden');
     const selectedSurface = renderAdultApproachChoices(scene, laterOverlay);
-    setSurface(selectedSurface);
+    setSurface(selectedSurface || 'approach');
     els.categorySection?.classList.add('hidden');
     els.positionSection?.classList.add('hidden');
     els.movementSection?.classList.add('hidden');

@@ -1586,6 +1586,8 @@ test('a dialogue between opening clips appears in the normal panel when its sour
   f.updateAdultPlayback(1250, 91);
   assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-dialogue']);
+  assert.equal(f.els.choices.classList.contains('hidden'), false,
+    'the paused interlude is visible, never a frozen frame without choices');
   const lustBeforeDialogue = f.state.femaleSceneProgress;
   f.playAdultPrelude('reported-dialogue');
   await flush();

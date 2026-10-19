@@ -933,3 +933,29 @@ test('decision timing follows source speech without a media manifest or network 
   assert.equal(f.client.capture(), null);
   assert.equal(f.requests.length, 0);
 });
+
+test('a network stall keeps the dub playing and small drift is corrected without seeking', async t => {
+  const f = fixture();
+  t.after(() => f.client.destroy());
+  f.video.sourceTime(1.5);
+  await f.client.loadResult(manifest());
+  f.video.paused = false;
+  f.video.fire('playing');
+  await settle();
+  const audio = f.audios.findLast(value => value.src);
+  assert.equal(audio.paused, false);
+  f.video.fire('stalled');
+  f.video.fire('timeupdate');
+  await settle();
+  assert.equal(audio.paused, false, 'stalled is not buffering');
+  const seeks = audio.seekWrites.length;
+  audio.sourceTime(f.video.currentTime - 0.2);
+  f.video.fire('timeupdate');
+  await settle();
+  assert.equal(audio.seekWrites.length, seeks, 'small drift does not interrupt the voice');
+  assert.ok(audio.playbackRate > 1 && audio.playbackRate <= 1.06);
+  audio.sourceTime(f.video.currentTime - 1);
+  f.video.fire('timeupdate');
+  await settle();
+  assert.equal(audio.seekWrites.length, seeks + 1, 'large drift still resynchronizes');
+});

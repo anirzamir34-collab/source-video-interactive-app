@@ -6,6 +6,7 @@ import { conversationEnd } from './conversation-timing.js';
 // The server produces one finished soundtrack. The source video owns every
 // playback boundary; this client only follows its clock and renders captions.
 const API = '/api/turkish-media';
+const HARD_RESYNC_SECONDS = 0.35;
 const MAX_CHUNK = 10 * 1024 * 1024;
 const LEGACY_AUDIO_UPLOAD_CHUNK_BYTES = 128 * 1024;
 export const AUDIO_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
@@ -231,18 +232,28 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     if (!audio || !dubEnabled) return;
     if (legacySourceVolume !== null && video.volume !== legacyAppliedVolume) legacySourceVolume = Number(video.volume) || 0;
     audio.volume = Math.max(0, Math.min(1, legacySourceVolume ?? (Number(video.volume) || 0)));
-    audio.playbackRate = Math.max(0.01, Number(video.playbackRate) || 1);
+    const baseRate = Math.max(0.01, Number(video.playbackRate) || 1);
     const target = Math.max(0, (Number(video.currentTime) || 0) + syncOffset);
     const duration = Number(audio.duration || manifest?.assets?.mix?.duration);
     const atEnd = Number.isFinite(duration) && duration > 0 && target >= duration - 0.015;
+    // Positive drift: the Turkish track is behind the picture.
+    const drift = target - (Number(audio.currentTime) || 0);
+    let seeked = false;
     try {
       // An in-flight MP3 seek must settle before attempting another seek or play.
       // Otherwise the decoder can briefly replay samples from the old scene.
-      if (!audio.seeking && (needsSeek || Math.abs((Number(audio.currentTime) || 0) - target) > 0.25)) {
+      if (!audio.seeking && (needsSeek || Math.abs(drift) > HARD_RESYNC_SECONDS)) {
         audio.currentTime = Number.isFinite(duration) && duration > 0 ? Math.min(target, duration) : target;
-        needsSeek = false;
+        needsSeek = false; seeked = true;
       }
     } catch { /* Metadata may not be available yet; loadedmetadata resynchronizes. */ }
+    // Small clock drift is corrected by a slight, inaudible speed change.
+    // Seeking for every quarter second of drift interrupted the voice and
+    // made the dub sound choppy.
+    const rate = !seeked && !audio.paused && Math.abs(drift) > 0.03
+      ? baseRate * (1 + Math.max(-0.06, Math.min(0.06, drift * 0.5))) : baseRate;
+    if (audio.preservesPitch === false) audio.preservesPitch = true;
+    if (Math.abs((Number(audio.playbackRate) || 0) - rate) > 0.001) audio.playbackRate = rate;
     if (!canPlayAudio() || atEnd) { stopAudio(); return; }
     if (audioOwnsPlayback) applySourceAudio();
     if (audio.paused !== false && !playAttempt) {
@@ -644,7 +655,10 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   }
 
   const onMedia = event => {
-    if (['waiting', 'stalled', 'seeking'].includes(event.type)) { waiting = true; stopAudio(); }
+    // 'stalled' only means the network is idle; a fully buffered blob keeps
+    // playing. Treating it as buffering silenced the dub for whole lines.
+    if (['waiting', 'seeking'].includes(event.type)) { waiting = true; stopAudio(); }
+    if (event.type === 'timeupdate' && waiting && !sourceEmptied && !playbackFailed && !video.seeking && Number(video.readyState) >= 3) waiting = false;
     if (['playing', 'canplay', 'loadeddata', 'loadedmetadata', 'seeked'].includes(event.type)) waiting = Number(video.readyState) < 3;
     if (['playing', 'canplay', 'loadeddata', 'loadedmetadata'].includes(event.type)) sourceEmptied = false;
     if (event.type === 'seeked') needsSeek = true;

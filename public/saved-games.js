@@ -80,8 +80,11 @@ function validateTurkishMedia(media, audio, duration) {
     }
     utterances.set(row.segmentId, row);
   }
+  // Lines that kept their original voice have a translation but no dub row.
+  const keptOriginal = Math.max(0, Number(manifest.qualityReport?.originalVoiceKeptCount) || 0);
   for (const [name, rows] of [['çeviri', manifest.translatedUtterances], ['dublaj', manifest.dubSegments]]) {
-    if (!Array.isArray(rows) || (rows.length && rows.length !== utterances.size)) throw new Error(`Kayıttaki ${name} kapsamı eksik.`);
+    const expected = name === 'dublaj' ? utterances.size - keptOriginal : utterances.size;
+    if (!Array.isArray(rows) || (rows.length && rows.length !== expected)) throw new Error(`Kayıttaki ${name} kapsamı eksik.`);
     const seen = new Set();
     for (const row of rows) {
       const original = utterances.get(row?.segmentId);

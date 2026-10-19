@@ -386,3 +386,15 @@ databaseTest('v1 database upgrade leaves disk rows intact, returns source-only d
   inspect.close();
   await store.close();
 });
+
+test('a partial dub that kept some original voices still saves', () => {
+  const input = fixture();
+  const m = input.turkishMedia.manifest;
+  const second = { ...m.sourceTranscript.utterances[0], segmentId: 'segment-source-2', sourceStart: 3, sourceEnd: 4,
+    words: [{ text: 'Hi.', start: 3, end: 4, type: 'word' }] };
+  m.sourceTranscript.utterances.push(second);
+  m.translatedUtterances.push({ segmentId: second.segmentId, speakerId: second.speakerId, translatedText: 'Selam.' });
+  assert.throws(() => prepareGame(input), /dublaj kapsamı/);
+  m.qualityReport.originalVoiceKeptCount = 1;
+  assert.doesNotThrow(() => prepareGame(input));
+});
