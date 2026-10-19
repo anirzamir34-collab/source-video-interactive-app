@@ -616,3 +616,21 @@ test('artifact range errors and disconnected responses release the lease without
   assert.equal(res.statusCode, 416); assert.equal(releases, 1);
   assert.doesNotMatch(JSON.stringify(res.jsonBody), /\/safe/);
 });
+
+test('an anti-bot wall gets one browser-impersonated retry when the extractor supports it', async () => {
+  const calls = [];
+  const code = section('async function resolveWithSiteExtractor(', "\napp.post('/api/resolve-video-url'");
+  const f = fixture(code, { selectExtractorSource, videoErrorDiagnostic, videoErrorDetail: e => String(e?.message || e),
+    videoExtractorCanImpersonate: () => true,
+    needsBrowserImpersonation: detail => /cloudflare/i.test(detail),
+    runVideoExtractor: async (url, options) => {
+      calls.push(options);
+      if (calls.length === 1) throw Error('Got HTTP Error 403 caused by Cloudflare anti-bot challenge');
+      return { url: 'https://cdn.test/video.mp4', vcodec: 'h264', acodec: 'aac' };
+    } });
+  const result = await f.scope.resolveWithSiteExtractor('https://site.test/watch');
+  assert.equal(result.sourceUrl, 'https://cdn.test/video.mp4');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].impersonate, 'chrome');
+  assert.equal(calls[1].userAgent, undefined);
+});

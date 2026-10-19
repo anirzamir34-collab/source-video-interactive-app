@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "postinstall": "node scripts/build-source-audio-codec.js",
+    "postinstall": "node scripts/build-source-audio-codec.js && node scripts/fetch-yt-dlp.js",
     "build:audio": "node scripts/build-source-audio-codec.js",
     "check": "node scripts/check-syntax.js",
     "test": "npm run check && node --test test/*.test.js"

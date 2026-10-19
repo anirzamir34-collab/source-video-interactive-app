@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
-import { runVideoExtractor } from './lib/video-extractor.js';
+import { runVideoExtractor, videoExtractorCanImpersonate, needsBrowserImpersonation } from './lib/video-extractor.js';
 import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure, videoErrorDetail, videoErrorDiagnostic } from './lib/video-url.js';
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
@@ -1478,13 +1478,25 @@ async function resolveWithSiteExtractor(rawUrl, { referer = rawUrl, timeoutMs = 
     userAgent, referer,
     format: 'best[protocol^=http][vcodec!=none][acodec!=none]/best/best*'
   };
-  // Use the installed extractor's normal transport. Forcing Chrome required
-  // optional Python dependencies that the standard Render install lacks.
+  // Use the normal transport first. Only an anti-bot wall (e.g. Cloudflare)
+  // gets one retry with a browser-identical fingerprint, and only when the
+  // installed standalone extractor actually bundles that capability.
   let output;
   try { output = await runVideoExtractor(rawUrl, baseOptions, { signal, timeoutMs }); }
   catch (error) {
     console.warn('[video-extractor-detail]', new URL(rawUrl).hostname, videoErrorDiagnostic(error));
-    throw error;
+    const canImpersonate = typeof videoExtractorCanImpersonate === 'function' && videoExtractorCanImpersonate();
+    if (!canImpersonate || signal.aborted || !needsBrowserImpersonation(videoErrorDetail(error))) throw error;
+    try {
+      // The impersonated browser supplies its own matching User-Agent.
+      const { userAgent: _ignored, ...plainOptions } = baseOptions;
+      output = await runVideoExtractor(rawUrl, { ...plainOptions,
+        impersonate: 'chrome', extractorArgs: 'generic:impersonate' }, { signal, timeoutMs });
+      console.warn('[video-extractor-impersonation]', new URL(rawUrl).hostname, 'ok');
+    } catch (retryError) {
+      console.warn('[video-extractor-detail]', new URL(rawUrl).hostname, 'impersonated:', videoErrorDiagnostic(retryError));
+      throw retryError;
+    }
   }
   const selected = selectExtractorSource(output, rawUrl);
   await validatePublicUrl(selected.sourceUrl);
