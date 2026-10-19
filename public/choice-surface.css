@@ -1,0 +1,143 @@
+/* Player choice surfaces. The existing playback and tactile controllers own behavior. */
+#playerSection .video-stage.scene-player.cinematic-ui #choices:has(> .story-choice) {
+  gap: 8px !important;
+  padding: 10px !important;
+  border: 1px solid rgba(194, 238, 223, .22) !important;
+  border-radius: 19px !important;
+  background: linear-gradient(160deg, rgba(13, 25, 27, .91), rgba(6, 14, 19, .94)) !important;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .42) !important;
+  backdrop-filter: blur(14px) saturate(120%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(120%) !important;
+}
+
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .choice.story-choice {
+  min-height: 54px !important;
+  padding: 11px 34px 11px 14px !important;
+  border: 1px solid rgba(172, 232, 211, .28) !important;
+  border-left: 3px solid #78e5bb !important;
+  border-radius: 14px !important;
+  background: linear-gradient(105deg, rgba(40, 103, 83, .45), rgba(17, 35, 40, .94)) !important;
+  box-shadow: 0 7px 18px rgba(0, 0, 0, .22), inset 0 1px rgba(255, 255, 255, .06) !important;
+  color: #f5fff9 !important;
+  font-size: 14px !important;
+  line-height: 1.35 !important;
+  transition: transform 150ms ease, border-color 150ms ease, filter 150ms ease !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .choice.story-choice .choice-title {
+  font-size: 14px !important;
+  line-height: 1.35 !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #choices > .choice.approach-choice {
+  border-color: rgba(255, 190, 157, .40) !important;
+  border-left-color: #ffbe9d !important;
+  background: linear-gradient(105deg, rgba(97, 55, 51, .47), rgba(30, 29, 35, .94)) !important;
+}
+
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices:not(.hidden) {
+  width: min(300px, 70%) !important;
+  gap: 7px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #approachChoices button {
+  min-height: 52px !important;
+  padding: 10px 12px !important;
+  border: 1px solid rgba(255, 207, 181, .34) !important;
+  border-left: 3px solid #ffbe9d !important;
+  border-radius: 13px !important;
+  background: linear-gradient(115deg, rgba(78, 42, 42, .87), rgba(18, 27, 29, .94)) !important;
+  box-shadow: 0 9px 22px rgba(0, 0, 0, .35) !important;
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+  text-shadow: none !important;
+}
+
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded:not(.hidden) {
+  max-width: min(300px, 38vw, calc(100% - 16px)) !important;
+  padding: 9px !important;
+  border: 1px solid rgba(189, 235, 216, .22) !important;
+  border-radius: 18px !important;
+  background: rgba(8, 19, 22, .88) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .45) !important;
+  backdrop-filter: blur(12px) saturate(120%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(120%) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.discovery-choice-grid, .movement-choice-grid) {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 7px !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-choice-wrap {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.discovery-choice-card, .movement-choice-card, .position-tab, .category-tab) {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-height: 50px !important;
+  padding: 10px 12px !important;
+  border: 1px solid rgba(148, 221, 195, .29) !important;
+  border-radius: 12px !important;
+  background: linear-gradient(120deg, rgba(35, 81, 69, .62), rgba(13, 31, 36, .96)) !important;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .20), inset 0 1px rgba(255, 255, 255, .06) !important;
+  color: #f5fff9 !important;
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+  text-shadow: none !important;
+  transition: transform 150ms ease, border-color 150ms ease, filter 150ms ease !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.discovery-choice-card, .movement-choice-card) :is(strong, span) {
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(.position-tab.active, .category-tab.active, .movement-choice-card.active, .movement-choice-card[data-playback="playing"]) {
+  border-color: #78e5bb !important;
+  background: linear-gradient(120deg, rgba(35, 116, 88, .8), rgba(14, 54, 49, .96)) !important;
+  box-shadow: 0 0 0 1px rgba(120, 229, 187, .25), 0 9px 20px rgba(0, 0, 0, .25) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .approach-card {
+  border-left: 3px solid #ffbe9d !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-choice-card[data-playback="loading"] {
+  border-color: rgba(255, 212, 140, .65) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-choice-card[data-playback]::after {
+  content: "" !important;
+  position: absolute !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 3px !important;
+  background: #78e5bb !important;
+  transform: scaleX(var(--clip-progress, 0)) !important;
+  transform-origin: left !important;
+  pointer-events: none !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) button:is(:hover, :focus-visible) {
+  border-color: rgba(191, 255, 225, .8) !important;
+}
+
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded:not(.hidden) {
+  max-width: min(300px, 38vw, calc(100% - 16px)) !important;
+}
+#playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel :is(.discovery-choice-card, .movement-choice-card, .position-tab, .category-tab) {
+  width: 100% !important;
+  min-height: 50px !important;
+  padding: 10px 12px !important;
+  border-radius: 12px !important;
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+}
+
+@media (orientation: portrait) {
+  #playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded:not(.hidden),
+  #playerSection .video-stage.scene-player.cinematic-ui:is(:fullscreen, :-webkit-full-screen) #adultInteractionPanel.compact-expanded:not(.hidden) {
+    max-width: min(300px, 76vw, calc(100% - 16px)) !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) button {
+    animation: none !important;
+    transition: none !important;
+  }
+}
