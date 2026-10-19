@@ -596,6 +596,43 @@ test('only a measured long utterance is shortened and regenerated before extreme
   assert.equal(result.qualityReport.adaptiveTempoCount, 0);
 });
 
+test('moderate duration overruns above the configured tempo ceiling get targeted recovery', async t => {
+  const f = await fixture(t);
+  const translate = f.translationProvider.translateScene;
+  f.translationProvider.translateScene = async (scene, options = {}) => {
+    const rows = await translate(scene, options);
+    return rows.map(row => row.translatedText === 'Evet.' ? row : ({
+      ...row,
+      translatedText: !options.shorten ? 'Merhaba, bugün burada ne yapıyorsun acaba?'
+        : options.shorteningRound === 1 ? 'Merhaba, bugün ne yapıyorsun?' : 'Selam.',
+      displaySubtitleText: !options.shorten ? 'Merhaba, bugün burada ne yapıyorsun acaba?'
+        : options.shorteningRound === 1 ? 'Merhaba, bugün ne yapıyorsun?' : 'Selam.'
+    }));
+  };
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (file, options) => {
+    const turn = JSON.parse(await readFile(file, 'utf8'));
+    if (turn.text.startsWith('Merhaba')) {
+      const actualDuration = turn.text.includes('burada') ? 3 : 2.8;
+      assert.ok(actualDuration > options.targetDuration * options.maxTempo);
+      assert.ok(actualDuration < options.targetDuration * 1.6);
+      throw Object.assign(new Error('moderate overrun'), {
+        code: 'DUB_REGENERATE_REQUIRED', actualDuration
+      });
+    }
+    return fit(file, options);
+  };
+  const result = await f.pipeline(f.input);
+  assert.deepEqual(f.calls.translate.slice(1).map(row => row.options.shorteningRound), [1, 2]);
+  assert.ok(f.calls.translate.slice(1).every(row => row.scene.utterances.length === 1));
+  assert.equal(result.translatedUtterances[0].translatedText, 'Selam.');
+  assert.equal(result.translatedUtterances[1].translatedText, 'Evet.');
+  assert.equal(result.qualityReport.shortenedDubCount, 2);
+  assert.equal(f.calls.synthesize.length, 3);
+  assert.ok(f.calls.fit.every(row => row.maxTempo === f.config.maxTempo));
+  assert.equal(f.calls.mix.length, 1);
+});
+
 test('measured overlong dialogue may be shortened twice before extreme time stretching', async t => {
   const f = await fixture(t);
   const translate = f.translationProvider.translateScene;
