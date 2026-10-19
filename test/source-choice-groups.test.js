@@ -165,7 +165,7 @@ test('four minute opening groups repeated adjacent actions without inventing int
   assert.equal(groupVerifiedApproachChoices(clips.slice(0, 1))[0].variants.length, 1);
 });
 
-test('verified rhythmic cuts with compatible tempo share a replayable movement card', () => {
+test('verified rhythmic actions with distinct labels retain their own movement cards', () => {
   const movements = [
     clip(0, { actionType: 'position', movementType: 'ritmik temas', label: 'İlk ritmik kesit' }),
     clip(1, { actionType: 'position', movementType: 'ritmik hareket', label: 'Aynı ritmi sürdür',
@@ -180,9 +180,9 @@ test('verified rhythmic cuts with compatible tempo share a replayable movement c
     ], movements };
   const cards = buildVerifiedMovementChoices(movements, 'Observed pose', 4, position);
   assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
-    [['clip-0', 'clip-1'], ['clip-2']]);
+    [['clip-0'], ['clip-1'], ['clip-2']]);
   assert.deepEqual(cards[0].variants.map(item => [item.loopStartTime, item.loopEndTime]),
-    [[0, 5], [9.6, 14.6]]);
+    [[0, 5]]);
   const differentCast = movements.map((item, index) => index === 1
     ? { ...item, partnerTrackId: 'person-c' } : item);
   assert.deepEqual(buildVerifiedMovementChoices(differentCast,

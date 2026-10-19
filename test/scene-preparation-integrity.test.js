@@ -76,9 +76,8 @@ test('anonymous Android analysis retains ordinary choices and the later verified
     item.familyId === 'oral' || item.familyId === 'standing-rear');
   const coreRhythm = rhythmic.find(position => position.familyId === 'standing-rear');
   assert.equal(coreRhythm.movements.length, 12);
-  assert.equal(coreRhythm.movementChoices.length, 9,
-    'three compatible source pairs rotate within cards rather than making duplicate buttons');
-  assert.ok(rhythmic.some(position => position.movementChoices.some(card => card.variants.length > 1)));
+  assert.equal(coreRhythm.movementChoices.length, 12,
+    'distinct observed source actions retain their own buttons');
   for (const position of rhythmic) for (const card of position.movementChoices) {
     assert.ok(card.variants.every(item => item.sourceVerified === true));
     assert.ok(card.variants.every(item => item.movementTempo === card.variants[0].movementTempo));
