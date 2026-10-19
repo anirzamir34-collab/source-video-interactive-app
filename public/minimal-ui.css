@@ -1,0 +1,194 @@
+/* Minimal choice UI.
+ * Loaded last. Every choice surface (story, opening, sex panel) becomes a
+ * row of text-sized pills docked at the bottom of the video, over a light
+ * scrim, so the video stays visible. Long descriptions stay in the button
+ * title/aria-label; no extra boxes, badges or explanatory copy.
+ */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui {
+  --mq-text: #f4f6f5;
+  --mq-muted: rgba(244, 246, 245, .62);
+  --mq-pill: rgba(18, 20, 22, .58);
+  --mq-pill-hover: rgba(40, 44, 48, .72);
+  --mq-line: rgba(255, 255, 255, .16);
+  --mq-accent: #8ff0cf;
+  --mq-accent-bg: rgba(143, 240, 207, .16);
+  --mq-size: 13px;
+  --mq-gap: 6px;
+}
+
+/* ---------- Shared dock: bottom of the video, content-sized ---------- */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel.compact-expanded):not(.hidden) {
+  position: absolute !important;
+  left: 8px !important; right: 8px !important; bottom: 8px !important; top: auto !important;
+  width: auto !important; max-width: min(640px, calc(100% - 16px)) !important;
+  height: auto !important; min-height: 0 !important; max-height: 38% !important;
+  margin: 0 !important; padding: 6px !important;
+  overflow-y: auto !important; overflow-x: hidden !important;
+  display: flex !important; flex-direction: row !important; flex-wrap: wrap !important;
+  align-items: center !important; justify-content: flex-start !important;
+  align-content: flex-end !important; gap: var(--mq-gap) !important;
+  transform: none !important; translate: none !important; inset-inline: 8px !important;
+  background: transparent !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  scrollbar-width: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel)::-webkit-scrollbar { display: none; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui:has(:is(#choices, #approachChoices, #adultInteractionPanel.compact-expanded):not(.hidden):not(:empty)) .cinema-shade {
+  background: linear-gradient(to top, rgba(0, 0, 0, .5) 0%, rgba(0, 0, 0, 0) 34%) !important;
+}
+
+/* ---------- Pills: every choice button ---------- */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+  .choice, .choice-btn, .discovery-choice-card, .movement-choice-card, .position-tab, .category-tab,
+  .outcome-choice-card, .outcome-choice-grid > button, .dialogue-skip) {
+  all: unset;
+  box-sizing: border-box !important;
+  display: inline-flex !important; align-items: center !important; gap: 6px !important;
+  width: auto !important; max-width: 100% !important; min-width: 0 !important; min-height: 0 !important;
+  padding: 6px 11px !important;
+  border: 1px solid var(--mq-line) !important; border-radius: 999px !important;
+  background: var(--mq-pill) !important;
+  backdrop-filter: blur(10px) !important; -webkit-backdrop-filter: blur(10px) !important;
+  color: var(--mq-text) !important;
+  font-family: inherit !important; font-weight: 500 !important;
+  font-size: var(--mq-size) !important; line-height: 1.3 !important;
+  white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
+  text-align: left !important; text-shadow: none !important; box-shadow: none !important;
+  cursor: pointer !important; transform: none !important;
+  transition: background-color 120ms ease, border-color 120ms ease !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+  .choice, .choice-btn, .discovery-choice-card, .movement-choice-card, .position-tab, .category-tab) :is(span, strong, .choice-title, [data-choice-label]) {
+  font: inherit !important; color: inherit !important; margin: 0 !important;
+  white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) button:is(:hover, :focus-visible) {
+  background: var(--mq-pill-hover) !important; border-color: rgba(255, 255, 255, .3) !important;
+  outline: none !important; transform: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(
+  .position-tab.active, .category-tab.active, .movement-choice-card.active, .movement-choice-card[data-playback="playing"]) {
+  background: var(--mq-accent-bg) !important; border-color: var(--mq-accent) !important; color: var(--mq-accent) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) button:disabled {
+  opacity: .4 !important; cursor: default !important;
+}
+/* Opening (approach) pills carry a thin accent so the three surfaces stay distinguishable. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-card {
+  border-color: rgba(143, 240, 207, .38) !important;
+}
+
+/* ---------- Remove bulk: badges, sub-lines, helper copy ---------- */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+  .choice-kind, .choice-meta, .choice-detail, .movement-variant-status, .movement-tempo-summary,
+  [data-playback-status], .choice-subtitle, .choice-desc) {
+  display: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-energy-badge {
+  all: unset; font-size: 10px !important; letter-spacing: .06em !important;
+  color: var(--mq-accent) !important; opacity: .85 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded :is(
+  .adult-panel-header, .adult-stage-summary, #discoveryGate, .adult-variant-toolbar, #rhythmControl,
+  .choice-section-heading, #foreplaySection.hidden, .adult-feel-toggle) {
+  display: none !important;
+}
+
+/* ---------- Approach heading: one quiet line ---------- */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading {
+  all: unset; flex: 1 0 100% !important; display: flex !important; gap: 8px !important; align-items: baseline !important;
+  font-size: 11px !important; color: var(--mq-muted) !important; letter-spacing: .04em !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading :is(span, small) { all: unset; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading strong { display: none !important; }
+
+/* ---------- Sex panel: rows of pills, one status line ---------- */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded > * {
+  flex: 1 0 100% !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important;
+  background: transparent !important; border: 0 !important; box-shadow: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded > .hidden { display: none !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel :is(
+  .position-tabs, .category-tabs, .movement-choice-grid, .discovery-choice-grid, .outcome-choice-grid, .adult-quick-choices) {
+  display: flex !important; flex-wrap: wrap !important; gap: var(--mq-gap) !important;
+  grid-template-columns: none !important; width: 100% !important; margin: 0 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-choice-wrap { display: contents !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-section,
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .position-section {
+  display: flex !important; flex-direction: column !important; gap: var(--mq-gap) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .movement-section.hidden,
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .position-section.hidden { display: none !important; }
+/* Position row = tabs, movement row below it is slightly set apart. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .position-tab { font-weight: 600 !important; }
+
+/* Status: phase · title · L/E meters, all on one small line. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-compact-dock {
+  display: flex !important; align-items: center !important; gap: 8px !important; flex-wrap: nowrap !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-state {
+  all: unset; display: flex !important; align-items: baseline !important; gap: 8px !important;
+  min-width: 0 !important; flex: 1 1 auto !important; color: var(--mq-muted) !important; font-size: 11px !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-state :is(.adult-dock-phase, strong) {
+  all: unset; font-size: 11px !important; color: var(--mq-muted) !important; letter-spacing: .04em !important;
+  white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-state :is(.panel-playback-status, .adult-dock-bars) {
+  display: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-meters {
+  all: unset; display: inline-flex !important; gap: 6px !important; margin-left: auto !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-meters span {
+  all: unset; font-size: 11px !important; color: var(--mq-muted) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-meters b {
+  font-weight: 600 !important; color: var(--mq-text) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded .adult-quick-choices { display: none !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel .adult-dock-more-btn {
+  all: unset; font-size: 11px !important; color: var(--mq-muted) !important; cursor: pointer !important; padding: 2px 4px !important;
+}
+
+/* Skip/close actions: plain text, not a block button. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #finishAdultSceneBtn {
+  all: unset; flex: 0 0 auto !important; margin-left: auto !important;
+  font-size: 11px !important; color: var(--mq-muted) !important; text-decoration: underline !important;
+  text-underline-offset: 3px !important; cursor: pointer !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices) .dialogue-skip {
+  background: transparent !important; border-color: transparent !important; color: var(--mq-muted) !important;
+  text-decoration: underline !important; text-underline-offset: 3px !important;
+}
+
+/* Orgasm decision stays readable but compact. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #orgasmDecision:not(.hidden) {
+  display: flex !important; flex-wrap: wrap !important; align-items: center !important; gap: var(--mq-gap) !important;
+  font-size: var(--mq-size) !important; color: var(--mq-text) !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #orgasmDecision :is(.adult-panel-kicker, small) { display: none !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel #orgasmDecision button {
+  all: unset; padding: 6px 11px !important; border-radius: 999px !important; border: 1px solid var(--mq-line) !important;
+  background: var(--mq-pill) !important; color: var(--mq-text) !important; font-size: var(--mq-size) !important; cursor: pointer !important;
+}
+
+/* ---------- Small screens: same pills, slightly tighter ---------- */
+@media (max-width: 560px) {
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui {
+    --mq-size: 12.5px; --mq-gap: 5px;
+  }
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel.compact-expanded):not(.hidden) {
+    left: 6px !important; right: 6px !important; bottom: 6px !important; max-height: 42% !important;
+  }
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(
+    .choice, .choice-btn, .discovery-choice-card, .movement-choice-card, .position-tab, .category-tab) {
+    padding: 5px 10px !important;
+  }
+}
+
+/* Hidden elements stay hidden even after the pill reset above. */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) .hidden {
+  display: none !important;
+}
