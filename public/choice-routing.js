@@ -160,18 +160,34 @@ export function sceneSurfaceChoices(items, surface, { floor = 0, ceiling = Infin
 }
 
 // The first approach menu is a scene-wide choice list, not a timeline queue.
-// Keep every distinct verified opening clip available before the first core
-// position, even when the viewer replays an older clip or moves the playhead.
-// Story-labelled source clips retain their original surface and label.
+// Keep every distinct verified approach clip before the first core position.
+// Normal dialogue remains on the separate story surface, including dialogue
+// preceding the scene; never copy it into the approach overlay.
 export function openingSceneChoiceMenu(items = [], { firstCoreStart = Infinity } = {}) {
   const ceiling = Number(firstCoreStart);
   return distinctVerifiedSourceChoices((Array.isArray(items) ? items : []).filter(item => {
     const start = Number(item?.startTime), end = Number(item?.endTime);
     return item?.sourceVerified === true &&
-      ['approach', 'story'].includes(choiceSurfaceKey(item)) &&
+      choiceSurfaceKey(item) === 'approach' &&
       Number.isFinite(start) && Number.isFinite(end) && end > start &&
       end <= ceiling + 0.05;
   }).sort((a, b) => Number(a.startTime) - Number(b.startTime)));
+}
+
+/**
+ * Verified normal dialogue occurring inside an active opening scene still
+ * belongs to the story surface. Earlier dialogue is handled by the normal
+ * timeline renderer; future dialogue is offered only when its source time
+ * approaches, so it cannot be mixed into the replayable approach card list.
+ */
+export function openingSceneStoryWindow(items = [], {
+  floor = 0, sceneStart = 0, firstCoreStart = Infinity, lookAheadSeconds = 2
+} = {}) {
+  const now = Number(floor);
+  if (!Number.isFinite(now)) return [];
+  return sceneSurfaceChoices(items, 'story', { floor: now, ceiling: firstCoreStart })
+    .filter(item => Number(item.startTime) >= Number(sceneStart) - 0.05 &&
+      Number(item.startTime) <= now + Math.max(0, Number(lookAheadSeconds) || 0) + 0.05);
 }
 
 /**

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choiceSurfaceForAction, withChoiceSurface, choiceSurfaceWindow, sceneSurfaceChoices,
   distinctVerifiedSourceChoices, sceneOwnsStoryChoice, sceneOwnsApproachChoice,
-  isForwardTimelineChoice, isUnroutedVerifiedApproach, openingSceneChoiceMenu, verifiedStoryAheadOfGap,
+  isForwardTimelineChoice, isUnroutedVerifiedApproach, openingSceneChoiceMenu, openingSceneStoryWindow, verifiedStoryAheadOfGap,
   boundedUnownedGapEnd } from '../public/choice-routing.js';
 import { groupSourceChoiceCards } from '../public/choice-groups.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
@@ -38,7 +38,7 @@ test('the complete first approach menu never gates verified choices by stage, cu
       sourceVerified: false, startTime: 70, endTime: 72 })
   ];
   const before = structuredClone(opening);
-  const expected = ['dialogue', 'clothing', 'transition-a', 'transition-b'];
+  const expected = ['clothing', 'transition-a', 'transition-b'];
   // The same complete menu applies before playback, halfway through, and
   // after any selected clip: play counts and the playhead do not filter it.
   for (const cursor of [50, 85, 97, 110.598, 160]) {
@@ -47,6 +47,49 @@ test('the complete first approach menu never gates verified choices by stage, cu
       .map(item => item.id), expected);
   }
   assert.deepEqual(opening, before);
+});
+
+test('normal dialogue before a verified opening is reserved for the story surface', () => {
+  const clips = [
+    action({ id: 'early-talk', actionId: 'early-talk', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 20, endTime: 30 }),
+    action({ id: 'first-approach', actionId: 'first-approach', choiceSurface: 'approach',
+      actionType: 'kiss', startTime: 30, endTime: 45 }),
+    action({ id: 'between-talk', actionId: 'between-talk', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 45, endTime: 50 }),
+    action({ id: 'next-approach', actionId: 'next-approach', choiceSurface: 'approach',
+      actionType: 'touch', startTime: 50, endTime: 60 })
+  ];
+  assert.deepEqual(openingSceneChoiceMenu(clips, { firstCoreStart: 70 }).map(clip => clip.id),
+    ['first-approach', 'next-approach']);
+  assert.deepEqual(sceneSurfaceChoices(clips, 'story', { floor: 0, ceiling: 70 }).map(clip => clip.id),
+    ['early-talk', 'between-talk']);
+  assert.deepEqual(clips.map(clip => clip.choiceSurface),
+    ['story', 'approach', 'story', 'approach'], 'source categories stay unchanged');
+});
+
+test('in-scene normal dialogue stays on the normal surface only near its verified source time', () => {
+  const clips = [
+    action({ id: 'earlier-talk', actionId: 'earlier-talk', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 10, endTime: 20 }),
+    action({ id: 'first-approach', actionId: 'first-approach', choiceSurface: 'approach',
+      actionType: 'touch', startTime: 30, endTime: 40 }),
+    action({ id: 'in-scene-talk', actionId: 'in-scene-talk', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 45, endTime: 50 }),
+    action({ id: 'next-approach', actionId: 'next-approach', choiceSurface: 'approach',
+      actionType: 'kiss', startTime: 50, endTime: 60 }),
+    action({ id: 'late-talk', actionId: 'late-talk', choiceSurface: 'story',
+      actionType: 'dialogue', startTime: 65, endTime: 70 })
+  ];
+  const at = floor => openingSceneStoryWindow(clips, { floor, sceneStart: 30, firstCoreStart: 75 })
+    .map(row => row.id);
+  assert.deepEqual(at(30), [], 'past and distant normal talk cannot hijack opening cards');
+  assert.deepEqual(at(43), ['in-scene-talk'], 'nearby verified dialogue is a normal choice');
+  assert.deepEqual(at(48), ['in-scene-talk'], 'playing normal dialogue retains its correct surface');
+  assert.deepEqual(at(52), [], 'a completed dialogue no longer overrides the approach menu');
+  assert.deepEqual(at(64), ['late-talk'], 'later normal dialogue is still reachable');
+  assert.deepEqual(openingSceneChoiceMenu(clips, { firstCoreStart: 75 }).map(row => row.id),
+    ['first-approach', 'next-approach']);
 });
 
 test('opening cards preserve independently verified source cuts and exact original labels', () => {

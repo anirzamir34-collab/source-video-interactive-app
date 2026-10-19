@@ -17,7 +17,11 @@ jobs:
           cache: npm
       - name: Install media test dependency
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # Unit tests mock video extraction. Avoid GitHub's anonymous release API
+      # rate limit during the dependency postinstall; production is unchanged.
       - run: npm ci
+        env:
+          YOUTUBE_DL_SKIP_DOWNLOAD: 'true'
       - name: Complete test suite
         run: npm test
   production-health:
