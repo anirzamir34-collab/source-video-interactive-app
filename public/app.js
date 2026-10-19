@@ -2,6 +2,7 @@ import { toggleFullscreen, revealFullscreenChoices } from './fullscreen.js';
 import { sourceOpeningTimeline } from './source-opening.js';
 import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
+import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
@@ -2896,6 +2897,11 @@ function initializeInteractive(analysis) {
   state.adultUiSignature = '';
   state.adultLastUiPhase = 'foreplay';
   state.adultPhaseMachine = 'foreplay';
+  // A verified wife of the protagonist is "karın" in intimate choices.
+  if (state.analysis?.actions) {
+    const spouseTracks = protagonistSpouseTracks(state.analysis.storyContext || {});
+    if (spouseTracks.size) state.analysis.actions = state.analysis.actions.map(action => withSpouseLabel(action, spouseTracks));
+  }
   prepareAdultScenes();
   const restoredSnapshot = restoreRuntimeSnapshot(analysis);
   if (restoredSnapshot) {
@@ -6681,7 +6687,7 @@ function nextVerifiedRouteTime() {
   return routes.length ? Math.min(...routes) : null;
 }
 
-async function resumeAnalysisGap(target) {
+async function resumeAnalysisGap(target, { skippable = false } = {}) {
   if (state.navigationSeeking || state.adultMode || state.activeAction) return;
   const generation = state.playbackGeneration;
   const bridgeTarget = Math.max(Number(state.gameCursorTime) || 0, Number(target) || 0);
@@ -6689,7 +6695,18 @@ async function resumeAnalysisGap(target) {
     els.video.removeEventListener('timeupdate', state.stopListener);
     state.stopListener = null;
   }
-  els.choices.classList.add('hidden');
+  if (skippable) {
+    // While watching another person's section, "skip" stays available so a
+    // long scene never has to be watched to the end.
+    const skip = document.createElement('button');
+    skip.type = 'button';
+    skip.className = 'choice story-choice';
+    skip.dataset.watchSkip = 'true';
+    skip.textContent = 'Sahneyi geç';
+    skip.addEventListener('click', () => void navigateTimelineTo(bridgeTarget, { resumeUntilNextRoute: true }));
+    els.choices.replaceChildren(skip);
+    els.choices.classList.remove('hidden');
+  } else els.choices.classList.add('hidden');
   setGameState('SEGMENT_PLAYING');
   logEngineEvent('ANALYSIS_GAP_PLAYBACK_STARTED', {
     from: Number(state.gameCursorTime) || 0,
@@ -6810,7 +6827,7 @@ function renderChoices() {
       const watch = document.createElement('button');
       watch.className = 'choice story-choice';
       watch.textContent = 'Bölümü izle';
-      watch.addEventListener('click', () => void resumeAnalysisGap(end));
+      watch.addEventListener('click', () => void resumeAnalysisGap(end, { skippable: true }));
       const skip = document.createElement('button');
       skip.className = 'choice story-choice';
       skip.textContent = 'Sahneyi geç';

@@ -368,7 +368,7 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
 FAMILY/SPOUSE CONTEXT — EXACT PARTICIPANT PAIR VALIDATION:
 - Keep every FACT relationship bound to its exact from/to participant IDs and evidence. A parent of a third person may independently be the spouse of another adult; never transfer a parent/child/sibling role to the spouse pair.
 - When original, time-aligned evidence establishes that the two participating adults are spouses (eşi/karısı/kocası), retain that exact spouse FACT in top-level storyContext.relationships, even when the same family has children or other relatives. Do not turn this fact into a different character identity.
-- For adult scenes, keep relationshipContext empty and use the proven participant name/ID in raw action wording. The app may separately render the verified spouse role for this exact pair. Never use other kinship roles for intimate choices or infer a spouse bond from appearance or proximity.
+- For adult scenes, keep relationshipContext empty and use the proven participant name/ID in raw action wording. When original evidence proves the partner is MAIN_MALE's own wife (or husband), record that spouse FACT between exactly those two IDs and address her in intimate labels as karın (e.g. Karını öp), never as a neutral genç kadın/kadın. Never use other kinship roles for intimate choices or infer a spouse bond from appearance or proximity.
 - If subjectTrackId, primaryCharacterId or partnerTrackId conflict, preserve the independently observable event and time interval with a neutral label; leave uncertain identities unresolved rather than dropping the event or assigning it to a family member.
 ` : '';
   const reviewInstructions = reviewMode ? `
@@ -511,6 +511,7 @@ The current locked profile and the optional user visual description are given in
   must stay unresolved rather than being relabeled.
 - When the profile is unresolved, keep non-protagonist observations as neutral
   chronological story context; do not manufacture male-player actions.
+- With no user description, MAIN_MALE is the adult male with the most screen presence and story agency across the video; a male point-of-view camera owner counts as MAIN_MALE. Once chosen, keep the same person for the whole video.
 - Distinguish all other males as OTHER_MALE and never convert their actions into player choices.
 - Use face, hair, facial hair, skin tone, body build, clothing, accessories, position and scene continuity together.
 - Never switch MAIN_MALE merely because another male becomes larger or more central in the frame.

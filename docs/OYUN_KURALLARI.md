@@ -73,6 +73,18 @@ otomatik kontrol eder.
 - Aile / üvey aile ilişkisi normal hikâye seçeneklerinde kalabilir; ilk
   yakınlaşma ve seks paneli seçeneklerine aktarılmaz.
 
+## 6b. Baş karakter ve grup sahneleri
+
+- Analizden önce yazılan tarif baş karakteri belirler; tarif yoksa videoda en
+  çok görünen ve hikâyeyi yürüten erkek (POV kamera sahibi dahil) seçilir ve
+  video boyunca aynı kişi kalır.
+- Bütün seçenekler baş karaktere göre kurulur. Başka bir erkeğin sahnesinde
+  "Bölümü izle" / "Sahneyi geç" çıkar; izlerken de "Sahneyi geç" ekranda kalır.
+- Baş karakter ile diğer erkek aynı sahnedeyse seçenekler yalnız baş karakterin
+  kendi hareketlerinden oluşur.
+- Baş karakterin karısı olduğu doğrulanmışsa yakın sahne seçeneklerinde "karın"
+  diye anılır; başka birinin eşi ya da tahmin bunu açmaz.
+
 ## 7. Analiz
 
 - 25 dk ve üstü videolarda önce ucuz bir ön tarama, sonra yalnız yakınlaşma
