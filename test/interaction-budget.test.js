@@ -32,17 +32,23 @@ test('budget duration is the union of verified opening ranges before first core'
   assert.deepEqual(budget.intervals, [{ startTime: 0, endTime: 30 }]);
 });
 
-test('actual natural playback increases progress with no selection and repeated coverage earns nothing', () => {
+test('actual natural playback increases progress with no selection and replayed footage keeps earning', () => {
   let state = budgetState(opening());
   state = observeInteractionPlayback(state, { startTime: 0, endTime: 30 });
-  assert.ok(state.progressionValue > 0 && state.progressionValue < 25);
+  assert.ok(state.progressionValue > 0 && state.progressionValue < 40);
   const initial = state.progressionValue;
   state = observeInteractionPlayback(state, { startTime: 0, endTime: 30 });
-  assert.equal(state.progressionValue, initial);
+  assert.ok(state.progressionValue > initial, 'a replayed opening clip is real playback and earns Lust again');
   assert.deepEqual(state.choicePlayCounts, {});
   state = observeInteractionPlayback(state, { startTime: 20, endTime: 40 });
   assert.equal(computeInteractionProgress(state.progressBudget, state.progressObservations).playedDuration, 40);
-  assert.ok(state.progressionValue > initial);
+});
+
+test('analyzed tempo weights Lust: the same seconds of a faster clip earn more', () => {
+  const scene = tempo => opening({ choices: [row('a', 0, 30, { movementTempo: tempo }), row('b', 30, 180)] });
+  const slow = observeInteractionPlayback(budgetState(scene('slow')), { startTime: 0, endTime: 20 });
+  const fast = observeInteractionPlayback(budgetState(scene('fast')), { startTime: 0, endTime: 20 });
+  assert.ok(fast.progressionValue > slow.progressionValue);
 });
 
 test('verified opening progress ignores an unplayable gap before the first core boundary', () => {
@@ -86,18 +92,25 @@ test('long verified approach from the reported source earns progress without inv
   assert.deepEqual(state.unlockedGroupIds, ['reported-core']);
 });
 
-test('all independently confirmed choices reach the next generic stage without watching every clip to the end', () => {
+test('Lust opens the next stage before every opening clip has been watched', () => {
   let state = budgetState(opening({ choices: [row('one', 0, 10), row('two', 20, 30), row('three', 40, 50)],
     groups: [row('next', 80, 100, { phase: 'CORE' })] }));
   state = completeInteractionSelection(state, 'one');
   assert.ok(state.progressionValue > 0 && state.progressionValue < 100);
   state = completeInteractionSelection(state, 'three');
-  assert.ok(state.progressionValue < 100);
-  state = completeInteractionSelection(state, 'two');
-  assert.equal(state.progressionValue, 100);
+  assert.equal(state.progressionValue, 100, 'two of three clips are enough; no clip is mandatory');
   assert.deepEqual(state.unlockedGroupIds, ['next']);
   assert.equal(state.currentPhase, 'CORE');
   assert.equal(state.lastSeekTarget, null);
+});
+
+test('any order of opening choices can reach the next stage, including replaying one favourite', () => {
+  let state = budgetState(opening({ choices: [row('one', 0, 10), row('two', 20, 30), row('three', 40, 50)],
+    groups: [row('next', 80, 100, { phase: 'CORE' })] }));
+  for (let index = 0; index < 3 && state.progressionValue < 100; index += 1)
+    state = completeInteractionSelection(state, 'two');
+  assert.equal(state.progressionValue, 100);
+  assert.deepEqual(state.unlockedGroupIds, ['next']);
 });
 
 test('selection requests and rejected or sought playback earn no budget credit', () => {
@@ -110,17 +123,14 @@ test('selection requests and rejected or sought playback earn no budget credit',
   assert.equal(completeInteractionSelection(requested, 'a', { playing: false }), requested);
 });
 
-test('completed selection contributes at most once for the same source coverage', () => {
+test('a completed selection tops up ticked playback instead of counting the same play twice', () => {
   const initial = budgetState(opening());
-  const once = completeInteractionSelection(initial, 'a', { startTime: 0, endTime: 30 });
-  const repeat = completeInteractionSelection(once, 'a', { startTime: 0, endTime: 30 });
-  assert.ok(once.progressionValue > 0);
-  assert.equal(repeat.progressionValue, once.progressionValue);
-  assert.equal(repeat.choicePlayCounts.a, 2);
-  const duplicateScene = opening({ choices: [row('a', 0, 30), row('alias', 0, 30)] });
-  const duplicateOnce = completeInteractionSelection(budgetState(duplicateScene), 'a');
-  const duplicateTwice = completeInteractionSelection(duplicateOnce, 'alias');
-  assert.equal(duplicateTwice.progressionValue, duplicateOnce.progressionValue);
+  const ticked = observeInteractionPlayback(initial, { startTime: 0, endTime: 30 });
+  const completed = completeInteractionSelection(ticked, 'a', { startTime: 0, endTime: 30 });
+  assert.equal(completed.progressionValue, ticked.progressionValue);
+  const replay = completeInteractionSelection(completed, 'a', { startTime: 0, endTime: 30 });
+  assert.ok(replay.progressionValue > completed.progressionValue, 'a later replay earns again');
+  assert.equal(replay.choicePlayCounts.a, 2);
 });
 
 test('disabled dialogue cannot grant progress through an overlapping approach group', () => {

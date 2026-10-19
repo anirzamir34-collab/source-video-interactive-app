@@ -116,7 +116,32 @@ function permittedChoiceRanges(source, row) {
 
 // The budget is indexed by verified source intervals. Labels and action names
 // never participate in identity, duration, eligibility, or progress calculations.
-export function createInteractionProgressBudget(scene, { selectionWeight = 0.2 } = {}) {
+// Lust is earned by verified approach footage that actually plays. Each
+// second is weighted by the analyzed tempo/intensity of that clip, and replays
+// keep earning: the player may choose any opening card, in any order, as many
+// times as they like. Lust never requires watching every clip.
+const LUST_TEMPO_WEIGHTS = [
+  [/\b(intense|vigorous|yoğun|sert|çok hızlı)\b/iu, 1.3],
+  [/\b(fast|quick|hızlı|seri)\b/iu, 1.2],
+  [/\b(moderate|medium|orta|tempolu|ritmik)\b/iu, 1.0],
+  [/\b(slow|gentle|yavaş|nazik|hafif)\b/iu, 0.85]
+];
+export function approachLustWeight(row = {}) {
+  const tempo = `${row.movementTempo || ''} ${row.intensity || ''}`.trim();
+  const tempoWeight = LUST_TEMPO_WEIGHTS.find(([pattern]) => pattern.test(tempo))?.[1] ?? 1;
+  const audio = String(row.audioIntensity || '').toLowerCase();
+  const audioWeight = /high|yüksek|loud/.test(audio) ? 1.1 : /low|düşük|quiet/.test(audio) ? 0.95 : 1;
+  return Number((tempoWeight * audioWeight).toFixed(3));
+}
+export function approachLustTargetSeconds(verifiedDuration, fraction = 0.65) {
+  const total = Math.max(0, Number(verifiedDuration) || 0);
+  if (!total) return 0;
+  const share = clamp(fraction, 0.2, 1);
+  // A very short opening still needs a few seconds of real footage; a very
+  // long one must not demand minutes of approach before the sex panel.
+  return Math.min(total, Math.max(Math.min(total, 15), Math.min(total * share, 120)));
+}
+export function createInteractionProgressBudget(scene, { selectionWeight = 0.2, lustTargetFraction = 0.65 } = {}) {
   const source = normalizeInteractionScene(scene);
   const coreStarts = source.groups.filter(row => row.phase === 'CORE').flatMap(rangesOf)
     .map(range => range.startTime);
@@ -132,7 +157,7 @@ export function createInteractionProgressBudget(scene, { selectionWeight = 0.2 }
         const key = JSON.stringify([part.id, part.occurrenceId, part.startTime, part.endTime]);
         if (seen.has(key)) return [];
         seen.add(key);
-        return [{ ...part, key, sourceKey: sourceKey(part), ownerId: row.id }];
+        return [{ ...part, key, sourceKey: sourceKey(part), ownerId: row.id, weight: approachLustWeight(row) }];
       });
     })).sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
   let latestEnd = -Infinity;
@@ -143,6 +168,7 @@ export function createInteractionProgressBudget(scene, { selectionWeight = 0.2 }
   return {
     entries, prefixEndTimes, intervals, firstCoreTime, openingStartTime, openingEndTime,
     verifiedDuration: intervalDuration(intervals), verifiedChoiceCount: entries.length,
+    lustTargetSeconds: approachLustTargetSeconds(intervalDuration(intervals), lustTargetFraction),
     openingDuration: openingStartTime === null ? 0 : Math.max(0,
       (firstCoreTime ?? openingEndTime) - openingStartTime),
     selectionWeight: clamp(selectionWeight, 0, 1)
@@ -174,7 +200,8 @@ function verifiedCoverage(budget, observations) {
       (!observation.sourceOccurrenceId || observation.sourceOccurrenceId === entry.occurrenceId) &&
       (!observation.sourceKey || observation.sourceKey === entry.sourceKey))
       .map(entry => ({ startTime: Math.max(startTime, entry.startTime), endTime: Math.min(endTime, entry.endTime),
-        sourcePositionId: entry.id, sourceOccurrenceId: entry.occurrenceId, sourceKey: entry.sourceKey }));
+        sourcePositionId: entry.id, sourceOccurrenceId: entry.occurrenceId, sourceKey: entry.sourceKey,
+        weight: Number(entry.weight) || 1 }));
   });
 }
 
@@ -187,7 +214,8 @@ function compactCoverage(intervals) {
   }
   return [...buckets.values()].flatMap(bucket => intervalUnion(bucket).map(interval => ({
     ...interval, sourceKey: bucket[0].sourceKey,
-    sourcePositionId: bucket[0].sourcePositionId, sourceOccurrenceId: bucket[0].sourceOccurrenceId
+    sourcePositionId: bucket[0].sourcePositionId, sourceOccurrenceId: bucket[0].sourceOccurrenceId,
+    weight: Number(bucket[0].weight) || 1
   })));
 }
 
@@ -229,13 +257,22 @@ export function computeInteractionProgress(budget, observations = {}) {
     })).filter(range => range.endTime > range.startTime));
     return intervalDuration(covered) >= entry.endTime - entry.startTime - 0.05;
   });
-  const progressionValue = observations.coreBoundaryObserved === true || complete ? 100 :
-    clamp(Math.min(coverageValue, frontierFraction * 100, budget?.firstCoreTime === null ? 100 : 99), 0, 100);
+  const weightedSeconds = Math.max(0, Number(observations.weightedSeconds) || 0);
+  const target = Number(budget?.lustTargetSeconds) > 0 ? Number(budget.lustTargetSeconds)
+    : approachLustTargetSeconds(total);
+  const lustValue = target > 0 ? clamp(100 * weightedSeconds / target, 0, 100) : 0;
+  const progressionValue = observations.coreBoundaryObserved === true || lustValue >= 99.95 ? 100 : lustValue;
   return { progressionValue, playedDuration, selectedDuration, observedEndTime,
-    verifiedDuration: total, frontierFraction };
+    verifiedDuration: total, frontierFraction, weightedSeconds, lustTargetSeconds: target,
+    coverageValue, coverageComplete: complete };
 }
 
-const emptyProgressObservations = () => ({ playedRanges: [], selectedRanges: [], coreBoundaryObserved: false });
+const emptyProgressObservations = () => ({ playedRanges: [], selectedRanges: [], coreBoundaryObserved: false,
+  weightedSeconds: 0 });
+// Each playback tick is a new, non-overlapping slice of real playback, so the
+// weighted seconds are additive: replaying a clip earns Lust again.
+const weightedPlayback = pieces => asList(pieces).reduce((total, piece) =>
+  total + Math.max(0, Number(piece.endTime) - Number(piece.startTime)) * (Number(piece.weight) || 1), 0);
 
 export function observeInteractionPlayback(state, observation = {}) {
   if (!state.progressBudget || state.progressBudgetConsumed || observation.playing === false || observation.seek === true) return state;
@@ -243,7 +280,11 @@ export function observeInteractionPlayback(state, observation = {}) {
   if (!verified.length) return state;
   const previous = state.progressObservations || emptyProgressObservations();
   const progressObservations = { ...previous,
-    playedRanges: compactCoverage([...previous.playedRanges, ...verified]) };
+    playedRanges: compactCoverage([...previous.playedRanges, ...verified]),
+    weightedSeconds: (Number(previous.weightedSeconds) || 0) + weightedPlayback(verified),
+    // Ticked playback since the last completed selection; a completion only
+    // tops up what ticks did not already credit, so a play is never counted twice.
+    tickedSinceSelection: (Number(previous.tickedSinceSelection) || 0) + weightedPlayback(verified) };
   const progress = computeInteractionProgress(state.progressBudget, progressObservations);
   return normalizeInteractionRuntime({ ...state, progressObservations,
     progressionValue: Math.max(state.progressionValue, progress.progressionValue) });
@@ -268,8 +309,11 @@ export function completeInteractionSelection(state, choiceId, observation = {}) 
     sourcePositionId: selected.id, sourceOccurrenceId: selected.occurrenceId }]);
   if (!credit.length) return state;
   const previous = state.progressObservations || emptyProgressObservations();
+  const topUp = Math.max(0, weightedPlayback(credit) - (Number(previous.tickedSinceSelection) || 0));
   const progressObservations = { ...previous,
-    selectedRanges: compactCoverage([...previous.selectedRanges, ...credit]) };
+    selectedRanges: compactCoverage([...previous.selectedRanges, ...credit]),
+    weightedSeconds: (Number(previous.weightedSeconds) || 0) + topUp,
+    tickedSinceSelection: 0 };
   const progress = computeInteractionProgress(state.progressBudget, progressObservations);
   return normalizeInteractionRuntime({ ...state, progressObservations,
     progressionValue: Math.max(state.progressionValue, progress.progressionValue),
@@ -422,6 +466,12 @@ export function advanceInteraction(state, requestedTime, options = {}) {
         .map(range => ({ ...range, endTime: Math.min(range.endTime, currentTime) })),
       selectedRanges: asList(state.progressObservations?.selectedRanges).filter(range => range.endTime <= currentTime)
     } : state.progressObservations;
+    // A manual scrub back restarts the opening from the footage that still
+    // lies before the playhead; earned replays after it are given back.
+    if (state.progressBudget) {
+      progressObservations.weightedSeconds = weightedPlayback(progressObservations.playedRanges);
+      progressObservations.tickedSinceSelection = 0;
+    }
     next = {
       ...next, activeGroupId: group?.row.id || null,
       activeOccurrenceId: group?.range.occurrenceId || null,

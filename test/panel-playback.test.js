@@ -15,6 +15,7 @@ import * as compat from '../public/interaction-compat.js';
 import { collapseConsecutiveEquivalentCards, bundleAdjacentSourceCards,
   groupVerifiedApproachChoices, approachStageChoices } from '../public/choice-groups.js';
 import * as completion from '../public/interaction-completion.js';
+import { nextSceneDialogueInterlude } from '../public/dialogue-interlude.js';
 
 // Exercise the real playback handlers with neutral chapter data and simulated
 // media events. No model calls or content/progression rules are involved.
@@ -326,7 +327,7 @@ const runtimeNames = [
   'renderAdultApproachChoices', 'renderAdultProgressiveUI', 'selectAdultCategory',
   'renderInteractionInterludeChoices',
   'selectAdultPosition', 'selectAdultMovement', 'refreshAdultCompactDock',
-  'playAdultPrelude', 'applyAdultPreludeProgress', 'completeCurrentApproachStage',
+  'playAdultPrelude', 'queueAdjacentDialogueInterlude', 'applyAdultPreludeProgress', 'completeCurrentApproachStage',
   'applyAdultSelectionProgress',
   'resetAdultTapRhythm', 'updateVariantButton', 'updateRhythmControl',
   'nextEnergeticPositionMovement', 'remainingPositionControlClips', 'selectMovementTempoVariant',
@@ -360,7 +361,7 @@ function runtimeFixture() {
   const f = fixture();
   Object.assign(f, gameplay, interaction, timeline, panel, compat, {
     canPlayAction, advanceAdultPhase, queueMicrotask, forwardVerifiedClips, sourcePositionAtTime,
-    compactPanelChoiceLabel,
+    compactPanelChoiceLabel, nextSceneDialogueInterlude,
     primeAdultPositionLanguage() {}, escapeHtml: String,
     normalizeAdultLabel: value => String(value || '').toLowerCase()
   });
@@ -1524,7 +1525,7 @@ test('an inactive scene trace excludes retained group unlocks and source ranges'
   assert.equal(trace.activeOccurrenceId, null);
 });
 
-test('verified normal dialogue remains visible beside opening cards without earning Lust', async () => {
+test('verified normal dialogue never appears inside the opening Lust menu', () => {
   const f = runtimeFixture();
   f.state.adultScene.dialogue = [
     { id: 'source-dialogue', label: 'Existing line', sourceVerified: true, nonIntimate: true, choiceSurface: 'story', startTime: 0, endTime: 10 }
@@ -1535,34 +1536,13 @@ test('verified normal dialogue remains visible beside opening cards without earn
   f.els.video.time = 0;
   f.renderAdultPanel(f.state.adultScene);
   assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['source-dialogue', 'source-opening']);
-  assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-dialogue'));
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['source-opening']);
+  assert.ok(!f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-dialogue'));
   assert.ok(f.els.approachChoices.children.some(node => node.dataset.clipId === 'source-opening'));
-  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
-  f.playAdultPrelude('source-dialogue');
-  await flush();
-  assert.equal(f.state.activeAdultPreludeId, 'source-dialogue');
   assert.equal(f.state.femaleSceneProgress, 0);
-  f.state.lastAdultFrameNow = 1000;
-  f.els.video.time = 5;
-  f.updateAdultPlayback(1250, 5);
-  assert.equal(f.state.femaleSceneProgress, 0);
-  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
-  f.els.video.time = 10;
-  f.updateAdultPlayback(1500, 10);
-  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
-  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['source-dialogue', 'source-opening']);
-  assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), true);
-  assert.equal(f.els.choices.classes.has('hidden'), true);
-  assert.equal(f.els.approachChoices.children.some(node => node.dataset.clipId), true);
-  assert.equal(f.state.femaleSceneProgress, 0);
-  assert.equal(f.els.video.currentTime, 10);
-  assert.equal(f.els.video.playCalls, 1);
 });
 
-test('a dialogue between verified opening clips stays visible with both opening cards until source core', () => {
+test('a dialogue between opening clips appears in the normal panel when its source time is reached', async () => {
   const f = runtimeFixture();
   f.state.adultScene.startTime = 28;
   f.state.adultScene.endTime = 330;
@@ -1581,30 +1561,30 @@ test('a dialogue between verified opening clips stays visible with both opening 
   ];
   f.els.video.time = 82;
   f.renderAdultPanel(f.state.adultScene);
-  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
-  assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['reported-opening', 'reported-dialogue', 'reported-next']);
+    ['reported-opening', 'reported-next']);
+  f.playAdultPrelude('reported-opening');
+  await flush();
+  f.state.lastAdultFrameNow = 1000;
   f.els.video.time = 91;
-  f.state.adultTimelineFloor = 91;
-  f.renderAdultProgressiveUI(true);
-  assert.equal(f.els.choices.classList.contains('hidden'), true);
-  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), true);
-  assert.equal(f.els.approachChoices.classList.contains('hidden'), false);
+  f.updateAdultPlayback(1250, 91);
+  assert.equal(f.els.choices.dataset.interactionPhase, 'DIALOGUE');
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['reported-dialogue']);
+  const lustBeforeDialogue = f.state.femaleSceneProgress;
+  f.playAdultPrelude('reported-dialogue');
+  await flush();
+  f.els.video.time = 104;
+  f.updateAdultPlayback(1500, 104);
+  assert.equal(f.state.femaleSceneProgress, lustBeforeDialogue, 'dialogue never earns Lust');
+  assert.equal(f.els.choices.dataset.interactionPhase, 'APPROACH');
   assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id),
-    ['reported-opening', 'reported-dialogue', 'reported-next']);
+    ['reported-opening', 'reported-next'], 'the opening menu returns after the dialogue');
   f.els.video.time = 295;
   f.state.adultTimelineFloor = 295;
+  f.state.adultOpeningMenuPinned = false;
   f.renderAdultProgressiveUI(true);
   assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
   assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
-  assert.ok(f.els.positionTabs.querySelectorAll('.position-tab').length > 0);
-  assert.ok(f.els.movementChoices.querySelectorAll('.movement-choice-card').length > 0,
-    JSON.stringify({ phase: f.state.interactionRuntime.currentPhase,
-      active: f.state.activePositionId, unlocked: [...f.state.adultUnlockedPositionIds],
-      tabs: f.els.positionTabs.children.map(node => ({ id: node.dataset.positionId, disabled: node.disabled })),
-      movementCount: f.els.movementCount.textContent,
-      occurrence: f.state.activeAdultOccurrenceId, events: f.state.events.slice(-4) }));
 });
 
 test('a later source dialogue and opening interval retain exclusive surfaces between unlocked chapters', () => {
@@ -1636,7 +1616,7 @@ test('a later source dialogue and opening interval retain exclusive surfaces bet
   assert.equal(f.els.foreplayChoices.children.length, 0);
 });
 
-test('unique opening clips fill the budget and open the core panel without repeat farming', async () => {
+test('opening clips fill Lust and open the sex panel before every clip is mandatory', async () => {
   const f = runtimeFixture();
   f.state.adultScene.positions = [chapter('main', 60)];
   f.state.adultScene.foreplay = Array.from({ length: 6 }, (_, index) => ({
@@ -1646,23 +1626,17 @@ test('unique opening clips fill the budget and open the core panel without repea
   f.els.video.time = 0;
   f.renderAdultProgressiveUI(true);
   assert.equal(f.state.adultApproachChoices.length, 6);
-  for (let index = 0; index < 6; index += 1) {
+  let played = 0;
+  for (let index = 0; index < 6 && !f.state.adultSexUnlocked; index += 1) {
     f.playAdultPrelude(`step-${index}`);
     await flush();
     f.els.video.time = (index + 1) * 10;
     f.updateAdultPlayback((index + 1) * 1000, f.els.video.time);
-    if (index < 5) {
-      assert.ok(f.currentAdultFlow() < 100);
-      assert.ok(f.state.adultApproachChoices.some(choice => choice.id === `step-${index + 1}`));
-    }
+    played += 1;
   }
-  assert.equal(f.currentAdultFlow(), 0, 'the opening meter is spent when the core boundary opens');
-  assert.equal(f.state.interactionRuntime.currentPhase, 'CORE');
-  assert.equal(f.els.adultInteractionPanel.classList.contains('hidden'), false);
-  assert.equal(f.els.choices.classList.contains('hidden'), true);
-  assert.equal(f.state.adultPreludePlayCounts.size, 6);
-  assert.ok([...f.state.adultPreludePlayCounts.values()].every(count => count === 1));
-  assert.equal(f.els.video.time, 60);
+  assert.equal(f.state.adultSexUnlocked, true, 'Lust 100 opens the sex panel');
+  assert.ok(played < 6, `opened after ${played} of 6 clips`);
+  assert.ok(f.state.adultUnlockedPositionIds.has('main'));
 });
 
 test('passive opening playback pauses for decisions and earns no unselected progress', () => {

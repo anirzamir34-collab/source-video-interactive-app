@@ -118,6 +118,7 @@ import { analysisRequestKey, analysisCheckpointKey, storyboardSourceKey, createA
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
 import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
+import { nextSceneDialogueInterlude } from './dialogue-interlude.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
   openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap,
@@ -222,6 +223,7 @@ const state = {
   adultVisitedPositionIds: new Set(),
   adultMovementPlayCounts: new Map(),
   adultPreludePlayCounts: new Map(),
+  adultDialogueInterludeIds: new Set(),
   adultComboCount: 0,
   adultClimaxProgress: 0,
   adultCorePlaySeconds: 0,
@@ -2633,7 +2635,7 @@ function normalizeAnalysis(body) {
       choiceSurfaceConfidence: Math.max(0, Math.min(1, Number(a.choiceSurfaceConfidence) || 0)),
       cameraMode: String(a.cameraMode || "uncertain"),
       adultScene: Boolean(a.adultScene),
-      adultSceneId: String(a.adultSceneId || ""),
+      adultSceneId: String(a.adultSceneId || "").trim().replace(/(\d+)$/u, digits => String(Number(digits))),
       adultSceneStartTime: Number(a.adultSceneStartTime ?? a.startTime),
       adultSceneEndTime: Number(a.adultSceneEndTime ?? a.endTime),
       postSceneTime: Number(a.postSceneTime ?? a.endTime),
@@ -2780,6 +2782,7 @@ function initializeInteractive(analysis) {
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
   state.adultPreludePlayCounts = new Map();
+  state.adultDialogueInterludeIds = new Set();
   state.adultComboCount = 0;
   state.adultClimaxProgress = 0;
   state.adultCorePlaySeconds = 0;
@@ -3708,7 +3711,9 @@ function prepareAdultScenes() {
   const acceptedApproachIds = new Set(state.adultScenes.flatMap(scene =>
     [...scene.foreplay, ...scene.dialogue])
     .map(item => item.sourceActionId || item.id));
-  const rejectedApproaches = actions.filter(action => isUnroutedVerifiedApproach(
+  // Only actions the analysis marked as approach can be a rejected approach.
+  // Ordinary story choices outside a scene are normal-panel choices, not losses.
+  const rejectedApproaches = actions.filter(action => action.choiceSurface === 'approach' && isUnroutedVerifiedApproach(
     action, traceByAction.get(action), acceptedApproachIds, isIntroduction(action))).map(action => {
     const row = traceByAction.get(action);
     if (row.membershipReason === 'NOT_ASSIGNED') row.membershipReason = 'NO_VERIFIED_SCENE_MEMBERSHIP';
@@ -4039,6 +4044,7 @@ function settleInteractionClipBoundary(mediaTime) {
   if (state.activeAdultEntryClip) state.activeAdultEntryClip = null;
   else if (prelude) state.activeAdultPreludeId = null;
   else state.activeMovementId = null;
+  if (prelude || (position && isWarmupPosition(position))) queueAdjacentDialogueInterlude({ endTime: end });
   if (prelude && state.interactionRuntime.scene.groups.some(group => group.phase === 'CORE' &&
       group.sourceRanges.some(range => end >= range.startTime && end < range.endTime))) {
     const beforeBoundary = state.interactionRuntime;
@@ -4461,6 +4467,7 @@ function resetAdultSceneGameplay() {
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
   state.adultPreludePlayCounts = new Map();
+  state.adultDialogueInterludeIds = new Set();
   state.adultComboCount = 0;
   state.adultClimaxProgress = 0;
   state.adultCorePlaySeconds = 0;
@@ -4593,21 +4600,31 @@ function renderAdultApproachChoices(scene, later = false) {
   // Neither playback time, stage boundaries, an arbitrary five-card limit nor
   // earlier selections may retire any verified opening choice. Dialogue keeps
   // its own source category and is displayed alongside opening actions.
+  // The opening Lust menu holds approach actions only. Ordinary dialogue that
+  // sits between approach clips is never mixed into it; it appears in the
+  // normal story panel when its source time is reached (see interlude below).
   const openingMenu = !later
-    ? openingSceneChoiceMenu(approachPool, { firstCoreStart: firstCoreTime })
+    ? openingSceneChoiceMenu(approachPool.filter(item => !item.nonIntimate), { firstCoreStart: firstCoreTime })
     : null;
+  const interludeIds = !later ? state.adultDialogueInterludeIds : null;
+  const interludeChoices = interludeIds?.size
+    ? approachPool.filter(item => item.nonIntimate && item.sourceVerified === true &&
+      (item.variants || [item]).some(clip => interludeIds.has(clip.id)))
+    : [];
+  if (interludeIds?.size && !interludeChoices.length) state.adultDialogueInterludeIds = new Set();
   // Later, between-core interludes still use their bounded lookahead and
   // should not be pulled into the first opening scene.
   const forwardApproach = later ? approachPool.filter(item => item.sourceVerified === true &&
     Number(item.endTime) > projectedFloor + 0.05)
     .sort((left, right) => Number(left.startTime) - Number(right.startTime)) : [];
-  const dialogueOnly = later && forwardApproach[0]?.nonIntimate === true;
-  const surfacePool = later ? sceneSurfaceChoices(approachPool,
+  const dialogueOnly = interludeChoices.length > 0 || (later && forwardApproach[0]?.nonIntimate === true);
+  const surfacePool = later && !interludeChoices.length ? sceneSurfaceChoices(approachPool,
     dialogueOnly ? 'story' : 'approach', {
       floor: projectedFloor,
       ceiling: dialogueOnly ? projectedFloor + 90 : Infinity
     }) : [];
-  const candidates = !later ? openingMenu : dialogueOnly ? surfacePool.slice(0, 5) :
+  const candidates = interludeChoices.length ? interludeChoices
+    : !later ? openingMenu : dialogueOnly ? surfacePool.slice(0, 5) :
     selectVerifiedChoiceQueue(surfacePool, {
       timelineFloor: projectedFloor,
       limit: 5,
@@ -4686,6 +4703,21 @@ function renderAdultApproachChoices(scene, later = false) {
       target.appendChild(detail);
     }
   });
+
+  if (interludeChoices.length) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'choice-btn dialogue-skip';
+    back.textContent = 'Yakınlaşmaya dön';
+    back.addEventListener('click', () => {
+      state.adultDialogueInterludeIds = new Set();
+      state.adultUiSignature = '';
+      renderAdultProgressiveUI(true);
+    });
+    target.appendChild(back);
+    refreshAdultCompactDock?.();
+    return;
+  }
 
   // Once the last source card has passed, natural playback can reach the next chapter.
   const hasForwardChoice = candidates.some(choice => Number(choice.endTime) > projectedFloor + 0.05);
@@ -5231,6 +5263,20 @@ function completeCurrentApproachStage() {
     (position.movements || []).some(clip => clip.sourceVerified === true &&
       Number(clip.loopStartTime) > lastEnd + 0.05 && Number(clip.loopStartTime) < firstCore));
   if (!laterPrelude && !laterWarmup) addFemaleLust(ADULT_LUST_UNLOCK_THRESHOLD - state.femaleSceneProgress);
+}
+
+// Ordinary dialogue inside the opening scene is shown in the normal story
+// panel when an approach (or a previous dialogue) clip ends exactly where that
+// dialogue begins in the source. After it, the approach menu returns.
+function queueAdjacentDialogueInterlude(finished) {
+  if (state.adultSexUnlocked) { state.adultDialogueInterludeIds = new Set(); return; }
+  const scene = state.adultScene;
+  const end = Number(finished?.endTime);
+  const next = Number.isFinite(end) ? nextSceneDialogueInterlude(scene?.dialogue, end, {
+    sceneStart: Number(scene?.startTime),
+    played: id => Number(state.adultPreludePlayCounts.get(id) || 0) > 0
+  }) : null;
+  state.adultDialogueInterludeIds = next ? new Set([next.id]) : new Set();
 }
 
 function playAdultPrelude(preludeId) {
@@ -6176,6 +6222,7 @@ function updateAdultPlayback(now, mediaTime) {
       if (mediaTime >= item.endTime - 0.04) {
         state.adultTimelineFloor = Math.max(state.adultTimelineFloor, Number(item.endTime) || 0);
         state.activeAdultPreludeId = null;
+        queueAdjacentDialogueInterlude(item);
         if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
         els.video?.pause();
         renderAdultProgressiveUI(true);
@@ -7026,6 +7073,7 @@ function clearPreviousGameResidue() {
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
   state.adultPreludePlayCounts = new Map();
+  state.adultDialogueInterludeIds = new Set();
   state.adultRevealedPositionIds = new Set();
   state.adultUnlockedOutcomeIds = new Set();
   state.adultMode = false;

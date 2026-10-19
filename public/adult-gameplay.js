@@ -197,6 +197,15 @@ export function forwardLocalMovementClips(position = {}, cursor = 0, horizonSeco
     .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime));
 }
 
+// Providers spell the same scene id with different zero padding
+// ("adult-scene-01" vs "adult-scene-001"). Treat those as one scene so a
+// continuous encounter is not split into separate occurrences and tabs.
+export function canonicalAdultSceneId(value) {
+  const id = String(value || '').trim();
+  if (!id) return '';
+  return id.replace(/(\d+)$/u, digits => String(Number(digits)));
+}
+
 export function assignAdultSceneOccurrenceIds(actions = [], maxSilentGapSeconds = 45) {
   const input = Array.isArray(actions) ? actions : [];
   const assignments = new Array(input.length).fill('');
@@ -212,7 +221,7 @@ export function assignAdultSceneOccurrenceIds(actions = [], maxSilentGapSeconds 
     .forEach(({ action, index }) => {
       const startTime = Number(action?.startTime);
       const endTime = Number(action?.endTime);
-      const rawId = String(action?.adultSceneId || '').trim() ||
+      const rawId = canonicalAdultSceneId(action?.adultSceneId) ||
         `adult-${Math.round(Number(action?.adultSceneStartTime ?? startTime) || 0)}`;
       const gap = Number.isFinite(previousEnd) && Number.isFinite(startTime)
         ? startTime - previousEnd
@@ -952,6 +961,8 @@ export function findAdultSceneForTimeline(
     .sort((a, b) => b.overlap - a.overlap)[0]?.scene || null;
 }
 
+const SAME_POSITION_RETURN_GAP_SECONDS = 8;
+
 export function consolidateVerifiedPositions(positions = [], { mergeDistantReturns = false } = {}) {
   const clusters = [];
   const sorted = [...(Array.isArray(positions) ? positions : [])]
@@ -1006,7 +1017,24 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
     // starts between them. Otherwise the first tab spans that later position,
     // so Lust can never reveal the actual chronological next group.
     const baseKey = `${String(position.familyId)}::${subjectKey}::${partnerKey}::${role}`;
-    const existing = [...clusters].reverse().find(item =>
+    const known = value => value && !['unclear', 'unknown', 'other'].includes(String(value));
+    const configurationConflict = item => ['receiverBodyOrientation', 'receiverSupport'].some(field =>
+      known(item[field]) && known(position[field]) && item[field] !== position[field]) ||
+      Boolean((item.beforeState?.clothing || item.beforeState?.outfit) &&
+        (position.beforeState?.clothing || position.beforeState?.outfit) &&
+        JSON.stringify(item.beforeState.clothing || item.beforeState.outfit) !==
+          JSON.stringify(position.beforeState.clothing || position.beforeState.outfit)) ||
+      Boolean(item.locationId && position.locationId && item.locationId !== position.locationId);
+    const shortReturn = item => item.baseKey === baseKey && !configurationConflict(item) &&
+      Number(position.startTime) >= Number(item.endTime) - 0.25 &&
+      Number(position.startTime) - Number(item.endTime) <= SAME_POSITION_RETURN_GAP_SECONDS &&
+      !clusters.some(other => other !== item &&
+        Number(other.startTime) >= Number(item.endTime) - 0.05 &&
+        Number(other.startTime) < Number(position.startTime) - 0.05);
+    // A position is the tab; a different verified act inside the same
+    // continuous position (e.g. the same rear pose continuing after a short
+    // cut) is a movement inside that tab, never a second identical tab.
+    const existing = [...clusters].reverse().find(item => shortReturn(item) || (
       item.baseKey === baseKey &&
       (!item.routeClass || !routeClass || item.routeClass === routeClass) && (
         (mergeDistantReturns && !clusters.some(other => other !== item &&
@@ -1029,7 +1057,7 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
           !clusters.some(other => other !== item &&
             Number(other.startTime) >= Number(item.endTime) - 0.05 &&
             Number(other.startTime) < Number(position.startTime) - 0.05))
-      )
+      ))
     );
     if (!existing) {
       const occurrenceNumber = clusters.filter(item => item.clusterKey === key).length + 1;

@@ -51,7 +51,7 @@ test('scripted natural playback advances a neutral opening, refreshes choices, a
   assert.equal(video.queue().length, 5);
   assert.deepEqual(video.queue().map(choice => choice.id), ['approach-a', 'approach-b', 'dialogue', 'approach-c', 'approach-d']);
   const first = video.advance(8);
-  assert.ok(first.progressionValue > 0 && first.progressionValue < 25);
+  assert.ok(first.progressionValue > 0 && first.progressionValue < 40);
   assert.equal(first.uniqueApproachCount, 6);
   assert.equal(first.playedUniqueApproachCount, 1);
   assert.ok(!first.remainingApproachIds.includes('dialogue'));
@@ -64,7 +64,10 @@ test('scripted natural playback advances a neutral opening, refreshes choices, a
   assert.equal(afterDialogue.playedUniqueApproachCount, 2);
   assert.deepEqual(video.queue().map(choice => choice.id), ['approach-c', 'approach-d', 'approach-e', 'entry-a']);
   for (const time of [28, 36, 42]) video.advance(time);
-  assert.ok(video.runtime.progressionValue < 100);
+  // Lust fills from weighted real playback, so the sex panel can open before
+  // the source reaches its first core position; no clip is mandatory.
+  assert.equal(video.runtime.progressionValue, 100);
+  assert.deepEqual(video.runtime.unlockedGroupIds, ['core-a']);
   const boundary = video.advance(44);
   assert.equal(boundary.progressionValue, 100);
   assert.equal(boundary.currentPhase, 'CORE');
@@ -72,8 +75,8 @@ test('scripted natural playback advances a neutral opening, refreshes choices, a
   assert.equal(boundary.overlayCount, 1);
   assert.deepEqual(boundary.unlockedCoreIds, ['core-a']);
   assert.deepEqual(boundary.visibleCoreIds, ['core-a']);
-  assert.equal(boundary.playedUniqueApproachCount, boundary.uniqueApproachCount);
-  assert.deepEqual(boundary.remainingApproachIds, []);
+  assert.ok(boundary.playedUniqueApproachCount < boundary.uniqueApproachCount,
+    'the panel opened without requiring every opening clip');
   assert.equal(boundary.progressBudget.firstCoreTime, 44);
   assert.equal(boundary.progressBudget.openingDuration, 44);
   assert.equal(boundary.progressBudget.verifiedDuration, 40);

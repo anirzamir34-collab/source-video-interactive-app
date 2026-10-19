@@ -47,10 +47,10 @@ test('all six generic selection orders unlock the next chapter without consuming
     const rejected = completeInteractionSelection(state, order[0], { playing: false });
     assert.equal(rejected.progressionValue, 0);
     for (const id of order) {
-      state = completeInteractionSelection(state, id);
+      if (state.progressionValue >= 100) break;
       const before = state.progressionValue;
       state = completeInteractionSelection(state, id);
-      assert.equal(state.progressionValue, before, 'repeated source coverage cannot add points');
+      assert.ok(state.progressionValue > before, 'each completed verified clip earns Lust');
     }
     assert.equal(state.progressionValue, 100);
     assert.deepEqual(state.unlockedGroupIds, ['next-chapter']);
