@@ -816,7 +816,10 @@ Optional user-provided *visual description* (not identity proof): ${JSON.stringi
           safetySettings: geminiAnalysisSafetySettings,
           systemInstruction: savedGameRepair ? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION
         };
-        const key = storyboardRequestKey({ apiKey, model, prompt: savedGameRepair ? `${GAP_REPAIR_VALIDATOR_VERSION}\n${requestPrompt}` : requestPrompt, files: requestFiles, generationConfig });
+        // A new analysis run must reach Gemini again; identical requests are
+        // shared only within the same run (retries, concurrent duplicates).
+        const runId = String(req.body?.analysisRunId || '').slice(0, 80);
+        const key = storyboardRequestKey({ apiKey, model, prompt: `${runId}\n${savedGameRepair ? `${GAP_REPAIR_VALIDATOR_VERSION}\n${requestPrompt}` : requestPrompt}`, files: requestFiles, generationConfig });
         const requestUsage = emptyGeminiUsage();
         const startedAt = Date.now();
         let attempts = 0;

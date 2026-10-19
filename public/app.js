@@ -996,7 +996,7 @@ const readServerRevision = createServerRevisionReader();
 async function runScoutPlan(storyboard, signal) {
   try {
     const scoutKey = await analysisCheckpointKey({ sheets: storyboard.sheets, timestamps: storyboard.timestamps,
-      duration: storyboard.duration, mode: 'scout-v1' });
+      duration: storyboard.duration, mode: `scout-v1:${state.analysisSession?.runId || ''}` });
     const saved = scoutKey ? await analysisResponseCache.readCheckpoint(scoutKey, 0) : null;
     if (Array.isArray(saved?.scoutSegments)) return scoutChunkPlan(storyboard, saved.scoutSegments);
     analysisProgress.update('analysis', { status: 'working', detail: 'Uzun video: önce sahne haritası çıkarılıyor.' });
@@ -1021,6 +1021,7 @@ async function runScoutPlan(storyboard, signal) {
         form.append('startTime', String(batch.startTime));
         form.append('endTime', String(batch.endTime));
         form.append('timestamps', JSON.stringify(batch.timestamps));
+        form.append('analysisRunId', String(state.analysisSession?.runId || ''));
         let body = null;
         try {
           const response = await fetch('/api/gemini-scout', { method: 'POST', headers: geminiRequestHeaders(), body: form, signal });
@@ -1599,6 +1600,15 @@ els.analyzeBtn.addEventListener('click', async () => {
     sourceKey, file: file || null, sourceTranscript: null, mediaManifest: null, storyboard: null,
     analysisModeKey: '', chunkResults: [], protagonistProfile: '', storyContextMemory: null
   };
+  // Every new analysis is a fresh Gemini run. A run id is kept only until the
+  // run succeeds, so an interrupted analysis can still resume its paid
+  // chapters, but a finished video is never replayed from saved chapters.
+  if (!session.runId) {
+    session.runId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    session.chunkResults = [];
+    session.firstPassResults = {};
+    session.analysisModeKey = '';
+  }
   state.analysisSession = session;
 
   mediaClient.reset();
@@ -1807,6 +1817,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     const modeForPlan = (plan, pipelineVersion = 'chunk-protagonist-context-7') => JSON.stringify({
       pipelineVersion,
       analysisRulesRevision,
+      analysisRunId: session.runId,
       analysisTier: modes.analysisTier,
       deepAnalysisModel: modes.analysisTier === 'deep' ? modes.deepAnalysisModel : null,
       chunks: plan.chunks.map(chunk => ({
@@ -1938,6 +1949,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       });
 
       form.append('duration', String(storyboard.duration));
+      form.append('analysisRunId', String(session.runId || ''));
       form.append('timestamps', JSON.stringify(chunkTimestamps));
       form.append('motionProfile', JSON.stringify(chunkMotionProfile));
       form.append('sceneBoundaries', JSON.stringify(chunkSceneBoundaries));
@@ -2522,6 +2534,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     ? 'Oyun cihazına kaydedildi.'
     : 'Oyun oynatılabilir fakat otomatik kayıt tamamlanamadı; kaydetme alanını kontrol et.');
   analysisSucceeded = true;
+  // The next "Analiz et" on this video starts a brand-new run.
+  session.runId = null;
   analysisProgress.finish();
   } catch (error) {
     console.error('Analysis failed:', error);
