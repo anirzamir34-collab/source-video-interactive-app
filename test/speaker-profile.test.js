@@ -60,3 +60,32 @@ test('a cached source WAV supplies speaker profiles without provider calls', asy
   });
   assert.equal(singleTurn.single?.gender, 'female', 'one sustained voice supplies enough independent pitch windows');
 });
+
+test('lenient pitch decision resolves near-boundary voices the strict test leaves open', async () => {
+  const { classifyPitchLenient } = await import('../lib/turkish-media/speaker-profile.js');
+  assert.equal(classifyPitchLenient([140, 150, 155, 158, 210, 145, 150]), 'male');
+  assert.equal(classifyPitchLenient([190, 200, 175, 180, 120, 195, 205]), 'female');
+  assert.equal(classifyPitchLenient([150, 180]), null, 'too little evidence stays unresolved');
+});
+
+test('one diarization ID with both a man and a woman is split by utterance pitch', async () => {
+  const { utteranceGenderSplit } = await import('../lib/turkish-media/speaker-profile.js');
+  const { splitMixedGenderSpeakers } = await import('../lib/turkish-media/pipeline.js');
+  const split = utteranceGenderSplit({ a: 120, b: 125, c: 210, d: 215, e: 168 });
+  assert.deepEqual(split, { a: 'male', b: 'male', c: 'female', d: 'female' });
+  assert.equal(utteranceGenderSplit({ a: 120, b: 125, c: 130, d: 215 }), null, 'one stray high line is not a second person');
+  const transcript = {
+    speakers: [{ speakerId: 's3', gender: null }, { speakerId: 's1', gender: 'female' }],
+    utterances: [
+      { segmentId: 'a', speakerId: 's3', sourceStart: 1 }, { segmentId: 'b', speakerId: 's3', sourceStart: 2 },
+      { segmentId: 'c', speakerId: 's3', sourceStart: 10 }, { segmentId: 'd', speakerId: 's3', sourceStart: 11 },
+      { segmentId: 'e', speakerId: 's3', sourceStart: 10.5 }, { segmentId: 'x', speakerId: 's1', sourceStart: 5 }
+    ],
+    audioEvents: []
+  };
+  splitMixedGenderSpeakers(transcript, { s3: { mixed: true, utteranceGenders: split } });
+  assert.deepEqual(transcript.speakers.map(row => [row.speakerId, row.gender]),
+    [['s3-m', 'male'], ['s3-f', 'female'], ['s1', 'female']]);
+  assert.equal(transcript.utterances.find(row => row.segmentId === 'e').speakerId, 's3-f',
+    'an unmeasured line follows the nearest measured line');
+});
