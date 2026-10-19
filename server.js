@@ -30,6 +30,8 @@ import { geminiAnalysisSafetySettings, geminiGenerationConfig } from './lib/gemi
 import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel, preferredRepairAnalysisModels } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
+import { installScoutRoute } from './lib/scout-route.js';
+import { ECONOMY_ANALYSIS_MODEL } from './lib/analysis-model-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1907,6 +1909,13 @@ app.post('/api/gemini-key-status', async (req, res) => {
       message: 'Gemini bağlantısı şu anda doğrulanamadı; analiz isteğini yeniden deneyebilirsin.'
     });
   }
+});
+
+installScoutRoute(app, {
+  upload: storyboardUpload, resolveApiKey: resolveGeminiApiKey, GoogleGenAI,
+  model: String(process.env.GEMINI_SCOUT_MODEL || process.env.GEMINI_ECONOMY_MODEL || ECONOMY_ANALYSIS_MODEL).trim(),
+  safetySettings: geminiAnalysisSafetySettings, emptyUsage: emptyGeminiUsage, addUsage: addGeminiUsage,
+  failureReason: storyboardFailureReason
 });
 
 app.get('/health', (_req, res) => {

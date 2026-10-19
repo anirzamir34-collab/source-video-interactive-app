@@ -144,6 +144,7 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     renderDebug() {}, updateAnalyzeAvailability() {},
     adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
     normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}), compactDialogueSegments, compactStoryMemory,
+    scoutEligible: () => false, runScoutPlan: async () => null,
     geminiRequestHeaders: () => ({}),
     analysisCheckpointKey: async () => null,
     storyboardSourceKey: async () => 'synthetic-source-evidence',

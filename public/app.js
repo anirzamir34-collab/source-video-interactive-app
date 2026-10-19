@@ -120,6 +120,7 @@ import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentC
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { nextSceneDialogueInterlude } from './dialogue-interlude.js';
 import { compactDialogueSegments, compactStoryMemory } from './analysis-context-compaction.js';
+import { scoutEligible, buildScoutSheets, scoutChunkPlan, SCOUT_KINDS } from './scout-plan.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
   openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap,
@@ -990,6 +991,61 @@ function storyboardProgress(progress, detail) {
 const analysisResponseCache = createAnalysisResponseCache();
 const readServerRevision = createServerRevisionReader();
 
+// Scout pass for long videos. The labelled timeline is kept on the device so a
+// resumed analysis reuses the same plan instead of paying for a new scout.
+async function runScoutPlan(storyboard, signal) {
+  try {
+    const scoutKey = await analysisCheckpointKey({ sheets: storyboard.sheets, timestamps: storyboard.timestamps,
+      duration: storyboard.duration, mode: 'scout-v1' });
+    const saved = scoutKey ? await analysisResponseCache.readCheckpoint(scoutKey, 0) : null;
+    if (Array.isArray(saved?.scoutSegments)) return scoutChunkPlan(storyboard, saved.scoutSegments);
+    analysisProgress.update('analysis', { status: 'working', detail: 'Uzun video: önce sahne haritası çıkarılıyor.' });
+    els.analysisTitle.textContent = 'Uzun video: sahne haritası çıkarılıyor';
+    const scout = await buildScoutSheets(storyboard, { spacing: 18, signal });
+    if (!scout.sheets.length) return null;
+    const batches = [];
+    for (let index = 0; index < scout.sheets.length; index += 4) {
+      const times = scout.timestamps.slice(index * 12, (index + 4) * 12);
+      const next = scout.timestamps[(index + 4) * 12];
+      batches.push({ sheets: scout.sheets.slice(index, index + 4), timestamps: times,
+        startTime: index === 0 ? 0 : times[0], endTime: Number.isFinite(next) ? next : storyboard.duration });
+    }
+    const segments = [];
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < batches.length) {
+        const batch = batches[cursor++];
+        signal?.throwIfAborted();
+        const form = new FormData();
+        batch.sheets.forEach((blob, index) => form.append('storyboards', blob, `scout-${index + 1}.jpg`));
+        form.append('startTime', String(batch.startTime));
+        form.append('endTime', String(batch.endTime));
+        form.append('timestamps', JSON.stringify(batch.timestamps));
+        let body = null;
+        try {
+          const response = await fetch('/api/gemini-scout', { method: 'POST', headers: geminiRequestHeaders(), body: form, signal });
+          body = await response.json();
+          recordAiUsage(body?.aiUsage);
+        } catch (error) { if (signal?.aborted) throw error; }
+        // A failed or refused scout range is analysed in detail, never skipped.
+        if (body?.available && Array.isArray(body.segments) && body.segments.length) segments.push(...body.segments);
+        else segments.push({ startTime: batch.startTime, endTime: batch.endTime, kind: 'uncertain' });
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    const clean = segments.filter(row => SCOUT_KINDS.includes(row.kind));
+    if (scoutKey) await analysisResponseCache.saveCheckpoint(scoutKey, 0, { available: true, actions: [], scoutSegments: clean });
+    const plan = scoutChunkPlan(storyboard, clean);
+    logEngineEvent('SCOUT_PLAN_READY', { chunks: plan?.chunkCount, detailed: plan?.detailedChunkCount,
+      overview: plan?.overviewChunkCount });
+    return plan;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    logEngineEvent('SCOUT_PLAN_FAILED', { message: String(error?.message || error).slice(0, 200) });
+    return null;
+  }
+}
+
 async function postAnalysisForm(path, form, options = {}) {
   if (path !== '/api/gemini-storyboard-analyze') return sendAnalysisForm(path, form, options);
   const signal = analysisAbortController?.signal;
@@ -1726,12 +1782,16 @@ els.analyzeBtn.addEventListener('click', async () => {
     const dialogueRows = state.sourceContext?.segments || [];
     const legacyPlan = adaptiveAnalysisChunkPlan(storyboard.sheets.length, storyboard.duration,
       modes.quality, modes.analysisTier === 'deep' ? modes.deepAnalysisModel : '');
-    const proposedPlan = modes.analysisTier === 'deep' && storyboard.duration >= 1200
+    // 25+ minute deep analysis: a cheap scout labels the timeline first, then
+    // only approach/intimate/uncertain/scene-change ranges get dense requests.
+    const scoutPlan = scoutEligible(storyboard.duration, modes.analysisTier)
+      ? await runScoutPlan(storyboard, analysisOwner.signal) : null;
+    const proposedPlan = scoutPlan || (modes.analysisTier === 'deep' && storyboard.duration >= 1200
       ? adaptiveConversationActionChunkPlan(storyboard, {
           qualityMode: modes.quality, analysisModel: modes.deepAnalysisModel,
           dialogueRows
         })
-      : legacyPlan;
+      : legacyPlan);
     const sameBoundaries = JSON.stringify(proposedPlan.chunks.map(x => [x.firstSheet, x.sheetCount])) === JSON.stringify(legacyPlan.chunks.map(x => [x.firstSheet, x.sheetCount]));
     let analysisPlan = sameBoundaries ? legacyPlan : proposedPlan;
     const framesPerSheet = 12;
@@ -1777,7 +1837,8 @@ els.analyzeBtn.addEventListener('click', async () => {
       }
     }
     analysisModeKey = modeForPlan(analysisPlan,
-      analysisPlan.adaptive ? 'chunk-protagonist-context-8-adaptive-dialogue' : 'chunk-protagonist-context-7');
+      analysisPlan.scout ? 'chunk-protagonist-context-9-scout'
+        : analysisPlan.adaptive ? 'chunk-protagonist-context-8-adaptive-dialogue' : 'chunk-protagonist-context-7');
     const chunkCount = analysisPlan.chunkCount;
 
     if (session.analysisModeKey !== analysisModeKey || session.chunkCount !== chunkCount) {

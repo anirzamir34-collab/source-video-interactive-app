@@ -175,8 +175,12 @@ export function storyboardSamplingPlan(duration, remote = false) {
       // Long local videos previously stopped at 228 frames. Sample roughly
       // every 4.5 seconds so brief transitions are less likely to disappear
       // between frames; cap the device decoding work at 480.
+      // 25+ minute videos use a two-pass plan: frames are cheap (they ride
+      // along in requests whose cost is dominated by the prompt), so sample
+      // about every 3 seconds and let the scout decide where requests are dense.
       baseCount: seconds <= 300 ? 144 : seconds <= 900 ? 192
-        : Math.min(480, Math.max(228, Math.ceil(seconds / 4.5))),
+        : seconds >= 1500 ? Math.min(1400, Math.ceil(seconds / 3))
+          : Math.min(480, Math.max(228, Math.ceil(seconds / 4.5))),
       focusedCount: 0
     };
   }

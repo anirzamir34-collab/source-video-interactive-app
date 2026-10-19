@@ -178,7 +178,9 @@ test('uses adaptive remote sampling while preserving local analysis density', ()
   assert.deepEqual(storyboardSamplingPlan(600, true), { baseCount: 100, focusedCount: 35 });
   assert.deepEqual(storyboardSamplingPlan(1200, true), { baseCount: 160, focusedCount: 56 });
   assert.deepEqual(storyboardSamplingPlan(240, false), { baseCount: 144, focusedCount: 0 });
-  assert.deepEqual(storyboardSamplingPlan(1729.548, false), { baseCount: 385, focusedCount: 0 });
+  assert.deepEqual(storyboardSamplingPlan(1729.548, false), { baseCount: 577, focusedCount: 0 },
+    '25+ minute local videos are sampled about every 3 seconds for the two-pass plan');
+  assert.deepEqual(storyboardSamplingPlan(1200, false), { baseCount: 267, focusedCount: 0 });
 });
 
 test('remote frame preparation grows with video duration instead of using broad buckets', () => {
