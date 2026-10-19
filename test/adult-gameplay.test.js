@@ -397,16 +397,19 @@ test('outcome pacing scales with scene length and remains deliberately slow', ()
   assert.equal(requiredCorePlaySecondsForOutcome(1000), 300);
 });
 
-test('one verified interval stays one playable source clip', () => {
+test('one long verified interval plays as consecutive sequences of the same action', () => {
   const variants = expandVerifiedMovementVariants([
     { id: 'doggy-long', label: 'Doggy-style ritmi', loopStartTime: 120, loopEndTime: 300, sourceVerified: true }
   ], 120, 300);
-  assert.equal(variants.length, 1);
-  assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 10));
-  assert.deepEqual(variants.map(item => item.loopStartTime), [120]);
+  assert.ok(variants.length >= 3 && variants.length <= 8);
+  assert.ok(variants.every(item => item.label === 'Doggy-style ritmi' && item.sequenceOf === 'doggy-long'));
+  assert.equal(variants[0].loopStartTime, 120);
+  assert.equal(variants.at(-1).loopEndTime, 300);
+  variants.slice(1).forEach((item, index) =>
+    assert.equal(item.loopStartTime, variants[index].loopEndTime, 'sequences are contiguous source footage'));
 });
 
-test('duplicate movement detections do not manufacture sequences', () => {
+test('duplicate movement detections collapse to one action before sequencing', () => {
   const duplicate = {
     id: 'prone-repeat',
     label: 'Prone Bone',
@@ -420,13 +423,12 @@ test('duplicate movement detections do not manufacture sequences', () => {
     { ...duplicate, id: 'prone-repeat-2' },
     { ...duplicate, id: 'prone-repeat-3' }
   ], 100, 180, { baseLabel: 'Prone Bone Pozisyonu' });
-  assert.equal(variants.length, 1);
-  assert.equal(new Set(variants.map(item => item.loopStartTime)).size, 1);
-  assert.deepEqual(variants.map(item => [item.loopStartTime, item.loopEndTime]), [
-    [100, 180]
-  ]);
-  assert.equal(variants[0].label, duplicate.label);
+  assert.equal(new Set(variants.map(item => item.sequenceOf)).size, 1);
+  assert.equal(variants[0].loopStartTime, 100);
+  assert.equal(variants.at(-1).loopEndTime, 180);
+  assert.ok(variants.every(item => item.label === duplicate.label));
 });
+
 
 test('prone bone stays a separate canonical position family', () => {
   assert.equal(adultPositionFamily('Pronebone'), 'prone-bone');

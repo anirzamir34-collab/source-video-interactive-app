@@ -322,7 +322,15 @@ export function playableAdultPanelFamily(action = {}) {
 }
 
 export function adultPositionFamilyFromBodyConfiguration(action = {}) {
-  return verifiedBodyConfigurationFamily(action);
+  const family = verifiedBodyConfigurationFamily(action);
+  if (family) return family;
+  // A receiver bent over while standing is the standing rear position, not
+  // the kneeling doggy-style position that shares the "arkadan" wording.
+  if (Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
+      String(action.positionEvidence || '').trim() &&
+      String(action.receiverBodyOrientation || '').toLowerCase() === 'bent_over' &&
+      String(action.receiverSupport || '').toLowerCase() === 'standing') return 'standing-rear';
+  return '';
 }
 
 export function resolveVerifiedAdultPosition(action = {}) {
@@ -629,6 +637,33 @@ export function verifiedActionSubsequences(action = {}, minSeconds = 5) {
   return ordered;
 }
 
+// A long verified action with no model-reported subranges is still one real
+// action. Play it as consecutive source sequences of the same card, so each
+// tap continues with the next part of that action instead of one long clip.
+// Nothing is relabelled or invented: every sequence keeps the action's label.
+const LONG_ACTION_SECONDS = 36;
+const SEQUENCE_TARGET_SECONDS = 14;
+export function longActionSequences(item = {}) {
+  const range = clipRange(item);
+  if (!range) return [item];
+  const duration = range.endTime - range.startTime;
+  if (duration <= LONG_ACTION_SECONDS) return [item];
+  const count = Math.min(8, Math.max(2, Math.round(duration / SEQUENCE_TARGET_SECONDS)));
+  const step = duration / count;
+  return Array.from({ length: count }, (_, index) => {
+    const startTime = Number((range.startTime + step * index).toFixed(3));
+    const endTime = index === count - 1 ? range.endTime : Number((range.startTime + step * (index + 1)).toFixed(3));
+    return { ...item,
+      id: `${item.id}:seq-${index + 1}`,
+      sourceActionId: item.sourceActionId || item.id,
+      sequenceOf: item.sourceActionId || item.id,
+      derivedFromVerifiedSegment: item.id,
+      sequenceIndex: index + 1, sequenceCount: count,
+      loopStartTime: startTime, loopEndTime: endTime, startTime, endTime,
+      verifiedSubsequences: undefined };
+  });
+}
+
 export function expandVerifiedMovementVariants(
   movements,
   positionStart,
@@ -670,7 +705,7 @@ export function expandVerifiedMovementVariants(
   // or incomplete list leaves the original exact playable interval intact.
   return source.flatMap(item => {
     const parts = verifiedActionSubsequences(item, minimum);
-    if (!parts.length) return [item];
+    if (!parts.length) return longActionSequences(item);
     return parts.map((part, index) => ({ ...item,
       id: `${item.id}:source-${index + 1}`,
       sourceActionId: item.sourceActionId || item.id,
@@ -1060,7 +1095,11 @@ export function consolidateVerifiedPositions(positions = [], { mergeDistantRetur
       ))
     );
     if (!existing) {
-      const occurrenceNumber = clusters.filter(item => item.clusterKey === key).length + 1;
+      // Tab ids must be unique: two clusters whose keys differ only by an
+      // omitted actor id used to share one id, leaving the second tab empty.
+      let occurrenceNumber = clusters.filter(item => item.clusterKey === key).length + 1;
+      while (clusters.some(item => item.id === (occurrenceNumber === 1 ? positionId : `${positionId}:occ-${occurrenceNumber}`)))
+        occurrenceNumber += 1;
       clusters.push({
         ...position,
         id: occurrenceNumber === 1 ? positionId : `${positionId}:occ-${occurrenceNumber}`,
@@ -1239,6 +1278,11 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
       ['subjectTrackId', 'partnerTrackId', 'routeNamespace'].every(field =>
         String(prior[field] || '') === String(current[field] || '')) &&
       visualState(prior) === visualState(current);
+    const sameSequence = Boolean(prior?.sequenceOf && prior.sequenceOf === current?.sequenceOf);
+    if (sameSequence && previous) {
+      previous.variants.push(...card.variants);
+      continue;
+    }
     if (position && previous && prior?.sourceVerified === true && current?.sourceVerified === true &&
         sameSource && ((rhythm(prior) && rhythm(current) && gap <= 5) ||
           ((rhythm(prior) || fastMotion(prior)) && (rhythm(current) || fastMotion(current)) &&

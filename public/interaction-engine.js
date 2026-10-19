@@ -261,7 +261,11 @@ export function computeInteractionProgress(budget, observations = {}) {
   const target = Number(budget?.lustTargetSeconds) > 0 ? Number(budget.lustTargetSeconds)
     : approachLustTargetSeconds(total);
   const lustValue = target > 0 ? clamp(100 * weightedSeconds / target, 0, 100) : 0;
-  const progressionValue = observations.coreBoundaryObserved === true || lustValue >= 99.95 ? 100 : lustValue;
+  // With no verified approach footage there is nothing to earn: the opening
+  // panel can never block the sex panel, so the gate is open from the start.
+  const noOpening = total <= 0 && budget?.firstCoreTime !== null && budget?.firstCoreTime !== undefined;
+  const progressionValue = observations.coreBoundaryObserved === true || noOpening || lustValue >= 99.95
+    ? 100 : lustValue;
   return { progressionValue, playedDuration, selectedDuration, observedEndTime,
     verifiedDuration: total, frontierFraction, weightedSeconds, lustTargetSeconds: target,
     coverageValue, coverageComplete: complete };

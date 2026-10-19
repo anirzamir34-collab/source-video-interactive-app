@@ -2591,6 +2591,20 @@ const deploymentGuard = createDeploymentGuard();
 void deploymentGuard.loadedCommit().then(commit => { state.loadedDeploymentCommit = commit; });
 
 function normalizeAnalysis(body) {
+  // Directly observed, non-sexual physical contact (touching, kissing,
+  // hugging, undressing) is an opening approach action, never an ordinary
+  // story card. A verbal instruction about such contact remains story.
+  const foldText = value => String(value || '').toLocaleLowerCase('tr-TR')
+    .replace(/[ıİ]/g, 'i').replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u').replace(/ö/g, 'o').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const contactPattern = /(?:^|\s)(?:dokun\w*|op(?:er|uyor|tu|mek|meye|us\w*|ucuk\w*)|saril\w*|oksa\w*|kucakla\w*|temas\w*|soyun\w*|soyar\w*|soydu\w*|fermuar\w*|kiss\w*|touch\w*|undress\w*|caress\w*|hug\w*|embrac\w*)(?=\s|$)|(?:giysi|elbise|kiyafet|gomlek|pantolon|sutyen|etek|bluz|hirka)\w*\s+(?:cikar|ac|indir)\w*/u;
+  const verbalPattern = /(?:^|\s)(?:soyle\w*|iste\w*|emre\w*|talimat\w*|sor\w*|konus\w*|anlat\w*|tehdit\w*|uyar\w*)(?=\s|$)/u;
+  const surfaceFor = a => {
+    const surface = String(a.choiceSurface || '');
+    if (surface !== 'story' || a.positionId) return surface;
+    const text = foldText([a.label, a.movementType, a.choiceSurfaceEvidence].filter(Boolean).join(' '));
+    return contactPattern.test(text) && !verbalPattern.test(foldText(a.label)) ? 'approach' : surface;
+  };
   const storyContext = mergeStoryContexts([{ storyContext: body?.storyContext || {} }]);
   const actions = Array.isArray(body?.actions) ? body.actions : [];
   const cleaned = actions
@@ -2630,7 +2644,7 @@ function normalizeAnalysis(body) {
       subjectTrackId: a.subjectTrackId ?? a.subject ?? null,
       actionLevel: a.actionLevel === "bonus" ? "bonus" : "main",
       actionType: String(a.actionType || "other"),
-      choiceSurface: String(a.choiceSurface || ''),
+      choiceSurface: surfaceFor(a),
       choiceSurfaceEvidence: String(a.choiceSurfaceEvidence || '').trim().slice(0, 500),
       choiceSurfaceConfidence: Math.max(0, Math.min(1, Number(a.choiceSurfaceConfidence) || 0)),
       cameraMode: String(a.cameraMode || "uncertain"),
@@ -3870,6 +3884,11 @@ function genericInteractionSnapshot() {
         unlockReason: restored.unlockReason } : {})
     } : created;
     state.restoredInteractionProgress = null;
+    // A scene without any verified approach footage has nothing to earn:
+    // the opening panel must not block the sex panel.
+    const budget = state.interactionRuntime?.progressBudget;
+    if (scene && budget && !sameSource && !matchingRestore && Number(budget.verifiedDuration) <= 0 &&
+        budget.firstCoreTime !== null) state.interactionRuntime = { ...state.interactionRuntime, progressionValue: 100 };
     bindInteractionRuntimeViews(state, { progressKey: 'femaleSceneProgress', progressTarget: ADULT_LUST_UNLOCK_THRESHOLD,
       unlockedKey: 'adultUnlockedPositionIds', revealedKey: 'adultRevealedPositionIds',
       unlockedFlagKey: 'adultSexUnlocked', activeKeys: { activePositionId: 'activeGroupId',

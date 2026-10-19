@@ -72,7 +72,9 @@ test('separate observed actions retain their own cards despite matching motion t
 test('one long action uses only independently verified source subsequences', () => {
   const base = { ...action('tl-021'), id: 'long', loopStartTime: 442.391,
     loopEndTime: 488.474, startTime: 442.391, endTime: 488.474 };
-  assert.equal(expandVerifiedMovementVariants([base], 442.391, 488.474).length, 1);
+  const fallback = expandVerifiedMovementVariants([base], 442.391, 488.474);
+  assert.ok(fallback.length > 1 && new Set(fallback.map(item => item.sequenceOf)).size === 1 && fallback.every(item => item.label === base.label),
+    'without model subranges a long action plays as consecutive sequences of the same card');
   const verifiedSubsequences = [
     { startTime: 442.391, endTime: 454, sourceVerified: true, movementTempo: 'moderate' },
     { startTime: 454, endTime: 469, sourceVerified: true, movementTempo: 'moderate' },
@@ -84,7 +86,7 @@ test('one long action uses only independently verified source subsequences', () 
   const unverified = expandVerifiedMovementVariants([{ ...base, verifiedSubsequences: [
     { startTime: 442.391, endTime: 454, sourceVerified: false }
   ] }], 442.391, 488.474);
-  assert.equal(unverified.length, 1, 'invalid subranges never manufacture playable clips');
+  assert.ok(new Set(unverified.map(item => item.sequenceOf)).size === 1, 'invalid subranges are ignored, never used as labels');
 });
 
 test('verified slow, steady and fast motion have bounded distinct pacing without numeric input', () => {

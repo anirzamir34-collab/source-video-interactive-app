@@ -33,16 +33,18 @@ const supportedMotion = position => (position?.movements || []).some(movement =>
  * remain opening choices only if a later verified core movement exists.
  * If no such movement exists, keep the earliest non-opening position playable.
  */
+// Oral and manual activity are sexual acts and belong to the sex panel as
+// positions. Only non-sexual opening contact (touching, kissing, undressing)
+// stays in the first approach panel, which is built from approach actions.
 export function assignVerifiedOpeningRoles(positions = []) {
   const ordered = [...positions].sort((a, b) => number(a?.startTime) - number(b?.startTime));
-  const firstMotion = ordered.find(position => !openingActivity(position) && supportedMotion(position));
-  const firstCore = firstMotion || ordered.find(position => !openingActivity(position));
+  const firstMotion = ordered.find(position => openingActivity(position) || supportedMotion(position));
+  const firstCore = firstMotion || ordered[0];
   const firstCoreTime = firstCore ? number(firstCore.startTime) : Infinity;
   return positions.map(position => {
     const beforeCore = number(position.startTime) < firstCoreTime - 0.05;
     const preparatoryPose = !openingActivity(position) && !supportedMotion(position) &&
       Boolean(firstMotion) && beforeCore;
-    return { ...position,
-      progressionRole: beforeCore && (openingActivity(position) || preparatoryPose) ? 'foreplay' : 'core' };
+    return { ...position, progressionRole: preparatoryPose ? 'foreplay' : 'core' };
   });
 }

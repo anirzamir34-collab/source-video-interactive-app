@@ -75,7 +75,7 @@ test('anonymous Android analysis retains ordinary choices and the later verified
   const rhythmic = state.adultScenes[0].positions.filter(item =>
     item.familyId === 'oral' || item.familyId === 'standing-rear');
   const coreRhythm = rhythmic.find(position => position.familyId === 'standing-rear');
-  assert.equal(coreRhythm.movements.length, 12);
+  assert.ok(coreRhythm.movements.length >= 12, 'long actions add consecutive sequences, never fewer clips');
   assert.equal(coreRhythm.movementChoices.length, 12,
     'distinct observed source actions retain their own buttons');
   for (const position of rhythmic) for (const card of position.movementChoices) {
@@ -806,7 +806,7 @@ test('preparation keeps dialogue, opening activity, and first core position in o
   assert.equal(state.adultScenes.length, 1);
   const [scene] = state.adultScenes;
   assert.deepEqual(Array.from(scene.positions, item => [item.familyId, item.progressionRole]),
-    [['oral', 'foreplay'], ['chapter', 'core']]);
+    [['oral', 'core'], ['chapter', 'core']]);
   assert.equal(scene.dialogue.some(item => item.id === 'dialogue'), true);
   assert.equal(scene.foreplay.some(item => item.id === 'dialogue'), false);
   assert.equal(scene.positions.some(item => item.sourceRanges.some(range =>
@@ -894,7 +894,7 @@ test('one cut-heavy source encounter keeps normal dialogue in story, opening pre
   assert.equal(scene.startTime,211.158);
   assert.deepEqual(Array.from(scene.dialogue, item=>item.id),['narrative']);
   assert.deepEqual(scene.positions.map(p=>[p.familyId,p.progressionRole]),[
-    ['seated-facing','foreplay'],['oral','foreplay'],['rear','core']]);
+    ['seated-facing','foreplay'],['oral','core'],['rear','core']]);
   const core=scene.positions.find(item=>item.familyId==='rear');
   assert.equal(core.movements.length,3);
   assert.equal(positionOccurrenceGroups(core).length,1);
