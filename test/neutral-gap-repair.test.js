@@ -66,7 +66,7 @@ test('saved-game server route is versioned and never sends full instruction for 
   assert.match(server, /savedGameRepair\s*\? buildGapRepairPrompt/);
   assert.match(server, /savedGameRepair \? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION/);
   assert.match(server, /inspectNeutralRepairActions\(parsed\?\.actions/);
-  assert.match(app, /lastAttempt\?\.promptVersion === GAP_REPAIR_PROMPT_VERSION/);
+  assert.match(app, /planSavedGapRepair\(previous, gap, repairModel/);
   assert.match(app, /uncoveredNeutralRepairIntervals\(gap, result\.actions\)/);
   assert.match(app, /promptVersion: GAP_REPAIR_PROMPT_VERSION/);
 });
