@@ -54,4 +54,9 @@ test('a cached source WAV supplies speaker profiles without provider calls', asy
   const profiles = await inferSpeakerProfiles(file, transcript);
   assert.equal(profiles.one?.gender, 'male');
   assert.equal(profiles.two?.gender, 'female');
+  const singleTurn = await inferSpeakerProfiles(file, {
+    speakers: [{ speakerId: 'single', gender: null }],
+    utterances: [{ speakerId: 'single', sourceStart: 4.2, sourceEnd: 6.2 }]
+  });
+  assert.equal(singleTurn.single?.gender, 'female', 'one sustained voice supplies enough independent pitch windows');
 });

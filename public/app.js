@@ -1187,6 +1187,7 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
     const result = await mediaClient.retry();
     if (state.analysisSession !== session) return;
     session.mediaManifest = result;
+    session.mediaModeKey = mediaModeKeyFromOptions({ outputs: requested, qualityMode: modes.dubQuality });
     updateSourceTranscript(result.sourceTranscript);
     renderMediaControls(); completed = true;
   } catch (error) {
@@ -2414,7 +2415,6 @@ els.analyzeBtn.addEventListener('click', async () => {
       sourceAudioOnly = true;
       mediaFailureMessage = mediaFallbackMessage(error);
       session.mediaManifest = null;
-      mediaClient.reset({ cancelJob: false });
       if (error?.code === 'VOICE_PROFILE_UNVERIFIED') {
         state.voiceMappingManualRequested = true;
         renderVoiceMappingPanel();

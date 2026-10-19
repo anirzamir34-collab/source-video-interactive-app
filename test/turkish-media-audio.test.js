@@ -179,6 +179,12 @@ test('real encoder-delay MP3 is sample-aligned and mixed without an original WAV
     });
     assert.equal(profiles['unverified-voice']?.gender, 'female',
       'direct MP3 mode must not break existing source-voice verification');
+    const singleTurn = await service.inferSpeakerProfiles(result.originalPath, {
+      speakers: [{ speakerId: 'one-long-voice', gender: null }],
+      utterances: [{ segmentId: 'single', speakerId: 'one-long-voice', sourceStart: .3, sourceEnd: 2.3 }]
+    });
+    assert.equal(singleTurn['one-long-voice']?.gender, 'female',
+      'one sustained MP3 utterance can verify a stable source voice');
     const paths = await readdir(directory);
     assert.ok(!paths.some(name => name.endsWith('.wav') || name.endsWith('.flac')),
       'native MP3 source never persists a large lossless bed');

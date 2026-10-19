@@ -93,7 +93,6 @@ test('never checkpoint failed, truncated or blocked provider outputs; code retai
   assert.match(app, /await analysisResponseCache\.saveCheckpoint\(checkpointPrefix, chunkIndex, chunkBody\)/);
   assert.match(app, /isRecoverableTurkishMediaFailure\(error\)/);
   assert.match(app, /sourceAudioOnly = true/);
-  assert.match(app, /mediaClient\.reset\(\{ cancelJob: false \}\)/);
   const mediaRecovery = readFileSync(new URL('../public/media-failure-recovery.js', import.meta.url), 'utf8');
   assert.match(mediaRecovery, /TRANSLATION_BLOCKED/);
   assert.match(mediaRecovery, /Özgün kaynak sesle devam/);
