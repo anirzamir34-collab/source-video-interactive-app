@@ -347,3 +347,32 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(button, summary, a, [role="button"], .choice) {
   pointer-events: auto !important;
 }
+
+/* ===== v4: the sex panel spans the video's width so every move is visible
+   without scrolling; approach/story choices keep the right-hand column. ===== */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel:not(.hidden) {
+  left: 10px !important; right: 10px !important; inset-inline: 10px 10px !important;
+  width: auto !important; max-width: none !important; max-height: 50% !important;
+  align-items: stretch !important; gap: 5px !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .position-tabs {
+  flex-wrap: nowrap !important; overflow-x: auto !important; overflow-y: hidden !important;
+  scrollbar-width: none !important; justify-content: flex-start !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .position-tabs::-webkit-scrollbar { display: none; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-choice-grid, .discovery-choice-grid, .outcome-choice-grid) {
+  display: grid !important; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+  gap: 5px !important; width: 100% !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-choice-card, .discovery-choice-card, .outcome-choice-grid > button) {
+  min-height: 0 !important; height: auto !important; padding: 5px 9px !important;
+  font-size: 12px !important; line-height: 1.25 !important; align-items: center !important;
+}
+@media (max-width: 560px) {
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel:not(.hidden) {
+    left: 6px !important; right: 6px !important; inset-inline: 6px 6px !important; max-height: 55% !important;
+  }
+  html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel :is(.movement-choice-grid, .discovery-choice-grid, .outcome-choice-grid) {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}

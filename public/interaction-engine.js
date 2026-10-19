@@ -120,18 +120,26 @@ function permittedChoiceRanges(source, row) {
 // second is weighted by the analyzed tempo/intensity of that clip, and replays
 // keep earning: the player may choose any opening card, in any order, as many
 // times as they like. Lust never requires watching every clip.
+// Lust follows the felt energy of the real footage: passionate, fast
+// moments fill it clearly faster than slow, gentle ones. The weights come
+// only from the analysis' observed tempo, intensity, audio and the model's
+// visible-motion pacing rate; nothing is invented.
 const LUST_TEMPO_WEIGHTS = [
-  [/\b(intense|vigorous|yoğun|sert|çok hızlı)\b/iu, 1.3],
-  [/\b(fast|quick|hızlı|seri)\b/iu, 1.2],
-  [/\b(moderate|medium|orta|tempolu|ritmik)\b/iu, 1.0],
-  [/\b(slow|gentle|yavaş|nazik|hafif)\b/iu, 0.85]
+  [/\b(intense|vigorous|passionate|yoğun|sert|tutkulu|çok hızlı)\b/iu, 1.8],
+  [/\b(fast|quick|hızlı|seri)\b/iu, 1.5],
+  [/\b(moderate|medium|orta|tempolu|ritmik|changing)\b/iu, 1.0],
+  [/\b(slow|gentle|yavaş|nazik|hafif)\b/iu, 0.6],
+  [/\b(still|durgun|hareketsiz)\b/iu, 0.45]
 ];
 export function approachLustWeight(row = {}) {
   const tempo = `${row.movementTempo || ''} ${row.intensity || ''}`.trim();
   const tempoWeight = LUST_TEMPO_WEIGHTS.find(([pattern]) => pattern.test(tempo))?.[1] ?? 1;
   const audio = String(row.audioIntensity || '').toLowerCase();
-  const audioWeight = /high|yüksek|loud/.test(audio) ? 1.1 : /low|düşük|quiet/.test(audio) ? 0.95 : 1;
-  return Number((tempoWeight * audioWeight).toFixed(3));
+  const audioWeight = /high|yüksek|loud/.test(audio) ? 1.2 : /low|düşük|quiet|none/.test(audio) ? 0.85 : 1;
+  // femaleProgressRate (0.25–2.5) is the model's own visible-motion pacing.
+  const rate = Number(row.femaleProgressRate);
+  const rateWeight = Number.isFinite(rate) && rate > 0 && rate !== 1 ? Math.sqrt(clamp(rate, 0.25, 2.5)) : 1;
+  return Number(clamp(tempoWeight * audioWeight * rateWeight, 0.4, 2.2).toFixed(3));
 }
 export function approachLustTargetSeconds(verifiedDuration, fraction = 0.65) {
   const total = Math.max(0, Number(verifiedDuration) || 0);

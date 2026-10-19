@@ -492,7 +492,8 @@ test('verified opening completion rewards stronger analyzed motion more than cal
     f.els.video.time = 20;
     f.renderAdultApproachChoices(f.state.adultScene);
     f.applyAdultPreludeProgress(f.state.adultScene.foreplay[0]);
-    return f.currentAdultFlow();
+    // A full meter unlocks the sex panel and resets for the next phase.
+    return f.state.adultSexUnlocked ? 100 : f.currentAdultFlow();
   };
   assert.ok(progress(0.45) < progress(1.8));
 });

@@ -300,3 +300,11 @@ test('approach selection keeps a discontinuous provider return in its own occurr
   assert.equal(selected.state.activeOccurrenceId, 'return');
   assert.equal(selectInteractionChoice(state, 'return', { occurrenceId: 'forged' }).target, null);
 });
+
+test('passionate verified footage fills Lust clearly faster than calm footage', async () => {
+  const { approachLustWeight } = await import('../public/interaction-engine.js');
+  const calm = approachLustWeight({ movementTempo: 'slow', audioIntensity: 'low' });
+  const intense = approachLustWeight({ movementTempo: 'fast', audioIntensity: 'high', femaleProgressRate: 2 });
+  assert.ok(intense / calm > 3, `${intense} vs ${calm}`);
+  assert.equal(approachLustWeight({}), 1);
+});
