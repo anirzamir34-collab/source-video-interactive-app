@@ -35,9 +35,9 @@ test('budget duration is the union of verified opening ranges before first core'
 test('actual natural playback increases progress with no selection and replayed footage keeps earning', () => {
   let state = budgetState(opening());
   state = observeInteractionPlayback(state, { startTime: 0, endTime: 30 });
-  assert.ok(state.progressionValue > 0 && state.progressionValue < 40);
+  assert.ok(state.progressionValue > 0 && state.progressionValue < 100);
   const initial = state.progressionValue;
-  state = observeInteractionPlayback(state, { startTime: 0, endTime: 30 });
+  state = observeInteractionPlayback(state, { startTime: 0, endTime: 10 });
   assert.ok(state.progressionValue > initial, 'a replayed opening clip is real playback and earns Lust again');
   assert.deepEqual(state.choicePlayCounts, {});
   state = observeInteractionPlayback(state, { startTime: 20, endTime: 40 });

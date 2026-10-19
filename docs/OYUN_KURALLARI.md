@@ -16,7 +16,8 @@ otomatik kontrol eder.
 - Yakınlaşma arasındaki konuşma, kaynak zamanı gelince normal panelde açılır;
   ardından "Yakınlaşmaya dön" ile yakınlaşma menüsüne dönülür.
 - İlk yakınlaşma menüsü aynı anda en çok 4 seçenek gösterir, zaman sırasıyla;
-  oynanan seçenek menüden çıkar. Menünün üstünde canlı Lust göstergesi vardır.
+  oynanan seçenek menüden çıkar. Uzun açılışlarda kartlar arasında en az 8 sn
+  bulunur; bir kart, az önce oynanan klibin bittiği yerden başlamaz. Menünün üstünde canlı Lust göstergesi vardır.
 - Hiçbir panelde videoda olmayan bir seçenek üretilmez.
 
 ## 2. Lust
@@ -24,6 +25,8 @@ otomatik kontrol eder.
 - Lust yalnız ilk yakınlaşma görüntüsü oynadıkça dolar; konuşma Lust vermez.
 - Dolum hızı gerçek harekete göre: tutkulu/hızlı sahneler sakin/yavaş
   sahnelerden 3–4 kat hızlı doldurur (tempo, ses yoğunluğu, model hareket oranı).
+- Lust 100 için yaklaşık 1 dakikalık ağırlıklı görüntü yeter (birkaç sakin
+  klip ya da daha az yoğun klip); uzun açılış dakikalarca beklemez.
 - Yakınlaşma görüntüsü yoksa seks paneli doğrudan açık başlar.
 - Lust 100 olunca seks panelindeki **bütün** pozisyon sekmeleri birlikte açılır.
 
@@ -67,6 +70,8 @@ otomatik kontrol eder.
 
 - 25 dk ve üstü videolarda önce ucuz bir ön tarama, sonra yalnız yakınlaşma
   ve seks bölümlerinde ayrıntılı analiz.
+- Google bir bölümü bütün modellerde içerik nedeniyle reddedebilir; bu
+  durumda o aralık analizsiz oynatılır, uygulama bunu aşamaz.
 - Analiz edilemeyen bölüm istenen modelle yeniden denenebilir; aynı model aynı
   bölümü iki kez reddederse o model için durur.
 - Model kısa ve bozuk bir yanıtla bölümü bitirirse o bölüm tekrar

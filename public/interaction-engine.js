@@ -169,15 +169,16 @@ export function motionIntensityFactors(clips = [], profile = []) {
   for (const [id, value] of perClip) factors.set(id, clamp(value / reference, 0.5, 2));
   return factors;
 }
-export function approachLustTargetSeconds(verifiedDuration, fraction = 0.65) {
+export function approachLustTargetSeconds(verifiedDuration, fraction = 0.4) {
   const total = Math.max(0, Number(verifiedDuration) || 0);
   if (!total) return 0;
   const share = clamp(fraction, 0.2, 1);
-  // A very short opening still needs a few seconds of real footage; a very
-  // long one must not demand minutes of approach before the sex panel.
-  return Math.min(total, Math.max(Math.min(total, 15), Math.min(total * share, 120)));
+  // A short opening still needs a few seconds of real footage; a long one
+  // must not demand minutes of approach before the sex panel: about a
+  // minute of weighted footage (a few calm clips, or fewer intense ones).
+  return Math.min(total, Math.max(Math.min(total, 15), Math.min(total * share, 60)));
 }
-export function createInteractionProgressBudget(scene, { selectionWeight = 0.2, lustTargetFraction = 0.65 } = {}) {
+export function createInteractionProgressBudget(scene, { selectionWeight = 0.2, lustTargetFraction = 0.4 } = {}) {
   const source = normalizeInteractionScene(scene);
   const coreStarts = source.groups.filter(row => row.phase === 'CORE').flatMap(rangesOf)
     .map(range => range.startTime);

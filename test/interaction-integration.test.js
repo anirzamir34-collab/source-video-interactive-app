@@ -51,7 +51,7 @@ test('scripted natural playback advances a neutral opening, refreshes choices, a
   assert.equal(video.queue().length, 5);
   assert.deepEqual(video.queue().map(choice => choice.id), ['approach-a', 'approach-b', 'dialogue', 'approach-c', 'approach-d']);
   const first = video.advance(8);
-  assert.ok(first.progressionValue > 0 && first.progressionValue < 40);
+  assert.ok(first.progressionValue > 0 && first.progressionValue < 100);
   assert.equal(first.uniqueApproachCount, 6);
   assert.equal(first.playedUniqueApproachCount, 1);
   assert.ok(!first.remainingApproachIds.includes('dialogue'));

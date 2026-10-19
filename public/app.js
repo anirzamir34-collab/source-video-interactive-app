@@ -4761,7 +4761,25 @@ function renderAdultApproachChoices(scene, later = false) {
     (item.variants || []).some(clip => clip.id === state.activeAdultPreludeId || clip.id === state.activeMovementId);
   const openingFresh = openingAll?.filter(item => Number(item.playCount || 0) === 0 || playing(item))
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
-  const openingMenu = openingAll ? (openingFresh.length ? openingFresh : openingAll).slice(0, 4) : null;
+  // Space the offered cards: a card that starts where the clip just played
+  // (or where another offered card) ends feels like watching straight on.
+  // Pick cards at least 8 s apart; fill up with the rest only if needed.
+  const spacedOpening = rows => {
+    // Short openings keep every card; spacing matters for long ones.
+    if (rows.length <= 4) return rows;
+    const lastPlayedEnd = Math.max(-Infinity, ...rows.concat(openingAll || [])
+      .filter(item => Number(item.playCount || 0) > 0).map(item => Number(item.endTime)));
+    const picked = [];
+    for (const item of rows) {
+      const start = Number(item.startTime);
+      const previousEnd = picked.length ? Number(picked.at(-1).endTime) : lastPlayedEnd;
+      if (playing(item) || !(start < previousEnd + 8)) picked.push(item);
+      if (picked.length === 4) break;
+    }
+    for (const item of rows) if (picked.length < Math.min(2, rows.length) && !picked.includes(item)) picked.push(item);
+    return picked.sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  };
+  const openingMenu = openingAll ? spacedOpening(openingFresh.length ? openingFresh : openingAll) : null;
   const interludeIds = !later ? state.adultDialogueInterludeIds : null;
   const interludeChoices = interludeIds?.size
     ? approachPool.filter(item => item.nonIntimate && item.sourceVerified === true &&

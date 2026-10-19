@@ -1641,7 +1641,8 @@ test('opening clips fill Lust and open the sex panel before every clip is mandat
   }));
   f.els.video.time = 0;
   f.renderAdultProgressiveUI(true);
-  assert.equal(f.state.adultApproachChoices.length, 4, 'at most four upcoming opening cards at a time');
+  assert.deepEqual(Array.from(f.state.adultApproachChoices, item => item.id), ['step-0', 'step-2', 'step-4'],
+    'a long opening offers spaced cards, never one that starts where the previous ends');
   let played = 0;
   for (let index = 0; index < 6 && !f.state.adultSexUnlocked; index += 1) {
     f.playAdultPrelude(`step-${index}`);
