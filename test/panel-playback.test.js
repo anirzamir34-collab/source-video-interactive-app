@@ -661,10 +661,18 @@ test('the scene control occupies space only while an existing clip is available'
   f.updateRhythmControl(position);
   assert.equal(f.els.rhythmControl.classes.has('hidden'), false);
   assert.equal(f.els.rhythmTapBtn.disabled, false);
-  assert.equal(f.els.rhythmTapStatus.textContent, 'Hazır');
+  assert.match(f.els.rhythmTapStatus.textContent, /^Hazır/);
+  assert.match(f.els.rhythmTapLabel.textContent, /^SEKS/);
+  // A sex position waiting for the next pick still offers the control.
   f.state.activeMovementId = null;
+  f.els.video.paused = true;
+  f.updateRhythmControl(position);
+  assert.equal(f.els.rhythmControl.classes.has('hidden'), false);
+  // Another position, or no open position, hides it.
+  f.state.activePositionId = 'other';
   f.updateRhythmControl(position);
   assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
+  f.state.activePositionId = position.id;
   f.state.activeMovementId = 'navigation-1';
   f.els.video.time = 60;
   f.updateRhythmControl(position);
@@ -1878,4 +1886,24 @@ test('one tap plays every consecutive sequence of a card before waiting for a ch
   f.els.video.time = 50;
   f.settleInteractionClipBoundary(50);
   assert.equal(f.state.activeMovementId, null, 'after the last sequence the player chooses again');
+});
+
+test('SEKS tap continues to the next intense clip and a hold jumps to the strongest one', () => {
+  const f = runtimeFixture();
+  const position = chapter('navigation', 30);
+  position.movements.push({ id: 'navigation-3', sourcePositionId: 'source-navigation', sourceVerified: true,
+    label: 'Action 3', startTime: 60, endTime: 70, loopStartTime: 60, loopEndTime: 70 });
+  position.sourceRanges[0].endTime = 70;
+  position.movements[2].movementTempo = 'moderate';
+  position.movements[3].movementTempo = 'fast';
+  f.isEnergeticSexMoment = clip => clip.movementTempo === 'fast';
+  f.state.activeAdultOccurrenceId = 'source-navigation';
+  f.els.video.time = 40;
+  // Tap prefers the next intense clip; hold takes the strongest remaining.
+  assert.equal(f.nextEnergeticPositionMovement(position, null)?.id, 'navigation-3');
+  assert.equal(f.nextEnergeticPositionMovement(position, null, true)?.id, 'navigation-3');
+  // Without any intense clip a tap simply continues with the next real clip.
+  position.movements[3].movementTempo = 'slow';
+  assert.equal(f.nextEnergeticPositionMovement(position, null)?.id, 'navigation-1');
+  assert.equal(f.nextEnergeticPositionMovement(position, null, true)?.id, 'navigation-2');
 });

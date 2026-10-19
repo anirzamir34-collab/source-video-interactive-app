@@ -47,6 +47,9 @@ otomatik kontrol eder.
 - Pozisyon adı vücut düzeninden gelir (kovboy / ters kovboy / doggy / ayakta
   doggy / prone-bone / misyoner ...).
 - Panel videonun genişliği boyunca altta; seçenekler kaydırmadan görünür.
+- SEKS butonu: bir pozisyon açıkken panelin sağ altında durur. Dokunmak aynı
+  pozisyonun sıradaki daha yoğun gerçek kesitine (yoksa sıradaki kesite) geçer;
+  basılı tutup bırakmak o pozisyonda kalan en yoğun ana atlar. Kesit kalmayınca gizlenir.
 
 ## 4. Oynanış akışı
 

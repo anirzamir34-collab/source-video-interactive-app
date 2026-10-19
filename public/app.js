@@ -5547,16 +5547,19 @@ function resetAdultTapRhythm() {
   els.rhythmTapBtn?.removeAttribute('data-tempo');
   if (els.video && Number(els.video.playbackRate) !== 1) els.video.playbackRate = 1;
   if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = 'SEKS';
-  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Yalnızca hızlı, sert veya derin doğrulanmış kesitlerde açılır';
+  if (els.rhythmTapStatus) els.rhythmTapStatus.textContent = 'Dokun: devam et · Basılı tut: en yoğun an';
 }
 
 function remainingPositionControlClips(position, currentMovement = null) {
   if (!position) return [];
   // Preserve the existing source/occurrence/classification constraints. The
   // completed clip ID is cleared at its end, so time must also exclude it.
+  // Every later verified clip of this same position occurrence is reachable.
+  // Limiting the button to rare "fast/hard" labelled clips (and the panel CSS
+  // hiding it) left the SEKS button with nothing to do in most videos.
   return forwardVerifiedClips(
     movementsForPositionOccurrence(position, state.activeAdultOccurrenceId)
-      .filter(item => position.controlClipIds?.includes(item.id) && isEnergeticSexMoment(item)),
+      .filter(item => item.sourceVerified === true && !item.entryOnly),
     {
       currentId: currentMovement?.id || '',
       after: Math.max(Number(state.adultTimelineFloor) || 0,
@@ -5566,20 +5569,33 @@ function remainingPositionControlClips(position, currentMovement = null) {
   );
 }
 
-function nextEnergeticPositionMovement(position, currentMovement = null) {
-  return remainingPositionControlClips(position, currentMovement)[0] || null;
+// Tap: the next more intense real clip of this position (or simply the next
+// clip when none is labelled intense). Hold: the strongest clip left.
+function nextEnergeticPositionMovement(position, currentMovement = null, strongest = false) {
+  const remaining = remainingPositionControlClips(position, currentMovement);
+  if (!remaining.length) return null;
+  if (!strongest) return remaining.find(item => isEnergeticSexMoment(item)) || remaining[0];
+  const intensity = item => {
+    const tempo = String(item?.movementTempo || '').toLowerCase();
+    const text = String(item?.label || '').toLocaleLowerCase('tr-TR');
+    return ({ intense: 4, fast: 3, moderate: 1 }[tempo] || 0) +
+      (isEnergeticSexMoment(item) ? 2 : 0) + (/derin|sert|hızlı|yoğun/.test(text) ? 1 : 0);
+  };
+  return remaining.reduce((best, item) => intensity(item) > intensity(best) ? item : best, remaining[0]);
 }
 
 function updateRhythmControl(position) {
   const movement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
-  const remaining = remainingPositionControlClips(position, movement);
-  const nextEnergetic = remaining[0];
+  const remaining = position ? remainingPositionControlClips(position, movement) : [];
+  const nextEnergetic = position ? nextEnergeticPositionMovement(position, movement) : null;
+  const strongest = position ? nextEnergeticPositionMovement(position, movement, true) : null;
+  // Available whenever a sex position is open (playing or waiting for the
+  // next pick) and this position still has a later real clip.
   const eligible = Boolean(
     position && !isWarmupPosition(position) &&
     state.adultOutcomePhase === 'idle' &&
-    movement && isEnergeticSexMoment(movement) &&
-    Number(els.video?.currentTime) >= Number(movement.loopStartTime) &&
-    Number(els.video?.currentTime) < Number(movement.loopEndTime) &&
+    state.activePositionId === position.id &&
+    (movement || els.video?.paused) &&
     nextEnergetic
   );
   els.rhythmControl?.classList.toggle('hidden', !eligible);
@@ -5595,22 +5611,22 @@ function updateRhythmControl(position) {
   if (/derin/i.test(nextLabel)) controlLabel = 'DERİN DEVAM ET';
   else if (/hızlı|sert|yoğun/i.test(nextLabel) || nextTempo === 'fast') controlLabel = 'DAHA YOĞUN';
   else if (nextTempo === 'moderate') controlLabel = 'RİTMİ KORU';
-  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? controlLabel : 'SEKS KAPALI';
+  if (els.rhythmTapLabel) els.rhythmTapLabel.textContent = eligible ? `SEKS · ${controlLabel}` : 'SEKS';
   if (els.rhythmTapStatus) {
     els.rhythmTapStatus.textContent = eligible
-      ? 'Hazır'
-      : 'Bu bölümde ilerlenebilecek uygun kesit kalmadı';
+      ? (strongest && strongest.id !== nextEnergetic.id ? 'Hazır · basılı tut: en yoğun an' : 'Hazır')
+      : 'Bu pozisyonda ilerlenecek kesit kalmadı';
   }
 }
 
-function handleAdultRhythmTap(timestamp = performance.now()) {
+function handleAdultRhythmTap(timestamp = performance.now(), charged = false) {
   const position = state.adultScene?.positions.find(item => item.id === state.activePositionId);
   const currentMovement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
   if (!position || state.adultOutcomePhase !== 'idle') return false;
 
   els.rhythmTapBtn?.classList.remove('tap-pulse');
   requestAnimationFrame(() => els.rhythmTapBtn?.classList.add('tap-pulse'));
-  const next = nextEnergeticPositionMovement(position, currentMovement);
+  const next = nextEnergeticPositionMovement(position, currentMovement, charged === true);
   if (!next) {
     updateRhythmControl(position);
     return false;
@@ -6511,7 +6527,7 @@ if (els.nextVariantBtn) {
 state.interactionHoldControl = attachHoldReleaseControl({
   button: els.rhythmTapBtn,
   engine: tactile,
-  onActivate: ({ timestamp }) => handleAdultRhythmTap(timestamp)
+  onActivate: ({ timestamp, charged }) => handleAdultRhythmTap(timestamp, charged)
 });
 
 attachTactileSurface({ root: els.adultInteractionPanel, engine: tactile });

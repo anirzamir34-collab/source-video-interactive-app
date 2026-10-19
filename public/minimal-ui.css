@@ -89,7 +89,7 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #a
   color: var(--mq-accent) !important; opacity: .85 !important;
 }
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultInteractionPanel.compact-expanded :is(
-  .adult-panel-header, .adult-stage-summary, #discoveryGate, .adult-variant-toolbar, #rhythmControl,
+  .adult-panel-header, .adult-stage-summary, #discoveryGate, .adult-variant-toolbar,
   .choice-section-heading, #foreplaySection.hidden, .adult-feel-toggle) {
   display: none !important;
 }
@@ -251,7 +251,7 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
   .movement-energy-badge, .choice-kind, .choice-meta, .choice-detail, .movement-variant-status,
   .movement-tempo-summary, [data-playback-status], .choice-subtitle, .choice-desc, .approach-overlay-heading,
   .choice-section-heading, .adult-panel-header, .adult-stage-summary, #discoveryGate, .adult-variant-toolbar,
-  #rhythmControl, .adult-quick-choices, .adult-dock-more-btn, .adult-feel-toggle,
+  .adult-quick-choices, .adult-dock-more-btn, .adult-feel-toggle,
   .adult-dock-phase, #adultDockTitle, .panel-playback-status, .adult-dock-bars) {
   display: none !important;
 }
@@ -390,3 +390,28 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
   background: linear-gradient(90deg, rgba(255, 92, 138, .55) var(--lust, 0%), rgba(8, 10, 12, .6) var(--lust, 0%)) !important;
 }
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui.cinematic-ui #approachChoices .approach-lust b { color: #fff !important; font-weight: 700 !important; }
+
+/* ---------- SEKS control: one accent pill under the movement cards ---------- */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmControl:not(.hidden) {
+  all: unset; display: flex !important; justify-content: flex-end !important; width: 100% !important; margin-top: 6px !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmControl.hidden { display: none !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmTapBtn {
+  all: unset; box-sizing: border-box !important; display: inline-flex !important; flex-direction: column !important;
+  align-items: flex-end !important; gap: 1px !important; padding: 6px 14px !important; border-radius: 999px !important;
+  border: 1px solid rgba(255, 120, 140, .7) !important; background: rgba(110, 18, 40, .72) !important;
+  backdrop-filter: blur(10px) !important; -webkit-backdrop-filter: blur(10px) !important;
+  color: #ffe3e8 !important; cursor: pointer !important; user-select: none !important; touch-action: manipulation !important;
+  transition: transform 120ms ease, background-color 120ms ease !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmTapBtn.is-pressed { transform: scale(.96) !important; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmTapBtn.is-charged {
+  background: rgba(170, 24, 56, .9) !important; border-color: #ff9fb0 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmTapLabel {
+  font-size: 12px !important; font-weight: 800 !important; letter-spacing: .06em !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmTapStatus {
+  display: block !important; font-size: 10px !important; opacity: .8 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui #adultInteractionPanel #rhythmTapBtn::after { display: none !important; }
