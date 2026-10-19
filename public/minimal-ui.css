@@ -340,3 +340,10 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
   html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui { --mq-col: 210px; }
   html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel):not(.hidden) { right: 8px !important; bottom: 8px !important; }
 }
+
+/* The dock containers let taps fall through to the video; every control
+   inside them must accept taps again (the pill reset above would otherwise
+   inherit the container's pointer-events: none and make cards dead). */
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui :is(#choices, #approachChoices, #adultInteractionPanel) :is(button, summary, a, [role="button"], .choice) {
+  pointer-events: auto !important;
+}

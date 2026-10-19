@@ -1040,3 +1040,22 @@ test('cache eviction cannot delete prepared source audio while a provider is con
   assert.equal(f.calls.mix.length, 1);
 });
 
+
+test('a single line that cannot fit keeps its original voice instead of failing the whole dub', async t => {
+  const f = await fixture(t);
+  const fit = f.audio.fitDubSegment;
+  f.audio.fitDubSegment = async (file, options) => {
+    const turn = JSON.parse(await readFile(file, 'utf8'));
+    if (turn.text.includes('Merhaba')) {
+      if (!options.adaptiveTempo) throw Object.assign(new Error('long'), { code: 'DUB_REGENERATE_REQUIRED', actualDuration: 8 });
+      const result = await fit(file, options);
+      return { ...result, tempo: 8 / options.targetDuration };
+    }
+    return fit(file, options);
+  };
+  const result = await f.pipeline(f.input);
+  assert.equal(f.calls.mix.length, 1, 'the rest of the dialogue is still dubbed and mixed');
+  assert.equal(result.dubSegments.length, 1);
+  assert.equal(result.qualityReport.originalVoiceKeptCount, 1);
+  assert.equal(result.subtitles.source_tr.length, 2, 'every line keeps its Turkish subtitle');
+});

@@ -1833,3 +1833,24 @@ test('panel retains eight distinct verified movement cards without a fixed displ
   assert.ok(cards.every(card => card.variants.length === 1));
 });
 
+
+
+test('clicking an opening card seeks to its source clip and plays it', async () => {
+  const f = runtimeFixture();
+  f.state.adultScene.startTime = 100;
+  f.state.adultScene.endTime = 400;
+  f.els.video.duration = 400; f.state.analysis.videoDuration = 400;
+  f.state.adultScene.positions = [chapter('oral-core', 300, 'oral')];
+  f.state.adultScene.foreplay = [
+    { id: 'touch-a', label: 'First opening', sourceVerified: true, choiceSurface: 'approach', startTime: 100, endTime: 115 },
+    { id: 'touch-b', label: 'Second opening', sourceVerified: true, choiceSurface: 'approach', startTime: 130, endTime: 150 }
+  ];
+  f.els.video.time = 100;
+  f.renderAdultPanel(f.state.adultScene);
+  const button = f.els.approachChoices.children.find(node => node.dataset?.clipId === 'touch-b');
+  button.dispatchEvent(new Event('click'));
+  await flush(); await flush();
+  assert.equal(f.state.activeAdultPreludeId, 'touch-b');
+  assert.equal(f.els.video.currentTime, 130);
+  assert.equal(f.els.video.paused, false);
+});

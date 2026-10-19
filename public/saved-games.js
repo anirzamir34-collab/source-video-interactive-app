@@ -97,7 +97,8 @@ function validateTurkishMedia(media, audio, duration) {
     voices.add(voiceId);
   }
   if (audio?.size && source.utterances.length &&
-      (manifest.translatedUtterances.length !== source.utterances.length || manifest.dubSegments.length !== source.utterances.length ||
+      (manifest.translatedUtterances.length !== source.utterances.length ||
+        manifest.dubSegments.length + Number(manifest.qualityReport?.originalVoiceKeptCount || 0) !== source.utterances.length ||
         source.utterances.some(row => !manifest.voiceMapping[row.speakerId]))) throw new Error('Kayıttaki dublaj kapsamı eksik.');
   if (!manifest.subtitles || typeof manifest.subtitles !== 'object') throw new Error('Kayıttaki altyazı bilgileri eksik.');
   for (const track of ['source_tr', 'dub_tr']) {
