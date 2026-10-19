@@ -1,5 +1,20 @@
 import { canvasBlob, seekMediaTo } from './playback-logic.js';
 
+// A second explicit saved-game repair pass inspects different actual video
+// frames. Replaying the identical sheets after an empty response is not useful.
+export function savedGapSampleTimes(start, end, strategy = 'baseline') {
+  const length = end - start;
+  if (!Number.isFinite(length) || length <= 0) return [];
+  const interval = Math.max(0.75, length / Math.min(48,
+    Math.max(12, Math.ceil(length / 3))));
+  const offset = strategy === 'shifted' ? interval / 2 : 0;
+  const times = [];
+  for (let time = start + offset; time < end - 0.05; time += interval) {
+    times.push(Number(time.toFixed(3)));
+  }
+  return times.length ? times : [start];
+}
+
 export function detectSceneBoundaries(motionProfile = [], interval = 1) {
   const samples = Array.isArray(motionProfile)
     ? motionProfile.filter(item => Number.isFinite(Number(item?.time)) && Number.isFinite(Number(item?.score)))
@@ -346,10 +361,7 @@ export async function extractStoryboard(source, onProgress = () => {}, signal, o
     const interval = Math.max(0.75, duration / targetFrameCount);
     const times = [];
     if (repairRange) {
-      const gapInterval = Math.max(0.75, (rangeEnd - rangeStart) / Math.min(48,
-        Math.max(12, Math.ceil((rangeEnd - rangeStart) / 3))));
-      for (let time = rangeStart; time < rangeEnd - 0.05; time += gapInterval) times.push(time);
-      if (!times.length) times.push(rangeStart);
+      times.push(...savedGapSampleTimes(rangeStart, rangeEnd, options.repairSamplingStrategy));
     } else {
       for (let time = 0; time < duration; time += interval) times.push(time);
     }
