@@ -34,7 +34,10 @@ test('verified female profile cannot reuse a male or unlabelled catalog voice', 
   ];
   assert.deepEqual(mapSpeakerVoices(speakers, catalog, { 'person-a': 'male-tr' }),
     { 'person-a': 'female-tr' });
-  assert.throws(() => mapSpeakerVoices(speakers, catalog, {}, { 'person-a': 'male-tr' }),
+  // The owner's explicit pick corrects a misdetected gender.
+  assert.deepEqual(mapSpeakerVoices(speakers, catalog, {}, { 'person-a': 'male-tr' }),
+    { 'person-a': 'male-tr' });
+  assert.throws(() => mapSpeakerVoices(speakers, catalog, {}, { 'person-a': 'missing-voice' }),
     { code: 'VOICE_MAPPING_INVALID' });
 });
 

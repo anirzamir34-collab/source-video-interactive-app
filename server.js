@@ -1,5 +1,5 @@
 import { parseModelJson } from './public/model-json.js';
-import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions, inspectNeutralRepairActions } from './public/neutral-gap-repair.js';
+import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, inspectNeutralRepairActions } from './public/neutral-gap-repair.js';
 import { GoogleGenAI } from "@google/genai";
 import express from 'express';
 import multer from 'multer';
@@ -12,8 +12,11 @@ import { runVideoExtractor, videoExtractorCanImpersonate, needsBrowserImpersonat
 import { resolveVideoUrl, probeVideoSource, selectExtractorSource, videoResolutionFailure, videoErrorDetail, videoErrorDiagnostic } from './lib/video-url.js';
 import { spawn } from 'node:child_process';
 import { Readable, pipeline } from 'node:stream';
-import { dedupeVerifiedTimelineActions, sourceMotionProgressRate,
-  verifiedActionSubsequences } from './public/adult-gameplay.js';
+import {
+  dedupeVerifiedTimelineActions,
+  sourceMotionProgressRate,
+  verifiedActionSubsequences
+} from './public/adult-gameplay.js';
 import { storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure } from './public/analysis-recovery.js';
 import { loadMediaConfig } from './lib/turkish-media/config.js';
 import { createMediaCache } from './lib/turkish-media/cache.js';
@@ -27,11 +30,10 @@ import { serializeReviewCandidates } from './public/classification-integrity.js'
 import { geminiQuotaFailure } from './public/gemini-quota.js';
 import { createAnalysisRequestCache, storyboardRequestKey } from './lib/analysis-request-cache.js';
 import { geminiAnalysisSafetySettings, geminiGenerationConfig } from './lib/gemini-generation-config.js';
-import { analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel, preferredRepairAnalysisModels } from './lib/analysis-model-routing.js';
+import { ECONOMY_ANALYSIS_MODEL, analysisModelCandidates, analysisTierFromRequest, isSupportedDeepAnalysisModel, isGeminiModelName, isVideoQuestAnalysisModel, preferredRepairAnalysisModels } from './lib/analysis-model-routing.js';
 import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 import { installScoutRoute } from './lib/scout-route.js';
-import { ECONOMY_ANALYSIS_MODEL } from './lib/analysis-model-routing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,6 +84,10 @@ const upload = multer({
 });
 
 app.disable('x-powered-by');
+// Render terminates TLS in front of the app. Trusting that single hop makes
+// req.ip the real client address, so the login limiter counts each client
+// instead of locking everyone out behind the shared proxy address.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 
@@ -190,6 +196,11 @@ app.post('/login', (req, res) => {
   const key = req.ip || 'unknown';
   const now = Date.now();
   const recent = (loginAttempts.get(key) || []).filter(time => now - time < 15 * 60 * 1000);
+  if (loginAttempts.size > 1000) {
+    for (const [address, times] of loginAttempts) {
+      if (!times.some(time => now - time < 15 * 60 * 1000)) loginAttempts.delete(address);
+    }
+  }
 
   if (recent.length >= 5) {
     loginAttempts.set(key, recent);
@@ -237,8 +248,11 @@ app.use(express.static(path.join(__dirname, 'public'), {
     // The app is deployed as one coherent ES-module graph. Caching an old
     // entry module across a deployment can make a later module request point
     // at a different release, so HTML/JS must always be revalidated together.
+    // "no-cache" still revalidates every load (ETag), so a deployment can
+    // never mix module versions, but unchanged files return 304 instead of
+    // re-downloading ~1 MB of scripts on every open.
     if (/\.(?:html|js)$/i.test(filePath)) {
-      res.setHeader('Cache-Control', 'no-store, max-age=0');
+      res.setHeader('Cache-Control', 'no-cache');
     }
   }
 }));
@@ -1359,7 +1373,11 @@ function normalizeAmpUrl(rawUrl) {
 }
 
 function isPrivateAddress(address) {
-  const value = String(address).toLowerCase();
+  let value = String(address).toLowerCase();
+  // IPv4-mapped IPv6 (::ffff:127.0.0.1) reaches the same IPv4 host.
+  const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) value = mapped[1];
+  if (value === '::' || value.startsWith('0.') || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(value)) return true;
   return value === '::1' ||
     value === '0.0.0.0' ||
     value.startsWith('10.') ||
@@ -1611,6 +1629,9 @@ app.get('/api/video-proxy', async (req, res) => {
       resolvedVideoSessions.delete(token);
       return res.status(410).json({ ok: false, reason: 'VIDEO_SESSION_EXPIRED', message: 'Video bağlantısının süresi doldu. Bağlantıyı yeniden aç.' });
     }
+    // A session in active use stays valid: long play sessions otherwise hit
+    // the 4-hour limit mid-game and every following seek failed with 410.
+    if (session) session.expiresAt = Math.max(session.expiresAt, Date.now() + 2 * 60 * 60 * 1000);
     const sourceUrl = String(session?.sourceUrl || req.query.url || '');
     const referer = String(session?.referer || req.query.referer || '');
     if (!sourceUrl) return res.status(400).json({ ok: false, message: 'Video URL’si gerekli.' });

@@ -60,6 +60,8 @@ otomatik kontrol eder.
 - Yalnız konuşmalar çevrilir ve seslendirilir. İnleme, nefes, "ah/oh/mmm",
   tekrarlanan "yes", "oh my god" gibi sesler ve tüm arka plan orijinal kalır.
 - Kadına kadın, erkeğe erkek sesi; karışık konuşmacı kimlikleri cinsiyete göre ayrılır.
+- Otomatik cinsiyet yanlış algılanırsa "Sesleri düzenle"de elle seçilen ses geçerlidir;
+  elle seçim yüzünden dublaj iptal olmaz.
 - Süresine sığmayan cümle önce kısaltılır, sonra en çok 1,35× hızlandırılır;
   yine sığmazsa o cümle orijinal seste kalır. İş yalnız hiçbir cümle
   seslendirilemezse iptal olur.

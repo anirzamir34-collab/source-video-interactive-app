@@ -19,8 +19,6 @@ import {
   adultPlaybackProgressDelta,
   adultDiscoveryPhase,
   averageAdultProgress,
-  canUnlockBonusPositions,
-  canUnlockCorePositions,
   canUnlockOutcome,
   buildVerifiedMovementChoices,
   splitSparseMovementChoiceCards,
@@ -38,30 +36,21 @@ import {
   forwardLocalMovementClips,
   isEnergeticSexMoment,
   isPlayableVerifiedPositionDuration,
-  isOutcomeUnlocked,
-  groupVerifiedMovementsByTempo,
   initialWarmupBeforeFirstPosition,
-  selectSequentialApproachChoices,
   movementsForPositionOccurrence,
   positionOccurrenceGroups,
   positionOccurrenceForMovement,
-  monotonicAdultPhase,
   normalizeSourceActionTimes,
   playableAdultPanelFamily,
   maleOrgasmPlaybackMultiplier,
   movementBelongsToVerifiedPosition,
-  nearestAvailableTempo,
   normalizeOutcomeUnlockProgress,
-  playbackRateForTapTempo,
-  pickNearbyRhythmVariant,
   pickNextChronologicalVariant,
   pickNextVariant,
   positionUnlockProgress,
   requiredCorePlaySecondsForOutcome,
-  requiredWarmupDiscoveries,
   resolveVerifiedAdultPosition,
   summarizeAdultSceneGraph,
-  tapRhythm,
   verifiedAdultPositionFamily,
   verifiedPartnerTransition
 } from './adult-gameplay.js';
@@ -69,14 +58,12 @@ import { analysisGapBridgeTarget, hasRemainingVideo, isCompleteChunkAnalysis, sc
 import {
   ANALYSIS_SCHEMA_VERSION,
   ENGINE_VERSION,
-  activityDisplayLabel,
   activityOccurrenceNamespace,
   advanceAdultPhase,
   analysisFingerprint,
   appendEngineEvent,
   applyRuntimeSnapshot,
   canPlayAction,
-  createRuntimeSnapshot,
   isCompatibleRuntimeSnapshot,
   integritySummaryText,
   mergeSecondPassReview,
@@ -87,7 +74,6 @@ import {
 import {
   mergeStoryContexts,
   normalizeStoryContext,
-  selectDiverseStoryActions,
   selectSameMomentStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
@@ -100,7 +86,7 @@ import {
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 import { recoverVerifiedChunksOnCreditExhaustion } from './partial-analysis-recovery.js';
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
-import { repairableAnalysisGaps, retryableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
+import { retryableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
 import { planSavedGapRepair, appendSavedGapRepairHistory } from './analysis-repair-attempts.js';
 
 import { attachPanelFeedback, compactPanelChoiceLabel, forwardVerifiedClips } from './panel-feedback.js';
@@ -118,26 +104,53 @@ import { createVideoDownloader } from './video-download.js';
 import { createUrlVideoCache } from './url-video-cache.js';
 import { analysisRequestKey, analysisCheckpointKey, storyboardSourceKey, createAnalysisResponseCache } from './analysis-response-cache.js';
 import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, verifiedOpeningCast } from './scene-entry.js';
-import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
-  bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
+import {
+  sourceIdentityLabel,
+  sourceDisplayLabel,
+  collapseConsecutiveEquivalentCards,
+  bundleAdjacentSourceCards,
+  groupVerifiedApproachChoices
+} from './choice-groups.js';
 import { nextSceneDialogueInterlude } from './dialogue-interlude.js';
 import { compactDialogueSegments, compactStoryMemory } from './analysis-context-compaction.js';
 import { scoutEligible, buildScoutSheets, scoutChunkPlan, SCOUT_KINDS } from './scout-plan.js';
-import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
-  sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
-  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap,
-  boundedUnownedGapEnd } from './choice-routing.js';
+import {
+  choiceSurfaceForAction,
+  withChoiceSurface,
+  scenePreludeChoices,
+  sceneOwnsStoryChoice,
+  sceneOwnsApproachChoice,
+  isUnroutedVerifiedApproach,
+  sceneSurfaceChoices,
+  openingSceneChoiceMenu,
+  isForwardTimelineChoice,
+  verifiedStoryAheadOfGap,
+  boundedUnownedGapEnd
+} from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
-import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
-  selectInteractionGroup, interactionTrace, transitionInteraction,
-  selectVerifiedChoiceQueue, motionIntensityFactors } from './interaction-engine.js';
-import { interactionEntryClip, interactionEntryGuard, interactionFamilyViews } from './interaction-timeline.js';
+import {
+  createInteractionState,
+  unlockNextCoreGroup,
+  selectInteractionGroup,
+  interactionTrace,
+  transitionInteraction,
+  selectVerifiedChoiceQueue,
+  motionIntensityFactors
+} from './interaction-engine.js';
+import { interactionEntryClip, interactionEntryGuard } from './interaction-timeline.js';
 import { bindInteractionRuntimeViews } from './interaction-compat.js';
 import { assignVerifiedOpeningRoles } from './verified-scene-continuity.js';
-import { beginVerifiedClipPlayback, observeVerifiedClipPlayback,
-  verifiedClipCompletionReady } from './interaction-completion.js';
-import { mountInteractionPanel, resetInteractionSelection,
-  sceneSurfaceIsStale, syncInteractionSurfaces } from './interaction-panel.js';
+import {
+  beginVerifiedClipPlayback,
+  observeVerifiedClipPlayback,
+  verifiedClipCompletionReady
+} from './interaction-completion.js';
+import {
+  mountInteractionPanel,
+  resetInteractionSelection,
+  sceneSurfaceIsStale,
+  syncInteractionSurfaces
+} from './interaction-panel.js';
 
 const videoDownloads = createVideoDownloader();
 const urlVideoCache = createUrlVideoCache();
@@ -419,13 +432,9 @@ function persistRuntimeSnapshot(reason = 'runtime', force = false) {
   const now = Date.now();
   if (!force && now - state.lastRuntimeSaveAt < 750) return;
   state.lastRuntimeSaveAt = now;
-  try {
-    const snapshot = createRuntimeSnapshot(state, state.analysisFingerprint);
-    // Session persistence intentionally disabled: refresh must start clean.
-    return;
-  } catch (error) {
-    console.warn('Runtime state could not be saved:', error);
-  }
+  // Session persistence is intentionally disabled (a refresh starts clean),
+  // so no snapshot is built: building and discarding it on every decision
+  // only cost time. Saved games are stored separately.
 }
 
 function removeStoredValue(storageName, key) {
@@ -556,7 +565,33 @@ function setGameState(next) {
   renderDebug();
 }
 
+// The telemetry card sits below the player. Serializing the whole story
+// context into it on every timeupdate (~4/s) cost main-thread time during
+// playback even when nobody was looking at it, so it renders only while
+// visible and at most once per second from playback ticks.
+let debugVisible = false;
+let debugDirtyExtra = null;
+let debugLastTickAt = 0;
+if (typeof IntersectionObserver === 'function' && els.debugOutput) {
+  new IntersectionObserver(entries => {
+    debugVisible = entries.some(entry => entry.isIntersecting);
+    if (debugVisible && debugDirtyExtra) renderDebug(debugDirtyExtra);
+  }).observe(els.debugOutput);
+} else {
+  debugVisible = true;
+}
+
+function renderDebugTick() {
+  const now = performance.now();
+  if (!debugVisible) { debugDirtyExtra ||= {}; return; }
+  if (now - debugLastTickAt < 1000) return;
+  debugLastTickAt = now;
+  renderDebug();
+}
+
 function renderDebug(extra = {}) {
+  if (!debugVisible) { debugDirtyExtra = extra; return; }
+  debugDirtyExtra = null;
   const payload = {
     serviceConnected: state.serviceConnected,
     serviceCapabilities: state.serviceCapabilities,
@@ -2937,10 +2972,6 @@ function normalizeAdultLabel(value) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
-function adultSemanticFamily(value) {
-  return adultPositionFamily(value);
-}
-
 function canonicalAdultPosition(action) {
   // A verified explicit label such as "ters kovboy pozisyonunda" corrects
   // stale parent metadata that still says cowgirl.
@@ -4493,24 +4524,6 @@ function continueAfterAdultOrgasm() {
   void seekAdultLoop(resumeTime, token);
 }
 
-function adultWarmupStats(scene = state.adultScene) {
-  const warmupPositions = (scene?.positions || []).filter(isWarmupPosition);
-  const warmupActionIds = new Set((scene?.foreplay || []).map(item => item.id));
-  let warmupUniquePlayed = 0;
-
-  warmupActionIds.forEach(id => {
-    if (Number(state.adultPreludePlayCounts.get(id) || 0) > 0) warmupUniquePlayed += 1;
-  });
-  warmupPositions.forEach(position => {
-    if (state.adultVisitedPositionIds.has(position.id)) warmupUniquePlayed += 1;
-  });
-
-  return {
-    warmupTotal: warmupActionIds.size + warmupPositions.length,
-    warmupUniquePlayed
-  };
-}
-
 function unlockedAdultPositions(scene = state.adultScene) {
   const positions = (scene?.positions || []).filter(position => position.sourceVerified === true);
   if (!state.adultSexUnlocked) return positions.filter(isWarmupPosition);
@@ -4542,13 +4555,6 @@ function unlockedAdultOutcomes(scene = state.adultScene) {
       )
     })
   );
-}
-
-function nextAdultDiscovery(scene = state.adultScene) {
-  const positionTarget = orderedLockedAdultPositions(scene)[0];
-  return positionTarget
-    ? { type: isBonusPosition(positionTarget) ? 'reward' : 'position', progress: 100 }
-    : null;
 }
 
 function renderAdultFlowStatus() {
@@ -4679,61 +4685,6 @@ function resetAdultSceneGameplay() {
   resetAdultTapRhythm();
 }
 
-function renderAdultWarmupChoices(scene) {
-  if (!els.foreplayChoices || !els.foreplaySection) return;
-  const flow = currentAdultFlow();
-  const warmupPositions = (scene?.positions || [])
-    .filter(position => isWarmupPosition(position) && flow >= Number(position.unlockProgress || 0))
-    .map(position => ({
-      kind: 'position',
-      id: position.id,
-      label: position.label,
-      startTime: position.startTime,
-      playCount: state.adultVisitedPositionIds.has(position.id) ? 1 : 0
-    }));
-
-  const warmupActions = (scene?.foreplay || []).map(item => ({
-    kind: 'foreplay',
-    id: item.id,
-    label: item.label,
-    startTime: item.startTime,
-    playCount: Number(state.adultPreludePlayCounts.get(item.id) || 0)
-  }));
-
-  const choices = [...warmupActions, ...warmupPositions]
-    .sort((a, b) => a.playCount - b.playCount || a.startTime - b.startTime)
-    .slice(0, 3);
-
-  els.foreplayChoices.innerHTML = '';
-  if (els.foreplayCount) {
-    els.foreplayCount.textContent = `${choices.length} seçenek`;
-  }
-
-  choices.forEach(choice => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'discovery-choice-card';
-    button.dataset.clipId = choice.id;
-    button.dataset.discoveryId = choice.id;
-    button.dataset.discoveryKind = choice.kind;
-    button.innerHTML = `
-      <span>${escapeHtml(choice.label)}</span>
-      <small>${choice.playCount ? 'Tekrar · daha az Lust' : 'Yeni keşif · Lust kazan'}</small>
-    `;
-    if (choice.id === state.activeAdultPreludeId || choice.id === state.activePositionId) {
-      button.classList.add('active');
-    }
-    button.addEventListener('click', () => {
-      if (choice.kind === 'foreplay') playAdultPrelude(choice.id);
-      else selectAdultPosition(choice.id, true);
-    });
-    els.foreplayChoices.appendChild(button);
-  });
-
-  els.foreplaySection.classList.toggle('hidden', !choices.length);
-  refreshAdultCompactDock();
-}
-
 function renderAdultApproachChoices(scene, later = false) {
   const flow = currentAdultFlow();
   const sceneCorePositions = (scene?.positions || []).filter(position => !isWarmupPosition(position));
@@ -4823,7 +4774,9 @@ function renderAdultApproachChoices(scene, later = false) {
     for (const item of rows) if (picked.length < Math.min(2, rows.length) && !picked.includes(item)) picked.push(item);
     return picked.sort((a, b) => Number(a.startTime) - Number(b.startTime));
   };
-  const openingMenu = openingAll ? spacedOpening(openingFresh.length ? openingFresh : openingAll) : null;
+  // Played cards leave the menu for good. When every opening card has been
+  // played, only "Videoya devam et" remains instead of re-offering them.
+  const openingMenu = openingAll ? spacedOpening(openingFresh) : null;
   const interludeIds = !later ? state.adultDialogueInterludeIds : null;
   const interludeChoices = interludeIds?.size
     ? approachPool.filter(item => item.nonIntimate && item.sourceVerified === true &&
@@ -4970,35 +4923,6 @@ function renderInteractionInterludeChoices(scene) {
   // Actual interludes are routed through the separate surface above.
   els.foreplayChoices.innerHTML = '';
   els.foreplaySection.classList.add('hidden');
-}
-
-function renderAdultOutcomes(scene) {
-  if (!els.outcomeSection || !els.outcomeChoices) return;
-  const outcomes = unlockedAdultOutcomes(scene);
-  els.outcomeChoices.innerHTML = '';
-  els.outcomeSection.classList.toggle('hidden', !outcomes.length);
-
-  if (!outcomes.length) {
-    if (els.outcomeCount) els.outcomeCount.textContent = '0 açık';
-    return;
-  }
-
-  outcomes.forEach((outcome, index) => {
-    state.adultUnlockedOutcomeIds.add(outcome.id);
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'outcome-choice-card unlock-reveal';
-    button.dataset.outcomeId = outcome.id;
-    button.innerHTML = `
-      <span>${escapeHtml(outcome.label || `Final ${index + 1}`)}</span>
-      <small>${adultTimeLabel(outcome.startTime)} – ${adultTimeLabel(outcome.endTime)}</small>
-      <small>Yeni açıldı · gerçek video segmenti</small>
-    `;
-    button.addEventListener('click', () => playAdultOutcome(outcome.id));
-    els.outcomeChoices.appendChild(button);
-  });
-
-  if (els.outcomeCount) els.outcomeCount.textContent = `${outcomes.length} açık`;
 }
 
 function renderAdultProgressiveUI(force = false) {
@@ -7178,15 +7102,6 @@ function renderTimeline() {
   });
 }
 
-function waitForEvent(target, event, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, timeoutMs);
-    const onEvent = () => { cleanup(); resolve(); };
-    const cleanup = () => { clearTimeout(timer); target.removeEventListener(event, onEvent); };
-    target.addEventListener(event, onEvent, { once: true });
-  });
-}
-
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -7279,7 +7194,7 @@ els.video.addEventListener('play', () => {
     els.video.pause();
   }
 });
-els.video.addEventListener('timeupdate', renderDebug);
+els.video.addEventListener('timeupdate', renderDebugTick);
 els.video.addEventListener('ended', handleSourceEnded);
 
 checkHealth();

@@ -221,15 +221,25 @@ export function createGameStore({ indexedDB = globalThis.indexedDB, database = D
       // inspected once; never load their video bytes just to draw the shelf.
       const legacy = rows.filter(row => row.analysisGapCount == null || row.analysisRepairableGapCount == null);
       if (legacy.length) {
-        const payloads = await transaction(['payloads'], 'readonly', (tx, done) => {
-          const request = tx.objectStore('payloads').getAll();
-          request.onsuccess = () => done(request.result);
-        });
-        const byId = new Map(payloads.map(row => [row.id, row.payload]));
-        legacy.forEach(row => {
-          const analysis = byId.get(row.id)?.analysis;
-          row.analysisGapCount = repairableAnalysisGaps(analysis, row.duration).length;
-          row.analysisRepairableGapCount = retryableAnalysisGaps(analysis, row.duration).length;
+        // Read only the legacy payloads, then store the counts so the next
+        // shelf open does not parse every analysis again.
+        await transaction(['games', 'payloads'], 'readwrite', (tx, done) => {
+          let pending = legacy.length;
+          legacy.forEach(row => {
+            const request = tx.objectStore('payloads').get(row.id);
+            request.onsuccess = () => {
+              const analysis = request.result?.payload?.analysis;
+              row.analysisGapCount = repairableAnalysisGaps(analysis, row.duration).length;
+              row.analysisRepairableGapCount = retryableAnalysisGaps(analysis, row.duration).length;
+              tx.objectStore('games').put(row);
+              if (!--pending) done(true);
+            };
+          });
+        }).catch(() => {
+          legacy.forEach(row => {
+            row.analysisGapCount ??= 0;
+            row.analysisRepairableGapCount ??= 0;
+          });
         });
       }
       // V1 metadata cannot advertise a final mix; raw old rows stay untouched.

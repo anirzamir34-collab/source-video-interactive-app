@@ -1,6 +1,5 @@
 import { mergeCharacterRecords } from './character-identity.js';
 import { relationshipChoiceLabel, verifiedRoleNoun } from './character-reference.js';
-import { isOrdinaryRelationshipAction } from './relationship-roles.js';
 
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, Number(value) || 0));
 
@@ -251,18 +250,6 @@ export function selectSameMomentStoryActions(actions = [], limit = 3, toleranceS
   const contemporaneous = ordered.filter(action =>
     Number(action.startTime) <= firstTime + tolerance + 1e-6);
   return selectDiverseStoryActions(contemporaneous, limit);
-}
-
-export function storyActionMeta(action = {}) {
-  return {
-    sceneTitle: cleanText(action.sceneTitle, 140),
-    sceneGoal: cleanText(action.sceneGoal, 280),
-    relationshipContext: cleanText(action.relationshipContext, 200),
-    narrativeReason: cleanText(action.narrativeReason, 280),
-    storyEvidenceLevel: normalizeEvidenceLevel(action.storyEvidenceLevel),
-    storyConfidence: clamp(action.storyConfidence),
-    storyEvidence: cleanText(action.storyEvidence, 360)
-  };
 }
 
 export function sensoryActionMeta(action = {}) {
