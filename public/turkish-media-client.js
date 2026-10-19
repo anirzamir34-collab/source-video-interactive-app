@@ -537,7 +537,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
     const owner = scope();
     lastStart = { source, options: { outputs: { dub: options.outputs?.dub !== false,
       subtitles: options.outputs?.subtitles !== false,
-       ...(options.outputs?.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}),
+       ...(options.outputs?.dub !== false && !options.outputs?.transcriptOnly && options.outputs?.dubbingProvider === 'elevenlabs_v1'
+         ? { dubbingProvider: 'elevenlabs_v1' } : {}),
        ...(options.outputs?.transcriptOnly ? { transcriptOnly: true } : {}) },
       qualityMode: String(options.qualityMode || 'quality'),
       voiceMapping: jsonCopy(options.voiceMapping || {}),

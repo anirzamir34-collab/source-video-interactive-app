@@ -1624,7 +1624,7 @@ els.analyzeBtn.addEventListener('click', async () => {
         ? mediaClient.loadResult(session.mediaManifest, { dubEnabled: modes.dubbing,
           subtitleTrack: modes.subtitles ? (modes.dubbing ? 'dub_tr' : 'source_tr') : 'off' })
         : await mediaClient.start(file, { outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
-          transcriptOnly: !modes.dubbing && !modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) }, qualityMode: modes.dubQuality, sceneContext: [] });
+          transcriptOnly: !modes.dubbing && !modes.subtitles, ...(modes.dubbing && modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) }, qualityMode: modes.dubQuality, sceneContext: [] });
       session.mediaManifest = result;
       session.mediaModeKey = mediaModeKey;
     }

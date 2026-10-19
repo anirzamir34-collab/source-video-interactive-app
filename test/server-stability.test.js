@@ -440,6 +440,18 @@ test('job routes use server source bytes, preserve output modes and return the c
   assert.equal(f.calls[0].source.duration, undefined);
   await f.request('POST', '/jobs', { uploadId: 'upload', outputs: { transcriptOnly: true } });
   assert.deepEqual(f.calls[1].outputs, { dub: false, subtitles: false, transcriptOnly: true });
+  const direct = await f.request('POST', '/jobs', { uploadId: 'upload',
+    outputs: { dub: true, subtitles: true, dubbingProvider: 'elevenlabs_v1' } });
+  assert.equal(direct.statusCode, 202);
+  assert.deepEqual(f.calls[2].outputs, { dub: true, subtitles: true, transcriptOnly: false, dubbingProvider: 'elevenlabs_v1' });
+  const sourceOnly = await f.request('POST', '/jobs', { uploadId: 'upload',
+    outputs: { dub: false, subtitles: false, transcriptOnly: true, dubbingProvider: 'elevenlabs_v1' } });
+  assert.equal(sourceOnly.statusCode, 202);
+  assert.deepEqual(f.calls[3].outputs, { dub: false, subtitles: false, transcriptOnly: true });
+  const invalid = await f.request('POST', '/jobs', { uploadId: 'upload',
+    outputs: { dub: true, subtitles: true, dubbingProvider: 'unknown' } });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(invalid.jsonBody.reason, 'DUBBING_PROVIDER_INVALID');
   const retry = await f.request('POST', '/jobs/:id/retry', {}, { id: 'job' });
   assert.equal(retry.statusCode, 202); assert.equal(retry.jsonBody.jobId, 'job');
   const result = await f.request('GET', '/jobs/:id/result', {}, { id: 'job' });
