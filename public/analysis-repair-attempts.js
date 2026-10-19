@@ -1,4 +1,6 @@
 // Keep the paid repair history when the latest saved-game report is replaced.
+export const SOURCE_GAP_REPAIR_PROMPT_VERSION = 'source-timeline-v1';
+export const SOURCE_GAP_REPAIR_VALIDATOR_VERSION = 'source-verifier-v1';
 const matched = (item, gap, model, promptVersion, validatorVersion) =>
   item?.model === model && item?.promptVersion === promptVersion &&
   item?.validatorVersion === validatorVersion &&
@@ -27,7 +29,12 @@ export function savedGapRepairHistory(analysis = {}) {
 export function planSavedGapRepair(analysis, gap, model, promptVersion, validatorVersion) {
   const attempts = savedGapRepairHistory(analysis).filter(item =>
     matched(item, gap, model, promptVersion, validatorVersion));
-  const blocked = attempts.find(item => item.reason === 'GEMINI_CONTENT_RESTRICTED');
+  // A provider restriction applies to the source/model combination, not
+  // merely one wording or validation version. Never try to evade it.
+  const blocked = savedGapRepairHistory(analysis).find(item =>
+    item.model === model && Number(item.startTime) === Number(gap.startTime) &&
+    Number(item.endTime) === Number(gap.endTime) &&
+    item.reason === 'GEMINI_CONTENT_RESTRICTED');
   if (blocked) return { skip: 'skipped_previous_rejection', reason: blocked.reason,
     httpStatus: blocked.httpStatus || null };
   const empty = attempts.filter(item => item.reason === 'GEMINI_NO_VERIFIED_EVENTS');
