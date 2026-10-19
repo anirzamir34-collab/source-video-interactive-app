@@ -204,7 +204,7 @@ test('old tabs polling key status spend zero inference calls; an explicit test c
   const source = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const route = source.indexOf("app.post('/api/gemini-key-status'");
   const start = source.indexOf('async (req, res) => {', route);
-  const end = source.indexOf("\napp.get('/health'", start);
+  const end = source.indexOf('\n});', start) + '\n});'.length;
   let calls = 0;
   const requests = [];
   const handler = vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
