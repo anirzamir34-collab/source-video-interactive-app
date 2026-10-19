@@ -8,6 +8,7 @@ import { isCompleteChunkAnalysis } from '../public/playback-logic.js';
 import { reviewAndHardenAnalysis } from '../public/engine-hardening.js';
 import { runContextualAnalysisChunks } from '../public/analysis-scheduler.js';
 import { recoverVerifiedChunksOnCreditExhaustion } from '../public/partial-analysis-recovery.js';
+import { compactDialogueSegments, compactStoryMemory } from '../public/analysis-context-compaction.js';
 
 // Run the application's actual chunk scheduler with an ordinary chapter response
 // and a simulated provider. This never calls a paid service.
@@ -45,7 +46,7 @@ function runChunks({ completed = 0, total = 1, review = false, fetch, session: e
     skippedFrameCount: 0, ANALYSIS_SCHEMA_VERSION: 5, ENGINE_VERSION: 'test',
     normalizeChunkActionTimes: actions => ({ actions, rebased: false }),
     secondPassReviewCandidates: () => review ? [{ actionId: 'walk' }] : [],
-    mergeSecondPassReview: body => body, mergeStoryContexts: () => ({}),
+    mergeSecondPassReview: body => body, mergeStoryContexts: () => ({}), compactDialogueSegments, compactStoryMemory,
     setTimeout: (callback, delay) => { delays.push(delay); callback(); },
     fetch: async (_url, options) => {
       const request = {

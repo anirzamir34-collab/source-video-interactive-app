@@ -119,6 +119,7 @@ import { matchSceneIntroductions, sourcePositionAtTime, sceneEntrySeekTarget, ve
 import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentCards,
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { nextSceneDialogueInterlude } from './dialogue-interlude.js';
+import { compactDialogueSegments, compactStoryMemory } from './analysis-context-compaction.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
   openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap,
@@ -971,7 +972,7 @@ els.videoInput.addEventListener('change', () => {
 
 function recordAiUsage(usage) {
   if (!usage || typeof usage !== 'object') return;
-  for (const key of ['requests', 'inputTokens', 'outputTokens', 'thinkingTokens', 'totalTokens', 'cacheHits']) {
+  for (const key of ['requests', 'inputTokens', 'cachedInputTokens', 'outputTokens', 'thinkingTokens', 'totalTokens', 'cacheHits']) {
     state.aiUsage[key] = (state.aiUsage[key] || 0) + Math.max(0, Number(usage[key]) || 0);
   }
   logEngineEvent('AI_USAGE', { ...state.aiUsage });
@@ -1503,7 +1504,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     return;
   }
   state.analysisInProgress = true;
-  state.aiUsage = { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
+  state.aiUsage = { requests: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
   state.savedGameReady = false;
   state.savedPlaybackOnly = false;
   analysisAbortController = new AbortController();
@@ -1884,7 +1885,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       Number(segment.startTime) <= chunkEnd
     );
 
-    form.append('dialogueContext', JSON.stringify(chunkDialogue));
+    form.append('dialogueContext', JSON.stringify(compactDialogueSegments(chunkDialogue)));
     form.append('dialogueSpeakerContext', JSON.stringify((state.sourceContext?.speakers || []).map(speaker => ({
       speakerId: speaker.speakerId, speakerName: speaker.speakerName,
       gender: speaker.gender, emotion: speaker.emotion
@@ -1898,7 +1899,7 @@ els.analyzeBtn.addEventListener('click', async () => {
     if (modes.analysisTier === 'deep') form.append('deepAnalysisModel', modes.deepAnalysisModel);
       form.append('protagonistProfile', contextSnapshot.protagonistProfile);
       form.append('protagonistHint', requestedProtagonist);
-      form.append('storyContextMemory', JSON.stringify(contextSnapshot.storyContextMemory));
+      form.append('storyContextMemory', JSON.stringify(compactStoryMemory(contextSnapshot.storyContextMemory)));
 
       const freshChunkForm = () => {
         const next = new FormData();
@@ -2440,7 +2441,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       : 'Bütün örnek kareler başarıyla hazırlandı.',
     `Son doğrulanmış aksiyon ${Number(body.analyzedThroughTime || 0).toFixed(1)} saniyede bitiyor.`,
     integritySummaryText(state.integrityReport, normalized.actions.length),
-    `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
+    `Bu çalıştırmada Gemini: ${state.aiUsage.requests} istek · ${state.aiUsage.cacheHits || 0} önbellekten yanıt · ${state.aiUsage.inputTokens} giriş (${state.aiUsage.cachedInputTokens || 0} önbellekli) · ${state.aiUsage.outputTokens + state.aiUsage.thinkingTokens} çıkış/düşünme tokenı.`,
     body.partial ? 'Doğrulanmış bölümlerle oynayabilirsin. Eksik bölgelerden seçenek uydurulmadı.' : 'Oyun modu kullanıma hazır.',
     creditRecovery?.recovered ? 'API kredisi tükendi: mevcut önceki analizler oyunlaştırıldı; eksik aralıklar kredi yenilendiğinde tamamlanabilir.' : '',
     sourceAudioOnly ? mediaFailureMessage : ''
@@ -7586,9 +7587,9 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
       form.append('analysisTier', 'deep');
       form.append('deepAnalysisModel', repairModel);
       form.append('repairMode', '1');
-      form.append('storyContextMemory', JSON.stringify(previous.storyContext || {}));
-      form.append('dialogueContext', JSON.stringify((savedSourceContext?.segments || []).filter(item =>
-        Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
+      form.append('storyContextMemory', JSON.stringify(compactStoryMemory(previous.storyContext || {})));
+      form.append('dialogueContext', JSON.stringify(compactDialogueSegments((savedSourceContext?.segments || []).filter(item =>
+        Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime))));
       form.append('dialogueSpeakerContext', JSON.stringify(savedSourceContext?.speakers || []));
       form.append('sensoryAudioContext', JSON.stringify((savedSourceContext?.nonSpeechEvents || []).filter(item =>
         Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));

@@ -6,6 +6,7 @@ import { createAnalysisProgress } from '../public/analysis-progress.js';
 import { sourceContextAdapter } from '../public/source-transcript.js';
 import { reconcileAnalysisSessionEvidence } from '../public/analysis-source-session.js';
 import { mediaModeKeyFromOptions } from '../public/media-mode-key.js';
+import { compactDialogueSegments, compactStoryMemory } from '../public/analysis-context-compaction.js';
 
 const appSource = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
@@ -142,7 +143,7 @@ function fixture({ motion = true, subtitles = false, dubbing = false, remote = t
     console: { error() {} }, videoUrlInput: new Element(), resolveUrlBtn: new Element(),
     renderDebug() {}, updateAnalyzeAvailability() {},
     adaptiveAnalysisChunkPlan: () => ({ chunkCount: 1, chunks: [{ firstSheet: 0, sheetCount: 1 }] }),
-    normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}),
+    normalizeStoryContext: () => ({}), mergeStoryContexts: () => ({}), compactDialogueSegments, compactStoryMemory,
     geminiRequestHeaders: () => ({}),
     analysisCheckpointKey: async () => null,
     storyboardSourceKey: async () => 'synthetic-source-evidence',

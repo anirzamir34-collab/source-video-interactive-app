@@ -129,7 +129,7 @@ function resolveGeminiApiKey(req) {
 }
 
 function emptyGeminiUsage() {
-  return { requests: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
+  return { requests: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, cacheHits: 0 };
 }
 
 function addGeminiUsage(total, metadata = {}) {
@@ -137,6 +137,8 @@ function addGeminiUsage(total, metadata = {}) {
   total.inputTokens += Number(metadata.promptTokenCount || metadata.inputTokenCount || 0);
   total.outputTokens += Number(metadata.candidatesTokenCount || metadata.outputTokenCount || 0);
   total.thinkingTokens += Number(metadata.thoughtsTokenCount || 0);
+  // Input tokens served from Gemini's implicit prefix cache (billed at a discount).
+  total.cachedInputTokens = Number(total.cachedInputTokens || 0) + Number(metadata.cachedContentTokenCount || 0);
   total.totalTokens += Number(metadata.totalTokenCount || 0);
   return total;
 }
@@ -424,23 +426,12 @@ Do not impose a fixed action count or collapse separately visible changes into o
 A continuous real action remains a real action when the camera angle changes; distinguish
 shot metadata from observable participant movement.
 
-Video duration: ${duration} seconds
-Timestamp metadata for this chunk: ${timestamps}
-Local visual-change profile for this chunk: ${motionProfile}
-Detected visual scene boundaries for this chunk: ${sceneBoundaries}
+The chunk's timestamps, visual-change profile and detected scene boundaries are given in CHUNK INPUT at the end.
 - Treat boundary timestamps as navigation hints, not proof of an action.
 - Prefer starting or ending an action near a boundary only when the adjacent frames visibly confirm the change.
-Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
-${reviewInstructions}
-${conditionalRelationshipInstructions}
+
 DIALOGUE AND SCENE CONTEXT:
-Quality mode: ${qualityMode}
-Time-aligned dialogue segments:
-${dialogueContext}
-Stable audio speaker registry (voice IDs are NOT visual character IDs):
-${dialogueSpeakerContext}
-Time-aligned non-speech audio observations:
-${sensoryAudioContext}
+The time-aligned dialogue segments, the stable audio speaker registry (voice IDs are NOT visual character IDs) and the time-aligned non-speech audio observations are given in CHUNK INPUT at the end.
 
 - Use dialogue only when its timestamp overlaps the visible scene.
 - Use verified spoken meaning to improve scene understanding and Turkish choice wording.
@@ -458,8 +449,7 @@ ${sensoryAudioContext}
 - Connect dialogue choices only to matching visible MAIN_MALE actions.
 
 STORY ENGINE V1 — EVIDENCE-AWARE NARRATIVE UNDERSTANDING:
-Prior verified story memory from earlier chunks:
-${storyContextMemory}
+Prior verified story memory from earlier chunks is given in CHUNK INPUT at the end.
 
 - Understand the scene as a story, not merely a motion list: identify setting, immediate scene purpose, emotional tone, character roles, relationship clues, goals, conflict/tension and meaningful narrative progression.
 - Build story continuity across chunks, but PRIOR MEMORY NEVER OVERRIDES current source frames or current time-aligned dialogue.
@@ -506,9 +496,7 @@ ${storyContextMemory}
 - Prefer story-aware wording over mechanical wording when evidence supports it: scene intention + interaction + verified action. Do not replace precise sexual-position controls with fictional dialogue or outcomes.
 
 PROTAGONIST IDENTITY LOCK:
-Current locked profile:
-${protagonistProfile || "NOT_LOCKED. The protagonist may first appear in a later chapter. Do not promote an unobserved person to MAIN_MALE; retain neutral character facts and allow later chapters to identify him."}
-Optional user-provided *visual description* (not identity proof): ${JSON.stringify(protagonistHint)}
+The current locked profile and the optional user visual description are given in CHUNK INPUT at the end.
 
 - Use MAIN_MALE only when an adult male is actually present and identifiable in this chapter.
 - The opening chapter may contain only women; that is NOT proof that the
@@ -526,8 +514,6 @@ Optional user-provided *visual description* (not identity proof): ${JSON.stringi
 - If identity is uncertain, never assign another person's action to MAIN_MALE. Keep the visible event as neutral story context with uncertain participant identity when its interval is supported; omit a player choice only if no supported player action can be identified.
 - Return a short stable protagonistProfile describing MAIN_MALE with persistent visible identity anchors.
 - Every returned action must belong to MAIN_MALE or to the male-POV camera controlled by MAIN_MALE.
-Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.
-
 CHUNK RULES:
 - Return actions only when startTime and endTime are inside this chunk.
 - Examine this short interval deeply instead of summarizing the whole video.
@@ -674,7 +660,7 @@ Rules:
 - Assign exactly one choiceSurface to each source action: story for dialogue and ordinary narrative actions, approach for directly verified opening interactions, or panel for an already verified panel control. Supply choiceSurfaceEvidence and choiceSurfaceConfidence for that specific interval. A directly visible opening physical interaction before the first verified position belongs to approach even if dialogue accompanies it: touching, caressing, kissing, hugging and removing or opening clothing are always approach, never story. Oral and manual sexual activity are positions (panel), not approach; a verbal command, a partner's reaction or a coercive exchange remains story. Never infer contact from dialogue or the later position.
 - Speech occurring during an action does not change its surface. Walking, sitting, watching, listening and camera changes stay story unless the supplied visual evidence independently proves another category.
 - Never combine separate source actions from different surfaces into one option or extend their timestamps across a category boundary. A conversation mentioning an action is not visual evidence that it happened.
-- timestamps must be within 0 and ${duration}
+- timestamps must be within 0 and the video duration given in CHUNK INPUT
 - startTime must be smaller than endTime
 - no duplicate or invented actions; return separate chronological atomic segments
 - sort actions chronologically
@@ -767,6 +753,28 @@ Rules:
 - outcomeUnlockProgress is a gameplay hint only; use 82 by default and never use it to invent or extend footage. If no verified outcome or aftermath exists, keep outcomeType "none" and do not fabricate one.
 - Outcome and aftermath boundaries must be directly source-verified and must never overlap a selectable movement loop.
 - Never invent any position, movement, transition, outcome or label absent from the source frames.
+
+CHUNK INPUT (only this part changes between requests; every rule above applies to it):
+Video duration: ${duration} seconds
+Current analysis chunk: ${chunkIndex + 1} of ${chunkCount}
+Analyze ONLY the interval ${chunkStart} to ${chunkEnd} seconds.
+Timestamp metadata for this chunk: ${timestamps}
+Local visual-change profile for this chunk: ${motionProfile}
+Detected visual scene boundaries for this chunk: ${sceneBoundaries}
+${reviewInstructions}
+${conditionalRelationshipInstructions}
+Quality mode: ${qualityMode}
+Time-aligned dialogue segments:
+${dialogueContext}
+Stable audio speaker registry (voice IDs are NOT visual character IDs):
+${dialogueSpeakerContext}
+Time-aligned non-speech audio observations:
+${sensoryAudioContext}
+Prior verified story memory from earlier chunks:
+${storyContextMemory}
+PROTAGONIST IDENTITY LOCK — current locked profile:
+${protagonistProfile || "NOT_LOCKED. The protagonist may first appear in a later chapter. Do not promote an unobserved person to MAIN_MALE; retain neutral character facts and allow later chapters to identify him."}
+Optional user-provided *visual description* (not identity proof): ${JSON.stringify(protagonistHint)}
 `;
 
     const ai = new GoogleGenAI({ apiKey });
