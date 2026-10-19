@@ -63,6 +63,24 @@ test('retry with dubbing now off starts a new analysis instead of retrying the o
   assert.equal(oldRetries, 0);
 });
 
+test('retry with the classic voice provider does not repeat a previous direct dubbing job', async () => {
+  let retryHandler;
+  let freshStarts = 0;
+  let oldRetries = 0;
+  const scope = vm.createContext({
+    els: { mediaJobRetryBtn: { addEventListener: (event, handler) => { retryHandler = handler; } },
+      analyzeBtn: { click: () => { freshStarts++; } } },
+    state: { analysisInProgress: false, savedGameBusy: false, mediaRevoice: null, analysisSession: {} },
+    mediaClient: { requestedOutputs: () => ({ dub: true, subtitles: false, dubbingProvider: 'elevenlabs_v1' }),
+      retry: () => { oldRetries++; } },
+    selectedAnalysisModes: () => ({ dubbing: true, subtitles: false, dubbingProvider: 'classic' })
+  });
+  vm.runInContext(mediaRetryHandler, scope);
+  await retryHandler();
+  assert.equal(freshStarts, 1);
+  assert.equal(oldRetries, 0);
+});
+
 function sourceManifest() {
   return {
     version: 1,

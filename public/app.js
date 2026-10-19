@@ -1175,7 +1175,8 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
   if (!session) return;
   const requested = mediaClient.requestedOutputs();
   const modes = selectedAnalysisModes();
-  if (requested && (requested.dub !== modes.dubbing || requested.subtitles !== modes.subtitles)) {
+  if (requested && (requested.dub !== modes.dubbing || requested.subtitles !== modes.subtitles ||
+      (requested.dub && (requested.dubbingProvider || 'classic') !== modes.dubbingProvider))) {
     els.analyzeBtn.click();
     return;
   }
