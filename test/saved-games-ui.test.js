@@ -91,6 +91,19 @@ test('repair report never describes refused five ranges as a successful analysis
   assert.equal(report.error, true);
 });
 
+test('an entirely skipped repair clearly reports that no new analysis started', () => {
+  const report = describeSavedGameRepair({ lastRepairAttempt: {
+    model: 'test-model', total: 2, recovered: 0, remaining: 2,
+    results: [
+      { startTime: 0, endTime: 10, outcome: 'skipped_previous_rejection' },
+      { startTime: 10, endTime: 20, outcome: 'skipped_previous_empty' }
+    ]
+  } });
+  assert.match(report.summary, /^Yeni analiz başlatılmadı\./);
+  assert.match(report.summary, /2 aralık yeniden gönderilmedi/);
+  assert.equal(report.error, true);
+});
+
 test('repair report shows disabled redundant retries and genuine success', () => {
   const report = describeSavedGameRepair({ lastRepairAttempt: {
     model: 'gemini-3.1-flash-lite', total: 2, recovered: 1, remaining: 1,
@@ -99,6 +112,7 @@ test('repair report shows disabled redundant retries and genuine success', () =>
         reason: 'GEMINI_CONTENT_RESTRICTED' }]
   } });
   assert.match(report.summary, /1\/2 eksik bölüm tamamlandı/);
+  assert.doesNotMatch(report.summary, /Yeni analiz başlatılmadı/);
   assert.match(report.details, /Önceki içerik reddi/);
   assert.match(report.details, /Bölüm tamamlandı · 1 doğrulanmış olay/);
   assert.equal(report.error, true);
