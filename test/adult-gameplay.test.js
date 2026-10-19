@@ -268,6 +268,22 @@ test('adjacent cuts with the same action stay on one card while retaining every 
     movements.map(item => item.id).sort());
 });
 
+test('distinct observed action labels in one rhythm keep separate panel cards', () => {
+  const source = { id: 'position-rear', startTime: 478.2, endTime: 518.05, sourceVerified: true };
+  const movements = [
+    { id: 'tl-022', sourceActionId: 'tl-022', label: 'Arkadan devam et',
+      loopStartTime: 478.2, loopEndTime: 494.8 },
+    { id: 'tl-023', sourceActionId: 'tl-023', label: 'Ritmi koru',
+      loopStartTime: 494.8, loopEndTime: 518.05 }
+  ].map(item => ({ ...item, sourcePositionId: source.id, sourceVerified: true,
+    actionType: 'position', movementType: 'ritmik hareket', movementTempo: 'moderate' }));
+  const position = { id: 'rear', occurrenceId: 'rear-core', startTime: source.startTime,
+    endTime: source.endTime, sourceRanges: [source], movements };
+  const choices = buildVerifiedMovementChoices(movements, 'Arkadan Pozisyon', 4, position);
+  assert.deepEqual(choices.map(item => item.label), ['Arkadan devam et', 'Ritmi koru']);
+  assert.deepEqual(choices.map(item => item.variants.map(variant => variant.id)), [['tl-022'], ['tl-023']]);
+});
+
 test('unspecified activity and verified activity share one named tab with exact source clips', () => {
   const cast = { subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
     familyId: 'spoon', progressionRole: 'core', label: 'Yan pozisyon', sourceVerified: true };

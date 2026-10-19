@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { choiceSurfaceForAction } from '../public/choice-routing.js';
 import { buildVerifiedMovementChoices, consolidateVerifiedPositions,
-  expandVerifiedMovementVariants, pickNextVariant, sourceMotionProgressRate } from '../public/adult-gameplay.js';
+  expandVerifiedMovementVariants, sourceMotionProgressRate } from '../public/adult-gameplay.js';
 import { playableAdultPanelFamily, movementBelongsToVerifiedPosition } from '../public/adult-gameplay.js';
 
 // Only source times, neutral track identifiers and structural metadata from
@@ -61,19 +61,12 @@ test('a different pose or a long analysis gap does not become one position', () 
     beforeState: { clothing: 'stage-b' } }]).length, 2);
 });
 
-test('observed matching motion types create variants despite different descriptive copy', () => {
+test('separate observed actions retain their own cards despite matching motion types', () => {
   const entries = ['tl-023', 'tl-024', 'tl-025'].map(position);
   const group = consolidateVerifiedPositions(entries)[0];
   const cards = buildVerifiedMovementChoices(group.movements, 'Source position', 5, group);
   assert.deepEqual(cards.map(card => card.variants.map(item => item.id)),
-    [['tl-023', 'tl-024'], ['tl-025']]);
-  const played = new Map();
-  const first = pickNextVariant(cards[0].variants, null, played);
-  played.set(first.id, 1);
-  const second = pickNextVariant(cards[0].variants, first.id, played);
-  played.set(second.id, 1);
-  const replay = pickNextVariant(cards[0].variants, second.id, played);
-  assert.deepEqual([first.id, second.id, replay.id], ['tl-023', 'tl-024', 'tl-023']);
+    [['tl-023'], ['tl-024'], ['tl-025']]);
 });
 
 test('one long action uses only independently verified source subsequences', () => {
@@ -116,7 +109,7 @@ test('source subsequences with a tempo change never share a card', () => {
   assert.deepEqual(clips.map(clip => clip.femaleProgressRate), [0.72, 0.72, 1.28]);
 });
 
-test('replaying the anonymous report structure reduces tabs and forms real multi-clip cards', () => {
+test('replaying the anonymous report structure retains distinct observed cards', () => {
   const projected = fixture.positions.map(item => {
     const source = item.actionIds.map(action).concat(item.familyId === 'oral' && item.sceneIndex === 0
       ? [action('tl-010'), action('tl-011')] : []);
@@ -137,6 +130,5 @@ test('replaying the anonymous report structure reduces tabs and forms real multi
     group.familyId, 5, group));
   assert.equal(groups.length, 7);
   assert.equal(cards.flatMap(card => card.variants).length, 23);
-  assert.equal(cards.length, 22);
-  assert.ok(cards.some(card => card.variants.length > 1));
+  assert.equal(cards.length, 23);
 });

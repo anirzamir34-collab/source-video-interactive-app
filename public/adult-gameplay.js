@@ -1183,9 +1183,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
     bandFor,
     mergeWithinContext: Boolean(position),
     labelFor: item => sourceIdentityLabel(sourceActionLabel(clean(
-      ['position', 'tempo_change'].includes(String(item.actionType || '').toLowerCase()) &&
-      ['ritmik hareket', 'yavaş hareket', 'hızlı hareket'].includes(normalize(item.movementType))
-        ? item.movementType : item.label || item.movementType || positionLabel))
+      item.label || item.movementType || positionLabel))
       .split('·').map(part => part.trim())
       .filter(part => !/\b(?:nefes|bakis|gorunum|ses|duygu|saniye|sn|gercek\s+(?:kesit|sekans)|bagli\s+gercek)\b/iu.test(normalize(part)))
       .join(' · ').trim(), item)
@@ -1217,6 +1215,7 @@ export function buildVerifiedMovementChoices(movements = [], positionLabel = '',
         sameSource && ((rhythm(prior) && rhythm(current) && gap <= 5) ||
           ((rhythm(prior) || fastMotion(prior)) && (rhythm(current) || fastMotion(current)) &&
             previous.tempo === 'fast' && gap <= 0.25)) &&
+        previous.label.toLocaleLowerCase('tr-TR') === card.label.toLocaleLowerCase('tr-TR') &&
         previous.tempo === card.tempo && previous.intensityBand === card.intensityBand &&
         previous.energyFlavor === card.energyFlavor && gap >= -0.05) {
       previous.variants.push(...card.variants);
