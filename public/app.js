@@ -1044,10 +1044,19 @@ function updateSourceTranscript(transcript) {
 
 function onTurkishMediaStatus(status) {
   state.turkishMediaStatus = status;
-  if (status.state === 'FAILED' && status.error?.code === 'VOICE_PROFILE_UNVERIFIED') {
-    state.voiceMappingManualRequested = true;
+  const needsVoiceSelection = status.state === 'FAILED' &&
+    status.error?.code === 'VOICE_PROFILE_UNVERIFIED';
+  if (needsVoiceSelection) state.voiceMappingManualRequested = true;
+  if (status.sourceTranscript) updateSourceTranscript(status.sourceTranscript);
+  if (status.sourceTranscript || needsVoiceSelection) {
+    renderVoiceMappingPanel();
+    // The safe fallback must be actionable without finding a collapsed editor.
+    // Keep the source identity unverified; never guess a voice or spend TTS credits.
+    if (needsVoiceSelection && state.sourceTranscript?.speakers?.length &&
+        !els.voiceMappingPanel?.classList.contains('hidden')) {
+      els.voiceMappingPanel.open = true;
+    }
   }
-  if (status.sourceTranscript) { updateSourceTranscript(status.sourceTranscript); renderVoiceMappingPanel(); }
   logEngineEvent('TURKISH_MEDIA_STATUS', { state: status.state, jobId: status.jobId || null });
   if (status.state === 'PLAYBACK_READY') { els.dubBufferStatus.classList.add('hidden'); return; }
   if (['PLAYBACK_BLOCKED', 'PLAYBACK_FAILED'].includes(status.state)) {
@@ -2474,6 +2483,9 @@ els.analyzeBtn.addEventListener('click', async () => {
     if (videoUrlInput) videoUrlInput.disabled = false;
     if (resolveUrlBtn) resolveUrlBtn.disabled = false;
     updateAnalyzeAvailability();
+    // An unverified speaker can be selected after visual analysis finishes.
+    // The picker may have loaded while analysis was still busy.
+    renderVoiceMappingPanel();
   }
 });
 
@@ -4592,7 +4604,7 @@ function renderAdultApproachChoices(scene, later = false) {
   // First approach: one complete, replayable source menu for this scene.
   // Neither playback time, stage boundaries, an arbitrary five-card limit nor
   // earlier selections may retire any verified opening choice. Dialogue keeps
-  // its own source category and is displayed alongside opening actions.
+  // its own story surface and must never be copied into approach cards.
   const openingMenu = !later
     ? openingSceneChoiceMenu(approachPool, { firstCoreStart: firstCoreTime })
     : null;
