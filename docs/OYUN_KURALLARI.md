@@ -60,11 +60,10 @@ otomatik kontrol eder.
 
 ## 4b. Hissiyat
 
-- Her seçim tuşu (hikâye, yakınlaşma, seks paneli) basınca titrer ve parmağın
-  altından dalga yayar. Hikâye seçimi kısa ve net, yakınlaşma/hareket kartı
-  derin bir vuruş, ya da o hareketin gerçek temposunda kısa bir ritim verir.
-- Lust her %25'te kalp atışı gibi titrer; 100 olunca uzun bir titreşim ve
-  sahnenin kenarında sıcak bir nabız görünür.
+- Varsayılan sakin: her seçimde tek, yumuşak bir dokunuş. Basarken titreşim yok.
+- Yalnız hızlı/yoğun gerçek hareket kartında (ve SEKS butonunda) 2–3 vuruşluk
+  kısa ritim ve sahne kenarında nabız gelir.
+- Lust %50'de tek yumuşak kalp atışı, 100'de bir kez uzun titreşim.
 - Titreşim gücü, titreşimin açık kalma süresiyle ayarlanır (PWM). Hareketi azaltma
   ayarı açık cihazda animasyonlar kapanır.
 

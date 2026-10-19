@@ -6547,7 +6547,8 @@ function feelLustProgress(lust) {
   const rising = step > previous;
   state.feltLustStep = step;
   if (!rising || !step) return;
-  // Each quarter of Lust is a heartbeat; reaching 100 is a full release.
+  // Calm: one soft heartbeat at half, one release at 100. Nothing between.
+  if (step !== 2 && step < 4) return;
   tactile.pulse(step >= 4 ? 'unlock' : 'heartbeat');
   const meters = [...(els.approachChoices?.querySelectorAll?.('.approach-lust') || []),
     els.adultDockLustValue].filter(Boolean);
@@ -6562,8 +6563,9 @@ function feelLustProgress(lust) {
 
 function feelSexControl(movement) {
   // Runs after the button's own confirm pulse, then follows the clip's tempo.
-  setTimeout(() => tactile.rhythm(movement?.movementTempo || 'fast'), 0);
-  if (feelStage) {
+  const tempo = String(movement?.movementTempo || '').toLowerCase();
+  setTimeout(() => tactile.rhythm(tempo), 0);
+  if (feelStage && ['fast', 'intense'].includes(tempo)) {
     feelStage.classList.remove('vq-impact'); void feelStage.offsetWidth; feelStage.classList.add('vq-impact');
     setTimeout(() => feelStage.classList.remove('vq-impact'), 650);
   }

@@ -170,7 +170,9 @@ test('PWM emulates intensity and never emits sub-motor slivers', async () => {
     assert.equal(pattern.length % 2, 1, 'patterns end on a vibration');
     pattern.forEach((value, index) => { if (index % 2 === 0) assert.ok(value >= 5, `vibration ${value}ms`); });
   }
-  // Faster real tempo answers with more beats.
+  // Calm tempos are one touch; only fast/intense get a short rhythm.
   const beats = tempo => rhythmPattern(tempo).filter((value, index) => index % 2 && value > 60).length + 1;
-  assert.ok(beats('fast') > beats('moderate') && beats('moderate') > beats('slow'));
+  assert.equal(beats('slow'), 1);
+  assert.equal(beats('moderate'), 1);
+  assert.ok(beats('intense') > beats('fast') && beats('fast') > 1);
 });

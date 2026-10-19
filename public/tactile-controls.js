@@ -26,29 +26,33 @@ export function pwm(duration, intensity = 1) {
 const join = (...parts) => parts.flatMap((part, index) =>
   typeof part === 'number' ? (index ? [part] : []) : part);
 
+// Calm by default: one soft touch per choice. Only fast/intense source
+// moments answer with a short rhythm, so strong feedback stays meaningful.
 export const TACTILE_PATTERNS = Object.freeze({
-  press: pwm(16, .75),                                   // finger lands: soft tick
-  selection: pwm(14, .9),                                // tab or chip
-  confirm: join(pwm(28, 1), 40, pwm(18, .7)),            // card chosen: thump + echo
-  impact: join(pwm(34, 1), 55, pwm(20, .6), 70, pwm(14, .5)), // intimate card: deeper thud
-  charged: join(pwm(16, .6), 30, pwm(24, .85), 30, pwm(34, 1)),
-  unavailable: join(pwm(10, .8), 45, pwm(10, .8)),
-  complete: join(pwm(18, .7), 35, pwm(18, .9), 35, pwm(26, 1)),
-  heartbeat: join(pwm(30, 1), 95, pwm(22, .6)),          // Lust step
-  unlock: join(pwm(30, .5), 40, pwm(40, .75), 40, pwm(60, 1), 120, pwm(30, 1), 90, pwm(22, .6))
+  press: pwm(10, .5),                                    // SEKS hold start only
+  selection: pwm(10, .6),                                // tab
+  soft: pwm(16, .6),                                     // ordinary card
+  confirm: pwm(18, .7),                                  // story choice
+  impact: pwm(22, .8),                                   // intimate card, calm tempo
+  charged: join(pwm(12, .6), 60, pwm(20, .85)),
+  unavailable: join(pwm(10, .6), 50, pwm(10, .6)),
+  complete: join(pwm(16, .7), 60, pwm(22, .85)),
+  heartbeat: join(pwm(22, .8), 110, pwm(16, .55)),
+  unlock: join(pwm(30, .8), 140, pwm(24, .6))
 });
 
-// A short pulse train that follows the chosen movement's real tempo.
-const RHYTHM = { still: [2, 520, .4], slow: [3, 420, .55], moderate: [4, 300, .75],
-  fast: [6, 180, .9], intense: [8, 130, 1] };
+// Fast and intense tempos get a short pulse train; calmer tempos stay one touch.
+const RHYTHM = { fast: [2, 230, .8], intense: [3, 180, .95] };
+export const isIntenseTempo = tempo => Boolean(RHYTHM[String(tempo || '').toLowerCase()]);
 export function rhythmPattern(tempo = 'moderate') {
-  const [count, period, level] = RHYTHM[String(tempo || '').toLowerCase()] || RHYTHM.moderate;
-  const beat = Math.round(Math.min(60, period * .3));
+  const row = RHYTHM[String(tempo || '').toLowerCase()];
+  if (!row) return TACTILE_PATTERNS.impact;
+  const [count, period, level] = row;
+  const beat = Math.round(Math.min(40, period * .2));
   const parts = [];
   for (let index = 0; index < count; index += 1) {
     if (index) parts.push(period - beat);
-    // Each beat swells a little more, like a rising rhythm.
-    parts.push(pwm(beat, Math.min(1, level * (.75 + .25 * (index + 1) / count))));
+    parts.push(pwm(beat, level));
   }
   return join(...parts);
 }
@@ -93,7 +97,7 @@ export function createTactileEngine({
       try { return navigatorRef.vibrate(pattern) !== false; } catch { return false; }
     },
     rhythm(tempo) {
-      if (reducedMotion()) return this.pulse('confirm');
+      if (reducedMotion() || !isIntenseTempo(tempo)) return this.pulse('impact');
       return this.pulse(rhythmPattern(tempo));
     }
   };
@@ -137,6 +141,7 @@ export function attachTactileSurface({
     const button = targetFor(event.target);
     if (!button || button.disabled) return;
     pressedPointers.set(event.pointerId, button);
+    // No vibration on touch-down: one calm touch on release is enough.
     button.classList.add('is-pressed');
     // The ripple starts exactly under the finger.
     const box = button.getBoundingClientRect?.();
@@ -146,7 +151,6 @@ export function attachTactileSurface({
     }
     restart(button, 'vq-ripple', 520);
     try { button.setPointerCapture?.(event.pointerId); } catch { /* optional */ }
-    engine.pulse('press');
   };
   const onPointerUp = event => clear(event.pointerId);
   const onPointerCancel = event => clear(event.pointerId, true);
@@ -154,13 +158,13 @@ export function attachTactileSurface({
     const button = targetFor(event.target);
     if (!button || button.disabled) return;
     const feel = feelFor(button);
-    const tempo = button.dataset?.tempo;
-    // A movement card answers with its own real tempo; others with a thud.
-    if (feel === 'impact' && tempo && typeof engine.rhythm === 'function') engine.rhythm(tempo);
-    else engine.pulse(feel);
+    const intense = feel === 'impact' && isIntenseTempo(button.dataset?.tempo);
+    // Only a fast/intense real movement answers with a rhythm and the scene glow.
+    if (intense && typeof engine.rhythm === 'function') engine.rhythm(button.dataset.tempo);
+    else engine.pulse(feel === 'impact' ? 'impact' : feel === 'selection' ? 'selection' : 'confirm');
     button.classList.remove('tap-confirmed');
     requestAnimationFrame(() => button.classList.add('tap-confirmed'));
-    if (feel !== 'selection') restart(stage, feel === 'impact' ? 'vq-impact' : 'vq-confirm', 650);
+    if (feel !== 'selection') restart(stage, intense ? 'vq-impact' : 'vq-confirm', 650);
   };
 
   root.addEventListener('pointerdown', onPointerDown, true);
