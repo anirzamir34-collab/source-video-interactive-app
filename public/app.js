@@ -120,7 +120,7 @@ import { sourceIdentityLabel, sourceDisplayLabel, collapseConsecutiveEquivalentC
   bundleAdjacentSourceCards, groupVerifiedApproachChoices } from './choice-groups.js';
 import { choiceSurfaceForAction, withChoiceSurface, scenePreludeChoices, sceneOwnsStoryChoice,
   sceneOwnsApproachChoice, isUnroutedVerifiedApproach, choiceSurfaceWindow, sceneSurfaceChoices,
-  openingSceneChoiceMenu, isForwardTimelineChoice, verifiedStoryAheadOfGap,
+  openingSceneChoiceMenu, openingSceneStoryWindow, isForwardTimelineChoice, verifiedStoryAheadOfGap,
   boundedUnownedGapEnd } from './choice-routing.js';
 import { isAdultSocialRelationshipRole } from './relationship-roles.js';
 import { createInteractionState, advanceInteraction, unlockNextCoreGroup,
@@ -1204,6 +1204,7 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
     if (error.name !== 'AbortError') els.mediaJobMessage.textContent = error.message;
   } finally {
     state.analysisInProgress = false; updateAnalyzeAvailability();
+    if (state.voiceMappingManualRequested) renderVoiceMappingPanel();
     if (!completed) setGameState(cancelled ? 'IDLE' : 'ERROR');
   }
   if (completed) els.analyzeBtn.click();
@@ -4608,18 +4609,22 @@ function renderAdultApproachChoices(scene, later = false) {
   const openingMenu = !later
     ? openingSceneChoiceMenu(approachPool, { firstCoreStart: firstCoreTime })
     : null;
+  const openingStory = !later
+    ? openingSceneStoryWindow(approachPool, { floor: projectedFloor,
+      sceneStart: scene.startTime, firstCoreStart: firstCoreTime })
+    : [];
   // Later, between-core interludes still use their bounded lookahead and
   // should not be pulled into the first opening scene.
   const forwardApproach = later ? approachPool.filter(item => item.sourceVerified === true &&
     Number(item.endTime) > projectedFloor + 0.05)
     .sort((left, right) => Number(left.startTime) - Number(right.startTime)) : [];
-  const dialogueOnly = later && forwardApproach[0]?.nonIntimate === true;
+  const dialogueOnly = later ? forwardApproach[0]?.nonIntimate === true : openingStory.length > 0;
   const surfacePool = later ? sceneSurfaceChoices(approachPool,
     dialogueOnly ? 'story' : 'approach', {
       floor: projectedFloor,
       ceiling: dialogueOnly ? projectedFloor + 90 : Infinity
     }) : [];
-  const candidates = !later ? openingMenu : dialogueOnly ? surfacePool.slice(0, 5) :
+  const candidates = !later ? (dialogueOnly ? openingStory : openingMenu) : dialogueOnly ? surfacePool.slice(0, 5) :
     selectVerifiedChoiceQueue(surfacePool, {
       timelineFloor: projectedFloor,
       limit: 5,
