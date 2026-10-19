@@ -891,6 +891,7 @@ test('transcript-only requests preserve the backend output flag and use no Turki
     dubbingProvider: 'elevenlabs_v1' }, qualityMode: 'quality' });
   const body = JSON.parse(f.requests.find(request => request.url.endsWith('/jobs')).init.body);
   assert.deepEqual(body.outputs, { dub: false, subtitles: false, transcriptOnly: true });
+  assert.deepEqual(f.client.requestedOutputs(), { dub: false, subtitles: false, transcriptOnly: true });
   assert.equal(f.audios.length, 0);
   assert.equal(await f.client.materializeAudio(), null);
   assert.equal(f.client.capture().dubEnabled, false);

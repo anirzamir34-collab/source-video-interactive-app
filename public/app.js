@@ -1173,6 +1173,12 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
   if (state.mediaRevoice) { await regenerateTurkishVoices(state.mediaRevoice, true); return; }
   const session = state.analysisSession;
   if (!session) return;
+  const requested = mediaClient.requestedOutputs();
+  const modes = selectedAnalysisModes();
+  if (requested && (requested.dub !== modes.dubbing || requested.subtitles !== modes.subtitles)) {
+    els.analyzeBtn.click();
+    return;
+  }
   state.analysisInProgress = true; updateAnalyzeAvailability();
   setGameState('ANALYZING');
   let completed = false, cancelled = false;
