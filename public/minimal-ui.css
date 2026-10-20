@@ -563,3 +563,4 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
 html body #playerSection .video-stage .reward-toast button[data-reward-play] { background: #ffc44d !important; color: #1a1205 !important; border: 0 !important; box-shadow: 0 0 16px rgba(255, 196, 77, .45) !important; }
 html body #playerSection .video-stage .reward-toast button[data-reward-later] { background: transparent !important; color: #ffe7b0 !important; border: 1px solid rgba(255, 231, 176, .35) !important; box-shadow: none !important; }
 html body #playerSection .video-stage .reward-toast button.reward-pill { background: rgba(30, 20, 4, .85) !important; color: #ffd36b !important; border: 1px solid rgba(255, 196, 77, .7) !important; }
+.voice-listen { margin-left: 6px; min-height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(46,230,166,.45); background: rgba(46,230,166,.1); color: #2ee6a6; font-size: 11px; font-weight: 800; }

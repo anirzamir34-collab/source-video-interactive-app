@@ -1429,10 +1429,34 @@ function renderVoiceMappingPanel() {
   const draft = new Map([...els.voiceMappingRows.querySelectorAll('select')]
     .map(select => [select.dataset.speakerId, select.value]));
   const genderLabel = gender => gender === 'male' ? 'Erkek' : gender === 'female' ? 'Kadın' : 'Belirsiz';
+  const utterances = state.sourceTranscript?.utterances || [];
   const rows = speakers.map((speaker, index) => {
     const label = document.createElement('label');
     const title = document.createElement('span');
+    const own = utterances.filter(row => row.speakerId === speaker.speakerId)
+      .sort((a, b) => Number(a.sourceStart) - Number(b.sourceStart));
     title.textContent = `Kaynak ses ${index + 1} · ${genderLabel(speaker.gender)}`;
+    title.title = `${own.length} cümle`;
+    label.append(title);
+    // Listening to a line is the only reliable way to know who this voice is.
+    const sample = own.find(row => Number(row.sourceEnd) - Number(row.sourceStart) >= 1.2) || own[0];
+    if (sample) {
+      const listen = document.createElement('button');
+      listen.type = 'button';
+      listen.className = 'voice-listen';
+      listen.textContent = '▶ Dinle';
+      listen.addEventListener('click', event => {
+        event.preventDefault();
+        const video = els.video;
+        if (!video) return;
+        const start = Number(sample.sourceStart), end = Math.min(Number(sample.sourceEnd), start + 4);
+        video.currentTime = Math.max(0, start - 0.1);
+        void video.play?.().catch?.(() => {});
+        const stop = () => { if (video.currentTime >= end) { video.pause(); video.removeEventListener('timeupdate', stop); } };
+        video.addEventListener('timeupdate', stop);
+      });
+      label.append(listen);
+    }
     const select = document.createElement('select');
     select.dataset.speakerId = speaker.speakerId;
     select.setAttribute('aria-label', `${title.textContent} için Türkçe ses`);
@@ -1452,7 +1476,7 @@ function renderVoiceMappingPanel() {
     }
     select.value = selected;
     select.disabled = state.analysisInProgress || state.savedGameBusy;
-    label.append(title, select); return label;
+    label.append(select); return label;
   });
   els.voiceMappingRows.replaceChildren(...rows);
   els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked;
@@ -1477,6 +1501,18 @@ function verifiedMediaSceneContext() {
     Number.isFinite(action.endTime) && action.endTime > action.startTime)
     .slice(0, 64).map(action => ({ startTime: action.startTime, endTime: action.endTime,
       description: String(typeof action.sourceEvidence === 'string' ? action.sourceEvidence : action.label || '').slice(0, 400) }));
+}
+
+// How many verified men and women the video shows. Used only to complete a
+// one-man / one-woman cast whose second voice could not be measured.
+function speakingCastGenders(analysis = state.analysis) {
+  const counts = { male: 0, female: 0 };
+  for (const character of analysis?.storyContext?.characters || []) {
+    if (character?.evidenceLevel !== 'fact' || character?.identityConflict) continue;
+    const gender = String(character.gender || '').toLowerCase();
+    if (gender === 'male' || gender === 'female') counts[gender] += 1;
+  }
+  return counts;
 }
 
 function verifiedSpeakerVoiceHints(analysis = state.analysis) {
@@ -1515,8 +1551,13 @@ function verifiedSpeakerVoiceHints(analysis = state.analysis) {
   for (const [speakerId, rows] of proposals) {
     const characterIds = [...new Set(rows.map(row => row.characterId))];
     // One Scribe ID matched to two visible people is ambiguous evidence. Do not
-    // force a voice identity from it; keep the raw speaker separate.
-    if (characterIds.length !== 1) continue;
+    // force a voice identity from it; keep the raw speaker separate. When those
+    // people are a man and a woman, the voice is split by pitch on the server.
+    if (characterIds.length !== 1) {
+      const both = new Set(rows.map(row => row.gender).filter(Boolean));
+      if (both.has('male') && both.has('female')) hints[speakerId] = { gender: 'mixed' };
+      continue;
+    }
     const genders = [...new Set(rows.map(row => row.gender).filter(Boolean))];
     const emotions = [...new Set(rows.map(row => row.emotion).filter(Boolean))];
     const tones = [...new Set(rows.map(row => row.tone).filter(Boolean))];
@@ -1622,7 +1663,11 @@ els.voiceMappingApplyBtn?.addEventListener('click', async () => {
   const modes = selectedAnalysisModes(), previous = mediaClient.capture();
   const options = { outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) }, qualityMode: modes.dubQuality,
     voiceMapping: Object.fromEntries(values.map(select => [select.dataset.speakerId, select.value])),
-    previousVoiceMapping: previous?.manifest.voiceMapping || {}, sceneContext: verifiedMediaSceneContext() };
+    previousVoiceMapping: previous?.manifest.voiceMapping || {}, sceneContext: verifiedMediaSceneContext(),
+    // The manual run must see the same voices as the automatic one: without
+    // these hints a man's lines merged into a woman's voice stayed merged
+    // and the chosen male voice never reached them.
+    speakerHints: verifiedSpeakerVoiceHints(state.analysis), castGenders: speakingCastGenders(state.analysis) };
   await regenerateTurkishVoices({ source, options, previous, session: state.analysisSession, started: false });
 });
 
@@ -2656,7 +2701,8 @@ els.analyzeBtn.addEventListener('click', async () => {
           outputs: { dub: modes.dubbing, subtitles: modes.subtitles, ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) },
           qualityMode: modes.dubQuality,
           sceneContext: verifiedMediaSceneContext(),
-          speakerHints
+          speakerHints,
+          castGenders: speakingCastGenders(normalized)
         });
       session.mediaManifest = finalMedia;
       recordAiUsage(finalMedia?.qualityReport?.geminiUsage);
@@ -2948,6 +2994,8 @@ function normalizeAnalysis(body) {
       observedAffect: String(a.observedAffect || 'unclear'),
       bodyResponse: String(a.bodyResponse || 'unclear'),
       sensoryEvidence: String(a.sensoryEvidence || ''),
+      oralGiver: ['partner', 'main_male'].includes(String(a.oralGiver || '').toLowerCase())
+        ? String(a.oralGiver).toLowerCase() : '',
       sensoryConfidence: Math.max(0, Math.min(1, Number(a.sensoryConfidence) || 0)),
       loopStartTime: Number(a.loopStartTime ?? a.startTime),
       loopEndTime: Number(a.loopEndTime ?? a.endTime),

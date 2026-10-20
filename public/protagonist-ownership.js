@@ -106,7 +106,8 @@ export function mergeUnownedIntervals(intervals = []) {
 // moved in actorTrackId, so one encounter is never split by who acts.
 export function protagonistPerspective(action = {}, context = {}, mainTrack = 'MAIN_MALE') {
   const subject = String(action.subjectTrackId || '').trim();
-  if (!subject || subject === mainTrack) return action;
+  if (!subject) return missingProtagonistSubject(action, context, mainTrack);
+  if (subject === mainTrack) return action;
   if (/(?:^|[_-])(?:OTHER_MALE|MALE_OTHER|SECOND_MALE)(?:$|[_-])/i.test(subject)) return action;
   const character = (Array.isArray(context.characters) ? context.characters : []).find(item =>
     String(item.participantTrackId || item.id || '').trim() === subject);
@@ -118,6 +119,23 @@ export function protagonistPerspective(action = {}, context = {}, mainTrack = 'M
   if (!ids.includes(mainTrack)) return action;
   return { ...action, actorTrackId: subject, subjectTrackId: mainTrack,
     partnerTrackId: subject, primaryCharacterId: subject };
+}
+
+// A two-person sex action that names only the woman (subject left empty,
+// e.g. "Hızlanarak devam et" in cowgirl) is still the protagonist's: without
+// this the empty subject looked like a different cast and split the scene.
+function missingProtagonistSubject(action, context, mainTrack) {
+  if (action.adultScene !== true || action.groupScene === true ||
+      !['panel', 'approach'].includes(String(action.choiceSurface || ''))) return action;
+  const partner = String(action.partnerTrackId || '').trim();
+  if (!partner || partner === mainTrack || /OTHER_MALE|MALE_OTHER|SECOND_MALE|MULTI_PARTNER/i.test(partner)) return action;
+  const character = (Array.isArray(context.characters) ? context.characters : []).find(item =>
+    String(item.participantTrackId || item.id || '').trim() === partner);
+  if (String(character?.gender || '').toLowerCase() === 'male') return action;
+  const others = [...(action.involvedCharacterIds || []), ...(action.participantTrackIds || [])]
+    .map(value => String(value || '').trim()).filter(Boolean).filter(id => id !== partner && id !== mainTrack);
+  if (others.length) return action;
+  return { ...action, subjectTrackId: mainTrack };
 }
 
 // A touch or kiss the model files as "approach" while a penetrative position

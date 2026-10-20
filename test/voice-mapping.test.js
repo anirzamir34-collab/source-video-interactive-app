@@ -352,7 +352,7 @@ test('verified visual character matches turn four raw speaker IDs into two autom
   assert.deepEqual(copy(hints['raw-4']), { characterId: 'WOMAN', gender: 'female', emotion: 'calm', tone: 'warm' });
 });
 
-test('ambiguous raw speaker IDs matched to two visible people are not forced into one character voice', () => {
+test('ambiguous raw speaker IDs matched to a man and a woman are flagged mixed, never forced into one character voice', () => {
   const f = uiFixture({ manual: false });
   f.state.analysis = { storyContext: { characters: [
     { id: 'A', participantTrackId: 'MAIN_MALE', evidenceLevel: 'fact', gender: 'male',
@@ -360,7 +360,7 @@ test('ambiguous raw speaker IDs matched to two visible people are not forced int
     { id: 'B', participantTrackId: 'PARTNER_A', evidenceLevel: 'fact', gender: 'female',
       speakerIds: ['raw-conflict'], voiceMatchEvidence: 'Başka aralıkta kadın konuşuyor.' },
   ] } };
-  assert.deepEqual(copy(f.scope.verifiedSpeakerVoiceHints()), {});
+  assert.deepEqual(copy(f.scope.verifiedSpeakerVoiceHints()), { 'raw-conflict': { gender: 'mixed' } });
 });
 
 test('voice editing remains optional after dubbing even when the source gender is known', () => {
@@ -410,7 +410,9 @@ test('applying catalogue voice IDs preserves original video range, gameplay stat
     outputs: { dub: true, subtitles: true }, qualityMode: 'quality',
     voiceMapping: { 'source-a': 'catalogue-custom-b', 'source-b': 'catalogue-custom-a' },
     previousVoiceMapping: f.previous.manifest.voiceMapping,
-    sceneContext: [{ startTime: 12, endTime: 14, description: 'Original observed scene' }]
+    sceneContext: [{ startTime: 12, endTime: 14, description: 'Original observed scene' }],
+    // The manual run keeps the same voice evidence as the automatic one.
+    speakerHints: {}, castGenders: { male: 0, female: 0 }
   });
   assert.equal(f.els.video.currentTime, 12.25);
   assert.deepEqual(f.els.video.seekWrites, []);
@@ -532,4 +534,22 @@ test('the video upload UI defaults to per-speaker Turkish voice generation', () 
   assert.match(html, /id="dubbingProvider" value="classic"/);
   assert.match(app, /dubbingProvider: els\.dubbingProvider\?\.value === 'elevenlabs_v1'/);
   assert.match(app, /dubbingProvider: 'elevenlabs_v1'/);
+});
+
+test('a man and a woman diarized as one voice are split at the widest pitch gap', async () => {
+  const { relativeGenderSplit } = await import('../lib/turkish-media/speaker-profile.js');
+  assert.deepEqual(relativeGenderSplit({ a: 128, b: 140, c: 205, d: 212 }), { a: 'male', b: 'male', c: 'female', d: 'female' });
+  assert.equal(relativeGenderSplit({ a: 200, b: 210, c: 215 }), null, 'one voice is never split');
+});
+
+test('a one-man one-woman cast completes the voice that could not be measured', async () => {
+  const { completeTwoPersonCast } = await import('../lib/turkish-media/pipeline.js');
+  const transcript = { speakers: [{ speakerId: 'a', gender: 'female' }, { speakerId: 'b', gender: null }],
+    utterances: [{ speakerId: 'b', gender: null }] };
+  completeTwoPersonCast(transcript, { male: 1, female: 1 });
+  assert.equal(transcript.speakers[1].gender, 'male');
+  assert.equal(transcript.utterances[0].gender, 'male');
+  const crowd = { speakers: [{ speakerId: 'a', gender: 'female' }, { speakerId: 'b', gender: null }], utterances: [] };
+  completeTwoPersonCast(crowd, { male: 2, female: 1 });
+  assert.equal(crowd.speakers[1].gender, null, 'a larger cast is never guessed');
 });

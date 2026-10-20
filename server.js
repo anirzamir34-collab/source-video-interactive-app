@@ -820,6 +820,8 @@ ${reviewCandidates}
           observedAffect: ['neutral', 'relaxed', 'tense', 'happy', 'sad', 'fearful', 'excited', 'distressed', 'unclear'].includes(String(action.observedAffect || '').toLowerCase()) ? String(action.observedAffect).toLowerCase() : 'unclear',
           bodyResponse: ['relaxed', 'tense', 'recoil', 'rhythmic', 'still', 'changing', 'unclear'].includes(String(action.bodyResponse || '').toLowerCase()) ? String(action.bodyResponse).toLowerCase() : 'unclear',
           sensoryEvidence: String(action.sensoryEvidence || '').trim(),
+          oralGiver: ['partner', 'main_male'].includes(String(action.oralGiver || '').toLowerCase())
+            ? String(action.oralGiver).toLowerCase() : '',
           sensoryConfidence: Math.max(0, Math.min(1, Number(action.sensoryConfidence) || 0)),
           loopStartTime: Number(action.loopStartTime ?? action.startTime),
           loopEndTime: Number(action.loopEndTime ?? action.endTime),

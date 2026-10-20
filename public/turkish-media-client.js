@@ -556,7 +556,8 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       previousVoiceMapping: jsonCopy(options.previousVoiceMapping || {}),
       sceneContext: jsonCopy(Array.isArray(options.sceneContext) ? options.sceneContext : []),
       ...(options.speakerHints && Object.keys(options.speakerHints).length
-        ? { speakerHints: jsonCopy(options.speakerHints) } : {}) } };
+        ? { speakerHints: jsonCopy(options.speakerHints) } : {}),
+      ...(options.castGenders ? { castGenders: jsonCopy(options.castGenders) } : {}) } };
     const selected = lastStart;
     try {
       if (!/^audio\//i.test(source?.type || '')) {

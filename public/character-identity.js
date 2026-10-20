@@ -28,6 +28,30 @@ export function stripTrackTokens(value) {
   return out ? out.slice(0, 1).toLocaleUpperCase('tr-TR') + out.slice(1) : '';
 }
 
+// Choices are the protagonist's own moves. A label that narrates him in the
+// third person and asks to watch it ("Erkeğin odaya girişini ve kadınla
+// konuşmasını izle") becomes his own action ("Odaya gir ve kadınla konuş").
+const imperativeOf = word => {
+  let match = word.match(/^(.+?)(?:ma|me)(?:sı|si)(?:nı|ni|na|ne)$/u);
+  if (match) return match[1];
+  match = word.match(/^(.+?)[ıiuü]ş[ıiuü](?:nı|ni|nu|nü)$/u);
+  if (match) return match[1];
+  return null;
+};
+export function protagonistFirstPerson(label = '') {
+  const value = String(label || '').trim();
+  const match = value.match(/^(?:(?:genç|yakışıklı|takım elbiseli|ana)\s+)?(?:erkeğin|adamın|erkek karakterin|ana karakterin)\s+(.+?)\s+izle$/iu);
+  if (!match) return value;
+  let changed = 0;
+  const body = match[1].split(/\s+/u).map(word => {
+    const verb = imperativeOf(word.toLocaleLowerCase('tr-TR'));
+    if (verb) { changed += 1; return verb; }
+    return word;
+  }).join(' ');
+  if (!changed) return value;
+  return body.slice(0, 1).toLocaleUpperCase('tr-TR') + body.slice(1);
+}
+
 export function verifiedCharacterName(character) {
   const name = text(character?.displayName);
   if (isTrackIdName(name, character || {})) return '';
@@ -267,6 +291,16 @@ export function bindActionCharacter(action, context = {}) {
   // proper name inserted for the previously selected pair.
   result.label = stripTrackTokens(result.characterSourceLabel) || result.characterSourceLabel;
   result.narrativeChoiceLabel = stripTrackTokens(result.characterSourceNarrativeLabel) || result.characterSourceNarrativeLabel;
+  if (['MAIN_MALE', ''].includes(text(action.subjectTrackId))) {
+    result.label = protagonistFirstPerson(result.label);
+    result.narrativeChoiceLabel = protagonistFirstPerson(result.narrativeChoiceLabel);
+  }
+  // He gives oral to her: never word it as her doing it to him.
+  if (String(action.oralGiver || '').toLowerCase() === 'main_male' &&
+      /yapmasına izin ver|emmesine|yalamasına/iu.test(result.label)) {
+    result.label = /tempo|hızlan|sert|derin/iu.test(result.label) ? 'Onu yalamaya devam et' : 'Onu yala';
+    if (/yapmasına izin ver|emmesine|yalamasına/iu.test(result.narrativeChoiceLabel)) result.narrativeChoiceLabel = '';
+  }
   // Derived labels must be rebuilt when a scene changes, never carried over.
   result.relationshipDisplayLabel = '';
   result.relationshipContext = '';

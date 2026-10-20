@@ -42,3 +42,21 @@ test('track ids and gender words never become names or label text', async () => 
   assert.equal(bound.partnerLabel, 'Kadın 1');
   assert.equal(bound.label, 'Üstüne çıkmasına izin ver');
 });
+
+test('a label that narrates the protagonist and asks to watch becomes his own move', async () => {
+  const { protagonistFirstPerson, bindActionCharacter } = await import('../public/character-identity.js');
+  assert.equal(protagonistFirstPerson('Erkeğin odaya girişini ve kadınla konuşmasını izle'), 'Odaya gir ve kadınla konuş');
+  assert.equal(protagonistFirstPerson('Kadının dansını izle'), 'Kadının dansını izle');
+  const bound = bindActionCharacter({ label: 'Erkeğin odaya girişini izle', subjectTrackId: 'MAIN_MALE' }, { characters: [] });
+  assert.equal(bound.label, 'Odaya gir');
+  const other = bindActionCharacter({ label: 'Adamın şarkı söylemesini izle', subjectTrackId: 'OTHER_MALE' }, { characters: [] });
+  assert.equal(other.label, 'Adamın şarkı söylemesini izle', 'watching another man stays as it is');
+});
+
+test('a couple sex action with an empty subject belongs to the protagonist', async () => {
+  const { protagonistPerspective } = await import('../public/protagonist-ownership.js');
+  const action = { adultScene: true, choiceSurface: 'panel', subjectTrackId: '', partnerTrackId: 'PARTNER_A', involvedCharacterIds: [] };
+  assert.equal(protagonistPerspective(action, { characters: [{ id: 'PARTNER_A', gender: 'female' }] }).subjectTrackId, 'MAIN_MALE');
+  assert.equal(protagonistPerspective({ ...action, groupScene: true }, {}).subjectTrackId, '', 'a group never guesses');
+  assert.equal(protagonistPerspective({ ...action, involvedCharacterIds: ['OTHER_MALE', 'PARTNER_A'] }, {}).subjectTrackId, '');
+});
