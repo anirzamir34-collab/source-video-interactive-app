@@ -10,7 +10,7 @@ import {
   storyChoiceLabelForAction
 } from '../public/story-engine.js';
 
-test('uses narrative choice only when evidence is strong enough', () => {
+test('uses the story wording unless the analysis calls it a weak guess', () => {
   assert.equal(storyChoiceLabelForAction({
     label: 'Kadına yaklaş',
     narrativeChoiceLabel: 'Eski kız arkadaşınla geçmişi konuş',
@@ -23,7 +23,7 @@ test('uses narrative choice only when evidence is strong enough', () => {
     label: 'Kadına yaklaş',
     narrativeChoiceLabel: 'Eski kız arkadaşınla geçmişi konuş',
     storyEvidenceLevel: 'inference',
-    storyConfidence: 0.70,
+    storyConfidence: 0.45,
     storyEvidence: 'Samimi davranıyorlar.'
   }), 'Kadına yaklaş');
 });

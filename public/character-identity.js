@@ -31,9 +31,9 @@ export function stripTrackTokens(value) {
 export function verifiedCharacterName(character) {
   const name = text(character?.displayName);
   if (isTrackIdName(name, character || {})) return '';
-  const confidence = Number(character?.confidence);
-  if (!name || character.identityConflict || character.evidenceLevel !== 'fact' ||
-      !Number.isFinite(confidence) || confidence < 0.68 || !text(character.evidence) ||
+  // A name the video gives (spoken in the dialogue or shown on screen) is used
+  // as is; only conflicting names, possessives and role words are refused.
+  if (!name || character.identityConflict ||
       /['’](?:n?[ıiuü]n|s)\s+/iu.test(name) ||
       vaguePossessive.test(name) || roleWords.test(name) || verifiedRoleNoun(name) ||
       nameKey(name) === nameKey(character.sourceRole || character.role)) return '';

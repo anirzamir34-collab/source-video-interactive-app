@@ -174,12 +174,13 @@ export function storyChoiceLabelForAction(action = {}) {
   };
   if (!narrative) return withCharacter(fallback);
 
+  // The story-aware wording (names, place, what was just said) comes from the
+  // video, so it is shown unless the analysis itself calls it a weak guess.
+  // An invented possessive identity ("Danny'nin kadını") is never shown.
+  if (/\p{L}+(?:['’]|\s)?(?:n?[ıiuü]n)\s+(?:kadın|erkek|adam|partner)/iu.test(narrative)) return withCharacter(fallback);
   const level = normalizeEvidenceLevel(action.storyEvidenceLevel);
   const confidence = clamp(action.storyConfidence);
-  const evidence = cleanText(action.storyEvidence, 360);
-
-  if (level === 'fact' && confidence >= 0.68 && evidence) return withCharacter(narrative);
-  if (level === 'inference' && confidence >= 0.88 && evidence) return withCharacter(narrative);
+  if (level === 'fact' || (level === 'inference' && confidence >= 0.6)) return withCharacter(narrative);
   return withCharacter(fallback);
 }
 

@@ -268,12 +268,13 @@ test('absent participants, missing IDs and ambiguous group targets never borrow 
 });
 
 test('unconfirmed names stay unconfirmed and possessive descriptions are not proper names', () => {
+  // A name the video gives is used as is, even when the model was unsure.
   for (const record of [
     { ...cast.characters[1], evidenceLevel: 'inference' },
     { ...cast.characters[1], confidence: NaN },
-    { ...cast.characters[1], evidence: '' },
-    { ...cast.characters[1], displayName: "Danny’nin kadını" }
-  ]) assert.equal(verifiedCharacterName(record), '');
+    { ...cast.characters[1], evidence: '' }
+  ]) assert.equal(verifiedCharacterName(record), cast.characters[1].displayName);
+  assert.equal(verifiedCharacterName({ ...cast.characters[1], displayName: "Danny’nin kadını" }), '');
   const action = bindActionCharacter({ label: 'Konuşmayı sürdür', narrativeChoiceLabel: "Danny’nin kadınıyla konuş", partnerTrackId: 'PARTNER_A' }, { ...cast, relationships: [] });
   assert.equal(storyChoiceLabelForAction(action), 'Konuşmayı sürdür · Meral');
   for (const label of ['Danny nin kadınıyla konuş', 'Dannynin kadınına bak']) {
