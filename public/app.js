@@ -3687,8 +3687,21 @@ function prepareAdultScenes() {
     );
 
     if (action.label || action.movementType) {
-      const movementStart = Number(action.loopStartTime ?? action.startTime);
-      const movementEnd = Number(action.loopEndTime ?? action.endTime);
+      // The loop is the repeatable part of a movement. When a long action
+      // carries only a short loop, playing just the loop skipped most of the
+      // footage and shrank the scene to a few seconds, so the whole action is
+      // the movement.
+      const actionStart = Number(action.startTime), actionEnd = Number(action.endTime);
+      let movementStart = Number(action.loopStartTime ?? actionStart);
+      let movementEnd = Number(action.loopEndTime ?? actionEnd);
+      // Only a bare minimum loop (about 5 s) inside a long action is treated
+      // this way; a real chosen loop stays as the model gave it.
+      if (sourceInterval(actionStart, actionEnd) && actionEnd - actionStart > 20 &&
+          movementEnd - movementStart <= 6 && (movementEnd - movementStart) < (actionEnd - actionStart) * 0.25 &&
+          actionStart >= position.startTime && actionEnd <= position.endTime) {
+        movementStart = actionStart;
+        movementEnd = actionEnd;
+      }
       const validMovementRange = sourceInterval(movementStart, movementEnd) &&
         movementStart >= observedSource.startTime && movementEnd <= observedSource.endTime &&
         movementStart >= position.startTime && movementEnd <= position.endTime;
