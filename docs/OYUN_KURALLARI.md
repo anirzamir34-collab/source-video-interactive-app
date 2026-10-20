@@ -114,7 +114,9 @@ otomatik kontrol eder.
   kopyasını çıkarır (480 px, saniyede 4 kare, sesli; H.264 yoksa WebM), sunucu
   onu Google'a verir ve Gemini her bölümün videosunu sesiyle izler (saniyede 2
   kare, düşük çözünürlük). Herhangi bir adım başarısız olursa analiz otomatik
-  olarak resimli yöntemle devam eder.
+  olarak resimli yöntemle devam eder. 25 dakikayı aşan videolarda video yalnız
+  ayrıntılı (yakın sahne) bölümlerinde kullanılır; ön taramanın ucuz hikâye
+  bölümleri resimle analiz edilmeye devam eder.
 - Google bir bölümü bütün modellerde içerik nedeniyle reddedebilir; bu
   durumda o aralık analizsiz oynatılır, uygulama bunu aşamaz.
 - Analiz edilemeyen bölüm istenen modelle yeniden denenebilir; aynı model aynı

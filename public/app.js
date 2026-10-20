@@ -2004,7 +2004,10 @@ els.analyzeBtn.addEventListener('click', async () => {
 
       const form = new FormData();
 
-      const videoInput = session.geminiVideo || null;
+      // Video only where motion matters: long videos' cheap "overview" story
+      // chapters keep their few contact sheets, so the scout savings stay.
+      const videoInput = session.geminiVideo && analysisPlan.chunks[chunkIndex]?.focusTier !== 'overview'
+        ? session.geminiVideo : null;
       if (videoInput) {
         form.append('videoFileUri', videoInput.fileUri);
         form.append('videoMimeType', videoInput.mimeType);
