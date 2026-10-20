@@ -17,6 +17,7 @@ import { isTerminalStoryboardFailure } from '../public/analysis-recovery.js';
 import { serializeReviewCandidates } from '../public/classification-integrity.js';
 import { buildAnalysisPrompt } from '../lib/analysis-prompt.js';
 import { isGeminiFileUri, absoluteClipTimes, geminiVideoMime } from '../lib/gemini-video.js';
+import { ensureProtagonistTrack } from '../lib/protagonist-track.js';
 import { buildLegacyAnalysisPrompt } from '../lib/analysis-prompt-legacy.js';
 
 const result = () => ({ status: 200, body: { available: true, actions: [{ actionId: 'walk', startTime: 0, endTime: 4 }],
@@ -151,7 +152,7 @@ function serverHandler(generateContent) {
   const end = source.indexOf("\napp.post('/api/external-analyze'", start);
   return vm.runInNewContext(`(${source.slice(start, end).trim().replace(/\);$/, '')})`, {
     ...choiceRouting, hasFamilyOrSpouseContext, GoogleGenAI: class { models = { generateContent }; },
-    geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction', buildAnalysisPrompt, buildLegacyAnalysisPrompt, ANALYSIS_PROMPT_STYLE: 'compact', isGeminiFileUri, absoluteClipTimes, geminiVideoMime, GEMINI_VIDEO_FPS: 2,
+    geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction', buildAnalysisPrompt, buildLegacyAnalysisPrompt, ANALYSIS_PROMPT_STYLE: 'compact', isGeminiFileUri, absoluteClipTimes, geminiVideoMime, ensureProtagonistTrack, GEMINI_VIDEO_FPS: 2,
     resolveGeminiApiKey: () => 'test-account', emptyGeminiUsage: () => ({ requests: 0 }),
     addGeminiUsage: usage => { usage.requests++; },
     storyboardFailureReason, isTerminalStoryboardFailure, serializeReviewCandidates, geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig,

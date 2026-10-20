@@ -35,6 +35,7 @@ import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 import { installScoutRoute } from './lib/scout-route.js';
 import { buildAnalysisPrompt } from './lib/analysis-prompt.js';
+import { ensureProtagonistTrack } from './lib/protagonist-track.js';
 import { createGeminiVideoFiles, isGeminiFileUri, absoluteClipTimes, geminiVideoMime } from './lib/gemini-video.js';
 import { buildLegacyAnalysisPrompt } from './lib/analysis-prompt-legacy.js';
 
@@ -77,7 +78,7 @@ if (!analysisRouteSource || !analysisRouteSource.includes('generateContent')) {
 const analysisRevision = crypto.createHash('sha256').update(JSON.stringify([
   ANALYSIS_SCHEMA_VERSION, ANALYSIS_ENGINE_VERSION, analysisRouteSource,
   ANALYSIS_PROMPT_STYLE,
-  ...['lib/gemini-generation-config.js', 'lib/analysis-prompt.js', 'lib/analysis-prompt-legacy.js', 'public/choice-routing.js',
+  ...['lib/gemini-generation-config.js', 'lib/analysis-prompt.js', 'lib/protagonist-track.js', 'lib/analysis-prompt-legacy.js', 'public/choice-routing.js',
     'public/classification-integrity.js', 'public/analysis-recovery.js',
     'public/gemini-quota.js', 'public/model-json.js', 'public/neutral-gap-repair.js'].map(file =>
     fs.readFileSync(path.join(__dirname, file), 'utf8')),
@@ -751,6 +752,13 @@ ${reviewCandidates}
     // Counts only: no labels, frames, participant names or raw model output.
     const normalizerRejected = { invalidStructure: 0, lowConfidence: 0, duplicates: 0 };
     if (videoFileUri && Array.isArray(parsed?.actions)) parsed.actions = absoluteClipTimes(parsed.actions, chunkStart, chunkEnd);
+    if (!savedGameRepair && parsed && Array.isArray(parsed.actions)) {
+      const protagonist = ensureProtagonistTrack(parsed);
+      if (protagonist.inferred) {
+        parsed = protagonist.parsed;
+        console.warn('[protagonist-track-inferred]', JSON.stringify({ chunkIndex, track: String(protagonist.inferred).slice(0, 40) }));
+      }
+    }
     const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
       .map((action, index) => ({
         ...action,

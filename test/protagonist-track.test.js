@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { ensureProtagonistTrack } from '../lib/protagonist-track.js';
+
+const act = (subjectTrackId, partnerTrackId, startTime, endTime) =>
+  ({ subjectTrackId, partnerTrackId, involvedCharacterIds: [subjectTrackId, partnerTrackId], startTime, endTime });
+
+test('a chapter that never names MAIN_MALE gets its most active man as MAIN_MALE', () => {
+  const parsed = { actions: [act('man-orange-vest', 'woman-red', 0, 40), act('man-blue', 'woman-white', 40, 50)],
+    storyContext: { characters: [{ id: 'man-orange-vest', participantTrackId: 'man-orange-vest', gender: 'male' },
+      { id: 'man-blue', participantTrackId: 'man-blue', gender: 'male' }], relationships: [] } };
+  const { parsed: next, inferred } = ensureProtagonistTrack(parsed);
+  assert.equal(inferred, 'man-orange-vest');
+  assert.equal(next.actions[0].subjectTrackId, 'MAIN_MALE');
+  assert.deepEqual(next.actions[0].involvedCharacterIds, ['MAIN_MALE', 'woman-red']);
+  // The other man keeps his own id, so his actions stay "another man's".
+  assert.equal(next.actions[1].subjectTrackId, 'man-blue');
+  assert.equal(next.storyContext.characters[0].participantTrackId, 'MAIN_MALE');
+});
+
+test('a chapter that already uses MAIN_MALE is left untouched', () => {
+  const parsed = { actions: [act('MAIN_MALE', 'PARTNER_A', 0, 10), act('man-x', 'PARTNER_B', 10, 60)] };
+  assert.equal(ensureProtagonistTrack(parsed).inferred, null);
+  assert.equal(ensureProtagonistTrack(parsed).parsed, parsed);
+});
+
+test('no male actor means no guess', () => {
+  const parsed = { actions: [act('woman-a', 'woman-b', 0, 10)], storyContext: { characters: [{ id: 'woman-a', gender: 'female' }] } };
+  assert.equal(ensureProtagonistTrack(parsed).inferred, null);
+});
