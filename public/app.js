@@ -8,6 +8,7 @@ import { prepareGeminiVideo } from './gemini-video-client.js';
 import { resolveCutRange, formatClock } from './time-range.js';
 import { normalizeRewardMoments, rewardsForScene, derivedHighlight, pickAdultReward, rewardTitle } from './reward-moments.js';
 import { buildIntensityTrack, measuredMovementFlavors, intensityRate } from './intensity-engine.js';
+import { positionBrief } from './position-brief.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
@@ -2997,6 +2998,8 @@ function normalizeAnalysis(body) {
       sensoryEvidence: String(a.sensoryEvidence || ''),
       oralGiver: ['partner', 'main_male'].includes(String(a.oralGiver || '').toLowerCase())
         ? String(a.oralGiver).toLowerCase() : '',
+      receiverLegs: ['raised_on_shoulders', 'raised', 'spread', 'together'].includes(String(a.receiverLegs || '').toLowerCase())
+        ? String(a.receiverLegs).toLowerCase() : 'unclear',
       sensoryConfidence: Math.max(0, Math.min(1, Number(a.sensoryConfidence) || 0)),
       loopStartTime: Number(a.loopStartTime ?? a.startTime),
       loopEndTime: Number(a.loopEndTime ?? a.endTime),
@@ -5634,6 +5637,21 @@ function syncAdultPanelPlacement(stage = els.video?.closest('.video-stage')) {
   mountInteractionPanel(stage, els.adultInteractionPanel);
 }
 
+// Who this position is with, as the player sees her: a heard name, her look,
+// or "Kadın 1/2" by order of appearance - never a tracking id.
+function adultPartnerName(position) {
+  const characters = state.analysis?.storyContext?.characters || [];
+  const id = String(position?.partnerTrackId || '').trim();
+  const character = characters.find(item => String(item.participantTrackId || item.id || '').trim() === id);
+  const known = character && (verifiedCharacterName(character) || verifiedVisualDescription(character));
+  if (known) return known;
+  const label = String(position?.partnerLabel || '').trim();
+  if (label && !/^(?:Karakter|Partner)\b/iu.test(label)) return label;
+  const order = [...new Set((state.adultScene?.positions || []).map(item => item.partnerTrackId).filter(Boolean))];
+  const index = order.indexOf(id);
+  return index >= 0 ? `Kadın ${index + 1}` : '';
+}
+
 function selectAdultCategory(categoryId, shouldSeek = true) {
   const scene = state.adultScene;
   const unlocked = unlockedAdultPositions(scene).filter(item => !isWarmupPosition(item));
@@ -5700,12 +5718,18 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
   // separate occurrences internally, but the player sees a single tab; tapping
   // it again moves to that position's next unlocked occurrence.
   const families = [];
+  // In a group scene the same position with two different women is two
+  // choices: one tab per position and partner ("Oral · Serena").
+  const groupKey = position => position.groupScene === true && position.partnerTrackId
+    ? `::${position.partnerTrackId}` : '';
   for (const position of positions) {
-    const key = String(position.familyId || position.id);
+    const key = String(position.familyId || position.id) + groupKey(position);
     const family = families.find(item => item.key === key);
     if (family) family.members.push(position);
     else families.push({ key, members: [position] });
   }
+  const partnersInTabs = new Set((scene?.positions || []).filter(item => item.groupScene === true && !isWarmupPosition(item))
+    .map(item => item.partnerTrackId).filter(Boolean));
   const playable = position => Boolean(interactionEntryClip(
     genericInteractionSnapshot().scene.groups.find(group => group.id === position.id)));
   families.forEach(({ members }) => {
@@ -5713,7 +5737,9 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     button.type = 'button';
     button.className = 'position-tab';
     const lead = members.find(item => item.id === state.activePositionId) || members[0];
-    button.textContent = String(lead.label || '').trim();
+    const partnerName = lead.groupScene === true && partnersInTabs.size > 1 ? adultPartnerName(lead) : '';
+    button.textContent = [String(lead.label || '').trim(), partnerName].filter(Boolean).join(' · ');
+    button.title = typeof positionBrief === 'function' ? positionBrief(lead) : '';
     button.dataset.positionId = lead.id;
     button.dataset.familyPositionIds = members.map(item => item.id).join(',');
     button.disabled = !members.some(playable);
@@ -5746,7 +5772,7 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     .filter(item => !state.adultUnlockedPositionIds.has(item.id))
     .filter(item => !showPartners || item.subjectTrackId === state.activeAdultPartnerTrackId)
     .sort((a, b) => Number(a.startTime) - Number(b.startTime))) {
-    const key = String(position.familyId || position.id);
+    const key = String(position.familyId || position.id) + groupKey(position);
     if (shownFamilies.has(key) || lockedFamilies.some(item => item.key === key)) continue;
     lockedFamilies.push({ key, position });
   }
@@ -5757,7 +5783,8 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
     button.disabled = true;
     button.dataset.lockedPositionId = position.id;
     button.title = index === 0 ? 'Lust dolunca açılır' : 'Kilitli';
-    button.innerHTML = `<span aria-hidden="true">🔒</span> ${escapeHtml(String(position.label || '').trim())}`;
+    const lockedPartner = position.groupScene === true && partnersInTabs.size > 1 ? adultPartnerName(position) : '';
+    button.innerHTML = `<span aria-hidden="true">🔒</span> ${escapeHtml([String(position.label || '').trim(), lockedPartner].filter(Boolean).join(' · '))}`;
     els.positionTabs?.appendChild(button);
   });
 
@@ -6217,6 +6244,14 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   }
   if (els.movementChoices) els.movementChoices.innerHTML = '';
   els.movementSection?.classList.remove('hidden');
+  // One fixed line that says exactly what this position is.
+  const brief = typeof positionBrief === 'function' ? positionBrief(position) : '';
+  if (brief && els.movementChoices && globalThis.document?.createElement) {
+    const line = document.createElement('div');
+    line.className = 'position-brief';
+    line.textContent = brief;
+    els.movementChoices.appendChild(line);
+  }
 
   movementChoices.forEach(choice => {
     const wrapper = document.createElement('div');

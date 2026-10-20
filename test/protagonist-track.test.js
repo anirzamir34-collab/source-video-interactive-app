@@ -68,3 +68,18 @@ test('a thrusting body change inside a running position is a movement, not a sto
   assert.equal(inPositionApproachAsMovement(action).choiceSurface, 'panel');
   assert.equal(inPositionApproachAsMovement({ ...action, movementType: 'pozisyon değiştirme', positionId: '' }).choiceSurface, 'story');
 });
+
+test('on her back, the legs decide between legs-up and missionary', async () => {
+  const { inPositionApproachAsMovement } = await import('../public/protagonist-ownership.js');
+  const base = { choiceSurface: 'panel', adultScene: true, receiverBodyOrientation: 'on_back', positionConfigurationConfidence: 0.9 };
+  assert.equal(inPositionApproachAsMovement({ ...base, positionId: 'missionary', receiverLegs: 'raised_on_shoulders' }).positionId, 'legs-up');
+  assert.equal(inPositionApproachAsMovement({ ...base, positionId: 'legs-up', receiverLegs: 'spread' }).positionId, 'missionary');
+  assert.equal(inPositionApproachAsMovement({ ...base, positionId: 'legs-up', receiverLegs: 'unclear' }).positionId, 'legs-up');
+});
+
+test('every canonical position has a fixed description from his point of view', async () => {
+  const { positionBrief } = await import('../public/position-brief.js');
+  assert.equal(positionBrief({ familyId: 'rear' }), 'Elleri ve dizleri üzerinde; sen arkasındasın.');
+  assert.equal(positionBrief({ familyId: 'oral', movements: [{ oralGiver: 'main_male' }] }), 'Ona oral yapıyorsun.');
+  assert.match(positionBrief({ familyId: 'prone-bone', routeNamespace: 'anal' }), /Anal\.$/);
+});

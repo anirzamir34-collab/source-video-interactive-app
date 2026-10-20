@@ -822,6 +822,8 @@ ${reviewCandidates}
           sensoryEvidence: String(action.sensoryEvidence || '').trim(),
           oralGiver: ['partner', 'main_male'].includes(String(action.oralGiver || '').toLowerCase())
             ? String(action.oralGiver).toLowerCase() : '',
+          receiverLegs: ['raised_on_shoulders', 'raised', 'spread', 'together'].includes(String(action.receiverLegs || '').toLowerCase())
+            ? String(action.receiverLegs).toLowerCase() : 'unclear',
           sensoryConfidence: Math.max(0, Math.min(1, Number(action.sensoryConfidence) || 0)),
           loopStartTime: Number(action.loopStartTime ?? action.startTime),
           loopEndTime: Number(action.loopEndTime ?? action.endTime),

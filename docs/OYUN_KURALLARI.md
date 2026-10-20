@@ -157,3 +157,13 @@ otomatik kontrol eder.
 - "En ateşli an" ödülü ölçülen en yoğun gerçek parçadan seçilir.
 - Analiz talimatı her 10–20 sn parçaya kendi görünür detay etiketini (saçını tutarak, kalçasını kavrayarak, bacağını omzuna alarak...) ve ses yoğunluğunu ister; genel "devam et" ancak detay yoksa kullanılır.
 - "Kucağında" ifadesi, kanıtlı bir kovboy pozisyonunu artık "oturarak" pozisyonuyla çakışma saymaz (sahnenin sonu ve zirve kaybolmuyordu).
+
+## Pozisyon doğruluğu ve tarifler
+- Analiz talimatı her pozisyonu sabit bir sırayla kontrol ettirir (oral → el → üstte mi/yüzü dönük mü → sırtüstü/bacaklar → yüzüstü → dört ayak → ayakta eğik → yan → oturur → ayakta); etiket bu kontrolle çelişirse kontrol kazanır. Ayrıca `receiverLegs` döner.
+- Sırtüstünde bacaklar karar verir: bacaklar havada/omuzlarda → legs-up, değilse misyoner (public/protagonist-ownership.js).
+- Gövde düzeni (yüzüstü düz, dört ayak, üstte yüz dönük...) pozisyon adıyla çelişirse gövde düzeni kazanır (mevcut resolveVerifiedAdultPosition).
+- Her pozisyonun altında sabit, baş karakterin gözünden bir tarif satırı görünür (public/position-brief.js): "Elleri ve dizleri üzerinde; sen arkasındasın." Oralde kimin yaptığı yazılır.
+
+## Grup sahneleri
+- Aynı pozisyon farklı kadınlarla ayrı sekmedir: "Oral Seks · Sarışın kadın", "Oral Seks · Kadın 2". Kilitli sekmeler de kadının adıyla görünür.
+- Kadının adı: duyulan isim → görünüş → görünme sırasına göre "Kadın 1/2"; asla takip kodu.

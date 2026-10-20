@@ -143,7 +143,21 @@ function missingProtagonistSubject(action, context, mainTrack) {
 // position, not an opening card. Oral/manual stay opening activities.
 const PENETRATIVE = new Set(['reverse-cowgirl', 'seated-facing', 'prone-bone', 'legs-up', 'missionary',
   'cowgirl', 'spoon', 'reverse-spoon', 'standing-rear', 'rear', 'seated', 'standing']);
+// On her back, the legs decide: held up -> legs-up, otherwise missionary.
+function poseFromLegs(action) {
+  const position = String(action.positionId || '').trim().toLowerCase();
+  const legs = String(action.receiverLegs || '').toLowerCase();
+  if (!['missionary', 'legs-up'].includes(position) || !legs || legs === 'unclear' ||
+      String(action.receiverBodyOrientation || '').toLowerCase() !== 'on_back' ||
+      Number(action.positionConfigurationConfidence || 0) < 0.78) return action;
+  const raised = ['raised', 'raised_on_shoulders'].includes(legs);
+  const corrected = raised ? 'legs-up' : 'missionary';
+  if (corrected === position) return action;
+  return { ...action, positionId: corrected, positionLabel: raised ? 'Bacaklar havada' : 'Misyoner', poseCorrectedFrom: position };
+}
+
 export function inPositionApproachAsMovement(action = {}) {
+  action = poseFromLegs(action);
   const position = String(action.positionId || '').trim().toLowerCase();
   // A body change inside the same running position (he leans over her and
   // speeds up) filed as a story card is a movement of that position.
