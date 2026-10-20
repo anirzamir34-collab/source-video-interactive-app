@@ -1,7 +1,7 @@
 import { toggleFullscreen, revealFullscreenChoices } from './fullscreen.js';
 import { sourceOpeningTimeline } from './source-opening.js';
 import { mountAnalysisReview } from './analysis-gap-view.js';
-import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
+import { protagonistPerspective, inPositionApproachAsMovement, mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
 import { trimIntroOutro } from './intro-outro.js';
 import { prepareGeminiVideo } from './gemini-video-client.js';
@@ -2858,7 +2858,7 @@ function normalizeAnalysis(body) {
     }))
     .filter(a => Number.isFinite(a.startTime) && Number.isFinite(a.endTime) && a.endTime > a.startTime && a.sourceVerified)
     .sort((a, b) => a.startTime - b.startTime)
-    .map(action => bindActionCharacter(action, storyContext));
+    .map(action => bindActionCharacter(inPositionApproachAsMovement(protagonistPerspective(action, storyContext)), storyContext));
 
   const ownership = partitionProtagonistActions(cleaned, storyContext, body?.mainMaleTrackId);
   assignPositionOccurrenceIds(ownership.playable);
@@ -3127,7 +3127,8 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
       ? [...new Set((item.participantTrackIds || []).map(value =>
         String(value || '').trim()).filter(Boolean))].sort()
       : [];
-    return [JSON.stringify([subject, partner, group])];
+    // Around the protagonist, who acts within the pair does not change the cast.
+    return [JSON.stringify([...([subject, partner].includes('MAIN_MALE') ? [subject, partner].sort() : [subject, partner]), group])];
   }))].sort().join('|');
 
   for (const scene of sorted) {
@@ -3163,10 +3164,11 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
       return row ? [String(row.subjectTrackId).trim(), String(row.partnerTrackId).trim()] : [];
     };
     const [subjectTrackId, partnerTrackId] = scenePair(previous);
+    const pairKey = (a, b) => { const pair = [String(a || '').trim(), String(b || '').trim()];
+      return (pair.includes('MAIN_MALE') ? pair.sort() : pair).join('|'); };
     const verifiedBridge = !castBarrier && Boolean(subjectTrackId && partnerTrackId) &&
       nonAdultActions.some(action => action?.sourceVerified === true &&
-        String(action.subjectTrackId || '').trim() === subjectTrackId &&
-        String(action.partnerTrackId || '').trim() === partnerTrackId &&
+        pairKey(action.subjectTrackId, action.partnerTrackId) === pairKey(subjectTrackId, partnerTrackId) &&
         Number(action.endTime) >= Number(previous.endTime) - 0.1 &&
         Number(action.startTime) <= Number(scene.startTime) + 2);
     const unownedBarrier = !verifiedBridge && unownedIntervals.some(interval =>
@@ -3185,7 +3187,9 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
         'outcome', 'aftermath'].includes(actionType);
       const unattributedNarrative = ['dialogue', 'story'].includes(actionType) &&
         (!subject || !partner || !subjectTrackId || !partnerTrackId);
-      const differentCast = Boolean(subject && partner && subjectTrackId && partnerTrackId &&
+      const samePair = [subject, partner].includes('MAIN_MALE') &&
+        [subject, partner].sort().join('|') === [subjectTrackId, partnerTrackId].sort().join('|');
+      const differentCast = Boolean(subject && partner && subjectTrackId && partnerTrackId && !samePair &&
         (subject !== subjectTrackId || (!sameProtagonist && partner !== partnerTrackId)));
       return action?.sourceVerified === true &&
         (explicitNarrativeBreak || unattributedNarrative || differentCast) &&
@@ -7789,7 +7793,8 @@ async function openSavedGame(game) {
   state.videoObjectUrl = url;
   const savedAnalysis = game.payload.analysis;
   if (savedAnalysis) {
-    const ownership = partitionProtagonistActions(savedAnalysis.actions || [],
+    const ownership = partitionProtagonistActions((savedAnalysis.actions || []).map(action =>
+      inPositionApproachAsMovement(protagonistPerspective(action, savedAnalysis.storyContext || {}))),
       savedAnalysis.storyContext, savedAnalysis.mainMaleTrackId);
     state.analysis = { ...savedAnalysis, actions: ownership.playable,
       unownedSourceIntervals: mergeUnownedIntervals([...(savedAnalysis.unownedSourceIntervals || []),

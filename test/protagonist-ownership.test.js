@@ -165,3 +165,21 @@ test('a female partner acting on the protagonist stays his choice; another man d
   assert.deepEqual(playable.map(item => item.actionId), ['m']);
   assert.deepEqual(excluded.map(item => item.actionId), ['o', 'a']);
 });
+
+test('a partner-led action is shown from the protagonist side; in-position touches become movements', async () => {
+  const { protagonistPerspective, inPositionApproachAsMovement } = await import('../public/protagonist-ownership.js');
+  const context = { characters: [{ participantTrackId: 'MAIN_MALE', gender: 'male' }, { participantTrackId: 'PARTNER_A', gender: 'female' }] };
+  const massage = { subjectTrackId: 'PARTNER_A', partnerTrackId: 'PARTNER_A', involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A'] };
+  assert.deepEqual(protagonistPerspective(massage, context), { ...massage, actorTrackId: 'PARTNER_A',
+    subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A', primaryCharacterId: 'PARTNER_A' });
+  // Another man, or a woman acting without the protagonist, is left untouched.
+  const other = { subjectTrackId: 'OTHER_MALE', partnerTrackId: 'PARTNER_A', involvedCharacterIds: ['MAIN_MALE'] };
+  assert.equal(protagonistPerspective(other, context), other);
+  const alone = { subjectTrackId: 'PARTNER_A', partnerTrackId: 'PARTNER_B', involvedCharacterIds: ['PARTNER_B'] };
+  assert.equal(protagonistPerspective(alone, context), alone);
+  const caress = { choiceSurface: 'approach', adultScene: true, positionId: 'legs-up', actionType: 'touch' };
+  assert.equal(inPositionApproachAsMovement(caress).choiceSurface, 'panel');
+  const opening = { choiceSurface: 'approach', adultScene: true, positionId: '', actionType: 'touch' };
+  assert.equal(inPositionApproachAsMovement(opening), opening);
+  assert.equal(inPositionApproachAsMovement({ ...caress, positionId: 'oral' }).choiceSurface, 'approach');
+});

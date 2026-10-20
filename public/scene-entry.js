@@ -29,7 +29,7 @@ export function verifiedOpeningCast(action = {}, characters = []) {
     if (candidate && candidate !== subject && matches.length === 1) partner = candidate;
   }
   if (!subject || !partner || subject === partner) return '';
-  return JSON.stringify([subject, partner,
+  return JSON.stringify([...([subject, partner].includes('MAIN_MALE') ? [subject, partner].sort() : [subject, partner]),
     action.groupScene === true ? [...(action.participantTrackIds || [])].sort() : []]);
 }
 
@@ -47,8 +47,17 @@ export function matchSceneIntroductions(actions, anchors, eligible, maxGap = 45,
       const action = ordered[i];
       const range = timelineRange(action.startTime, action.endTime);
       const start = range?.startTime, end = range?.endTime;
-      const sameRoles = ['subjectTrackId', 'partnerTrackId'].every(field =>
-        !String(anchor[field] || '').trim() || String(action[field] || '').trim() === String(anchor[field]).trim());
+      // The same two people stay the same cast whoever is acting: a partner
+      // massaging the protagonist and him moving her are one encounter.
+      const pair = item => [String(item?.subjectTrackId || '').trim(), String(item?.partnerTrackId || '').trim()];
+      const [anchorSubject, anchorPartner] = pair(anchor), [actionSubject, actionPartner] = pair(action);
+      // Swapped roles count as the same cast only around the protagonist
+      // (a partner acting on MAIN_MALE); two other people stay role-exact.
+      const sameRoles = anchorSubject && anchorPartner && actionSubject && actionPartner &&
+        [anchorSubject, anchorPartner].includes('MAIN_MALE')
+        ? [anchorSubject, anchorPartner].sort().join('|') === [actionSubject, actionPartner].sort().join('|')
+        : ['subjectTrackId', 'partnerTrackId'].every(field =>
+          !String(anchor[field] || '').trim() || String(action[field] || '').trim() === String(anchor[field]).trim());
       const gap = nextStart - end;
       const verifiedBridge = gap > 0.25 && allowBridge(action, anchor, gap) === true;
       const reason = !eligible(action) ? 'INELIGIBLE_ACTION'

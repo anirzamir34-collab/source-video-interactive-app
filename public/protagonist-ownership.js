@@ -98,3 +98,37 @@ export function mergeUnownedIntervals(intervals = []) {
   }
   return merged;
 }
+
+// Gameplay is built around "protagonist + partner". When a female partner is
+// the one acting on the protagonist (massage, climbing on top, oral), the
+// model may name her as both subject and partner. Present the action from the
+// protagonist's side — subject MAIN_MALE, partner her — and keep who actually
+// moved in actorTrackId, so one encounter is never split by who acts.
+export function protagonistPerspective(action = {}, context = {}, mainTrack = 'MAIN_MALE') {
+  const subject = String(action.subjectTrackId || '').trim();
+  if (!subject || subject === mainTrack) return action;
+  if (/(?:^|[_-])(?:OTHER_MALE|MALE_OTHER|SECOND_MALE)(?:$|[_-])/i.test(subject)) return action;
+  const character = (Array.isArray(context.characters) ? context.characters : []).find(item =>
+    String(item.participantTrackId || item.id || '').trim() === subject);
+  const gender = String(character?.gender || '').toLowerCase();
+  const female = gender === 'female' || (!gender && /^PARTNER[_-]?[A-Z0-9]+$/i.test(subject));
+  if (!female) return action;
+  const ids = [action.partnerTrackId, action.primaryCharacterId, ...(action.involvedCharacterIds || []),
+    ...(action.participantTrackIds || [])].map(value => String(value || '').trim());
+  if (!ids.includes(mainTrack)) return action;
+  return { ...action, actorTrackId: subject, subjectTrackId: mainTrack,
+    partnerTrackId: subject, primaryCharacterId: subject };
+}
+
+// A touch or kiss the model files as "approach" while a penetrative position
+// is already running (it carries that position's id) is a movement of that
+// position, not an opening card. Oral/manual stay opening activities.
+const PENETRATIVE = new Set(['reverse-cowgirl', 'seated-facing', 'prone-bone', 'legs-up', 'missionary',
+  'cowgirl', 'spoon', 'reverse-spoon', 'standing-rear', 'rear', 'seated', 'standing']);
+export function inPositionApproachAsMovement(action = {}) {
+  if (action.choiceSurface !== 'approach' || action.adultScene !== true) return action;
+  const position = String(action.positionId || '').trim().toLowerCase();
+  if (!PENETRATIVE.has(position)) return action;
+  if (!['touch', 'kiss', 'tempo_change', 'other'].includes(String(action.actionType || '').toLowerCase())) return action;
+  return { ...action, choiceSurface: 'panel', originalChoiceSurface: 'approach', actionType: 'tempo_change' };
+}
