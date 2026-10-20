@@ -149,3 +149,19 @@ test('mixed-cast core with no verified main actor remains unplayable without man
   assert.equal(excluded.length, 1);
   assert.equal(skippableExcluded.length, 0);
 });
+
+test('a female partner acting on the protagonist stays his choice; another man does not', async () => {
+  const { partitionProtagonistActions } = await import('../public/protagonist-ownership.js');
+  const context = { characters: [
+    { id: 'MAIN_MALE', participantTrackId: 'MAIN_MALE', gender: 'male' },
+    { id: 'PARTNER_A', participantTrackId: 'PARTNER_A', gender: 'female' },
+    { id: 'OTHER_MALE', participantTrackId: 'OTHER_MALE', gender: 'male' }] };
+  const massage = { actionId: 'm', sourceVerified: true, subjectTrackId: 'PARTNER_A', partnerTrackId: 'MAIN_MALE',
+    involvedCharacterIds: ['PARTNER_A', 'MAIN_MALE'], actionType: 'touch', choiceSurface: 'approach', startTime: 0, endTime: 10 };
+  const other = { actionId: 'o', sourceVerified: true, subjectTrackId: 'OTHER_MALE', partnerTrackId: 'PARTNER_A',
+    involvedCharacterIds: ['OTHER_MALE', 'PARTNER_A'], actionType: 'position', startTime: 20, endTime: 30 };
+  const alone = { ...massage, actionId: 'a', partnerTrackId: '', involvedCharacterIds: ['PARTNER_A'], startTime: 40, endTime: 50 };
+  const { playable, excluded } = partitionProtagonistActions([massage, other, alone], context);
+  assert.deepEqual(playable.map(item => item.actionId), ['m']);
+  assert.deepEqual(excluded.map(item => item.actionId), ['o', 'a']);
+});
