@@ -94,6 +94,10 @@ otomatik kontrol eder.
   video boyunca aynı kişi kalır.
 - Bütün seçenekler baş karaktere göre kurulur. Başka bir erkeğin sahnesinde
   "Bölümü izle" / "Sahneyi geç" çıkar; izlerken de "Sahneyi geç" ekranda kalır.
+- Grup sahnesinde baş karakter kadınlar arasında geçiş yapsa da kesintisiz
+  devam eden karşılaşma tek sahnedir: yakınlaşma ve Lust bir kez, en başta
+  oynanır; Lust 100 olunca iki partnerin bütün pozisyonları açılır. İki ayrı
+  çift sahnesi (grup değil) ayrı kalır.
 - Baş karakter ile diğer erkek aynı sahnedeyse seçenekler yalnız baş karakterin
   kendi hareketlerinden oluşur.
 - Baş karakterin karısı olduğu doğrulanmışsa yakın sahne seçeneklerinde "karın"

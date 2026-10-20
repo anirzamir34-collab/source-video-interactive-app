@@ -3090,7 +3090,23 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
     const gap = Number(scene.startTime) - Number(previous.endTime);
     const previousCast = castFor(previous);
     const sceneCast = castFor(scene);
-    const castBarrier = Boolean(previousCast && sceneCast && previousCast !== sceneCast);
+    // In a group encounter the protagonist moves between partners without
+    // the encounter ending. Splitting at every partner change cut one session
+    // into several scenes, and every later piece opened with Lust already at
+    // 100 and no approach meter. The same protagonist continuing straight on
+    // (no scene break, small gap) keeps one scene; another man's scene, or a
+    // different protagonist, is still a barrier.
+    const subjectsOf = source => new Set([...(source.positions || []), ...(source.foreplay || []),
+      ...(source.partnerTransitions || [])].map(item => String(item.subjectTrackId || '').trim()).filter(Boolean));
+    const previousSubjects = subjectsOf(previous), sceneSubjects = subjectsOf(scene);
+    const isGroup = source => [...(source.positions || []), ...(source.foreplay || [])]
+      .some(item => item.groupScene === true);
+    // Only a verified group encounter on both sides may cross a partner change;
+    // two couple scenes back to back stay separate chapters.
+    const sameProtagonist = previousSubjects.size === 1 && sceneSubjects.size === 1 &&
+      [...previousSubjects][0] === [...sceneSubjects][0] && [...previousSubjects][0] === 'MAIN_MALE' &&
+      isGroup(previous) && isGroup(scene);
+    const castBarrier = Boolean(previousCast && sceneCast && previousCast !== sceneCast) && !sameProtagonist;
     const scenePair = source => {
       const rows = [...(source.positions || []), ...(source.foreplay || []), ...(source.partnerTransitions || [])];
       const row = rows.find(item => String(item.subjectTrackId || '').trim() && String(item.partnerTrackId || '').trim());
@@ -3120,7 +3136,7 @@ function mergeAdultSceneFragments(scenes, nonAdultActions = [], unownedIntervals
       const unattributedNarrative = ['dialogue', 'story'].includes(actionType) &&
         (!subject || !partner || !subjectTrackId || !partnerTrackId);
       const differentCast = Boolean(subject && partner && subjectTrackId && partnerTrackId &&
-        (subject !== subjectTrackId || partner !== partnerTrackId));
+        (subject !== subjectTrackId || (!sameProtagonist && partner !== partnerTrackId)));
       return action?.sourceVerified === true &&
         (explicitNarrativeBreak || unattributedNarrative || differentCast) &&
         Number.isFinite(start) && Number.isFinite(end) &&

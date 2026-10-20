@@ -133,3 +133,17 @@ test('verified ordinary choices before the playable scene opening remain in the 
   assert.equal(ctx.isUnownedTimelineChoice({ actionId: 'tl-001', sourceVerified: false,
     choiceSurface: 'story', startTime: 4.608, endTime: 21.5 }), false);
 });
+
+test('a continuous group encounter stays one scene when the protagonist changes partner', () => {
+  const pair = (partnerTrackId, startTime, endTime) => ({
+    subjectTrackId: 'MAIN_MALE', partnerTrackId, groupScene: true,
+    sourceVerified: true, startTime, endTime
+  });
+  const first = { ...chapter('a', 10, 20), positions: [pair('PARTNER_B', 10, 20)] };
+  const second = { ...chapter('b', 20, 30), positions: [pair('PARTNER_A', 20, 30)] };
+  const third = { ...chapter('c', 30, 40), positions: [pair('PARTNER_B', 30, 40)] };
+  assert.equal(context.mergeAdultSceneFragments([first, second, third]).length, 1);
+  // Another man's chapter is never merged into the protagonist's encounter.
+  const other = { ...chapter('d', 40, 50), positions: [{ ...pair('PARTNER_A', 40, 50), subjectTrackId: 'OTHER_MALE' }] };
+  assert.equal(context.mergeAdultSceneFragments([first, other]).length, 2);
+});
