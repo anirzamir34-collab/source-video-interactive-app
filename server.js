@@ -36,6 +36,7 @@ import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 import { installScoutRoute } from './lib/scout-route.js';
 import { buildAnalysisPrompt } from './lib/analysis-prompt.js';
 import { ensureProtagonistTrack } from './lib/protagonist-track.js';
+import { normalizeRewardMoments } from './public/reward-moments.js';
 import { createGeminiVideoFiles, isGeminiFileUri, absoluteClipTimes, geminiVideoMime } from './lib/gemini-video.js';
 import { buildLegacyAnalysisPrompt } from './lib/analysis-prompt-legacy.js';
 
@@ -952,6 +953,7 @@ ${reviewCandidates}
       videoPrompt: String(parsed.videoPrompt || ''),
       storyContext: parsed.storyContext && typeof parsed.storyContext === 'object' ? parsed.storyContext : {},
       actions: dedupedActions,
+      rewardMoments: normalizeRewardMoments(parsed.rewardMoments, { chunkStart, chunkEnd }),
       analysisGaps: Array.isArray(parsed.analysisGaps) ? parsed.analysisGaps : [],
       restrictedRanges: Array.isArray(parsed.restrictedRanges) ? parsed.restrictedRanges : [],
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],

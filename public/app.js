@@ -6,6 +6,7 @@ import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
 import { trimIntroOutro } from './intro-outro.js';
 import { prepareGeminiVideo } from './gemini-video-client.js';
 import { resolveCutRange, formatClock } from './time-range.js';
+import { normalizeRewardMoments, rewardsForScene, derivedHighlight, pickAdultReward, rewardTitle } from './reward-moments.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
@@ -2447,6 +2448,8 @@ els.analyzeBtn.addEventListener('click', async () => {
         ].filter(Boolean).join('\n\n'),
         storyContext: mergedStoryContext,
         actions: mergedActions,
+        rewardMoments: typeof normalizeRewardMoments === 'function' ? normalizeRewardMoments(completedResults.flatMap(result =>
+          Array.isArray(result.rewardMoments) ? result.rewardMoments : [])) : [],
         warnings: [...(session.audioContextStatus === 'unavailable'
           ? ['Konuşma analizi alınamadı; karakter bilgisi yalnızca görsel kanıta dayanıyor.'] : []), ...chunkResults.flatMap(result =>
           Array.isArray(result.warnings) ? result.warnings : []
@@ -2975,6 +2978,7 @@ function normalizeAnalysis(body) {
     analysisTier: body?.analysisTier === 'deep' ? 'deep' : body?.analysisTier === 'economy' ? 'economy' : null,
     deepAnalysisModel: body?.analysisTier === 'deep' ? String(body?.deepAnalysisModel || '') : null,
     analysisGaps: Array.isArray(body?.analysisGaps) ? body.analysisGaps : [],
+    rewardMoments: typeof normalizeRewardMoments === 'function' ? normalizeRewardMoments(body?.rewardMoments) : [],
     expectedChunkCount: Number(body?.expectedChunkCount || 0),
     analysisCoverage: Number(body?.analysisCoverage || 0),
     secondPassChunkCount: Number(body?.secondPassChunkCount || 0),
@@ -3067,6 +3071,7 @@ function initializeInteractive(analysis) {
   state.adultMaleOrgasmCount = 0;
   state.adultFemaleOrgasmCount = 0;
   state.adultOrgasmDecision = null;
+  if (typeof resetAdultRewards === 'function') resetAdultRewards();
   state.adultSexUnlocked = false;
   state.adultUnlockedPositionIds = new Set();
   state.adultVisitedPositionIds = new Set();
@@ -4605,12 +4610,148 @@ function addFemaleLust(amount) {
     state.interactionMeterNeedsReset = false;
     state.femaleSceneProgress = 0;
   }
+  const before = Math.max(0, Number(state.femaleSceneProgress) || 0);
   state.femaleSceneProgress = Math.min(
     ADULT_LUST_UNLOCK_THRESHOLD,
-    Math.max(0, Number(state.femaleSceneProgress) || 0) + Math.max(0, Number(amount) || 0)
+    before + Math.max(0, Number(amount) || 0)
   );
   if (state.femaleSceneProgress + 0.001 < ADULT_LUST_UNLOCK_THRESHOLD) return null;
-  return unlockNextAdultPositionFromLust();
+  const filled = before + 0.001 < ADULT_LUST_UNLOCK_THRESHOLD;
+  if (filled) state.adultLustFills = (Number(state.adultLustFills) || 0) + 1;
+  const unlocked = unlockNextAdultPositionFromLust();
+  if (filled && typeof offerAdultReward === 'function') {
+    offerAdultReward();
+    // A full Lust that opens nothing starts a new round, so later rounds can
+    // still count towards rewards.
+    const hasCore = (state.adultScene?.positions || []).some(position => !isWarmupPosition(position));
+    if (!unlocked && (state.adultSexUnlocked || !hasCore)) state.femaleSceneProgress = 0;
+  }
+  return unlocked;
+}
+
+// ---------- Reward scenes ----------
+function resetAdultRewards() {
+  state.adultLustFills = 0;
+  state.adultRewardOffered = new Set();
+  state.adultPlayedRewardIds = state.adultPlayedRewardIds instanceof Set ? state.adultPlayedRewardIds : new Set();
+  state.adultPendingReward = null;
+  state.adultRewardReturn = null;
+  state.activeAdultRewardId = null;
+  if (typeof hideRewardToast === 'function') hideRewardToast();
+}
+
+function adultSceneRewards(scene = state.adultScene) {
+  if (!scene || typeof rewardsForScene !== 'function') return [];
+  if (!Array.isArray(scene.rewards)) {
+    const own = rewardsForScene(state.analysis?.rewardMoments || [], scene);
+    const derived = own.some(item => item.rewardType === 'highlight') ? null
+      : derivedHighlight(scene, position => !isWarmupPosition(position) && !isBonusPosition(position));
+    scene.rewards = derived ? [...own, derived] : own;
+  }
+  return scene.rewards;
+}
+
+function offerAdultReward() {
+  if (state.adultPendingReward || state.adultOutcomePhase !== 'idle' || typeof pickAdultReward !== 'function') return null;
+  state.adultRewardOffered ??= new Set();
+  state.adultPlayedRewardIds ??= new Set();
+  const reward = pickAdultReward(adultSceneRewards(), {
+    lustFills: Number(state.adultLustFills) || 0,
+    played: state.adultPlayedRewardIds, offered: state.adultRewardOffered
+  });
+  if (!reward) return null;
+  state.adultRewardOffered.add(reward.id);
+  state.adultPendingReward = reward;
+  showRewardToast(reward);
+  logEngineEvent('REWARD_OFFERED', { id: reward.id, type: reward.rewardType, derived: reward.derived === true });
+  return reward;
+}
+
+function rewardToastElement() {
+  const stage = els.video?.closest?.('.video-stage');
+  if (!stage || !globalThis.document) return null;
+  let toast = stage.querySelector('.reward-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'reward-toast hidden';
+    toast.setAttribute('role', 'status');
+    toast.innerHTML = '<button type="button" class="reward-pill" data-reward-open>🎁 Ödül</button>' +
+      '<div class="reward-card"><small>🎁 ÖDÜL AÇILDI</small><strong data-reward-title></strong>' +
+      '<div class="reward-actions"><button type="button" data-reward-play>İzle</button>' +
+      '<button type="button" data-reward-later>Sonra</button></div></div>';
+    toast.querySelector('[data-reward-play]').addEventListener('click', () => playAdultReward(state.adultPendingReward));
+    toast.querySelector('[data-reward-later]').addEventListener('click', () => toast.classList.add('collapsed'));
+    toast.querySelector('[data-reward-open]').addEventListener('click', () => toast.classList.remove('collapsed'));
+    stage.appendChild(toast);
+  }
+  return toast;
+}
+
+function showRewardToast(reward) {
+  const toast = rewardToastElement();
+  if (!toast) return;
+  toast.querySelector('[data-reward-title]').textContent = rewardTitle(reward);
+  toast.classList.remove('hidden', 'collapsed', 'flash');
+  if (typeof feelLustProgress === 'function') feelLustProgress(100);
+}
+
+function hideRewardToast() {
+  const stage = els.video?.closest?.('.video-stage');
+  stage?.querySelector?.('.reward-toast')?.classList.add('hidden');
+}
+
+// A short, non-interactive banner, e.g. when his climax plays.
+function flashRewardBanner(title) {
+  const toast = rewardToastElement();
+  if (!toast || state.adultPendingReward) return;
+  toast.querySelector('[data-reward-title]').textContent = title;
+  toast.classList.remove('hidden', 'collapsed');
+  toast.classList.add('flash');
+  clearTimeout(state.rewardFlashTimer);
+  state.rewardFlashTimer = setTimeout(() => {
+    if (!state.adultPendingReward) toast.classList.add('hidden');
+    toast.classList.remove('flash');
+  }, 3200);
+}
+
+function playAdultReward(reward) {
+  if (!reward || state.adultOutcomePhase !== 'idle' || !els.video || !state.adultMode) return false;
+  state.adultRewardReturn = {
+    mediaTime: Number(els.video.currentTime) || 0,
+    positionId: state.activePositionId, movementId: state.activeMovementId,
+    occurrenceId: state.activeAdultOccurrenceId, preludeId: state.activeAdultPreludeId,
+    wasPlaying: !els.video.paused
+  };
+  const token = beginAdultSelection();
+  state.adultOutcomePhase = 'reward';
+  state.activeAdultRewardId = reward.id;
+  state.activeMovementId = null;
+  state.activeAdultPreludeId = null;
+  state.adultPendingReward = null;
+  hideRewardToast();
+  logEngineEvent('REWARD_PLAYED', { id: reward.id, type: reward.rewardType });
+  els.video.pause();
+  void seekAdultLoop(reward.startTime, token);
+  return true;
+}
+
+function finishAdultReward() {
+  const back = state.adultRewardReturn;
+  if (state.activeAdultRewardId) (state.adultPlayedRewardIds ??= new Set()).add(state.activeAdultRewardId);
+  state.adultOutcomePhase = 'idle';
+  state.activeAdultRewardId = null;
+  state.adultRewardReturn = null;
+  const token = beginAdultSelection();
+  els.video?.pause();
+  if (back && Number.isFinite(back.mediaTime)) {
+    state.activePositionId = back.positionId;
+    state.activeAdultOccurrenceId = back.occurrenceId;
+    state.activeMovementId = back.movementId;
+    state.activeAdultPreludeId = back.preludeId;
+    void seekAdultLoop(back.mediaTime, token, { resume: back.wasPlaying });
+  }
+  state.adultUiSignature = '';
+  renderAdultProgressiveUI(true);
 }
 
 function triggerAdultOrgasmDecision() {
@@ -4640,7 +4781,10 @@ function triggerAdultOrgasmDecision() {
   const outcome = outcomes.find(item => !state.adultPlayedOutcomeIds.has(item.id)) || outcomes[0];
   if (outcome) {
     state.adultOrgasmDecision.hasVerifiedOutcome = true;
-    if (playAdultOutcome(outcome.id, { orgasmTriggered: true })) return true;
+    if (playAdultOutcome(outcome.id, { orgasmTriggered: true })) {
+      if (typeof flashRewardBanner === 'function') flashRewardBanner(outcome.label || 'Final');
+      return true;
+    }
     state.adultOrgasmDecision.hasVerifiedOutcome = false;
   }
   return openAdultOrgasmDecision();
@@ -4853,6 +4997,7 @@ function resetAdultSceneGameplay() {
   state.adultMaleOrgasmCount = 0;
   state.adultFemaleOrgasmCount = 0;
   state.adultOrgasmDecision = null;
+  if (typeof resetAdultRewards === 'function') resetAdultRewards();
   state.adultSexUnlocked = false;
   state.adultUnlockedPositionIds = new Set();
   state.activeAdultOccurrenceId = null;
@@ -6573,6 +6718,13 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   if (els.video.paused) {
+    state.lastAdultFrameNow = now;
+    return;
+  }
+
+  if (state.adultOutcomePhase === 'reward') {
+    const reward = adultSceneRewards().find(item => item.id === state.activeAdultRewardId);
+    if (!reward || mediaTime >= reward.endTime - 0.04) finishAdultReward();
     state.lastAdultFrameNow = now;
     return;
   }

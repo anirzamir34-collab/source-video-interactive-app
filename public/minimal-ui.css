@@ -533,3 +533,33 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.ci
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .position-tab.locked-tab {
   opacity: .55 !important; filter: grayscale(1) !important; border-style: dashed !important; cursor: default !important;
 }
+
+/* Reward scene toast: drops in over the video, then can be kept as a pill. */
+.reward-toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 60; pointer-events: auto; }
+.reward-toast.hidden { display: none !important; }
+.reward-toast .reward-pill { display: none; }
+.reward-toast.collapsed .reward-card { display: none; }
+.reward-toast.collapsed .reward-pill {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid rgba(255, 196, 77, .7); background: rgba(30, 20, 4, .85); color: #ffd36b; font-weight: 850; font-size: 13px;
+  box-shadow: 0 0 18px rgba(255, 196, 77, .35); animation: vqRewardGlow 1.6s ease-in-out infinite;
+}
+.reward-toast .reward-card {
+  display: grid; gap: 6px; min-width: min(300px, 80vw); padding: 12px 16px; border-radius: 16px; text-align: center;
+  border: 1px solid rgba(255, 196, 77, .75); background: linear-gradient(160deg, rgba(48, 30, 4, .94), rgba(18, 10, 2, .94));
+  color: #fff3d6; box-shadow: 0 10px 40px rgba(0, 0, 0, .5), 0 0 28px rgba(255, 196, 77, .35);
+  animation: vqRewardDrop .45s cubic-bezier(.2, 1.4, .4, 1);
+}
+.reward-toast .reward-card small { color: #ffc44d; font-size: 11px; font-weight: 900; letter-spacing: .14em; }
+.reward-toast .reward-card strong { font-size: 16px; line-height: 1.25; }
+.reward-toast .reward-actions { display: flex; gap: 8px; justify-content: center; }
+.reward-toast.flash .reward-actions { display: none; }
+.reward-toast .reward-actions button { min-height: 38px; padding: 0 18px; border-radius: 999px; font-weight: 850; font-size: 13px; }
+.reward-toast [data-reward-play] { background: #ffc44d; color: #1a1205; border: 0; }
+.reward-toast [data-reward-later] { background: transparent; color: #ffe7b0; border: 1px solid rgba(255, 231, 176, .35); }
+@keyframes vqRewardDrop { from { opacity: 0; transform: translateY(-14px) scale(.92); } to { opacity: 1; transform: none; } }
+@keyframes vqRewardGlow { 50% { box-shadow: 0 0 30px rgba(255, 196, 77, .6); } }
+@media (prefers-reduced-motion: reduce) { .reward-toast .reward-card, .reward-toast.collapsed .reward-pill { animation: none; } }
+html body #playerSection .video-stage .reward-toast button[data-reward-play] { background: #ffc44d !important; color: #1a1205 !important; border: 0 !important; box-shadow: 0 0 16px rgba(255, 196, 77, .45) !important; }
+html body #playerSection .video-stage .reward-toast button[data-reward-later] { background: transparent !important; color: #ffe7b0 !important; border: 1px solid rgba(255, 231, 176, .35) !important; box-shadow: none !important; }
+html body #playerSection .video-stage .reward-toast button.reward-pill { background: rgba(30, 20, 4, .85) !important; color: #ffd36b !important; border: 1px solid rgba(255, 196, 77, .7) !important; }

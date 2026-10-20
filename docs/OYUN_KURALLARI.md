@@ -131,3 +131,20 @@ otomatik kontrol eder.
 - Video seçildikten sonra (dosya ya da bağlantı) "Videoyu kes" alanında başlangıç/bitiş (dk:sn) yazılır veya önizlemede "Şu an" ile alınır.
 - Kesme telefonda, yeniden kodlamadan yapılır (mediabunny, `trimVideo` — public/video-proxy.js); başlangıç en yakın anahtar kareye kadar birkaç saniye geriye kayabilir.
 - Kesilen dosya seçili videonun yerine geçer: kareler, ses, video modu, oynatma ve kayıtlı oyun bu kısa videoyu kullanır. "Videonun tamamına dön" orijinali geri getirir.
+
+## Hareket kartları, tempo düğmeleri ve sekanslar
+- Uzun pozisyonlar ve uzun yakınlaşma klipleri (öpüşme, okşama, oral) 10–20 saniyelik sekanslara bölünür; her dokunuş aynı kartın henüz izlenmemiş sıradaki sekansını oynatır.
+- Kart = erkeğin o anki gerçek hareketi ("Saçını tutarak devam et"). Kartın altındaki **Hızlan / Sertleş / Derine / Yavaşla** düğmeleri aynı hareketin videoda gerçekten hızlandığı/sertleştiği/derinleştiği/yavaşladığı parçaları oynatır; videoda o tempo yoksa düğme çıkmaz (public/movement-tempo.js).
+- Analiz talimatı uzun aksiyonlar için 10–20 sn'lik `verifiedSubsequences` ve her parçaya `movementChange` (faster/slower/harder/deeper/none) ister.
+
+## Pozisyon açılışı (Lust)
+- En fazla 3 pozisyon: ilk dolu Lust 1 pozisyon açar, sonra her dolu Lust bir tane daha.
+- 4–5 pozisyon: ilk açılışta 2; 6+: ilk açılışta 3; kalanlar her dolu Lust'ta birer birer.
+- Kilitli pozisyonlar gri ve kilitli sekme olarak görünür. Video doğal akışla kilitli bir pozisyonun görüntüsüne gelirse o pozisyon kendiliğinden açılır.
+
+## Ödül sahneleri
+- Analiz `rewardMoments` döndürür: `her_climax` (kadının görünür zirvesi) ve `highlight` (sahnenin en çarpıcı, final olmayan anı); hepsi gerçek ve doğrulanmış aralıklardır (public/reward-moments.js).
+- Kadının zirvesi: seks paneli açıldıktan sonra Lust bir kez daha dolunca "🎁 ÖDÜL AÇILDI" kartı çıkar.
+- Videoda kadın zirvesi yoksa: Lust 3 kez dolunca highlight ödülü çıkar. Eski analizlerde highlight, sahnenin en yoğun gerçek hareket klibinden seçilir.
+- Erkeğin göstergesi dolunca doğrulanmış final oynar ve "ÖDÜL" bandı görünür.
+- Ödül izlendikten sonra oyun kalınan yere döner. "Sonra" ödülü küçük bir 🎁 düğmesi olarak saklar.
