@@ -1,0 +1,27 @@
+/* Compact setup screen: fewer, smaller blocks before the video is chosen. */
+body .saved-games { padding: 12px 16px; margin: 12px 0; }
+body .saved-games-fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; min-height: 32px; }
+body .saved-games-fold > summary::-webkit-details-marker { display: none; }
+body .saved-games-fold .fold-chevron { color: #8ecab8; font-size: 18px; line-height: 1; transition: transform .2s; }
+body .saved-games-fold[open] .fold-chevron { transform: rotate(180deg); }
+body .saved-games-tools { display: flex; justify-content: flex-end; margin-top: 10px; }
+body .saved-games-current:has(button[data-game-save]:disabled) { display: none; }
+body .saved-games [data-games-status]:empty { display: none; }
+
+body .upload-card .upload-target { min-height: 0 !important; display: flex !important; flex-direction: row !important; align-items: center !important; gap: 12px !important; padding: 14px 16px !important; justify-content: flex-start !important; text-align: left !important; }
+body .upload-card .upload-target .upload-icon { font-size: 24px; }
+body .upload-card .upload-target strong { font-size: 16px; }
+body .upload-card .upload-target span { font-size: 11px; margin-left: auto; }
+body .upload-card .url-import { margin-top: 12px; }
+body .upload-card .url-row { display: flex !important; flex-direction: row !important; gap: 8px; align-items: stretch; }
+body .upload-card .url-row .url-input { flex: 1 1 auto; min-width: 0; width: auto; }
+body .upload-card .url-row .url-btn { flex: 0 0 auto; width: auto; min-width: 92px; margin: 0; }
+body .upload-card .url-status:empty { min-height: 0; padding-top: 0; }
+
+body .protagonist-lock { margin: 12px 0; padding: 12px; }
+body .analysis-modes { margin-top: 4px; padding-top: 12px; }
+body .analysis-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+body .analysis-chips .analysis-deep-toggle { flex: 1 1 140px; margin: 0; }
+body .provider-settings { margin: 0 0 10px; }
+body .analysis-modes .mode-switch { padding-top: 10px !important; padding-bottom: 10px !important; margin: 0 0 8px !important; }
+body .upload-card #analyzeBtn { margin-top: 12px; }

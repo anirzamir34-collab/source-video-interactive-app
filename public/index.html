@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/ui-refinement.css" />
   <link rel="stylesheet" href="/choice-surface.css" />
   <link rel="stylesheet" href="/minimal-ui.css" />
+  <link rel="stylesheet" href="/setup-compact.css" />
 </head>
 <body>
   <main class="shell">
@@ -36,12 +37,15 @@
     </section>
 
     <section id="savedGames" class="saved-games" aria-labelledby="savedGamesTitle">
-      <div class="saved-games-head">
+      <details class="saved-games-fold">
+      <summary class="saved-games-head">
         <h2 id="savedGamesTitle">Kayıtlı oyunlar <span data-games-count>0</span></h2>
+        <span class="fold-chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="saved-games-tools">
         <button type="button" data-games-import-button>Yedek yükle</button>
         <input type="file" data-games-import accept=".vqgame" hidden />
       </div>
-      <p>Kayıtlar bu tarayıcıda saklanır. Cihaz değiştirmeden önce yedek indirebilirsin.</p>
       <div class="saved-games-current">
         <input type="text" data-game-title aria-label="Kayıt adı" placeholder="Oyun adı (isteğe bağlı)" maxlength="120" />
         <button type="button" data-game-save disabled>Şimdi kaydet</button>
@@ -50,6 +54,7 @@
       <p data-games-status role="status" aria-live="polite"></p>
       <div data-games-list class="saved-games-list"></div>
       <p data-games-storage></p>
+      </details>
     </section>
 
     <section class="upload-card">
@@ -68,7 +73,6 @@
           <button id="resolveUrlBtn" class="url-btn" type="button">Videoyu bul</button>
         </div>
         <div id="urlStatus" class="url-status" role="status" aria-live="polite"></div>
-        <small class="url-download-note">Video önce cihazda hazırlanır; ardından analiz edilir.</small>
         <div id="browserDownloadHelp" class="browser-download-help hidden">
           <p>Tarayıcıda açılan videoyu veya kaynak sitenin indirme seçeneğini kullanarak dosyayı indir. Sonra “İndirdiğim videoyu seç” ile devam et.</p>
           <div class="browser-download-actions">
@@ -101,23 +105,19 @@
           placeholder="Örnek: Sakallı, siyah tişörtlü erkek"
           autocomplete="off"
         />
-        <small>Grup videolarında oynayacağın kişiyi tarif et. Boş bırakırsan sistem tek bir başkarakteri otomatik seçer; diğer kişilerin seçenekleri bu analizde oluşturulmayabilir.</small>
+        <small>Grup videolarında oynayacağın kişi. Boş bırakırsan otomatik seçilir.</small>
       </div>
       <section class="analysis-modes">
-        <div class="analysis-modes__head">
-          <div>
-            <strong>Videonu hazırla</strong>
-            <small>Oynamak istediğin özellikleri seç.</small>
-          </div>
+        <div class="analysis-chips">
           <label class="analysis-deep-toggle" for="deepAnalysisMode">
             <input id="deepAnalysisMode" type="checkbox" />
-            <span>Derin Analiz (güçlü Gemini)</span>
+            <span>Derin Analiz</span>
+          </label>
+          <label class="analysis-deep-toggle analysis-video-toggle" for="videoAnalysisMode">
+            <input id="videoAnalysisMode" type="checkbox" />
+            <span>Video ile analiz</span>
           </label>
         </div>
-        <label class="analysis-deep-toggle analysis-video-toggle" for="videoAnalysisMode">
-          <input id="videoAnalysisMode" type="checkbox" />
-          <span>Video ile analiz (deneysel)</span>
-        </label>
         <div id="deepModelPicker" class="analysis-deep-model hidden">
           <label for="deepAnalysisModel"><strong>Derin analiz modelini seç</strong></label>
           <select id="deepAnalysisModel" aria-label="Derin analiz için Gemini modeli">
