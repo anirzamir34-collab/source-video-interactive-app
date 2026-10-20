@@ -3,6 +3,7 @@ import { sourceOpeningTimeline } from './source-opening.js';
 import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
+import { trimIntroOutro } from './intro-outro.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
@@ -2861,6 +2862,24 @@ function normalizeAnalysis(body) {
 
 function initializeInteractive(analysis) {
   cancelTimelineNavigation();
+  // Opening logos/ads and closing/credit screens are not playable story:
+  // start after them and end the game before them.
+  if (Array.isArray(analysis?.actions) && analysis.actions.length) {
+    const trimmed = trimIntroOutro(analysis.actions, {
+      introEndTime: analysis.playStartTime ?? analysis.introEndTime,
+      duration: Number(analysis.videoDuration) || Number(els.video?.duration) || 0,
+      analysisGaps: analysis.analysisGaps
+    });
+    if (trimmed.actions.length) {
+      analysis.actions = trimmed.actions;
+      analysis.playStartTime = trimmed.playStartTime;
+      if (trimmed.removed.some(action => Number(action.startTime) >= trimmed.playEndTime - 0.05)) {
+        analysis.playEndTime = trimmed.playEndTime;
+      }
+      if (trimmed.removed.length) logEngineEvent('INTRO_OUTRO_TRIMMED', { start: trimmed.playStartTime,
+        end: analysis.playEndTime ?? null, removed: trimmed.removed.map(action => action.actionId) });
+    }
+  }
   const requestedStart = Number(
     analysis.playStartTime ??
     analysis.introEndTime ??
@@ -6769,8 +6788,12 @@ function renderChoices() {
     return;
   }
 
-  if (els.video?.ended) {
-    state.gameCursorTime = Number(els.video.duration) || Number(state.analysis?.videoDuration) || state.gameCursorTime;
+  const outroAt = Number(state.analysis?.playEndTime);
+  if (els.video?.ended || (Number.isFinite(outroAt) && outroAt > 0 &&
+      Math.max(state.gameCursorTime, Number(els.video?.currentTime) || 0) >= outroAt - 0.05)) {
+    els.video?.pause();
+    state.gameCursorTime = Number.isFinite(outroAt) && outroAt > 0 ? outroAt
+      : Number(els.video.duration) || Number(state.analysis?.videoDuration) || state.gameCursorTime;
     els.choices.classList.remove('hidden');
     els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
     setGameState('ENDED');
@@ -6842,7 +6865,9 @@ function renderChoices() {
   candidates = candidates.filter(isUnownedTimelineChoice);
 
   if (!candidates.length) {
-    const duration = Number(els.video.duration) || Number(state.analysis?.videoDuration);
+    const fullDuration = Number(els.video.duration) || Number(state.analysis?.videoDuration);
+    const outroStart = Number(state.analysis?.playEndTime);
+    const duration = Number.isFinite(outroStart) && outroStart > 0 ? Math.min(fullDuration || outroStart, outroStart) : fullDuration;
     const cursor = Math.max(state.gameCursorTime, Number(els.video.currentTime) || 0);
     if (hasRemainingVideo(cursor, duration)) {
       if (Number.isFinite(routeTime) && routeTime > cursor + .05) {
@@ -7267,6 +7292,20 @@ els.video.addEventListener('play', () => {
   }
 });
 els.video.addEventListener('timeupdate', renderDebugTick);
+els.video.addEventListener('timeupdate', () => {
+  const outroAt = Number(state.analysis?.playEndTime);
+  if (!Number.isFinite(outroAt) || outroAt <= 0 || state.adultMode || state.gameState === 'ENDED') return;
+  if ((Number(els.video.currentTime) || 0) < outroAt - 0.05) return;
+  if (state.activeAction && Number(state.activeAction.endTime) > outroAt + 0.05) return;
+  // The closing/credit screens are not part of the game.
+  els.video.pause();
+  if (state.stopListener) { els.video.removeEventListener('timeupdate', state.stopListener); state.stopListener = null; }
+  state.activeAction = null;
+  state.gameCursorTime = outroAt;
+  els.choices.classList.remove('hidden');
+  els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
+  setGameState('ENDED');
+});
 els.video.addEventListener('ended', handleSourceEnded);
 
 checkHealth();

@@ -55,6 +55,9 @@ otomatik kontrol eder.
 
 - Seçim beklenirken video durur ve seçenekler görünür kalır; hiçbir durumda
   seçeneksiz donuk ekran olmaz.
+- Oyun girişteki logo/reklam/başlık ekranlarını ve ilk olaydan önceki boş
+  görüntüyü atlayarak başlar; sondaki kapanış, jenerik ve fragman ekranlarından
+  önce "Video tamamlandı" ile biter. Bu ekranlar seçenek olarak gösterilmez.
 - Her analiz sıfırdan yapılır; eski analiz parçaları yeniden kullanılmaz.
 - Biten analiz otomatik olarak Kayıtlı oyunlar'a kaydedilir.
 
