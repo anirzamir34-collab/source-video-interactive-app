@@ -936,7 +936,7 @@ function updateAnalyzeAvailability() {
     ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
       .includes(String(state.geminiProviderStatus?.state || ''));
   els.analyzeBtn.disabled = busy || state.trimInProgress || geminiBlocked || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
-  renderTrimPanel(busy);
+  if (typeof renderTrimPanel === 'function') renderTrimPanel(busy);
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
