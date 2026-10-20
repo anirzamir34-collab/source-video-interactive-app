@@ -675,6 +675,14 @@ export function longPreludeSequences(prelude = {}) {
 
 export { movementCardsWithTempo } from './movement-tempo.js';
 
+// The first full Lust opens one position when the video has few (up to 3),
+// two when it has 4-5 and three when it has 6 or more; every later full Lust
+// opens one more.
+export function adultFirstUnlockCount(coreCount) {
+  const count = Math.max(0, Number(coreCount) || 0);
+  return count >= 6 ? 3 : count >= 4 ? 2 : 1;
+}
+
 export function expandVerifiedMovementVariants(
   movements,
   positionStart,

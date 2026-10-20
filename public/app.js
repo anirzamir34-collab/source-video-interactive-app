@@ -33,6 +33,7 @@ import {
   warmupLustScale,
   expandVerifiedMovementVariants,
   longPreludeSequences,
+  adultFirstUnlockCount,
   movementCardsWithTempo,
   sourceMotionProgressRate,
   verifiedActionSubsequences,
@@ -4548,13 +4549,18 @@ function unlockNextAdultPositionFromLust() {
     Number(item.startTime) < Number(following.startTime) && Number(item.endTime) > Number(next.endTime));
   // A long, continuous verified source can reveal one additional neighboring
   // position on a later gate. Never batch the first gate or cross story/cast.
-  const extra = !firstUnlock && coreCount >= 5 && adjacent && !interveningStory &&
+  const extra = false && !firstUnlock && coreCount >= 5 && adjacent && !interveningStory &&
     (following.movements || []).some(clip => clip.sourceVerified === true &&
       positionOccurrenceForMovement(following, clip)) ? following : null;
-  // Lust 100 opens the whole sex panel at once: every verified position of
-  // the scene gets its tab. Unlocking one position per Lust refill left the
-  // video playing (e.g.) reverse cowgirl footage under a doggy-style tab.
-  const all = firstUnlock ? eligible.filter(position => !isBonusPosition(position)) : [];
+  // How many positions the first full Lust opens: a video with few positions
+  // opens them one Lust at a time; a video with many opens 2-3 at once and
+  // the rest one per Lust. Natural playback reaching a still-locked
+  // position's footage opens that position by itself (source boundary), so a
+  // tab never mismatches the footage.
+  const firstBatch = adultFirstUnlockCount(coreCount);
+  const all = firstUnlock
+    ? eligible.filter(position => !isBonusPosition(position)).slice(0, firstBatch)
+    : [];
   for (const position of all) {
     state.adultUnlockedPositionIds.add(position.id);
     state.adultRevealedPositionIds.add(position.id);
@@ -5500,6 +5506,29 @@ function selectAdultCategory(categoryId, shouldSeek = true) {
       button.dataset.positionId = next.id;
       selectAdultPosition(next.id, true);
     });
+    els.positionTabs?.appendChild(button);
+  });
+  // Still-locked positions of this scene stay visible, grey, so the player
+  // sees what the next full Lust will open.
+  const shownFamilies = new Set(families.map(item => item.key));
+  const lockedFamilies = [];
+  for (const position of (scene?.positions || [])
+    .filter(item => item.sourceVerified === true && !isWarmupPosition(item) && !isBonusPosition(item))
+    .filter(item => !state.adultUnlockedPositionIds.has(item.id))
+    .filter(item => !showPartners || item.subjectTrackId === state.activeAdultPartnerTrackId)
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime))) {
+    const key = String(position.familyId || position.id);
+    if (shownFamilies.has(key) || lockedFamilies.some(item => item.key === key)) continue;
+    lockedFamilies.push({ key, position });
+  }
+  lockedFamilies.forEach(({ position }, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'position-tab locked-tab';
+    button.disabled = true;
+    button.dataset.lockedPositionId = position.id;
+    button.title = index === 0 ? 'Lust dolunca açılır' : 'Kilitli';
+    button.innerHTML = `<span aria-hidden="true">🔒</span> ${escapeHtml(String(position.label || '').trim())}`;
     els.positionTabs?.appendChild(button);
   });
 

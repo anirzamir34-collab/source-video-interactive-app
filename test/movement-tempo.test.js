@@ -40,3 +40,8 @@ test('the same movement in another position or occurrence stays a separate card'
   assert.equal(mergeSameMovementCards(cards).length, 2);
   assert.deepEqual(attachTempoOptions({ variants: [] }).tempoOptions, []);
 });
+
+test('first full Lust opens 1 position for short videos, 2-3 for videos with many', async () => {
+  const { adultFirstUnlockCount } = await import('../public/adult-gameplay.js');
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 9].map(adultFirstUnlockCount), [1, 1, 1, 2, 2, 3, 3]);
+});

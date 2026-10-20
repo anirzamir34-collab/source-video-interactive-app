@@ -727,8 +727,13 @@ test('first unlock reveals a clickable chapter; only explicit selection plays it
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.paused, false);
   assert.ok(f.state.adultUnlockedPositionIds.has('one'));
-  assert.ok(f.state.adultScene.positions.filter(item => item.progressionRole !== 'foreplay')
-    .every(item => f.state.adultUnlockedPositionIds.has(item.id)), 'Lust 100 opens every verified position tab');
+  // Three positions: the first full Lust opens only the first; the others
+  // stay as grey locked tabs until later full Lusts.
+  assert.deepEqual(f.state.adultScene.positions.filter(item => item.progressionRole !== 'foreplay')
+    .filter(item => f.state.adultUnlockedPositionIds.has(item.id)).map(item => item.id), ['one']);
+  f.renderAdultProgressiveUI(true);
+  assert.ok(f.els.positionTabs.querySelectorAll('.position-tab').some(button =>
+    button.dataset.lockedPositionId === 'two' && button.disabled), 'a locked position is shown, grey and disabled');
   assert.equal(f.els.adultInteractionPanel.classes.has('hidden'), false);
   assert.ok(f.state.femaleSceneProgress < 35);
   const token = f.state.adultSelectionToken;
@@ -835,7 +840,7 @@ test('entry during a disjoint return binds that occurrence and a parent gap neve
   }
 });
 
-test('after the first gate every chapter is open and later Lust never moves the source clock', async () => {
+test('each later full Lust opens the next chapter and never moves the source clock', async () => {
   const f = runtimeFixture();
   await startFirstChapter(f);
   f.state.femaleSceneProgress = 0;
@@ -843,7 +848,7 @@ test('after the first gate every chapter is open and later Lust never moves the 
   const plays = f.els.video.playCalls;
   f.addFemaleLust(35);
   f.renderAdultProgressiveUI(true);
-  assert.deepEqual([...f.state.adultUnlockedPositionIds].sort(), ['one', 'three', 'two']);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds].sort(), ['one', 'two']);
   assert.equal(f.state.activePositionId, 'one');
   assert.equal(f.els.video.currentTime, 20);
   assert.equal(f.els.video.playCalls, plays);
@@ -852,7 +857,7 @@ test('after the first gate every chapter is open and later Lust never moves the 
   assert.equal(tab.disabled, false, 'an unlocked destination is clickable outside passive lookahead');
 });
 
-test('a later gate may reveal two adjacent verified chapters in a long source while retaining earlier tabs', () => {
+test('a later gate opens exactly one more chapter in a long source while retaining earlier tabs', () => {
   const f = runtimeFixture();
   f.state.adultScene.positions = [0, 30, 60, 90, 120, 150]
     .map((start, index) => chapter(`chapter-${index}`, start));
@@ -864,15 +869,12 @@ test('a later gate may reveal two adjacent verified chapters in a long source wh
   f.state.adultSexUnlocked = true;
   f.state.adultVisitedPositionIds.add('chapter-0');
   f.addFemaleLust(35);
-  assert.deepEqual([...f.state.adultUnlockedPositionIds],
-    ['chapter-0', 'chapter-1', 'chapter-2']);
-  assert.deepEqual([...f.state.adultRevealedPositionIds],
-    ['chapter-0', 'chapter-1', 'chapter-2']);
+  assert.deepEqual([...f.state.adultUnlockedPositionIds], ['chapter-0', 'chapter-1']);
   f.renderAdultProgressiveUI(true);
   const tabs = f.els.positionTabs.querySelectorAll('.position-tab');
   assert.ok(tabs.find(tab => tab.dataset.positionId === 'chapter-0' && !tab.disabled));
-  assert.ok(tabs.find(tab => tab.dataset.positionId === 'chapter-2' && !tab.disabled));
-  assert.equal(f.state.adultUnlockedPositionIds.has('chapter-3'), false);
+  assert.ok(tabs.find(tab => tab.dataset.positionId === 'chapter-1' && !tab.disabled));
+  assert.equal(f.state.adultUnlockedPositionIds.has('chapter-2'), false);
 });
 
 test('a long source does not batch across a narrative gap or different participant', () => {
