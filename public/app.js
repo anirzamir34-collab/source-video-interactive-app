@@ -4,6 +4,7 @@ import { mountAnalysisReview } from './analysis-gap-view.js';
 import { mergeUnownedIntervals, partitionProtagonistActions } from './protagonist-ownership.js';
 import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
 import { trimIntroOutro } from './intro-outro.js';
+import { prepareGeminiVideo } from './gemini-video-client.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
@@ -304,6 +305,7 @@ const els = {
   voiceMappingMessage: $('voiceMappingMessage'),
   voiceMappingApplyBtn: $('voiceMappingApplyBtn'),
   geminiApiKeyInput: $('geminiApiKeyInput'),
+  videoAnalysisMode: $('videoAnalysisMode'),
   saveGeminiApiKeyBtn: $('saveGeminiApiKeyBtn'),
   testGeminiApiKeyBtn: $('testGeminiApiKeyBtn'),
   clearGeminiApiKeyBtn: $('clearGeminiApiKeyBtn'),
@@ -895,7 +897,8 @@ function selectedAnalysisModes() {
     dubbingProvider: els.dubbingProvider?.value === 'elevenlabs_v1' ? 'elevenlabs_v1' : 'classic',
     quality: 'ultra',
     analysisTier: els.deepAnalysisMode?.checked ? 'deep' : 'economy',
-    deepAnalysisModel: els.deepAnalysisModel?.value || 'gemini-3.8-flash'
+    deepAnalysisModel: els.deepAnalysisModel?.value || 'gemini-3.8-flash',
+    videoAnalysis: Boolean(els.videoAnalysisMode?.checked)
   };
 }
 
@@ -1709,6 +1712,26 @@ els.analyzeBtn.addEventListener('click', async () => {
     : null;
   // Attach a handler immediately; await below still surfaces the frame error.
   fastStoryboardPreparation?.catch(() => {});
+  // Experimental video-input analysis runs beside the frame preparation. Any
+  // failure falls back to the normal image analysis; it never stops the run.
+  const geminiVideoPreparation = modes.motion && modes.videoAnalysis && file
+    ? prepareGeminiVideo(file, { signal: analysisOwner.signal, headers: geminiRequestHeaders(),
+      onProgress: progress => {
+        const text = { proxy: 'Video ile analiz: küçük analiz kopyası hazırlanıyor.',
+          upload: 'Video ile analiz: kopya gönderiliyor.', google: 'Video ile analiz: Google videoyu işliyor.' }[progress.phase];
+        analysisProgress.update('source', { status: 'working', detail: text,
+          ...(progress.phase === 'upload' ? { loaded: progress.loaded, total: progress.total, unit: 'bytes' }
+            : progress.phase === 'proxy' ? { loaded: Math.round((progress.loaded || 0) * 100), total: 100, unit: 'percent' } : {}) });
+      } })
+      .then(value => { analysisProgress.done('source', 'Video ile analiz hazır.'); logEngineEvent('GEMINI_VIDEO_READY', { bytes: value.proxyBytes }); return value; })
+      .catch(error => {
+        if (analysisOwner.signal.aborted) throw error;
+        logEngineEvent('GEMINI_VIDEO_FALLBACK', { code: String(error?.code || ''), message: String(error?.message || error).slice(0, 200) });
+        analysisProgress.update('source', { status: 'done', detail: 'Video ile analiz kullanılamadı; resimli analiz yapılıyor.' });
+        return null;
+      })
+    : null;
+  geminiVideoPreparation?.catch(() => {});
   session.audioContextStatus = 'pending';
   const mediaModeKey = mediaModeKeyFromOptions({
     outputs: { dub: modes.dubbing, subtitles: modes.subtitles, dubbingProvider: modes.dubbingProvider },
@@ -1893,6 +1916,9 @@ els.analyzeBtn.addEventListener('click', async () => {
     analysisModeKey = modeForPlan(analysisPlan,
       analysisPlan.scout ? 'chunk-protagonist-context-9-scout'
         : analysisPlan.adaptive ? 'chunk-protagonist-context-8-adaptive-dialogue' : 'chunk-protagonist-context-7');
+    // Kept on the session so the per-chapter request builder can read it.
+    session.geminiVideo = geminiVideoPreparation ? await geminiVideoPreparation : null;
+    if (session.geminiVideo) analysisModeKey += '-video-input';
     const chunkCount = analysisPlan.chunkCount;
 
     if (session.analysisModeKey !== analysisModeKey || session.chunkCount !== chunkCount) {
@@ -1978,7 +2004,12 @@ els.analyzeBtn.addEventListener('click', async () => {
 
       const form = new FormData();
 
-      chunkSheets.forEach((blob, index) => {
+      const videoInput = session.geminiVideo || null;
+      if (videoInput) {
+        form.append('videoFileUri', videoInput.fileUri);
+        form.append('videoMimeType', videoInput.mimeType);
+      }
+      if (!videoInput) chunkSheets.forEach((blob, index) => {
         form.append(
           'storyboards',
           blob,

@@ -110,6 +110,11 @@ otomatik kontrol eder.
 
 - 25 dk ve üstü videolarda önce ucuz bir ön tarama, sonra yalnız yakınlaşma
   ve seks bölümlerinde ayrıntılı analiz.
+- "Video ile analiz (deneysel)" seçilirse telefon videonun küçük bir analiz
+  kopyasını çıkarır (480 px, saniyede 4 kare, sesli; H.264 yoksa WebM), sunucu
+  onu Google'a verir ve Gemini her bölümün videosunu sesiyle izler (saniyede 2
+  kare, düşük çözünürlük). Herhangi bir adım başarısız olursa analiz otomatik
+  olarak resimli yöntemle devam eder.
 - Google bir bölümü bütün modellerde içerik nedeniyle reddedebilir; bu
   durumda o aralık analizsiz oynatılır, uygulama bunu aşamaz.
 - Analiz edilemeyen bölüm istenen modelle yeniden denenebilir; aynı model aynı

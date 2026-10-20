@@ -20,6 +20,7 @@ import { geminiGenerationConfig } from '../lib/gemini-generation-config.js';
 import { hasFamilyOrSpouseContext } from '../public/relationship-roles.js';
 import { analysisModelCandidates, analysisTierFromRequest } from '../lib/analysis-model-routing.js';
 import { buildAnalysisPrompt } from '../lib/analysis-prompt.js';
+import { isGeminiFileUri, absoluteClipTimes, geminiVideoMime } from '../lib/gemini-video.js';
 import { buildLegacyAnalysisPrompt } from '../lib/analysis-prompt-legacy.js';
 
 for (const response of [
@@ -145,7 +146,7 @@ test('the live server handler reports refused chapters without retrying or split
       resolveGeminiApiKey: () => 'test-only', emptyGeminiUsage: () => ({ requests: 0 }),
       addGeminiUsage: usage => { usage.requests += 1; },
       storyboardFailureReason, generateStoryboardWithRetry, isTerminalStoryboardFailure, serializeReviewCandidates,
-      geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction', buildAnalysisPrompt, buildLegacyAnalysisPrompt, ANALYSIS_PROMPT_STYLE: 'compact',
+      geminiAnalysisSafetySettings: [], GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'test visual instruction', buildAnalysisPrompt, buildLegacyAnalysisPrompt, ANALYSIS_PROMPT_STYLE: 'compact', isGeminiFileUri, absoluteClipTimes, geminiVideoMime, GEMINI_VIDEO_FPS: 2,
       geminiQuotaFailure, storyboardRequestKey, geminiGenerationConfig, hasFamilyOrSpouseContext,
       analysisModelCandidates, analysisTierFromRequest, storyboardRequestCache: createAnalysisRequestCache(),
       GEMINI_DEFAULT_MODEL: 'gemini-test-model', ANALYSIS_MODEL: 'gemini-3.1-pro-preview',
@@ -231,7 +232,7 @@ test('empty saved-game repairs fail HTTP 422 and are not cached as successful an
     hasFamilyOrSpouseContext, analysisModelCandidates, analysisTierFromRequest,
     isGeminiModelName: value => /^gemini-/.test(value),
     storyboardRequestCache: createAnalysisRequestCache(),
-    GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'normal analysis instructions', buildAnalysisPrompt, buildLegacyAnalysisPrompt, ANALYSIS_PROMPT_STYLE: 'compact',
+    GEMINI_VISUAL_SYSTEM_INSTRUCTION: 'normal analysis instructions', buildAnalysisPrompt, buildLegacyAnalysisPrompt, ANALYSIS_PROMPT_STYLE: 'compact', isGeminiFileUri, absoluteClipTimes, geminiVideoMime, GEMINI_VIDEO_FPS: 2,
     GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION,
     GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, verifiedNeutralRepairActions, inspectNeutralRepairActions,
     ANALYSIS_MODEL: 'gemini-3.8-flash', process: { env: {} },

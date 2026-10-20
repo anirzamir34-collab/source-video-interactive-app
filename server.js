@@ -35,6 +35,7 @@ import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 import { installScoutRoute } from './lib/scout-route.js';
 import { buildAnalysisPrompt } from './lib/analysis-prompt.js';
+import { createGeminiVideoFiles, isGeminiFileUri, absoluteClipTimes, geminiVideoMime } from './lib/gemini-video.js';
 import { buildLegacyAnalysisPrompt } from './lib/analysis-prompt-legacy.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -61,6 +62,7 @@ const ANALYSIS_SCHEMA_VERSION = 6;
 const ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-3.8-flash';
 const ANALYSIS_ENGINE_VERSION = 'gemini-storyboard-story-v1';
 // The compact prompt is the default; ANALYSIS_PROMPT=legacy restores the old one.
+const GEMINI_VIDEO_FPS = Math.min(4, Math.max(0.5, Number(process.env.GEMINI_VIDEO_FPS) || 2));
 const ANALYSIS_PROMPT_STYLE = String(process.env.ANALYSIS_PROMPT || '').trim().toLowerCase() === 'legacy' ? 'legacy' : 'compact';
 const storyboardRequestCache = createAnalysisRequestCache();
 // Cache identity tracks analysis behavior, not unrelated media routes or deployments.
@@ -341,7 +343,10 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
     }
 
     const files = Array.isArray(req.files) ? req.files : [];
-    if (!files.length) {
+    // Experimental: analyze the uploaded video itself instead of contact sheets.
+    const videoFileUri = String(req.body?.repairMode || '') !== '1' && isGeminiFileUri(req.body?.videoFileUri)
+      ? String(req.body.videoFileUri) : '';
+    if (!files.length && !videoFileUri) {
       return res.status(400).json({
         available: false,
         reason: 'STORYBOARD_REQUIRED',
@@ -424,7 +429,7 @@ ${reviewCandidates}
         duration, chunkIndex, chunkCount, chunkStart, chunkEnd, timestamps, motionProfile,
         sceneBoundaries, reviewInstructions, conditionalRelationshipInstructions, qualityMode,
         dialogueContext, dialogueSpeakerContext, sensoryAudioContext, storyContextMemory,
-        protagonistProfile, protagonistHint
+        protagonistProfile, protagonistHint, sourceKind: videoFileUri ? 'video' : 'frames'
       });
 
     const ai = new GoogleGenAI({ apiKey });
@@ -446,7 +451,12 @@ ${reviewCandidates}
     });
     let repairTelemetry = null;
     const generateStoryboardJson = async (requestPrompt, requestFiles, retryLabel = 'full') => {
-      const parts = [
+      const parts = videoFileUri ? [
+        // Video first, then the instructions (Google's recommended order).
+        { fileData: { fileUri: videoFileUri, mimeType: geminiVideoMime(req.body?.videoMimeType) },
+          videoMetadata: { startOffset: `${chunkStart}s`, endOffset: `${chunkEnd}s`, fps: GEMINI_VIDEO_FPS } },
+        { text: requestPrompt }
+      ] : [
         { text: requestPrompt },
         ...requestFiles.map((file) => ({
           inlineData: {
@@ -461,13 +471,15 @@ ${reviewCandidates}
         const model = candidates[modelIndex];
         const generationConfig = {
           ...geminiGenerationConfig(model),
+          // Video frames at low resolution: ~66 tokens per frame instead of 258.
+          ...(videoFileUri ? { mediaResolution: 'MEDIA_RESOLUTION_LOW' } : {}),
           safetySettings: geminiAnalysisSafetySettings,
           systemInstruction: savedGameRepair ? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION
         };
         // A new analysis run must reach Gemini again; identical requests are
         // shared only within the same run (retries, concurrent duplicates).
         const runId = String(req.body?.analysisRunId || '').slice(0, 80);
-        const key = storyboardRequestKey({ apiKey, model, prompt: `${runId}\n${savedGameRepair ? `${GAP_REPAIR_VALIDATOR_VERSION}\n${requestPrompt}` : requestPrompt}`, files: requestFiles, generationConfig });
+        const key = storyboardRequestKey({ apiKey, model, prompt: `${runId}\n${savedGameRepair ? `${GAP_REPAIR_VALIDATOR_VERSION}\n${requestPrompt}` : requestPrompt}${videoFileUri ? `\nvideo:${videoFileUri}` : ''}`, files: requestFiles, generationConfig });
         const requestUsage = emptyGeminiUsage();
         const startedAt = Date.now();
         let attempts = 0;
@@ -738,6 +750,7 @@ ${reviewCandidates}
     // Shared telemetry for both initial video analysis and saved-game repair.
     // Counts only: no labels, frames, participant names or raw model output.
     const normalizerRejected = { invalidStructure: 0, lowConfidence: 0, duplicates: 0 };
+    if (videoFileUri && Array.isArray(parsed?.actions)) parsed.actions = absoluteClipTimes(parsed.actions, chunkStart, chunkEnd);
     const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
       .map((action, index) => ({
         ...action,
@@ -1395,6 +1408,26 @@ installTurkishMediaRoutes(app, { uploads: mediaUploads, jobs: mediaJobs,
   rawParser: express.raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_CHUNK_BYTES }),
   secrets: [mediaConfig.elevenLabs.apiKey, mediaConfig.translation.apiKey],
 });
+const geminiVideoFiles = createGeminiVideoFiles({ GoogleGenAI, uploads: mediaUploads });
+app.post('/api/gemini-video/prepare', async (req, res) => {
+  const controller = new AbortController();
+  const abort = () => { if (!res.writableEnded) controller.abort(); };
+  res.once('close', abort);
+  try {
+    const value = await geminiVideoFiles.prepare({ apiKey: resolveGeminiApiKey(req),
+      uploadId: req.body?.uploadId, mimeType: req.body?.mimeType, signal: controller.signal });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ available: true, ...value });
+  } catch (error) {
+    if (res.destroyed) return;
+    const status = Number(error?.status) >= 400 && Number(error?.status) < 600 ? Number(error.status) : 502;
+    console.warn('[gemini-video-prepare]', JSON.stringify({ code: String(error?.code || '').slice(0, 64),
+      status, fileState: error?.fileState || null }));
+    res.status(status).json({ available: false, reason: String(error?.code || 'GEMINI_VIDEO_UNAVAILABLE'),
+      message: error?.message && status < 500 ? error.message : 'Video Google\'a hazırlanamadı; resimli analiz kullanılacak.' });
+  } finally { res.removeListener('close', abort); }
+});
+
 let mediaCleanupRunning = false;
 setInterval(async () => {
   if (mediaCleanupRunning) return;
