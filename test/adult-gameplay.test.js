@@ -401,7 +401,9 @@ test('one long verified interval plays as consecutive sequences of the same acti
   const variants = expandVerifiedMovementVariants([
     { id: 'doggy-long', label: 'Doggy-style ritmi', loopStartTime: 120, loopEndTime: 300, sourceVerified: true }
   ], 120, 300);
-  assert.ok(variants.length >= 3 && variants.length <= 8);
+  assert.ok(variants.length >= 9 && variants.length <= 18);
+  assert.ok(variants.every(item => item.loopEndTime - item.loopStartTime >= 10 && item.loopEndTime - item.loopStartTime <= 20),
+    'every sequence lasts 10-20 seconds');
   assert.ok(variants.every(item => item.label === 'Doggy-style ritmi' && item.sequenceOf === 'doggy-long'));
   assert.equal(variants[0].loopStartTime, 120);
   assert.equal(variants.at(-1).loopEndTime, 300);

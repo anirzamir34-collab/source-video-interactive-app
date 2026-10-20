@@ -623,7 +623,7 @@ export function verifiedActionSubsequences(action = {}, minSeconds = 5) {
   const source = clipRange(action);
   const parts = action.verifiedSubsequences;
   if (action.sourceVerified !== true || !source || !Array.isArray(parts) || parts.length < 2 ||
-      parts.length > 12) return [];
+      parts.length > 40) return [];
   const ordered = [...parts].sort((a, b) => Number(a.startTime) - Number(b.startTime));
   if (!ordered.every((part, index) => part.sourceVerified === true &&
       Number.isFinite(Number(part.startTime)) && Number.isFinite(Number(part.endTime)) &&
@@ -641,14 +641,16 @@ export function verifiedActionSubsequences(action = {}, minSeconds = 5) {
 // action. Play it as consecutive source sequences of the same card, so each
 // tap continues with the next part of that action instead of one long clip.
 // Nothing is relabelled or invented: every sequence keeps the action's label.
-const LONG_ACTION_SECONDS = 16;
-const SEQUENCE_TARGET_SECONDS = 9;
+// Sequences are 10-20 s: long enough to feel like a real moment, short
+// enough that every tap shows something new.
+const LONG_ACTION_SECONDS = 20;
+const SEQUENCE_TARGET_SECONDS = 14;
 export function longActionSequences(item = {}) {
   const range = clipRange(item);
   if (!range) return [item];
   const duration = range.endTime - range.startTime;
   if (duration <= LONG_ACTION_SECONDS) return [item];
-  const count = Math.min(8, Math.max(2, Math.round(duration / SEQUENCE_TARGET_SECONDS)));
+  const count = Math.min(24, Math.max(2, Math.round(duration / SEQUENCE_TARGET_SECONDS)));
   const step = duration / count;
   return Array.from({ length: count }, (_, index) => {
     const startTime = Number((range.startTime + step * index).toFixed(3));
@@ -663,6 +665,15 @@ export function longActionSequences(item = {}) {
       verifiedSubsequences: undefined };
   });
 }
+
+// A long kiss, caress or oral opening plays as consecutive 10-20 s
+// sequences of the same card, like long sex positions do.
+export function longPreludeSequences(prelude = {}) {
+  return longActionSequences({ ...prelude, loopStartTime: undefined, loopEndTime: undefined })
+    .map(item => item.id === prelude.id ? prelude : { ...item, loopStartTime: undefined, loopEndTime: undefined });
+}
+
+export { movementCardsWithTempo } from './movement-tempo.js';
 
 export function expandVerifiedMovementVariants(
   movements,
@@ -706,13 +717,14 @@ export function expandVerifiedMovementVariants(
   return source.flatMap(item => {
     const parts = verifiedActionSubsequences(item, minimum);
     if (!parts.length) return longActionSequences(item);
-    return parts.map((part, index) => ({ ...item,
+    return parts.flatMap((part, index) => longActionSequences({ ...item,
       id: `${item.id}:source-${index + 1}`,
       sourceActionId: item.sourceActionId || item.id,
       loopStartTime: Number(part.startTime), loopEndTime: Number(part.endTime),
       startTime: Number(part.startTime), endTime: Number(part.endTime),
       movementTempo: part.movementTempo || item.movementTempo,
       movementType: part.movementType || item.movementType,
+      movementChange: part.movementChange || 'none',
       femaleProgressRate: sourceMotionProgressRate({ ...item, ...part }, part.femaleProgressRate),
       maleProgressRate: sourceMotionProgressRate({ ...item, ...part }, part.maleProgressRate),
       verifiedSubsequences: undefined

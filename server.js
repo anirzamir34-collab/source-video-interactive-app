@@ -826,6 +826,8 @@ ${reviewCandidates}
             startTime: Number(part.startTime), endTime: Number(part.endTime), sourceVerified: true,
             movementTempo: String(part.movementTempo || action.movementTempo || 'unclear'),
             movementType: String(part.movementType || action.movementType || ''),
+            movementChange: ['faster', 'slower', 'harder', 'deeper'].includes(String(part.movementChange || '').toLowerCase())
+              ? String(part.movementChange).toLowerCase() : 'none',
             maleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.maleProgressRate),
             femaleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.femaleProgressRate)
           })),

@@ -15,6 +15,8 @@ import { assignVerifiedOpeningRoles } from '../public/verified-scene-continuity.
 import { positionOccurrenceGroups, movementsForPositionOccurrence } from '../public/adult-gameplay.js';
 import { canonicalizeActionTrackIds } from '../public/character-identity.js';
 
+const sourceIds = rows => [...new Set(Array.from(rows, item => String(item.id).replace(/:seq-\d+$/, '')))];
+
 test('verified action time repairs zeroed position and loop metadata', () => {
   const repaired = gameplay.normalizeSourceActionTimes({ startTime: 332.653, endTime: 345.5,
     positionStartTime: 0, positionEndTime: 0, loopStartTime: 0, loopEndTime: 0 });
@@ -207,7 +209,8 @@ test('distant verified intimacy remains a separate progressing panel with explic
   ] });
   assert.equal(state.adultScenes.length, 2);
   const [opening, positionScene] = state.adultScenes;
-  assert.deepEqual(Array.from(opening.foreplay, item => item.id),
+  // Long approach clips play as 10-20 s sequences of the same source action.
+  assert.deepEqual(sourceIds(opening.foreplay),
     ['approach-1', 'approach-2', 'approach-3']);
   assert.deepEqual(Array.from(opening.dialogue, item => item.id), ['story-interlude'],
     'ordinary story metadata stays separate from approach choices');
@@ -308,7 +311,7 @@ test('a verified introduction with a different scene ID opens the panel before i
   const state = prepare([...warmup, core]);
   assert.equal(state.adultScenes.length, 1);
   assert.equal(state.adultScenes[0].startTime, 217.5);
-  assert.deepEqual(Array.from(state.adultScenes[0].foreplay, item => item.id),
+  assert.deepEqual(sourceIds(state.adultScenes[0].foreplay),
     ['approach', 'continue', 'transition']);
 });
 
@@ -356,7 +359,7 @@ test('the reported long opening joins the verified core without losing source mo
   const [scene] = state.adultScenes;
   assert.equal(scene.startTime, 78.5,
     'the first verified approach, not the preceding dialogue, opens this chapter');
-  assert.deepEqual(Array.from(scene.foreplay, item => item.id), ['contact', 'kiss', 'approach', 'last-contact']);
+  assert.deepEqual(sourceIds(scene.foreplay), ['contact', 'kiss', 'approach', 'last-contact']);
   assert.deepEqual(Array.from(scene.dialogue, item => item.id), ['talk', 'line', 'posture']);
   assert.deepEqual(scene.positions.map(position => position.familyId), ['rear', 'spoon']);
   assert.equal(scene.positions.reduce((total, position) => total + position.movements.length, 0) >= 4, true);
@@ -705,7 +708,7 @@ test('reported 27–110 second opening and following verified panel build one pl
     positions: item.positions.map(row => [row.id, row.subjectTrackId, row.partnerTrackId, row.participantTrackIds])
   }))));
   assert.equal(state.adultScenes[0].startTime, 27.611);
-  assert.ok(state.adultScenes[0].foreplay.some(item => item.id === 'tl-002'));
+  assert.ok(sourceIds(state.adultScenes[0].foreplay).includes('tl-002'));
   assert.ok(state.adultScenes[0].positions.some(item => item.familyId === 'cowgirl'));
 });
 

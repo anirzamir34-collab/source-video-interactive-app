@@ -32,6 +32,8 @@ import {
   computeWarmupSelectionDelta,
   warmupLustScale,
   expandVerifiedMovementVariants,
+  longPreludeSequences,
+  movementCardsWithTempo,
   sourceMotionProgressRate,
   verifiedActionSubsequences,
   exclusiveControlClipIds,
@@ -3683,9 +3685,10 @@ function prepareAdultScenes() {
             startTime: Number(part.startTime), endTime: Number(part.endTime),
             movementTempo: part.movementTempo || action.movementTempo,
             movementType: part.movementType || action.movementType,
+            movementChange: part.movementChange || 'none',
             maleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.maleProgressRate),
             femaleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.femaleProgressRate)
-          })) : [prelude]));
+          })) : sourceDialogue ? [prelude] : longPreludeSequences(prelude)));
       }
       if (traceRow.route === 'NOT_ROUTED') {
         traceRow.route = 'REJECTED';
@@ -5944,9 +5947,9 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   // contextual control is an alternate way to advance among them, not a
   // reason to hide them from the panel.
   const movementPool = verifiedMovements;
-  const movementChoices = bundleAdjacentSourceCards(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
-    buildVerifiedMovementChoices(movementPool, position.label, 4, position), 4
-  )), { targetCount: 4 });
+  const movementChoices = movementCardsWithTempo(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
+    buildVerifiedMovementChoices(movementPool, position.label, 6, position), 6
+  )), { maxCards: 6, bundle: bundleAdjacentSourceCards });
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
@@ -5970,10 +5973,10 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
     const energyBadge = choice.energyLabel
       ? `<small class="movement-energy-badge" data-energy="${escapeHtml(choice.energyFlavor)}">${escapeHtml(choice.energyLabel)}</small>`
       : '';
-    const variantStatus = choice.variants.length > 1
-      ? `<small class="movement-variant-status" data-variant-status>${choice.variants.length} hareket · dönüşümlü oynatılır</small>`
-      : '<small class="movement-variant-status" data-variant-status>1 gerçek hareket</small>';
-    const tempoSummary = choice.hasTempoShift && choice.tempoVariants?.length
+    const variantStatus = choice.baseVariants.length > 1
+      ? `<small class="movement-variant-status" data-variant-status>${choice.baseVariants.length} sekans · her dokunuş yenisi</small>`
+      : '';
+    const tempoSummary = !choice.tempoOptions.length && choice.hasTempoShift && choice.tempoVariants?.length
       ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
       : '';
     button.innerHTML = `${energyBadge}<span data-choice-label>${escapeHtml(
@@ -5983,13 +5986,35 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
         : null;
-      const movement = pickNextVariant(choice.variants, currentId, state.adultMovementPlayCounts);
+      const movement = pickNextVariant(choice.baseVariants, currentId, state.adultMovementPlayCounts);
       if (!movement) return;
       state.activeMovementChoiceId = choice.id;
       // Actual media readiness, not a click, drives the visible playing state.
       selectAdultMovement(movement.id, true);
     });
     wrapper.appendChild(button);
+    if (choice.tempoOptions.length) {
+      const row = document.createElement('div');
+      row.className = 'tempo-chips';
+      for (const option of choice.tempoOptions) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'tempo-chip';
+        chip.dataset.flavor = option.flavor;
+        chip.dataset.tempoVariantIds = option.variants.map(item => item.id).join(',');
+        chip.textContent = option.label;
+        chip.addEventListener('click', event => {
+          event.stopPropagation();
+          if (state.adultLoopSeeking && option.variants.some(item => item.id === state.activeMovementId)) return;
+          const movement = pickNextVariant(option.variants, state.activeMovementId, state.adultMovementPlayCounts);
+          if (!movement) return;
+          state.activeMovementChoiceId = choice.id;
+          selectAdultMovement(movement.id, true);
+        });
+        row.appendChild(chip);
+      }
+      wrapper.appendChild(row);
+    }
     if (choice.label.length > 65 || choice.label.includes(' · ') || choice.variants.length > 1) {
       const detail = document.createElement('details');
       detail.className = 'choice-detail';
@@ -5997,7 +6022,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       detail.innerHTML = `<summary>Açıklama</summary><p>${descriptions.map(escapeHtml).join('<br>')}</p>`;
       wrapper.appendChild(detail);
     }
-    if (choice.hasTempoShift && choice.tempoVariants?.length > 1) {
+    if (!choice.tempoOptions.length && choice.hasTempoShift && choice.tempoVariants?.length > 1) {
       const tempoButton = document.createElement('button');
       tempoButton.type = 'button';
       tempoButton.className = 'movement-tempo-btn';
@@ -6124,8 +6149,8 @@ function selectAdultMovement(
   );
   if (matchingChoice) state.activeMovementChoiceId = matchingChoice.id;
   state.lastAdultMediaTime = null;
-  els.movementChoices?.querySelectorAll('.movement-choice-card').forEach(button => {
-    const variants = String(button.dataset.variantIds || '').split(',');
+  els.movementChoices?.querySelectorAll('.movement-choice-card, .tempo-chip').forEach(button => {
+    const variants = String(button.dataset.variantIds || button.dataset.tempoVariantIds || '').split(',');
     button.classList.toggle('active', variants.includes(movement.id));
   });
 

@@ -497,3 +497,36 @@ html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui :i
   html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui::after { animation: none !important; }
 }
 html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui #adultDockLustValue { display: inline-block; }
+
+/* Tempo buttons under a movement card: same movement, the part where the
+   video really speeds up, gets harder, deeper or slower. */
+.tempo-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 2px 2px; }
+.tempo-chip {
+  min-height: 34px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid rgba(255, 92, 122, .45); background: rgba(255, 92, 122, .10);
+  color: #ffd2db; font-size: 12px; font-weight: 800; letter-spacing: .02em;
+}
+.tempo-chip[data-flavor="slow"] { border-color: rgba(120, 190, 255, .45); background: rgba(120, 190, 255, .10); color: #d6ecff; }
+.tempo-chip.active { background: #ff5c7a; border-color: #ff5c7a; color: #1a0508; }
+.tempo-chip[data-flavor="slow"].active { background: #78beff; border-color: #78beff; color: #04121f; }
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .movement-choice-wrap:has(> .tempo-chips) {
+  display: flex !important; flex-direction: column !important; align-items: flex-start !important; gap: 6px !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .tempo-chips {
+  display: flex !important; flex-wrap: wrap !important; gap: 6px !important; margin: 0 0 2px 4px !important; padding: 0 !important;
+  background: transparent !important; border: 0 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .tempo-chip {
+  min-height: 32px !important; padding: 0 12px !important; border-radius: 999px !important;
+  border: 1px solid rgba(255, 92, 122, .55) !important; background: rgba(255, 92, 122, .16) !important;
+  color: #ffe1e7 !important; font-size: 12px !important; font-weight: 800 !important; box-shadow: none !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .tempo-chip[data-flavor="slow"] {
+  border-color: rgba(120, 190, 255, .55) !important; background: rgba(120, 190, 255, .16) !important; color: #e0f0ff !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .tempo-chip.active {
+  background: #ff5c7a !important; border-color: #ff5c7a !important; color: #1a0508 !important;
+}
+html body #playerSection#playerSection .video-stage.scene-player.cinematic-ui.cinematic-ui.cinematic-ui #adultInteractionPanel .tempo-chip[data-flavor="slow"].active {
+  background: #78beff !important; border-color: #78beff !important; color: #04121f !important;
+}
