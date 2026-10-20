@@ -28,3 +28,17 @@ test('no male actor means no guess', () => {
   const parsed = { actions: [act('woman-a', 'woman-b', 0, 10)], storyContext: { characters: [{ id: 'woman-a', gender: 'female' }] } };
   assert.equal(ensureProtagonistTrack(parsed).inferred, null);
 });
+
+test('track ids and gender words never become names or label text', async () => {
+  const { verifiedCharacterName, stripTrackTokens, bindActionCharacter } = await import('../public/character-identity.js');
+  const fact = displayName => ({ displayName, evidenceLevel: 'fact', confidence: 1, evidence: 'görüldü' });
+  for (const name of ['FEMALE_1', 'MALE_2', 'OTHER_MALE', 'PARTNER_B', 'female', 'participant-001']) assert.equal(verifiedCharacterName(fact(name)), '');
+  assert.equal(verifiedCharacterName(fact('Ayşe')), 'Ayşe');
+  assert.equal(stripTrackTokens("PARTNER_A'nın oral seks yapmasına izin ver"), 'Oral seks yapmasına izin ver');
+  const context = { characters: [{ id: 'FEMALE_1', participantTrackId: 'FEMALE_1', displayName: 'FEMALE_1', gender: 'female', evidenceLevel: 'fact', confidence: 1, evidence: 'x' },
+    { id: 'MAIN_MALE', participantTrackId: 'MAIN_MALE', displayName: 'MAIN_MALE', gender: 'male', evidenceLevel: 'fact', confidence: 1, evidence: 'x' }] };
+  const bound = bindActionCharacter({ label: "FEMALE_1'in üstüne çıkmasına izin ver", subjectTrackId: 'MAIN_MALE', partnerTrackId: 'FEMALE_1',
+    involvedCharacterIds: ['MAIN_MALE', 'FEMALE_1'], actionType: 'position', adultScene: true }, context);
+  assert.equal(bound.partnerLabel, 'Kadın 1');
+  assert.equal(bound.label, 'Üstüne çıkmasına izin ver');
+});

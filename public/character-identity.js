@@ -6,8 +6,31 @@ const nameKey = value => text(value).toLocaleLowerCase('tr-TR');
 const vaguePossessive = /\p{L}+(?:['’]|\s)?(?:n?[ıiuü]n)\s+(?:kadın|erkek|adam|partner)[\p{L}]*/iu;
 const roleWords = /(?:^|[^\p{L}])(?:kadın|kadını|erkek|adam|kişi|karakter|partner|sevgili|sevgilisi|anne|baba|kız|kızı|oğul|oğlu|kardeş|üvey|abla|ağabey|amca|dayı|hala|teyze|eş|eşi|karısı|kocası|woman|man|mother|father|daughter|son|wife|husband|girlfriend|boyfriend|unknown)(?:$|[^\p{L}])/iu;
 
+// Model-made routing keys ("FEMALE_1", "PARTNER_A", "participant-002") and
+// bare gender words are never a character's name.
+const TRACK_TOKEN = /(?<![\p{L}\p{N}_])(?:MAIN_MALE|OTHER_(?:FE)?MALE(?:_\d+)?|PARTNER_[A-Z0-9]{1,3}|(?:FE)?MALE_\d{1,2}|(?:WO)?MAN_\d{1,2}|PARTICIPANT[-_]\d{1,3})(?![\p{L}\p{N}_])/u;
+export function isTrackIdName(name, character = {}) {
+  const value = text(name);
+  if (!value) return false;
+  if ([character.id, character.participantTrackId].map(text).includes(value)) return true;
+  return /^[A-Z][A-Z0-9]*(?:[_-][A-Z0-9]+)+$/.test(value) || /^(?:fe)?male$|^(?:wo)?man$|^participant[-_ ]?\d+$/i.test(value);
+}
+
+// Removes leaked routing keys from player-facing wording:
+// "PARTNER_A'nın oral seks yapmasına izin ver" -> "Oral seks yapmasına izin ver".
+export function stripTrackTokens(value) {
+  const source = String(value ?? '');
+  const token = new RegExp(TRACK_TOKEN.source, 'gu');
+  if (!token.test(source)) return source;
+  const out = source
+    .replace(new RegExp(`${TRACK_TOKEN.source}(?:['’]\\p{L}+)?(?:\\s+(?:ile|ve|için))?\\s*`, 'gu'), '')
+    .replace(/\s{2,}/g, ' ').replace(/^[\s,;:–-]+|[\s,;:–-]+$/g, '').trim();
+  return out ? out.slice(0, 1).toLocaleUpperCase('tr-TR') + out.slice(1) : '';
+}
+
 export function verifiedCharacterName(character) {
   const name = text(character?.displayName);
+  if (isTrackIdName(name, character || {})) return '';
   const confidence = Number(character?.confidence);
   if (!name || character.identityConflict || character.evidenceLevel !== 'fact' ||
       !Number.isFinite(confidence) || confidence < 0.68 || !text(character.evidence) ||
@@ -187,6 +210,10 @@ function verifiedRelationship(context, subject, target) {
 function participantLabel(character) {
   const id = text(character.participantTrackId || character.id);
   if (id === 'MAIN_MALE') return 'Ana karakter';
+  const numbered = id.match(/^(FE)?MALE_(\d{1,2})$/i);
+  if (numbered) return `${numbered[1] ? 'Kadın' : 'Adam'} ${numbered[2]}`;
+  if (/^OTHER_FEMALE/i.test(id)) return 'Diğer kadın';
+  if (/^OTHER_MALE/i.test(id)) return 'Diğer adam';
   return `Karakter ${id.replace(/^(?:PARTNER|CHARACTER|CHAR|PERSON)[_-]?/i, '') || '?'}`;
 }
 
@@ -238,8 +265,8 @@ export function bindActionCharacter(action, context = {}) {
   };
   // Rebinding another pair must start from the source wording, not a role or
   // proper name inserted for the previously selected pair.
-  result.label = result.characterSourceLabel;
-  result.narrativeChoiceLabel = result.characterSourceNarrativeLabel;
+  result.label = stripTrackTokens(result.characterSourceLabel) || result.characterSourceLabel;
+  result.narrativeChoiceLabel = stripTrackTokens(result.characterSourceNarrativeLabel) || result.characterSourceNarrativeLabel;
   // Derived labels must be rebuilt when a scene changes, never carried over.
   result.relationshipDisplayLabel = '';
   result.relationshipContext = '';
