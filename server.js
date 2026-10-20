@@ -831,6 +831,9 @@ ${reviewCandidates}
             movementType: String(part.movementType || action.movementType || ''),
             movementChange: ['faster', 'slower', 'harder', 'deeper'].includes(String(part.movementChange || '').toLowerCase())
               ? String(part.movementChange).toLowerCase() : 'none',
+            label: String(part.label || '').trim().slice(0, 90),
+            audioIntensity: ['low', 'moderate', 'high'].includes(String(part.audioIntensity || '').toLowerCase())
+              ? String(part.audioIntensity).toLowerCase() : 'unclear',
             maleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.maleProgressRate),
             femaleProgressRate: sourceMotionProgressRate({ ...action, ...part }, part.femaleProgressRate)
           })),

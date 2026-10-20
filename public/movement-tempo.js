@@ -33,6 +33,9 @@ export function movementFlavor(movement = {}) {
   if (/\b(sert\w*|hard|guclu)\b/u.test(words)) return 'hard';
   if (tempo === 'fast' || /\b(hizli|hizlan\w*|fast)\b|\btempo\w*\s+(artir\w*|yukselt\w*)/u.test(words)) return 'fast';
   if (tempo === 'slow' || /\b(yavas\w*|slow)\b|\btempo\w*\s+(dusur\w*|azalt\w*)/u.test(words)) return 'slow';
+  // Measured on the real footage (intensity-engine.js) when the analysis
+  // called every part "moderate".
+  if (['fast', 'slow'].includes(movement.measuredFlavor)) return movement.measuredFlavor;
   return 'steady';
 }
 

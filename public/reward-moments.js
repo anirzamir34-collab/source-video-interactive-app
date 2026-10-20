@@ -51,7 +51,7 @@ export function rewardsForScene(rewards = [], scene = {}) {
 
 // For analyses without marked rewards: the scene's most intense real core
 // movement, preferring the later part of the scene, is the highlight.
-export function derivedHighlight(scene = {}, isCore = () => true) {
+export function derivedHighlight(scene = {}, isCore = () => true, track = null) {
   const start = Number(scene?.startTime), end = Number(scene?.endTime);
   const span = Math.max(1, end - start);
   const candidates = (scene?.positions || []).filter(isCore).flatMap(position => position.movements || [])
@@ -62,7 +62,9 @@ export function derivedHighlight(scene = {}, isCore = () => true) {
         (String(item.movementTempo) === 'fast' ? 0.6 : 0) +
         (['harder', 'deeper', 'faster'].includes(String(item.movementChange)) ? 0.4 : 0);
       const lateness = (Number(item.loopStartTime) - start) / span;
-      return { item, score: intensity + lateness * 0.5 };
+      // Measured motion and moans of the real footage weigh most.
+      const measured = track?.mean ? Number(track.mean(item.loopStartTime, item.loopEndTime)) || 0 : 0;
+      return { item, score: intensity + lateness * 0.5 + measured * 2.5 };
     })
     .sort((a, b) => b.score - a.score);
   const best = candidates[0]?.item;

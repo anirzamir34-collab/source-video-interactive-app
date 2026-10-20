@@ -482,6 +482,14 @@ export function movementBelongsToVerifiedPosition(action = {}, canonicalId = '')
       Number(action.positionConfigurationConfidence || 0) >= 0.78 &&
       String(action.positionEvidence || '').trim() &&
       adultPositionFamily(action.positionId) === canonicalId;
+    // "Kucağında" (on his lap) is how a facing cowgirl often reads; the
+    // prompt itself defines cowgirl as astride on his lap. A declared,
+    // evidenced cowgirl stays cowgirl when the label only says "lap".
+    const lapWording = ((canonicalId === 'cowgirl' && family === 'seated-facing') ||
+      (canonicalId === 'reverse-cowgirl' && family === 'seated')) &&
+      /\bkucag\w*|\blap\b|astride/.test(text) &&
+      ['straddling', 'seated', 'unclear', ''].includes(String(action.receiverSupport || '').toLowerCase());
+    if (lapWording && (verifiedParent || evidencedDeclaredParent)) return true;
     return Boolean(broadDirectionOnly && (verifiedParent || evidencedDeclaredParent) &&
       ['spoon', 'standing-rear', 'prone-bone'].includes(canonicalId));
   }
@@ -733,6 +741,9 @@ export function expandVerifiedMovementVariants(
       movementTempo: part.movementTempo || item.movementTempo,
       movementType: part.movementType || item.movementType,
       movementChange: part.movementChange || 'none',
+      // A part with its own visible detail carries its own wording.
+      ...(String(part.label || '').trim() ? { label: String(part.label).trim() } : {}),
+      ...(['low', 'moderate', 'high'].includes(part.audioIntensity) ? { audioIntensity: part.audioIntensity } : {}),
       femaleProgressRate: sourceMotionProgressRate({ ...item, ...part }, part.femaleProgressRate),
       maleProgressRate: sourceMotionProgressRate({ ...item, ...part }, part.maleProgressRate),
       verifiedSubsequences: undefined

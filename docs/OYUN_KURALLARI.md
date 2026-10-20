@@ -148,3 +148,12 @@ otomatik kontrol eder.
 - Videoda kadın zirvesi yoksa: Lust 3 kez dolunca highlight ödülü çıkar. Eski analizlerde highlight, sahnenin en yoğun gerçek hareket klibinden seçilir.
 - Erkeğin göstergesi dolunca doğrulanmış final oynar ve "ÖDÜL" bandı görünür.
 - Ödül izlendikten sonra oyun kalınan yere döner. "Sonra" ödülü küçük bir 🎁 düğmesi olarak saklar.
+
+## Ölçülen yoğunluk (hareket + nefes/inilti)
+- public/intensity-engine.js videonun her saniyesi için gerçek yoğunluğu hesaplar: storyboard'un kareler arası hareket ölçümü (motionProfile) + ElevenLabs dökümündeki inilti/nefes/soluma olayları ve yalnızca ses olan kısa satırlar ("ahh", "mmm").
+- Analiz bir pozisyonun bütün parçalarına "orta tempo" dediyse, aynı pozisyonda gerçekten daha hızlı/yavaş hareket eden parçalar ölçümle **Hızlan / Yavaşla** düğmesi alır. Analizin açık hızlı/yavaş kararı önceliklidir.
+- Lust ve erkek göstergesi gerçek yoğunluğa göre 0.7×–1.5× hızla dolar.
+- Titreşim sakin kalır: yalnızca en yoğun anlarda (hızlı hareket + inilti/nefes) en fazla 1.6 sn'de bir kısa kalp atışı. İnilti duyulurken Lust rozeti hafifçe "nefes alır".
+- "En ateşli an" ödülü ölçülen en yoğun gerçek parçadan seçilir.
+- Analiz talimatı her 10–20 sn parçaya kendi görünür detay etiketini (saçını tutarak, kalçasını kavrayarak, bacağını omzuna alarak...) ve ses yoğunluğunu ister; genel "devam et" ancak detay yoksa kullanılır.
+- "Kucağında" ifadesi, kanıtlı bir kovboy pozisyonunu artık "oturarak" pozisyonuyla çakışma saymaz (sahnenin sonu ve zirve kaybolmuyordu).

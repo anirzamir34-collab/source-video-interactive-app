@@ -7,6 +7,7 @@ import { trimIntroOutro } from './intro-outro.js';
 import { prepareGeminiVideo } from './gemini-video-client.js';
 import { resolveCutRange, formatClock } from './time-range.js';
 import { normalizeRewardMoments, rewardsForScene, derivedHighlight, pickAdultReward, rewardTitle } from './reward-moments.js';
+import { buildIntensityTrack, measuredMovementFlavors, intensityRate } from './intensity-engine.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
@@ -4688,12 +4689,44 @@ function resetAdultRewards() {
   if (typeof hideRewardToast === 'function') hideRewardToast();
 }
 
+// ---------- Measured intensity (motion + breath/moan audio) ----------
+function adultIntensityTrack() {
+  if (typeof buildIntensityTrack !== 'function') return null;
+  const analysis = state.analysis;
+  const transcript = state.sourceTranscript;
+  const key = [analysis?.motionProfile?.length || 0, transcript?.audioEvents?.length || 0,
+    transcript?.utterances?.length || 0, analysis?.videoDuration || 0].join('|');
+  if (state.intensityTrack?.key === key && state.intensityTrack.analysis === analysis) return state.intensityTrack.track;
+  const track = buildIntensityTrack({ motionProfile: analysis?.motionProfile || [],
+    audioEvents: transcript?.audioEvents || [], utterances: transcript?.utterances || [],
+    duration: Number(analysis?.videoDuration) || Number(els.video?.duration) || 0 });
+  state.intensityTrack = { key, analysis, track };
+  return track;
+}
+
+function annotateMeasuredFlavors(position) {
+  const track = adultIntensityTrack();
+  if (!track || !position?.movements?.length || position.measuredFlavorsReady) return;
+  const flavors = measuredMovementFlavors(position.movements, track);
+  for (const movement of position.movements) {
+    const flavor = flavors.get(movement.id);
+    if (flavor) movement.measuredFlavor = flavor;
+  }
+  position.measuredFlavorsReady = true;
+}
+
+function intensityNow() {
+  const track = adultIntensityTrack();
+  return track ? track.at(Number(els.video?.currentTime) || 0) : null;
+}
+
 function adultSceneRewards(scene = state.adultScene) {
   if (!scene || typeof rewardsForScene !== 'function') return [];
   if (!Array.isArray(scene.rewards)) {
     const own = rewardsForScene(state.analysis?.rewardMoments || [], scene);
     const derived = own.some(item => item.rewardType === 'highlight') ? null
-      : derivedHighlight(scene, position => !isWarmupPosition(position) && !isBonusPosition(position));
+      : derivedHighlight(scene, position => !isWarmupPosition(position) && !isBonusPosition(position),
+        typeof adultIntensityTrack === 'function' ? adultIntensityTrack() : null);
     scene.rewards = derived ? [...own, derived] : own;
   }
   return scene.rewards;
@@ -6169,6 +6202,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   // contextual control is an alternate way to advance among them, not a
   // reason to hide them from the panel.
   const movementPool = verifiedMovements;
+  if (typeof annotateMeasuredFlavors === 'function') annotateMeasuredFlavors(position);
   const movementChoices = movementCardsWithTempo(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
     buildVerifiedMovementChoices(movementPool, position.label, 6, position), 6
   )), { maxCards: 6, bundle: bundleAdjacentSourceCards });
@@ -6904,8 +6938,14 @@ function updateAdultPlayback(now, mediaTime) {
   }
 
   const warmupMovement = isWarmupPosition(position);
+  // The real footage sets the pace: its measured motion and breath/moan
+  // sounds speed Lust and his pleasure up or down, and the hottest moments
+  // answer with a quiet pulse.
+  const sensed = typeof intensityNow === 'function' ? intensityNow() : null;
+  const sensedRate = sensed && typeof intensityRate === 'function' ? intensityRate(sensed) : 1;
+  if (sensed && typeof feelIntensity === 'function') feelIntensity(sensed, now);
   const progress = adultPlaybackProgressDelta({
-    elapsed,
+    elapsed: elapsed * sensedRate,
     maleRate: movement.maleProgressRate || 1,
     femaleRate: movement.femaleProgressRate || 1,
     warmup: warmupMovement
@@ -6997,6 +7037,18 @@ function feelLustProgress(lust) {
     feelStage.classList.remove('vq-unlock'); void feelStage.offsetWidth; feelStage.classList.add('vq-unlock');
     setTimeout(() => feelStage.classList.remove('vq-unlock'), 1400);
   }
+}
+
+// Quiet by default: only the hottest measured moments of the real video (fast
+// motion with moans or breaths) answer with a short heartbeat, at most every
+// 1.6 s. Calm footage never vibrates.
+function feelIntensity(sample, now = performance.now()) {
+  const stage = els.video?.closest?.('.video-stage');
+  const hot = Number(sample?.value) >= 0.78 && (Number(sample?.voice) >= 0.5 || Number(sample?.motion) >= 0.9);
+  stage?.classList.toggle('vq-breathing', Number(sample?.voice) >= 0.5);
+  if (!hot || now - (state.lastIntensityPulseAt || 0) < 1600) return;
+  state.lastIntensityPulseAt = now;
+  tactile.pulse('heartbeat');
 }
 
 function feelSexControl(movement) {
