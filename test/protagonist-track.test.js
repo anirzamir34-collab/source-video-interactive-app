@@ -60,3 +60,11 @@ test('a couple sex action with an empty subject belongs to the protagonist', asy
   assert.equal(protagonistPerspective({ ...action, groupScene: true }, {}).subjectTrackId, '', 'a group never guesses');
   assert.equal(protagonistPerspective({ ...action, involvedCharacterIds: ['OTHER_MALE', 'PARTNER_A'] }, {}).subjectTrackId, '');
 });
+
+test('a thrusting body change inside a running position is a movement, not a story card', async () => {
+  const { inPositionApproachAsMovement } = await import('../public/protagonist-ownership.js');
+  const action = { choiceSurface: 'story', adultScene: true, actionType: 'body_transition', positionId: 'prone-bone',
+    positionConfigurationConfidence: 0.98, positionEvidence: 'Kadın yüzükoyun, erkek üzerine eğilmiş.', movementType: 'thrusting' };
+  assert.equal(inPositionApproachAsMovement(action).choiceSurface, 'panel');
+  assert.equal(inPositionApproachAsMovement({ ...action, movementType: 'pozisyon değiştirme', positionId: '' }).choiceSurface, 'story');
+});

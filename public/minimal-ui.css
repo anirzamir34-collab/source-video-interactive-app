@@ -569,3 +569,18 @@ html body #playerSection .video-stage .reward-toast button.reward-pill { backgro
 .video-stage.vq-breathing .adult-dock-lust, .video-stage.vq-breathing #adultDockLustValue { animation: vqBreath 1.4s ease-in-out infinite; }
 @keyframes vqBreath { 0%, 100% { text-shadow: none; } 50% { text-shadow: 0 0 10px rgba(255, 92, 122, .9); } }
 @media (prefers-reduced-motion: reduce) { .video-stage.vq-breathing #adultDockLustValue { animation: none; } }
+
+/* The dock-cleanup rule above contains an id inside :is(), which made its
+   specificity beat the v5 rule and hid the first-approach Lust meter. */
+html body #playerSection#playerSection#playerSection#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading {
+  display: flex !important; justify-content: flex-end !important; width: 100% !important;
+  background: transparent !important; border: 0 !important; padding: 0 !important; margin: 0 0 2px !important;
+}
+html body #playerSection#playerSection#playerSection#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-overlay-heading > :not(.approach-lust) { display: none !important; }
+html body #playerSection#playerSection#playerSection#playerSection .video-stage.scene-player.cinematic-ui #approachChoices .approach-lust {
+  display: inline-flex !important; align-items: center !important; gap: 4px !important;
+  font-style: normal !important; font-size: 12px !important; color: rgba(255, 255, 255, .9) !important;
+  padding: 4px 12px !important; border-radius: 999px !important; min-width: 96px !important;
+  background: linear-gradient(90deg, rgba(255, 92, 138, .65) var(--lust, 0%), rgba(8, 10, 12, .7) var(--lust, 0%)) !important;
+  border: 1px solid rgba(255, 92, 138, .5) !important;
+}

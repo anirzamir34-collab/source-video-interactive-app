@@ -84,6 +84,22 @@ function visualDisplayName(character) {
   return name.slice(0, 1).toLocaleUpperCase('tr-TR') + name.slice(1);
 }
 
+// "Erkeğin üstünde oturan pembe büstiyerli genç kadın" is a posture plus a
+// look; only the look identifies her: "Pembe büstiyerli kadın".
+const LOOK_WORD = /^(?:\p{L}+(?:lü|lu|li|lı)|esmer|sarışın|kızıl|kumral|kel|dövmeli|gözlüklü|bıyıklı|sakallı)$/iu;
+const COLOR = /^(?:pembe|kırmızı|siyah|beyaz|mavi|yeşil|sarı|mor|turuncu|gri|lacivert|kahverengi|bej|bordo|açık|koyu|uzun|kısa|kıvırcık|düz|dar|ince)$/iu;
+function compactLook(phrase, character) {
+  const words = String(phrase || '').trim().split(/\s+/u);
+  const index = words.findIndex(word => LOOK_WORD.test(word) && !/^(?:oturan|yatan|duran)$/iu.test(word));
+  if (index < 0) return '';
+  const parts = [words[index]];
+  for (let i = index - 1; i >= 0 && parts.length < 3 && COLOR.test(words[i]); i--) parts.unshift(words[i]);
+  const gender = String(character?.gender || '').toLowerCase();
+  const noun = gender === 'female' ? 'kadın' : gender === 'male' ? 'adam' : '';
+  const look = `${parts.join(' ')}${noun ? ` ${noun}` : ''}`.trim();
+  return look.slice(0, 1).toLocaleUpperCase('tr-TR') + look.slice(1);
+}
+
 export function verifiedVisualDescription(character) {
   if (character?.identityConflict || character?.evidenceLevel !== 'fact' ||
       Number(character?.confidence) < 0.68) return '';
@@ -100,7 +116,8 @@ export function verifiedVisualDescription(character) {
     if (!/(?:kadın|erkek|kişi|woman|man)/iu.test(value)) continue;
     const phrase = value.split(/[,.;]/u).map(item => item.trim())
       .find(item => descriptor.test(item));
-    if (phrase) return phrase.replace(/\s+(?:misafir\s+|diğer\s+)?(?:kadın|erkek|kişi)$/iu, '').trim().slice(0, 75);
+    if (phrase) return compactLook(phrase, character) ||
+      phrase.replace(/\s+(?:misafir\s+|diğer\s+)?(?:kadın|erkek|kişi)$/iu, '').trim().slice(0, 75);
   }
   return '';
 }

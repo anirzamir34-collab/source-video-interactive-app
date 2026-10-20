@@ -144,8 +144,17 @@ function missingProtagonistSubject(action, context, mainTrack) {
 const PENETRATIVE = new Set(['reverse-cowgirl', 'seated-facing', 'prone-bone', 'legs-up', 'missionary',
   'cowgirl', 'spoon', 'reverse-spoon', 'standing-rear', 'rear', 'seated', 'standing']);
 export function inPositionApproachAsMovement(action = {}) {
-  if (action.choiceSurface !== 'approach' || action.adultScene !== true) return action;
   const position = String(action.positionId || '').trim().toLowerCase();
+  // A body change inside the same running position (he leans over her and
+  // speeds up) filed as a story card is a movement of that position.
+  if (action.choiceSurface === 'story' && action.adultScene === true && PENETRATIVE.has(position) &&
+      String(action.actionType || '').toLowerCase() === 'body_transition' &&
+      Number(action.positionConfigurationConfidence || 0) >= 0.78 && String(action.positionEvidence || '').trim() &&
+      /thrust|pump|itme|darbe|vuruş|girip|ritim|ritmik|tempo|hızlan|sert|derin/iu.test(
+        [action.movementType, action.label, action.choiceSurfaceEvidence].filter(Boolean).join(' '))) {
+    return { ...action, choiceSurface: 'panel', originalChoiceSurface: 'story', actionType: 'tempo_change' };
+  }
+  if (action.choiceSurface !== 'approach' || action.adultScene !== true) return action;
   if (!PENETRATIVE.has(position)) return action;
   if (!['touch', 'kiss', 'tempo_change', 'other'].includes(String(action.actionType || '').toLowerCase())) return action;
   return { ...action, choiceSurface: 'panel', originalChoiceSurface: 'approach', actionType: 'tempo_change' };

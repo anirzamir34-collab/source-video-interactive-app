@@ -3851,8 +3851,11 @@ function prepareAdultScenes() {
       let movementEnd = Number(action.loopEndTime ?? actionEnd);
       // Only a bare minimum loop (about 5 s) inside a long action is treated
       // this way; a real chosen loop stays as the model gave it.
+      // The whole action is real footage of this move; playing only its loop
+      // skipped up to two thirds of every long action (e.g. 182-204 of a
+      // 169-216 cowgirl). Long actions are cut into 10-20 s sequences later.
       if (sourceInterval(actionStart, actionEnd) && actionEnd - actionStart > 20 &&
-          movementEnd - movementStart <= 6 && (movementEnd - movementStart) < (actionEnd - actionStart) * 0.25 &&
+          (movementEnd - movementStart) < (actionEnd - actionStart) * 0.9 &&
           actionStart >= position.startTime && actionEnd <= position.endTime) {
         movementStart = actionStart;
         movementEnd = actionEnd;
