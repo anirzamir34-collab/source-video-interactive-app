@@ -126,3 +126,8 @@ otomatik kontrol eder.
   içinde saklıdır; Render'da ANALYSIS_PROMPT=legacy ayarıyla geri dönülür.
 - Model kısa ve bozuk bir yanıtla bölümü bitirirse o bölüm tekrar
   sorulmaz, boşluk olarak geçilir.
+
+## Videoyu kesme (uzun videolar)
+- Video seçildikten sonra (dosya ya da bağlantı) "Videoyu kes" alanında başlangıç/bitiş (dk:sn) yazılır veya önizlemede "Şu an" ile alınır.
+- Kesme telefonda, yeniden kodlamadan yapılır (mediabunny, `trimVideo` — public/video-proxy.js); başlangıç en yakın anahtar kareye kadar birkaç saniye geriye kayabilir.
+- Kesilen dosya seçili videonun yerine geçer: kareler, ses, video modu, oynatma ve kayıtlı oyun bu kısa videoyu kullanır. "Videonun tamamına dön" orijinali geri getirir.

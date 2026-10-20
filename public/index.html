@@ -78,6 +78,20 @@
           </div>
         </div>
       </div>
+      <div id="trimPanel" class="trim-panel hidden">
+        <div class="trim-head"><strong>Videoyu kes</strong><small>İsteğe bağlı · sadece seçtiğin kısım analiz edilir</small></div>
+        <div class="trim-row">
+          <label>Başlangıç<input id="trimStart" type="text" inputmode="numeric" placeholder="0:00" autocomplete="off" /></label>
+          <button id="trimStartNow" class="trim-now" type="button" title="Önizlemedeki anı al">Şu an</button>
+          <label>Bitiş<input id="trimEnd" type="text" inputmode="numeric" placeholder="sonu" autocomplete="off" /></label>
+          <button id="trimEndNow" class="trim-now" type="button" title="Önizlemedeki anı al">Şu an</button>
+        </div>
+        <div class="trim-actions">
+          <button id="trimCutBtn" class="trim-cut" type="button">Kes</button>
+          <button id="trimUndoBtn" class="trim-undo hidden" type="button">Videonun tamamına dön</button>
+        </div>
+        <div id="trimStatus" class="trim-status" role="status" aria-live="polite"></div>
+      </div>
       <div class="protagonist-lock">
         <label for="protagonistInput">Başkarakter</label>
         <input

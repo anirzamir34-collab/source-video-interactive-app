@@ -4873,3 +4873,39 @@ body { font-size: 13px; }
   font-size: 12px;
 }
 .analysis-deep-model small { color: rgba(255, 255, 255, .65); line-height: 1.4; }
+
+/* VIDEO CUT (analyze only part of a long video) */
+.trim-panel {
+  margin: 16px 0 0;
+  padding: 14px;
+  border: 1px solid rgba(255, 196, 77, 0.28);
+  border-radius: 14px;
+  background: rgba(255, 196, 77, 0.05);
+}
+.trim-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 10px; }
+.trim-head strong { color: #ffc44d; font-size: 12px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
+.trim-head small { color: rgba(255, 255, 255, 0.58); font-size: 11px; }
+.trim-row { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 8px; align-items: end; }
+.trim-row label { display: grid; gap: 5px; min-width: 0; color: rgba(255, 255, 255, 0.7); font-size: 11px; font-weight: 700; }
+.trim-row input {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 10px 11px;
+  color: #f4f7f6; background: #090c0d; border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 11px; font: inherit; font-variant-numeric: tabular-nums; outline: none;
+}
+.trim-row input:focus { border-color: #ffc44d; box-shadow: 0 0 0 3px rgba(255, 196, 77, 0.12); }
+.trim-now, .trim-cut, .trim-undo {
+  min-height: 44px; padding: 0 12px; border-radius: 11px; font-size: 11px; font-weight: 850;
+  border: 1px solid rgba(255, 196, 77, 0.42); background: rgba(255, 196, 77, 0.10); color: #ffc44d;
+}
+.trim-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.trim-cut { flex: 1 1 140px; background: #ffc44d; color: #1a1205; }
+.trim-undo { flex: 1 1 160px; border-color: rgba(255, 255, 255, 0.2); background: transparent; color: rgba(255, 255, 255, 0.78); }
+.trim-panel button:disabled { opacity: .5; }
+.trim-status { min-height: 16px; padding-top: 8px; color: #8d98a3; font-size: 12px; line-height: 1.4; }
+.trim-status.error { color: #ff7a7a; }
+.trim-status.success { color: #2ee6a6; }
+@media (max-width: 380px) {
+  .trim-row { grid-template-columns: 1fr auto; }
+}
+.trim-panel button.trim-undo { background: transparent !important; color: rgba(255, 255, 255, 0.82) !important; border: 1px solid rgba(255, 255, 255, 0.22) !important; box-shadow: none !important; }
+.trim-panel button.trim-now { background: rgba(255, 255, 255, 0.06) !important; color: #f4f7f6 !important; border: 1px solid rgba(255, 255, 255, 0.18) !important; box-shadow: none !important; }

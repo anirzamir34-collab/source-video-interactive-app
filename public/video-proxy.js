@@ -54,3 +54,36 @@ export async function createAnalysisProxy(file, { signal, onProgress = () => {},
     input.dispose();
   }
 }
+
+// Cuts the chosen part out of a long video before analysis. Encoded media is
+// copied (no re-encoding), so even a big phone video is cut in seconds; the
+// cut may start a little earlier, at the nearest key frame, so nothing in the
+// chosen range is lost.
+export async function trimVideo(file, { start = 0, end, signal, onProgress = () => {} } = {}) {
+  signal?.throwIfAborted();
+  const from = Math.max(0, Number(start) || 0);
+  const to = Number(end);
+  if (!Number.isFinite(to) || to - from < 5) throw Object.assign(new Error('Kesilecek aralık en az 5 saniye olmalı.'), { code: 'TRIM_RANGE' });
+  const webm = /webm/i.test(file.type || '') || /\.webm$/i.test(file.name || '');
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  const target = new BufferTarget();
+  const output = new Output({ format: webm ? new WebMOutputFormat() : new Mp4OutputFormat({ fastStart: 'in-memory' }), target });
+  let conversion;
+  const cancel = () => { void conversion?.cancel().catch(() => {}); input.dispose(); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    conversion = await Conversion.init({ input, output, showWarnings: false, trim: { start: from, end: to } });
+    if (!conversion.isValid) throw Object.assign(new Error('Bu video bu cihazda kesilemiyor.'), { code: 'TRIM_UNSUPPORTED' });
+    conversion.onProgress = value => onProgress(Math.min(1, Math.max(0, value)));
+    await conversion.execute();
+    signal?.throwIfAborted();
+    if (!target.buffer?.byteLength) throw Object.assign(new Error('Kesilen video boş çıktı.'), { code: 'TRIM_EMPTY' });
+    const stamp = value => `${Math.floor(value / 60)}dk${String(Math.floor(value % 60)).padStart(2, '0')}`;
+    const base = String(file.name || 'video').replace(/\.[^.]+$/, '');
+    return new File([target.buffer], `${base}-${stamp(from)}-${stamp(to)}.${webm ? 'webm' : 'mp4'}`,
+      { type: webm ? 'video/webm' : 'video/mp4' });
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    input.dispose();
+  }
+}

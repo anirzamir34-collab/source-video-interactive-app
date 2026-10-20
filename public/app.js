@@ -5,6 +5,7 @@ import { protagonistPerspective, inPositionApproachAsMovement, mergeUnownedInter
 import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
 import { trimIntroOutro } from './intro-outro.js';
 import { prepareGeminiVideo } from './gemini-video-client.js';
+import { resolveCutRange, formatClock } from './time-range.js';
 import { createAnalysisProgress } from './analysis-progress.js';
 import { explainNoVerifiedActions } from './analysis-empty-diagnostics.js';
 import { reconcileAnalysisSessionEvidence } from './analysis-source-session.js';
@@ -178,6 +179,9 @@ const state = {
   selectedRemoteToken: '',
   urlCacheKey: '',
   urlCacheSavePromise: null,
+  trimInProgress: false,
+  uncutSource: null,
+  cutFile: null,
   remoteFileDownload: null,
   videoObjectUrl: '',
   analysisSession: null,
@@ -931,7 +935,8 @@ function updateAnalyzeAvailability() {
   const geminiBlocked = needsGemini &&
     ['no_credits', 'daily_limit', 'rate_limited', 'invalid', 'forbidden', 'unconfigured']
       .includes(String(state.geminiProviderStatus?.state || ''));
-  els.analyzeBtn.disabled = busy || geminiBlocked || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
+  els.analyzeBtn.disabled = busy || state.trimInProgress || geminiBlocked || !(state.selectedFile || state.selectedRemoteVideo) || !hasMode;
+  renderTrimPanel(busy);
   els.videoInput.disabled = busy;
   $('videoUrl').disabled = busy;
   $('resolveUrlBtn').disabled = busy;
@@ -979,6 +984,98 @@ els.clearElevenLabsApiKeyBtn?.addEventListener('click', clearElevenLabsApiKey);
 renderGeminiApiKeyState();
 renderElevenLabsApiKeyState();
 removeStoredValue('sessionStorage', 'videoquest_elevenlabs_api_key');
+
+// Cut a long video down to the part to analyze. The cut file then replaces
+// the selected video everywhere (frames, audio, playback and the saved game),
+// so the rest of the pipeline needs no time offsets.
+function renderTrimPanel(busy = false) {
+  const panel = $('trimPanel');
+  if (!panel) return;
+  if (state.cutFile && state.selectedFile !== state.cutFile) { state.cutFile = null; state.uncutSource = null; }
+  panel.classList.toggle('hidden', !state.selectedFile || Boolean(state.analysis));
+  for (const id of ['trimStart', 'trimEnd', 'trimStartNow', 'trimEndNow', 'trimCutBtn', 'trimUndoBtn']) {
+    const control = $(id);
+    if (control) control.disabled = busy || Boolean(state.trimInProgress);
+  }
+  $('trimUndoBtn')?.classList.toggle('hidden', !state.uncutSource);
+}
+
+function setTrimStatus(message, tone = '') {
+  const status = $('trimStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.className = `trim-status${tone ? ` ${tone}` : ''}`;
+}
+
+function useVideoFile(file, { kind, urlCacheKey = '', remoteToken = '', meta = '' } = {}) {
+  clearPreviousGameResidue();
+  releaseVideoObjectUrl();
+  state.selectedFile = file;
+  state.selectedSourceKind = kind || 'file';
+  state.selectedRemoteVideo = null;
+  state.selectedRemoteToken = remoteToken;
+  state.urlCacheKey = urlCacheKey;
+  state.analysisSession = null;
+  state.videoObjectUrl = URL.createObjectURL(file);
+  els.video.src = state.videoObjectUrl;
+  els.fileMeta.textContent = meta || `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function cutSelectedVideo() {
+  if (state.trimInProgress || state.analysisInProgress || state.urlResolutionInProgress || state.savedGameBusy) return;
+  const source = state.selectedFile;
+  if (!source) return;
+  const duration = Number(els.video.duration) || 0;
+  const range = resolveCutRange($('trimStart')?.value, $('trimEnd')?.value, duration);
+  if (range.error) { setTrimStatus(range.error, 'error'); return; }
+  state.trimInProgress = true;
+  updateAnalyzeAvailability();
+  els.video.pause();
+  setTrimStatus(`${formatClock(range.start)} – ${formatClock(range.end)} kesiliyor…`);
+  try {
+    const { trimVideo } = await import('./video-proxy.bundle.js');
+    const cut = await trimVideo(source, { start: range.start, end: range.end,
+      onProgress: value => setTrimStatus(`${formatClock(range.start)} – ${formatClock(range.end)} kesiliyor… %${Math.round(value * 100)}`) });
+    const original = state.uncutSource || { file: source, kind: state.selectedSourceKind, urlCacheKey: state.urlCacheKey,
+      remoteToken: state.selectedRemoteToken, meta: els.fileMeta.textContent };
+    const label = `${formatClock(range.start)} – ${formatClock(range.end)}`;
+    useVideoFile(cut, { kind: original.kind, remoteToken: original.remoteToken,
+      urlCacheKey: original.urlCacheKey ? `${original.urlCacheKey}#cut=${Math.round(range.start)}-${Math.round(range.end)}` : '',
+      meta: `${cut.name} • ${(cut.size / 1024 / 1024).toFixed(1)} MB • Kesilmiş: ${label}` });
+    state.uncutSource = original;
+    state.cutFile = cut;
+    $('trimStart').value = '';
+    $('trimEnd').value = '';
+    setTrimStatus(`Kesildi: ${label}. Analiz sadece bu kısmı kapsayacak; kayıtlı oyun da bu kısa videoyla saklanır.`, 'success');
+  } catch (error) {
+    setTrimStatus(error?.message || 'Video kesilemedi.', 'error');
+  } finally {
+    state.trimInProgress = false;
+    updateAnalyzeAvailability();
+    renderDebug();
+  }
+}
+
+function undoVideoCut() {
+  const original = state.uncutSource;
+  if (!original || state.trimInProgress || state.analysisInProgress) return;
+  useVideoFile(original.file, original);
+  state.uncutSource = null;
+  state.cutFile = null;
+  setTrimStatus('Videonun tamamı geri geldi.');
+  updateAnalyzeAvailability();
+  renderDebug();
+}
+
+$('trimCutBtn')?.addEventListener('click', () => { void cutSelectedVideo(); });
+$('trimUndoBtn')?.addEventListener('click', undoVideoCut);
+for (const [button, input] of [['trimStartNow', 'trimStart'], ['trimEndNow', 'trimEnd']]) {
+  $(button)?.addEventListener('click', () => {
+    const field = $(input);
+    if (field) field.value = formatClock(Number(els.video.currentTime) || 0);
+    setTrimStatus('');
+  });
+}
 
 function releaseVideoObjectUrl() {
   if (!state.videoObjectUrl) return;
