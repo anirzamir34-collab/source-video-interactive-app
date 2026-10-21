@@ -1424,7 +1424,11 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
   try {
     let result;
     try {
-      result = requested ? await mediaClient.retry() : null;
+      // Only the same kind of job is continued; a transcript-only first pass
+      // or another output choice gets a fresh full job.
+      const sameJob = requested && !requested.transcriptOnly && requested.dub === modes.dubbing &&
+        requested.subtitles === modes.subtitles;
+      result = sameJob ? await mediaClient.retry() : null;
     } catch (error) {
       // A changed API key (a renewed or new account) cannot continue the old
       // server job; a fresh job reuses the server's cached audio stages.
@@ -1981,7 +1985,13 @@ els.analyzeBtn.addEventListener('click', async () => {
     if (fastStoryboardPreparation) {
       session.storyboard = await fastStoryboardPreparation.catch(() => null);
     }
-    if (error?.name === 'AbortError' || !modes.motion || modes.dubbing || modes.subtitles) throw error;
+    if (error?.name === 'AbortError' || !modes.motion) throw error;
+    // Out of ElevenLabs credits (or another provider failure) must not stop
+    // the visual analysis: the game is made now with the original sound and
+    // the Turkish media can be made later from the finished game.
+    if ((modes.dubbing || modes.subtitles) && !(typeof isRecoverableTurkishMediaFailure === 'function' &&
+      isRecoverableTurkishMediaFailure(error))) throw error;
+    if (modes.dubbing || modes.subtitles) session.mediaSkippedError = error;
     // Visual-only analysis may continue without speech evidence, including a
     // genuinely silent source or an unavailable ASR service. Requested Turkish
     // media still fails explicitly above; no alternate speech model is used.
@@ -2735,7 +2745,11 @@ els.analyzeBtn.addEventListener('click', async () => {
   }
   let sourceAudioOnly = false;
   let mediaFailureMessage = '';
-  if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
+  if (session.mediaSkippedError && (modes.dubbing || modes.subtitles)) {
+    sourceAudioOnly = true;
+    mediaFailureMessage = `${session.mediaSkippedError.message} Oyun özgün sesle hazırlandı; Türkçe ses daha sonra "Türkçe dublajı hazırla" ile eklenebilir.`;
+    session.mediaSkippedError = null;
+  } else if (modes.motion && (modes.dubbing || modes.subtitles) && !creditRecovery.recovered) {
     analysisProgress.update('voices', { detail: 'Kaynak konuşmacılar görsel karakterlerle eşleştiriliyor.' });
     const speakerHints = verifiedSpeakerVoiceHints(normalized);
     const speakerCount = state.sourceContext?.speakers?.length || 0;
@@ -2821,6 +2835,13 @@ els.analyzeBtn.addEventListener('click', async () => {
   // The next "Analiz et" on this video starts a brand-new run.
   session.runId = null;
   analysisProgress.finish();
+  if (sourceAudioOnly && state.analysis && els.mediaJobStatus && els.mediaJobRetryBtn) {
+    els.mediaJobStatus.classList.remove('hidden');
+    els.mediaJobRetryBtn.classList.remove('hidden');
+    els.mediaJobRetryBtn.disabled = false;
+    els.mediaJobRetryBtn.textContent = 'Türkçe dublajı hazırla';
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = mediaFailureMessage;
+  }
   } catch (error) {
     console.error('Analysis failed:', error);
     els.analysisCard.dataset.compactError = 'true';

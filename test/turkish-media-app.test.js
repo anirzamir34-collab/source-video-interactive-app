@@ -424,3 +424,15 @@ test('motion-only cancellation rejects instead of continuing visually and the an
   assert.equal(f.state.savedGameReady, false);
   assert.equal(f.calls.save.length, 0);
 });
+
+test('running out of ElevenLabs credits keeps the visual analysis going; Turkish media can be made later', async () => {
+  const { isRecoverableTurkishMediaFailure } = await import('../public/media-failure-recovery.js');
+  const failedJob = Object.assign(new Error('ElevenLabs kredisi yetmedi.'), { code: 'ELEVENLABS_QUOTA_EXCEEDED' });
+  const storyboard = { sheets: [new Blob(['source frames'])], timestamps: [0], duration: 30, totalBytes: 13 };
+  const f = fixture({ visual: true, dubbing: true, start: async () => { throw failedJob; },
+    extract: () => Promise.resolve(storyboard) });
+  f.scope.isRecoverableTurkishMediaFailure = isRecoverableTurkishMediaFailure;
+  await f.run();
+  assert.equal(f.calls.visual.length, 1, 'the visual analysis still runs');
+  assert.equal(f.session.mediaSkippedError, failedJob);
+});
