@@ -1403,6 +1403,13 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
   if (state.mediaRevoice) { await regenerateTurkishVoices(state.mediaRevoice, true); return; }
   const session = state.analysisSession;
   const file = state.selectedFile || session?.file || null;
+  // "Türkçe dublajı hazırla" means dubbing even when the switch was left off
+  // (it is off after a page reload); turn it on instead of failing with
+  // "En az bir medya çıktısı seçilmeli".
+  if (els.dubMode && !els.dubMode.checked && !els.subtitleMode?.checked) {
+    els.dubMode.checked = true;
+    if (typeof updateAnalysisModesUI === 'function') updateAnalysisModesUI();
+  }
   const modes = selectedAnalysisModes();
   // The game is ready: only the Turkish media is redone; the visual analysis
   // and the game stay as they are (no new Gemini analysis).
