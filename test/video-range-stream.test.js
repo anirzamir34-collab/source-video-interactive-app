@@ -273,3 +273,13 @@ test('controlled HTTP benchmark: concurrent requests improve a per-connection bo
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('a relayed download waits for consent and stops when the user declines', async () => {
+  let proxied = 0;
+  const downloads = downloader(async () => { proxied++; return full(); });
+  await assert.rejects(downloads.download('/api/video-proxy?token=t', { confirmProxy: async () => false }), { code: 'PROXY_DECLINED' });
+  assert.equal(proxied, 0);
+  const file = await downloads.download('/api/video-proxy?token=t', { confirmProxy: async () => true });
+  assert.equal(proxied, 1);
+  assert.equal(digest(new Uint8Array(await file.arrayBuffer())), expectedHash);
+});

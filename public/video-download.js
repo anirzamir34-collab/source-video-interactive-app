@@ -304,6 +304,11 @@ export function createVideoDownloader({
         options.onProgress?.({ loaded: 0, total: options.expectedSize || 0, transport: 'proxy', writeMs: 0 });
       }
     }
+    // Relaying through the server costs server traffic; ask first.
+    if (typeof options.confirmProxy === 'function' && !(await options.confirmProxy({ size: Number(options.expectedSize) || 0 }))) {
+      throw Object.assign(new Error('Sunucu üzerinden indirme yapılmadı. Videoyu tarayıcıda açıp indir, sonra "İndirdiğim videoyu seç" ile seç.'),
+        { code: 'PROXY_DECLINED' });
+    }
     return attempt(url, { ...options, direct: false,
       maxDurationMs: options.maxDurationMs > 0 ? Math.max(1, options.maxDurationMs - (Date.now() - started)) : 0 });
   }

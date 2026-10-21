@@ -78,3 +78,58 @@ test('client builds the copy, uploads it in resumable chunks and asks the server
   assert.equal(calls.at(-1)[0], '/api/gemini-video/prepare');
   assert.equal(calls.at(-1)[2], 'user-key');
 });
+
+test('the analysis copy goes from the phone straight to Google, without the server upload', async () => {
+  const { prepareGeminiVideo } = await import('../public/gemini-video-client.js');
+  const calls = [];
+  const proxy = new File([new Uint8Array(1024)], 'analysis-proxy.mp4', { type: 'video/mp4' });
+  const fetchImpl = async (url, options = {}) => {
+    calls.push(url);
+    const body = url.endsWith('/direct-start') ? { uploadUrl: 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x' }
+      : url.endsWith('/direct-finish') ? { available: true, fileUri: URI, mimeType: 'video/mp4' } : { ok: true };
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  const sent = [];
+  const result = await prepareGeminiVideo(new Blob(['x']), { fetchImpl, makeProxy: async () => proxy,
+    directUpload: async (url, blob) => { sent.push([url, blob.size]); return { file: { name: 'files/abc-123' } }; } });
+  assert.equal(result.fileUri, URI);
+  assert.equal(result.direct, true);
+  assert.deepEqual(sent, [['https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x', 1024]]);
+  assert.deepEqual(calls, ['/api/gemini-video/direct-start', '/api/gemini-video/direct-finish']);
+});
+
+test('when the direct upload is blocked the server path is used', async () => {
+  const { prepareGeminiVideo } = await import('../public/gemini-video-client.js');
+  const calls = [];
+  const proxy = new File([new Uint8Array(1024)], 'analysis-proxy.mp4', { type: 'video/mp4' });
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    const body = url.endsWith('/direct-start') ? { uploadUrl: 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x' }
+      : url.endsWith('/uploads/start') ? { uploadId: 'u-1', chunkSize: 8 * 1024 * 1024 }
+      : url.endsWith('/prepare') ? { available: true, fileUri: URI, mimeType: 'video/mp4' } : { ok: true };
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  const result = await prepareGeminiVideo(new Blob(['x']), { fetchImpl, makeProxy: async () => proxy,
+    directUpload: async () => { throw new TypeError('CORS'); } });
+  assert.equal(result.fileUri, URI);
+  assert.ok(calls.includes('/api/gemini-video/prepare'));
+});
+
+test('the server opens a Google upload session and waits for the processed file', async () => {
+  const { createGeminiVideoFiles } = await import('../lib/gemini-video.js');
+  let state = 'PROCESSING';
+  const GoogleGenAI = class { constructor() { this.files = { get: async ({ name }) => {
+    const row = { name, state, uri: `https://generativelanguage.googleapis.com/v1beta/${name}`, mimeType: 'video/mp4' };
+    state = 'ACTIVE'; return row; } }; } };
+  const files = createGeminiVideoFiles({ GoogleGenAI, uploads: {}, sleep: async () => {} });
+  const started = await files.startDirect({ apiKey: 'k', size: 1024, mimeType: 'video/mp4',
+    fetchImpl: async (url, options) => {
+      assert.match(url, /upload\/v1beta\/files\?key=k$/);
+      assert.equal(options.headers['X-Goog-Upload-Command'], 'start');
+      return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=y' } });
+    } });
+  assert.equal(started.uploadUrl, 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=y');
+  const ready = await files.finishDirect({ apiKey: 'k', name: 'files/abc-123' });
+  assert.equal(ready.fileUri, 'https://generativelanguage.googleapis.com/v1beta/files/abc-123');
+  await assert.rejects(files.finishDirect({ apiKey: 'k', name: '../evil' }), { code: 'GEMINI_VIDEO_NAME_INVALID' });
+});

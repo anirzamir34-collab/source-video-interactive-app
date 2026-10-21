@@ -7965,7 +7965,9 @@ els.video.addEventListener('timeupdate', () => {
 });
 els.video.addEventListener('ended', handleSourceEnded);
 
-checkHealth();
+// The separate fallback analysis service is only checked on request: waking
+// it on every page load used up the account's free instance hours.
+setServiceStatus('status-checking', 'İSTEĞE BAĞLI', 'Yedek analiz servisi gerektiğinde kontrol edilir.');
 checkTurkishMediaCapabilities();
 setInterval(checkTurkishMediaCapabilities, 60 * 1000);
 renderDebug();
@@ -8132,6 +8134,26 @@ function setUrlStatus(message, type = '') {
   urlStatus.className = `url-status ${type}`.trim();
 }
 
+// Asks before a video is relayed through the server (it uses the server's
+// monthly traffic). Resolves true to relay, false to download it yourself.
+function askProxyConsent({ size = 0 } = {}) {
+  return new Promise(resolve => {
+    const host = urlStatus?.parentElement;
+    if (!host || typeof urlStatus?.after !== 'function' || !globalThis.document?.createElement) { resolve(true); return; }
+    host.querySelector('.proxy-consent')?.remove();
+    const box = document.createElement('div');
+    box.className = 'proxy-consent';
+    const mb = size ? `${Math.round(size / 1024 / 1024)} MB` : 'boyutu bilinmiyor';
+    box.innerHTML = `<p>Bu site videoyu doğrudan telefona vermiyor. Sunucu üzerinden indirilirse sunucu trafiği kullanılır (${mb}).</p>` +
+      '<div class="proxy-consent-actions"><button type="button" data-proxy-yes>Sunucu üzerinden indir</button>' +
+      '<button type="button" data-proxy-no>Kendim indireceğim</button></div>';
+    const done = value => { box.remove(); resolve(value); };
+    box.querySelector('[data-proxy-yes]').addEventListener('click', () => done(true));
+    box.querySelector('[data-proxy-no]').addEventListener('click', () => done(false));
+    urlStatus.after(box);
+  });
+}
+
 function hideBrowserDownloadHelp() {
   document.getElementById('browserDownloadHelp')?.classList.add('hidden');
   for (const id of ['browserVideoLink', 'browserPageLink']) document.getElementById(id)?.removeAttribute('href');
@@ -8201,6 +8223,7 @@ async function ensureSelectedRemoteFile({ onProgress } = {}) {
         (remote.directDownload == null && !['hls', 'dash'].includes(remote.type)),
       signal: task.controller.signal,
       expectedSize: remote.size || 0,
+      confirmProxy: typeof askProxyConsent === 'function' ? () => askProxyConsent({ size: Number(remote.size) || 0 }) : undefined,
       onProgress: progress => {
         if (remote !== state.selectedRemoteVideo) return;
         if (typeof onProgress === 'function') onProgress(progress);
@@ -8286,7 +8309,8 @@ async function resolveVideoUrl() {
     const resolveSeconds = Math.max(0.1, (performance.now() - resolveStartedAt) / 1000).toFixed(1);
     setUrlStatus(`Video ${resolveSeconds} sn içinde bulundu. Cihaza indiriliyor...`);
     const blob = pendingBlob = await downloadUrlVideo(result.proxyUrl, result.sourceUrl, {
-      allowDirect: result.directDownload === true
+      allowDirect: result.directDownload === true,
+      confirmProxy: typeof askProxyConsent === 'function' ? () => askProxyConsent({ size: Number(result.size) || 0 }) : undefined
     });
 
     if (!blob.size) throw new Error('Video boş geldi.');

@@ -1254,6 +1254,7 @@ app.post('/api/resolve-video-url', async (req, res) => {
       proxyUrl: `/api/video-proxy?token=${encodeURIComponent(token)}`,
       remoteToken: token,
       directDownload: resolved.type === 'video' && !resolved.cookie && new URL(resolved.sourceUrl).protocol === 'https:',
+      ...(Number(resolved.size) > 0 ? { size: Number(resolved.size) } : {}),
       cached: cacheHit, resolveMs: Date.now() - startedAt
     });
   } catch (error) {
@@ -1446,6 +1447,37 @@ app.post('/api/gemini-video/prepare', async (req, res) => {
       status, fileState: error?.fileState || null }));
     res.status(status).json({ available: false, reason: String(error?.code || 'GEMINI_VIDEO_UNAVAILABLE'),
       message: error?.message && status < 500 ? error.message : 'Video Google\'a hazırlanamadı; resimli analiz kullanılacak.' });
+  } finally { res.removeListener('close', abort); }
+});
+
+// Direct phone-to-Google upload for "Video ile analiz" (no server bandwidth).
+app.post('/api/gemini-video/direct-start', async (req, res) => {
+  try {
+    const value = await geminiVideoFiles.startDirect({ apiKey: resolveGeminiApiKey(req),
+      size: req.body?.size, mimeType: req.body?.mimeType });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(value);
+  } catch (error) {
+    const status = Number(error?.status) >= 400 && Number(error?.status) < 600 ? Number(error.status) : 502;
+    res.status(status).json({ reason: String(error?.code || 'GEMINI_VIDEO_UPLOAD_START_FAILED'), message: error?.message || 'Yükleme açılamadı.' });
+  }
+});
+
+app.post('/api/gemini-video/direct-finish', async (req, res) => {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  res.once('close', abort);
+  try {
+    const value = await geminiVideoFiles.finishDirect({ apiKey: resolveGeminiApiKey(req),
+      name: req.body?.name, mimeType: req.body?.mimeType, signal: controller.signal });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ available: true, ...value });
+  } catch (error) {
+    if (res.destroyed) return;
+    const status = Number(error?.status) >= 400 && Number(error?.status) < 600 ? Number(error.status) : 502;
+    console.warn('[gemini-video-direct]', JSON.stringify({ code: String(error?.code || '').slice(0, 64), status }));
+    res.status(status).json({ available: false, reason: String(error?.code || 'GEMINI_VIDEO_UNAVAILABLE'),
+      message: error?.message && status < 500 ? error.message : 'Video Google\'a hazırlanamadı.' });
   } finally { res.removeListener('close', abort); }
 });
 
