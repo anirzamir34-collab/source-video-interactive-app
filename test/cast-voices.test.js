@@ -49,3 +49,20 @@ test('the visible description decides the voice age when the analysis gives none
     { id: 'x', gender: 'uncertain', evidenceLevel: 'fact' }] } };
   assert.deepEqual(castProfilesFor(analysis), [{ characterId: 'char-olga', gender: 'female' }]);
 });
+
+test('more people than catalogue voices share a fitting voice instead of stopping the dub', () => {
+  const catalog = [
+    { voice_id: 'f1', labels: { gender: 'female', age: 'young' } },
+    { voice_id: 'f2', labels: { gender: 'female', age: 'middle_aged' } },
+    { voice_id: 'm1', labels: { gender: 'male', age: 'middle_aged' } },
+  ];
+  const speakers = [
+    { speakerId: 'a', gender: 'female', ageGroup: 'mature' }, { speakerId: 'b', gender: 'female', ageGroup: 'young' },
+    { speakerId: 'c', gender: 'female', ageGroup: 'young' }, { speakerId: 'd', gender: 'male' }, { speakerId: 'e', gender: 'male' },
+  ];
+  const result = mapSpeakerVoices(speakers, catalog);
+  assert.deepEqual(Object.keys(result).sort(), ['a', 'b', 'c', 'd', 'e']);
+  for (const id of ['a', 'b', 'c']) assert.ok(['f1', 'f2'].includes(result[id]), 'women keep female voices');
+  assert.equal(result.d, 'm1'); assert.equal(result.e, 'm1');
+  assert.notEqual(result.a, result.b, 'distinct voices while the catalogue has them');
+});
