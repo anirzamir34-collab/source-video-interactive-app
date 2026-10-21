@@ -66,3 +66,15 @@ test('more people than catalogue voices share a fitting voice instead of stoppin
   assert.equal(result.d, 'm1'); assert.equal(result.e, 'm1');
   assert.notEqual(result.a, result.b, 'distinct voices while the catalogue has them');
 });
+
+test('a voice left open gets its gender from pitch or the cast instead of asking', async () => {
+  const { resolveOpenGenders } = await import('../lib/turkish-media/cast-voices.js');
+  const transcript = { speakers: [{ speakerId: 'a', gender: null }, { speakerId: 'b', gender: null }, { speakerId: 'c', gender: 'male' }],
+    utterances: [{ speakerId: 'a' }, { speakerId: 'b' }] };
+  resolveOpenGenders(transcript, { a: { medianHz: 120 } }, [{ characterId: 'x', gender: 'female' }, { characterId: 'y', gender: 'female' }, { characterId: 'z', gender: 'male' }]);
+  assert.deepEqual(transcript.speakers.map(row => row.gender), ['male', 'female', 'male']);
+  assert.deepEqual(transcript.utterances.map(row => row.gender), ['male', 'female']);
+  const unknown = { speakers: [{ speakerId: 'q', gender: null }], utterances: [] };
+  resolveOpenGenders(unknown, {}, []);
+  assert.equal(unknown.speakers[0].gender, null, 'with nothing known it stays open');
+});
