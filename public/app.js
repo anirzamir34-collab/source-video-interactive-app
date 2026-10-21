@@ -8418,6 +8418,14 @@ async function openSavedGame(game) {
     subtitleTrack: turkishMedia.subtitleTrack, syncOffset: 0
   });
   renderMediaControls();
+  // A saved game whose Turkish media failed (say, out of credits) can make
+  // it later from here without a new analysis.
+  if (!turkishMedia && state.analysis && els.mediaJobStatus && els.mediaJobRetryBtn) {
+    els.mediaJobStatus.classList.remove('hidden');
+    els.mediaJobRetryBtn.classList.remove('hidden');
+    els.mediaJobRetryBtn.textContent = 'Türkçe dublajı hazırla';
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Bu kayıtta Türkçe ses yok. Dublaj açıkken bu düğmeyle hazırlanır; analiz ve oyun aynen kalır.';
+  }
   if (state.analysis) initializeInteractive(state.analysis);
   else {
     els.playerSection.classList.remove('hidden');
