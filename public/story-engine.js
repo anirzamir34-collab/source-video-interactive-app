@@ -63,6 +63,8 @@ export function normalizeStoryContext(input = {}) {
       role: cleanText(item?.role ?? item?.sourceRole, 100),
       gender: ['male', 'female', 'uncertain'].includes(String(item?.gender || '').toLowerCase())
         ? String(item.gender).toLowerCase() : 'uncertain',
+      ...(['young', 'adult', 'mature', 'senior'].includes(String(item?.ageGroup || '').toLowerCase())
+        ? { ageGroup: String(item.ageGroup).toLowerCase() } : {}),
       voiceTone: cleanText(item?.voiceTone ?? item?.tone, 80),
       voiceEmotion: cleanText(item?.voiceEmotion ?? item?.emotion, 80),
       description: cleanText(item?.description, 280),

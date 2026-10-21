@@ -72,3 +72,14 @@ test('a tempo button is offered only where the next real part changes pace', asy
   assert.equal(nextTempoPrompt(steady, [steady, faster], { sameOccurrence: item => item.id !== 'b' }), null, 'another occurrence never counts');
   assert.equal(nextTempoPrompt(part('x', 0), [part('y', 12, { movementChange: 'harder' })]).label, 'Sertleş');
 });
+
+test('parts the tempo button opens are kept off the cards', async () => {
+  const { promptReservedIds } = await import('../public/movement-tempo.js');
+  const part = (id, start, extra = {}) => ({ id, loopStartTime: start, loopEndTime: start + 12, sourceVerified: true, ...extra });
+  const list = [part('a', 0), part('b', 12, { movementTempo: 'fast' }), part('c', 24), part('d', 36)];
+  assert.deepEqual([...promptReservedIds(list)], ['b'], 'only the fast part after a steady one');
+  assert.deepEqual([...promptReservedIds([part('a', 0), part('b', 12, { movementTempo: 'fast' })].slice(1))], [], 'a lone part always stays a card');
+  const occ = item => (item.id === 'b' ? 2 : 1);
+  assert.deepEqual([...promptReservedIds(list, { sameOccurrence: current => item => occ(item) === occ(current) })], [],
+    'another occurrence never reserves');
+});

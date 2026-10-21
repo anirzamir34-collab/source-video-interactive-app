@@ -412,7 +412,7 @@ test('applying catalogue voice IDs preserves original video range, gameplay stat
     previousVoiceMapping: f.previous.manifest.voiceMapping,
     sceneContext: [{ startTime: 12, endTime: 14, description: 'Original observed scene' }],
     // The manual run keeps the same voice evidence as the automatic one.
-    speakerHints: {}, castGenders: { male: 0, female: 0 }
+    speakerHints: {}, castGenders: { male: 0, female: 0 }, castProfiles: []
   });
   assert.equal(f.els.video.currentTime, 12.25);
   assert.deepEqual(f.els.video.seekWrites, []);

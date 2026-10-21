@@ -6,6 +6,7 @@ import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
 import { trimIntroOutro } from './intro-outro.js';
 import { prepareGeminiVideo } from './gemini-video-client.js';
 import { resolveCutRange, formatClock } from './time-range.js';
+import { castProfilesFor } from './voice-cast.js';
 import { normalizeRewardMoments, rewardsForScene, derivedHighlight, pickAdultReward, rewardTitle } from './reward-moments.js';
 import { buildIntensityTrack, measuredMovementFlavors, intensityRate } from './intensity-engine.js';
 import { positionBrief } from './position-brief.js';
@@ -39,6 +40,7 @@ import {
   adultFirstUnlockCount,
   movementCardsWithTempo,
   nextTempoPrompt,
+  promptReservedIds,
   sourceMotionProgressRate,
   verifiedActionSubsequences,
   exclusiveControlClipIds,
@@ -1438,7 +1440,12 @@ function renderVoiceMappingPanel() {
     const title = document.createElement('span');
     const own = utterances.filter(row => row.speakerId === speaker.speakerId)
       .sort((a, b) => Number(a.sourceStart) - Number(b.sourceStart));
-    title.textContent = `Kaynak ses ${index + 1} · ${genderLabel(speaker.gender)}`;
+    // Each voice belongs to one person; name that person when known.
+    const person = (state.analysis?.storyContext?.characters || []).find(character => speaker.characterId &&
+      [character.id, character.participantTrackId, ...(character.characterIds || [])].includes(speaker.characterId));
+    const ageLabel = { young: 'genç', adult: 'yetişkin', mature: 'olgun', senior: 'yaşlı' }[speaker.ageGroup] || '';
+    const personName = person ? (typeof verifiedCharacterName === 'function' && verifiedCharacterName(person)) || person.displayName : '';
+    title.textContent = [personName || `Kaynak ses ${index + 1}`, genderLabel(speaker.gender), ageLabel].filter(Boolean).join(' · ');
     title.title = `${own.length} cümle`;
     label.append(title);
     // Listening to a line is the only reliable way to know who this voice is.
@@ -1670,7 +1677,8 @@ els.voiceMappingApplyBtn?.addEventListener('click', async () => {
     // The manual run must see the same voices as the automatic one: without
     // these hints a man's lines merged into a woman's voice stayed merged
     // and the chosen male voice never reached them.
-    speakerHints: verifiedSpeakerVoiceHints(state.analysis), castGenders: speakingCastGenders(state.analysis) };
+    speakerHints: verifiedSpeakerVoiceHints(state.analysis), castGenders: speakingCastGenders(state.analysis),
+    castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(state.analysis) : [] };
   await regenerateTurkishVoices({ source, options, previous, session: state.analysisSession, started: false });
 });
 
@@ -2705,7 +2713,8 @@ els.analyzeBtn.addEventListener('click', async () => {
           qualityMode: modes.dubQuality,
           sceneContext: verifiedMediaSceneContext(),
           speakerHints,
-          castGenders: speakingCastGenders(normalized)
+          castGenders: speakingCastGenders(normalized),
+          castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(normalized) : []
         });
       session.mediaManifest = finalMedia;
       recordAiUsage(finalMedia?.qualityReport?.geminiUsage);
@@ -4767,10 +4776,10 @@ function rewardToastElement() {
     toast = document.createElement('div');
     toast.className = 'reward-toast hidden';
     toast.setAttribute('role', 'status');
-    toast.innerHTML = '<button type="button" class="reward-pill" data-reward-open>🎁 Ödül</button>' +
-      '<div class="reward-card"><small>🎁 ÖDÜL AÇILDI</small><strong data-reward-title></strong>' +
-      '<div class="reward-actions"><button type="button" data-reward-play>İzle</button>' +
-      '<button type="button" data-reward-later>Sonra</button></div></div>';
+    toast.innerHTML = '<button type="button" class="reward-pill" data-reward-open>Ödül <span aria-hidden="true">›</span></button>' +
+      '<div class="reward-card"><small>Ödül</small><strong data-reward-title></strong>' +
+      '<div class="reward-actions"><button type="button" data-reward-play>İzle <span aria-hidden="true">›</span></button>' +
+      '<button type="button" data-reward-later aria-label="Sonra">Sonra</button></div></div>';
     toast.querySelector('[data-reward-play]').addEventListener('click', () => playAdultReward(state.adultPendingReward));
     toast.querySelector('[data-reward-later]').addEventListener('click', () => toast.classList.add('collapsed'));
     toast.querySelector('[data-reward-open]').addEventListener('click', () => toast.classList.remove('collapsed'));
@@ -4785,6 +4794,11 @@ function showRewardToast(reward) {
   toast.querySelector('[data-reward-title]').textContent = rewardTitle(reward);
   toast.classList.remove('hidden', 'collapsed', 'flash');
   if (typeof feelLustProgress === 'function') feelLustProgress(100);
+  // A quiet line that folds itself away; the small "Ödül" chip stays.
+  clearTimeout(state.rewardCollapseTimer);
+  state.rewardCollapseTimer = setTimeout(() => {
+    if (state.adultPendingReward && !toast.classList.contains('hidden')) toast.classList.add('collapsed');
+  }, 7000);
 }
 
 function hideRewardToast() {
@@ -6245,8 +6259,17 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   // Context-control clips are still ordinary source-backed choices. The
   // contextual control is an alternate way to advance among them, not a
   // reason to hide them from the panel.
-  const movementPool = verifiedMovements;
   if (typeof annotateMeasuredFlavors === 'function') annotateMeasuredFlavors(position);
+  // Parts the moment-of-change button opens stay off the cards, so the
+  // button always leads to footage the cards do not already play.
+  const reserved = typeof promptReservedIds === 'function'
+    ? promptReservedIds(verifiedMovements, { sameOccurrence: current => {
+      const occurrence = positionOccurrenceForMovement(position, current)?.id;
+      return item => positionOccurrenceForMovement(position, item)?.id === occurrence;
+    } })
+    : new Set();
+  const movementPool = verifiedMovements.filter(item => !reserved.has(item.id));
+  position.tempoReservedIds = reserved;
   const movementChoices = movementCardsWithTempo(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
     buildVerifiedMovementChoices(movementPool, position.label, 6, position), 6
   )), { maxCards: 5, bundle: bundleAdjacentSourceCards });
@@ -7132,8 +7155,11 @@ function updateTempoPrompt(position, movement, mediaTime, now = performance.now(
   const occurrence = positionOccurrenceForMovement(position, movement)?.id;
   const offer = nextTempoPrompt(movement, position.movements || [], {
     sameOccurrence: item => positionOccurrenceForMovement(position, item)?.id === occurrence });
-  state.tempoPrompt = { forId: movement.id, movementId: offer?.movement?.id || null, visible: Boolean(offer), shownAt: now };
-  if (!offer) return;
+  // Only footage the cards do not play is offered, so the button is always
+  // something new.
+  const fresh = offer && (!(position.tempoReservedIds instanceof Set) || position.tempoReservedIds.has(offer.movement.id));
+  state.tempoPrompt = { forId: movement.id, movementId: fresh ? offer.movement.id : null, visible: Boolean(fresh), shownAt: now };
+  if (!fresh) return;
   const button = tempoPromptElement();
   if (!button) return;
   button.textContent = offer.label;

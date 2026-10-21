@@ -167,3 +167,19 @@ export function nextTempoPrompt(current, movements = [], { sameOccurrence = () =
   if (to === 'slow') return { flavor: 'slow', label: PROMPT_LABEL.slow, movement: next };
   return null;
 }
+
+// Parts the moment-of-change button leads to. They are kept off the cards so
+// the button opens footage the cards do not already play. The first part of
+// every occurrence always stays on a card.
+export function promptReservedIds(movements = [], { sameOccurrence = () => () => true, maxGap = 3 } = {}) {
+  const list = (Array.isArray(movements) ? movements : []).filter(Boolean)
+    .slice().sort((a, b) => Number(a.loopStartTime ?? a.startTime) - Number(b.loopStartTime ?? b.startTime));
+  const reserved = new Set();
+  for (const current of list) {
+    const offer = nextTempoPrompt(current, list, { sameOccurrence: sameOccurrence(current), maxGap });
+    if (offer?.movement?.id && !reserved.has(current.id)) reserved.add(offer.movement.id);
+  }
+  // Never leave a position without a card.
+  if (reserved.size >= list.length) return new Set();
+  return reserved;
+}
