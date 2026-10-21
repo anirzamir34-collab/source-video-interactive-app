@@ -10,7 +10,7 @@ export const TEMPO_OPTIONS = Object.freeze([
   { flavor: 'fast', label: 'Hızlan' },
   { flavor: 'hard', label: 'Sertleş' },
   { flavor: 'deep', label: 'Derine' },
-  { flavor: 'slow', label: 'Yavaşla' }
+  { flavor: 'slow', label: 'Sakinleş' }
 ]);
 
 const fold = value => String(value || '').toLocaleLowerCase('tr-TR')
@@ -50,6 +50,30 @@ export function movementBaseKey(label = '') {
     .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Cards are grouped by where his hands are; the playing card still shows the
+// full wording of the real clip. One short card per grip keeps a position to
+// a handful of choices.
+const GRIPS = [
+  [/\bboyn\w*|\bbogaz\w*|\bense\w*/u, 'boyun', 'Boynunu tut'],
+  [/\bsac\w*/u, 'sac', 'Saçını tut'],
+  [/\bkalca\w*/u, 'kalca', 'Kalçasını kavra'],
+  [/\bbacag\w*|\bbacak\w*|\bdizin\w*/u, 'bacak', 'Bacağını kavra'],
+  [/\bkarn\w*|\bkarin\w*|\bkasig\w*/u, 'karin', 'Karnına bastır'],
+  [/\bgogs\w*|\bgogus\w*|\bmeme\w*/u, 'gogus', 'Göğsünü tut'],
+  [/\bbel(?:i|in|ine|inden|ini)\b/u, 'bel', 'Belinden tut'],
+  [/\bomz\w*|\bomuz\w*/u, 'omuz', 'Omzunu tut'],
+  [/\bagz\w*|\bparmak\w*/u, 'agiz', 'Parmaklarını ağzına ver'],
+];
+export function movementGrip(label = '') {
+  const text = fold(label);
+  let best = null;
+  for (const [pattern, key, title] of GRIPS) {
+    const match = text.match(pattern);
+    if (match && (best === null || match.index < best.index)) best = { index: match.index, key, title };
+  }
+  return best ? { key: best.key, title: best.title } : null;
+}
+
 const cardSource = card => {
   const first = card?.variants?.[0] || {};
   return [card?.sourcePositionId || first.sourcePositionId || '',
@@ -61,12 +85,14 @@ export function mergeSameMovementCards(cards = []) {
   const out = [];
   const byKey = new Map();
   for (const card of Array.isArray(cards) ? cards : []) {
-    const base = movementBaseKey(card?.label);
+    const grip = movementGrip(card?.label);
+    const base = grip ? `grip:${grip.key}` : movementBaseKey(card?.label);
     const key = base ? `${cardSource(card)}::${base}` : '';
     const existing = key ? byKey.get(key) : null;
     const flavor = movementFlavor(card?.variants?.[0]);
     if (!existing) {
-      const copy = { ...card, variants: [...(card?.variants || [])], labelsByFlavor: { [flavor]: card?.label } };
+      const copy = { ...card, variants: [...(card?.variants || [])], labelsByFlavor: { [flavor]: card?.label },
+        ...(grip ? { gripLabel: grip.title } : {}) };
       out.push(copy);
       if (key) byKey.set(key, copy);
       continue;
@@ -96,12 +122,22 @@ export function attachTempoOptions(card = {}) {
   // The card is worded after the part it plays itself; the tempo buttons
   // already say the change.
   const ownLabel = (byFlavor.get(base) || []).map(item => String(item.label || '').trim()).find(Boolean);
-  const label = card.labelsByFlavor?.[base] || (base !== movementFlavor(variants[0]) && ownLabel) || card.label;
+  const label = card.gripLabel || card.labelsByFlavor?.[base] || (base !== movementFlavor(variants[0]) && ownLabel) || card.label;
   return { ...card, label, baseFlavor: base, baseVariants: byFlavor.get(base) || variants, tempoOptions };
 }
 
-export function movementCardsWithTempo(cards = [], { maxCards = 6, bundle = null } = {}) {
+export function movementCardsWithTempo(cards = [], { maxCards = 5, bundle = null } = {}) {
   let merged = mergeSameMovementCards(cards);
+  // Too many cards: every move without a named grip becomes one "Devam et".
+  if (merged.length > maxCards) {
+    const loose = merged.filter(card => !card.gripLabel);
+    if (loose.length > 1) {
+      const rest = { ...loose[0], label: 'Devam et', gripLabel: 'Devam et',
+        variants: loose.flatMap(card => card.variants || [])
+          .sort((a, b) => Number(a.loopStartTime ?? a.startTime) - Number(b.loopStartTime ?? b.startTime)) };
+      merged = [...merged.filter(card => card.gripLabel), rest];
+    }
+  }
   if (merged.length > maxCards && typeof bundle === 'function') merged = bundle(merged, { targetCount: maxCards });
   return merged.map(attachTempoOptions);
 }

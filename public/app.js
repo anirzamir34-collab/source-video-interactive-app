@@ -6059,7 +6059,16 @@ function nextEnergeticPositionMovement(position, currentMovement = null, stronge
   return remaining.reduce((best, item) => intensity(item) > intensity(best) ? item : best, remaining[0]);
 }
 
+// The SEKS button was removed: it repeated what the movement cards do and
+// jumped past the clip the player had just chosen. Tempo prompts replace it.
+const SEX_CONTROL_ENABLED = false;
+
 function updateRhythmControl(position) {
+  if (typeof SEX_CONTROL_ENABLED === 'undefined' || !SEX_CONTROL_ENABLED) {
+    els.rhythmControl?.classList.add('hidden');
+    if (els.rhythmTapBtn) els.rhythmTapBtn.disabled = true;
+    return;
+  }
   const movement = position?.movements?.find(item => item.id === state.activeMovementId) || null;
   const remaining = position ? remainingPositionControlClips(position, movement) : [];
   const nextEnergetic = position ? nextEnergeticPositionMovement(position, movement) : null;
@@ -6235,7 +6244,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   if (typeof annotateMeasuredFlavors === 'function') annotateMeasuredFlavors(position);
   const movementChoices = movementCardsWithTempo(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
     buildVerifiedMovementChoices(movementPool, position.label, 6, position), 6
-  )), { maxCards: 6, bundle: bundleAdjacentSourceCards });
+  )), { maxCards: 5, bundle: bundleAdjacentSourceCards });
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;

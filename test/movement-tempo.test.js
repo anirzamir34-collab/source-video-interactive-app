@@ -26,7 +26,7 @@ test('one movement card gets tempo buttons only for paces the video really has',
   const result = movementCardsWithTempo(cards);
   assert.equal(result.length, 2);
   const hair = result[0];
-  assert.equal(hair.label, 'Saçını tutarak devam et');
+  assert.equal(hair.label, 'Saçını tut', 'cards are named after the grip');
   assert.deepEqual(hair.baseVariants.map(item => item.id), ['s1', 's2']);
   assert.deepEqual(hair.tempoOptions.map(option => [option.label, option.variants.map(item => item.id)]), [['Hızlan', ['f1']]]);
   assert.deepEqual(result[1].tempoOptions, [], 'no pace change in the video, no tempo button');
@@ -44,4 +44,19 @@ test('the same movement in another position or occurrence stays a separate card'
 test('first full Lust opens 1 position for short videos, 2-3 for videos with many', async () => {
   const { adultFirstUnlockCount } = await import('../public/adult-gameplay.js');
   assert.deepEqual([1, 2, 3, 4, 5, 6, 9].map(adultFirstUnlockCount), [1, 1, 1, 2, 2, 3, 3]);
+});
+
+test('cards group by where his hands are; moves without a grip share one card when crowded', async () => {
+  const { movementGrip } = await import('../public/movement-tempo.js');
+  assert.deepEqual(movementGrip('Elini boynuna koyarak ritmik itişleri sürdür'), { key: 'boyun', title: 'Boynunu tut' });
+  assert.equal(movementGrip('Karnını ve bacağını tutarak devam et').key, 'karin');
+  assert.equal(movementGrip('Temponu artırarak devam et'), null);
+  const clipAt = (id, start) => clip(id, start);
+  const cards = ['Boynunu kavrayarak hızlan', 'Elini boynuna koyup devam et', 'Bacağını tutarak devam et',
+    'Karnına bastırarak devam et', 'Saçını tutarak devam et', 'Göğsünü tutarak devam et', 'Ritmik devam et', 'Temponu koru']
+    .map((label, index) => ({ id: `c${index}`, label, sourcePositionId: 'doggy', variants: [clipAt(`v${index}`, index * 12)] }));
+  const result = movementCardsWithTempo(cards, { maxCards: 6 });
+  assert.equal(result.filter(card => card.label === 'Boynunu tut').length, 1);
+  assert.ok(result.some(card => card.label === 'Devam et' && card.variants.length === 2));
+  assert.equal(result.flatMap(card => card.variants).length, 8);
 });

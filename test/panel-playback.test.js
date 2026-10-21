@@ -650,7 +650,7 @@ test('forward control never includes a disjoint return from another occurrence',
   assert.equal(f.nextEnergeticPositionMovement(position, null), null);
 });
 
-test('the scene control occupies space only while an existing clip is available', () => {
+test('the removed SEKS control stays hidden even while a later clip exists', () => {
   const f = runtimeFixture();
   const position = chapter('navigation', 30);
   f.isEnergeticSexMoment = () => true;
@@ -659,29 +659,8 @@ test('the scene control occupies space only while an existing clip is available'
   f.state.activeMovementId = 'navigation-1';
   f.els.video.time = 40;
   f.updateRhythmControl(position);
-  assert.equal(f.els.rhythmControl.classes.has('hidden'), false);
-  assert.equal(f.els.rhythmTapBtn.disabled, false);
-  assert.match(f.els.rhythmTapStatus.textContent, /^Hazır/);
-  assert.match(f.els.rhythmTapLabel.textContent, /^SEKS/);
-  // A sex position waiting for the next pick still offers the control.
-  f.state.activeMovementId = null;
-  f.els.video.paused = true;
-  f.updateRhythmControl(position);
-  assert.equal(f.els.rhythmControl.classes.has('hidden'), false);
-  // Another position, or no open position, hides it.
-  f.state.activePositionId = 'other';
-  f.updateRhythmControl(position);
-  assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
-  f.state.activePositionId = position.id;
-  f.state.activeMovementId = 'navigation-1';
-  f.els.video.time = 60;
-  f.updateRhythmControl(position);
   assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
   assert.equal(f.els.rhythmTapBtn.disabled, true);
-  f.updateRhythmControl(null);
-  assert.equal(f.els.rhythmControl.classes.has('hidden'), true);
-  assert.equal(f.els.video.currentTime, 60);
-  assert.equal(f.els.video.playCalls, 0);
 });
 
 async function startFirstChapter(f) {
@@ -698,6 +677,7 @@ async function startFirstChapter(f) {
   await flush();
   assert.equal(f.els.video.paused, false);
 }
+
 
 test('first unlock reveals a clickable chapter; only explicit selection plays its verified entry', async () => {
   const f = runtimeFixture();
@@ -1822,7 +1802,7 @@ test('context-control clips stay visible as ordinary movement choices', () => {
   );
 });
 
-test('panel retains eight distinct verified movement cards without a fixed display count', () => {
+test('eight different moves stay playable while the panel keeps at most five short cards', () => {
   const f = runtimeFixture();
   const position = f.state.adultScene.positions[0];
   position.endTime = 100;
@@ -1838,10 +1818,9 @@ test('panel retains eight distinct verified movement cards without a fixed displ
   f.renderAdultProgressiveUI(true);
   f.selectAdultPosition('one', false);
   const cards = position.activeMovementChoices;
-  assert.equal(cards.length, 8);
-  assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)),
-    position.movements.map(item => item.id));
-  assert.ok(cards.every(card => card.variants.length === 1));
+  assert.ok(cards.length <= 5);
+  assert.deepEqual(cards.flatMap(card => card.variants.map(item => item.id)).sort(),
+    position.movements.map(item => item.id).sort(), 'every real move is still reachable');
 });
 
 
