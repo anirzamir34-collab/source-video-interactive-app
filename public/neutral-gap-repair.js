@@ -1,6 +1,6 @@
 // Separate, narrowly scoped saved-game repair. This is NOT a rewritten
 // version of the full adult-interaction analysis request.
-export const GAP_REPAIR_PROMPT_VERSION = 'neutral-timeline-v2';
+export const GAP_REPAIR_PROMPT_VERSION = 'neutral-timeline-v3';
 export const GAP_REPAIR_VALIDATOR_VERSION = 'neutral-validator-v2';
 
 export const GAP_REPAIR_SYSTEM_INSTRUCTION = `You are a factual video timeline assistant.
@@ -26,35 +26,25 @@ export function buildGapRepairPrompt({
     throw new Error('Invalid gap repair interval');
   }
   return `VIDEOQUEST SAVED GAME — NEUTRAL TIMELINE RECOVERY
-This request is ONLY for ordinary, non-graphic, directly observable source events.
-It does not ask for the adult gameplay taxonomy, sexual positioning, physical
-contact details, intimate interactions or reinterpretation of restricted frames.
-If the provider cannot process this source, do not attempt to override that decision.
-
-Analyze the supplied timestamped frame sheets within ${start}–${end} seconds.
-Frames are still images, not a continuous video: never infer unobserved moments.
-Identify only meaningful, ordinary actions that can be visually confirmed, e.g.
-a person enters or leaves a room, visibly moves to another location, a clearly
-ordinary non-intimate gesture, or a narrative-relevant scene transition.
+Review ${start}–${end} seconds using only the supplied timestamped still frames.
+Report ordinary, non-graphic events: entering or leaving a room, moving to
+another location, a non-intimate gesture, or a meaningful scene transition.
+Use brief, factual Turkish descriptions. Do not describe or classify sexual acts.
+Respect provider restrictions; if the source cannot be processed, do not override
+that decision. Leave unverified intervals incomplete and explain them in warnings.
+Still frames do not show continuous video: never infer unobserved moments.
 A camera-only cut, a new camera angle and repeated motion are NOT player actions.
 Do not report a description based solely on the motionProfile or sceneBoundaries.
 
-For each verified ordinary action, return:
-- startTime and endTime strictly inside the requested range, covering only
-  the frames that show the event; no extrapolation.
-- a brief neutral Turkish label, clearly supported by the frames.
-- sourceVerified=true ONLY if the actual event and playable interval are
-  independently visible in multiple frames.
-- confidence is an honest probability from 0.0 to 1.0, assessed from the frames.
-  A generic sample number is NOT evidence and must not be copied. For uncertain
-  events use a low confidence or omit the event; never inflate confidence.
-- Times MUST use absolute source-video seconds, not seconds relative to this chunk.
-  Do not invent start/end times between two distant sampled frames.
-- actionType="story", choiceSurface="story", nonIntimate=true,
-  activityType="other", positionId="", positionLabel="", and no movement loops.
-If no such event can be safely verified, return actions=[].
-Never add filler, fake transitions, invented participants, fake actions or
-graphic descriptions. Never call a restricted or uninspected interval complete.
+Set sourceVerified=true only when multiple frames verify both the ordinary event
+and its interval. Use absolute source-video seconds within the requested range;
+do not extrapolate or invent times between distant frames.
+Give an honest confidence from 0.0 to 1.0; omit uncertain events or use low
+confidence. Do not invent events, participants, details or coverage.
+Use actionType="story", choiceSurface="story", nonIntimate=true,
+activityType="other", positionId="", positionLabel="", and no movement loops.
+If nothing can be verified, return actions=[]. Never call a restricted or
+uninspected interval complete.
 
 Return a single JSON object (no markdown) with these keys:
 {"available":true,"actions":[],"analysisGaps":[],"warnings":[]}

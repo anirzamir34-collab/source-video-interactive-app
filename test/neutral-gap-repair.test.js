@@ -12,7 +12,7 @@ test('gap-repair uses a separate short neutral timeline prompt', () => {
     motionProfile: '[{"time":103,"score":7}]',
     sceneBoundaries: '[{"time":110,"kind":"hard-cut"}]'
   });
-  assert.equal(GAP_REPAIR_PROMPT_VERSION, 'neutral-timeline-v2');
+  assert.equal(GAP_REPAIR_PROMPT_VERSION, 'neutral-timeline-v3');
   assert.equal(GAP_REPAIR_VALIDATOR_VERSION, 'neutral-validator-v2');
   assert.match(GAP_REPAIR_SYSTEM_INSTRUCTION, /non-graphic/);
   assert.match(prompt, /100–160 seconds/);
