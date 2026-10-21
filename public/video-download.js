@@ -144,6 +144,8 @@ export function createVideoDownloader({
       if (!writer) maxBytes = Math.min(requestedLimit, MAX_MEMORY_VIDEO_BYTES);
       if (total > maxBytes) throw sizeError();
       stage = 'network';
+      const resumable = /bytes/i.test(response.headers.get('accept-ranges') || '') && total > 0;
+      let resumes = 0;
       reader = response.body?.getReader();
       if (!reader) throw new Error('Tarayıcı video akışını okuyamadı. Güncel bir tarayıcıyla tekrar dene.');
       const chunks = [];
@@ -181,7 +183,28 @@ export function createVideoDownloader({
       while (true) {
         checkpoint();
         stage = 'network';
-        const { done, value } = await reader.read();
+        let chunk;
+        try { chunk = await reader.read(); }
+        catch (error) {
+          // A dropped connection continues from the bytes already saved
+          // instead of starting the whole video again.
+          if (controller.signal.aborted || !resumable || resumes >= 6 || !received) throw error;
+          resumes += 1;
+          try { reader.releaseLock(); } catch {}
+          await new Promise(resolve => setTimeout(resolve, 800 * resumes));
+          checkpoint();
+          const next = await fetchVideo(url, { ...(options.direct ? { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' } : {}),
+            signal: controller.signal, headers: { Range: `bytes=${received}-` } });
+          const range = /^bytes (\d+)-\d+\/(\d+)$/i.exec(next.headers.get('content-range') || '');
+          if (next.status !== 206 || !range || Number(range[1]) !== received || (total && Number(range[2]) !== total) || !next.body) {
+            try { await next.body?.cancel(); } catch {}
+            throw error;
+          }
+          reader = next.body.getReader();
+          refreshDeadline();
+          continue;
+        }
+        const { done, value } = chunk;
         checkpoint();
         if (done) break;
         received += value.byteLength ?? value.length;
@@ -226,6 +249,9 @@ export function createVideoDownloader({
       if (options.signal?.aborted) throw options.signal.reason || error;
       if (error.name === 'QuotaExceededError') throw storageError();
       if (controller.signal.aborted) error = new Error('Video aktarımı durdu. Bağlantını kontrol edip tekrar dene.');
+      else if (error instanceof TypeError && /network|fetch|load failed/i.test(String(error.message))) {
+        error = Object.assign(new Error('Video sitesiyle bağlantı koptu. Site indirmeyi yavaşlatıyor veya engelliyor olabilir; tekrar dene ya da videoyu tarayıcıda açıp indir.'), { retryViaProxy: options.direct });
+      }
       if (options.direct && stage === 'network' && !error.code) error.retryViaProxy = true;
       throw error;
     } finally {

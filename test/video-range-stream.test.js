@@ -159,9 +159,45 @@ test('changed identity, wrong range, short body and ignored conditional range di
       return part(range, failure === 'identity' ? { etag: '"changed"' } : { 'content-range': `bytes 2-3/${bytes.length}` });
     }).download('/video', { parallel: true });
     assert.equal(serial, 1, failure);
-    assert.equal(rangeRequests, 5, failure);
+    // A dropped connection or short part is retried on its own first.
+    if (['short', 'network'].includes(failure)) assert.ok(rangeRequests > 5, failure);
+    else assert.equal(rangeRequests, 5, failure);
     assert.equal(digest(new Uint8Array(await file.arrayBuffer())), expectedHash, failure);
   }
+});
+
+test('one dropped part is downloaded again without restarting the video', async () => {
+  let serial = 0, dropped = 0;
+  const file = await downloader(async (_url, options) => {
+    const range = options.headers?.Range;
+    if (!range) { serial++; return full(); }
+    if (range.startsWith('bytes=2097153-') && dropped++ === 0) throw new TypeError('network error');
+    return part(range);
+  }).download('/video', { parallel: true });
+  assert.equal(serial, 0);
+  assert.equal(dropped, 2);
+  assert.equal(digest(new Uint8Array(await file.arrayBuffer())), expectedHash);
+});
+
+test('a single-connection download continues from the saved bytes after a drop', async () => {
+  const requests = [];
+  const file = await downloader(async (_url, options) => {
+    const range = options.headers?.Range || '';
+    requests.push(range);
+    if (!range) {
+      let sent = false;
+      const body = new ReadableStream({ pull(controller) {
+        if (!sent) { sent = true; controller.enqueue(bytes.slice(0, 1000)); return; }
+        controller.error(new TypeError('network error'));
+      } });
+      return new Response(body, { headers: { 'content-type': 'video/mp4', 'content-length': String(bytes.length), 'accept-ranges': 'bytes' } });
+    }
+    const start = Number(/^bytes=(\d+)-$/.exec(range)[1]);
+    return new Response(bytes.slice(start), { status: 206, headers: { 'content-type': 'video/mp4',
+      'content-range': `bytes ${start}-${bytes.length - 1}/${bytes.length}` } });
+  }).download('/video', { parallel: false });
+  assert.deepEqual(requests, ['', 'bytes=1000-']);
+  assert.equal(digest(new Uint8Array(await file.arrayBuffer())), expectedHash);
 });
 
 test('a long Retry-After stops range requests without starting another transfer', async () => {

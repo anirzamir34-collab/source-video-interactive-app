@@ -4,6 +4,7 @@ const CONNECTIONS = 4;
 const LARGE_FILE_BYTES = 64 * 1024 * 1024;
 const LARGE_PART_BYTES = 8 * 1024 * 1024;
 const LARGE_CONNECTIONS = 6;
+const PART_ATTEMPTS = 4;
 
 function rangeOf(response) {
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/i.exec(response.headers.get('content-range') || '');
@@ -65,7 +66,7 @@ export async function openVideoDownload(url, {
   let failure;
   const readers = new Set();
   let cancelled = false;
-  const readPart = async (response, start, end) => {
+  const readPart = async (response, start, end, progress = { count: 0 }) => {
     let reader;
     try {
       if (response.status === 429) {
@@ -93,10 +94,11 @@ export async function openVideoDownload(url, {
         if (count + value.byteLength > expected) throw retrySerial();
         bytes.set(value, count);
         count += value.byteLength;
+        progress.count = count;
         loaded += value.byteLength;
         onNetwork?.({ loaded, total, connections });
       }
-      if (count !== expected) throw retrySerial();
+      if (count !== expected) throw Object.assign(retrySerial(), { transient: true });
       return bytes;
     } finally {
       try { if (reader) await reader.cancel(); else await response.body?.cancel(); } catch {}
@@ -117,10 +119,28 @@ export async function openVideoDownload(url, {
       const end = Math.min(total - 1, start + partBytes - 1);
       offset = end + 1;
       const task = (async () => {
-        const response = await fetchVideo(url, { ...requestOptions,
-          signal: AbortSignal.any([combined, AbortSignal.timeout(45000)]),
-          headers: { Range: `bytes=${start}-${end}`, 'If-Range': validator.value } });
-        return { bytes: await readPart(response, start, end) };
+        // A dropped connection or a slow part is retried on its own (mobile
+        // networks and busy video hosts drop single connections) instead of
+        // restarting the whole video from zero.
+        for (let attemptNo = 1; ; attemptNo++) {
+          const progress = { count: 0 };
+          try {
+            const response = await fetchVideo(url, { ...requestOptions,
+              signal: AbortSignal.any([combined, AbortSignal.timeout(60000)]),
+              headers: { Range: `bytes=${start}-${end}`, 'If-Range': validator.value } });
+            if (response.status >= 500 && attemptNo < PART_ATTEMPTS) {
+              try { await response.body?.cancel(); } catch {}
+              throw Object.assign(new Error(`HTTP ${response.status}`), { transient: true });
+            }
+            return { bytes: await readPart(response, start, end, progress) };
+          } catch (error) {
+            loaded -= progress.count; // a broken part is downloaded again
+            if (combined.aborted || cancelled || (error?.code === 'VIDEO_RANGE_RETRY' && !error.transient) ||
+                attemptNo >= PART_ATTEMPTS) throw error;
+            await new Promise(resolve => setTimeout(resolve, 600 * attemptNo));
+            if (combined.aborted || cancelled) throw error;
+          }
+        }
       })().catch(error => {
         // Observe every background rejection immediately. A bad later range
         // cancels the whole window, even while an earlier range is stalled.
