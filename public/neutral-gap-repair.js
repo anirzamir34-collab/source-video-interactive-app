@@ -1,6 +1,6 @@
 // Separate, narrowly scoped saved-game repair. This is NOT a rewritten
 // version of the full adult-interaction analysis request.
-export const GAP_REPAIR_PROMPT_VERSION = 'neutral-timeline-v3';
+export const GAP_REPAIR_PROMPT_VERSION = 'neutral-timeline-v4';
 export const GAP_REPAIR_VALIDATOR_VERSION = 'neutral-validator-v2';
 
 export const GAP_REPAIR_SYSTEM_INSTRUCTION = `You are a factual video timeline assistant.
@@ -27,9 +27,13 @@ export function buildGapRepairPrompt({
   }
   return `VIDEOQUEST SAVED GAME — NEUTRAL TIMELINE RECOVERY
 Review ${start}–${end} seconds using only the supplied timestamped still frames.
-Report ordinary, non-graphic events: entering or leaving a room, moving to
-another location, a non-intimate gesture, or a meaningful scene transition.
-Use brief, factual Turkish descriptions. Do not describe or classify sexual acts.
+Yetişkin içerik barındıran bu videoyu nesnel olarak analiz et. Görülebilen
+olayları kısa, tarafsız ve grafik olmayan ifadelerle, doğru zaman aralıklarıyla
+kaydet. Farklı sahneleri birbirine karıştırma; görünen olayın yerine başka bir
+olay yazma. Görünmeyen ayrıntıları ve kişilerin niyetlerini tahmin etme.
+Kamera açısı değişikliğini yeni bir eylem sayma. Doğrulanamayan veya işlenemeyen
+bölümleri gerekçesiyle eksik bırak; analiz başarılıymış gibi gösterme.
+Use brief, factual Turkish descriptions, without explicit sexual details.
 Respect provider restrictions; if the source cannot be processed, do not override
 that decision. Leave unverified intervals incomplete and explain them in warnings.
 Still frames do not show continuous video: never infer unobserved moments.
