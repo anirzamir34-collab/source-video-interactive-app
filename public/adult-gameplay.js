@@ -681,7 +681,7 @@ export function longPreludeSequences(prelude = {}) {
     .map(item => item.id === prelude.id ? prelude : { ...item, loopStartTime: undefined, loopEndTime: undefined });
 }
 
-export { movementCardsWithTempo } from './movement-tempo.js';
+export { movementCardsWithTempo, nextTempoPrompt } from './movement-tempo.js';
 
 // The first full Lust opens one position when the video has few (up to 3),
 // two when it has 4-5 and three when it has 6 or more; every later full Lust
@@ -740,7 +740,7 @@ export function expandVerifiedMovementVariants(
       startTime: Number(part.startTime), endTime: Number(part.endTime),
       movementTempo: part.movementTempo || item.movementTempo,
       movementType: part.movementType || item.movementType,
-      movementChange: part.movementChange || 'none',
+      movementChange: part.movementChange && part.movementChange !== 'none' ? part.movementChange : (item.movementChange || 'none'),
       // A part with its own visible detail carries its own wording.
       ...(String(part.label || '').trim() ? { label: String(part.label).trim() } : {}),
       ...(['low', 'moderate', 'high'].includes(part.audioIntensity) ? { audioIntensity: part.audioIntensity } : {}),

@@ -141,3 +141,29 @@ export function movementCardsWithTempo(cards = [], { maxCards = 5, bundle = null
   if (merged.length > maxCards && typeof bundle === 'function') merged = bundle(merged, { targetCount: maxCards });
   return merged.map(attachTempoOptions);
 }
+
+// The moment-of-change prompt: while one part of a position plays, the very
+// next real part of the same occurrence is checked. When the video really
+// speeds up, gets harder or deeper there - or calms down after a hot part -
+// a single button ("Hızlan", "Sertleş", "Derine", "Sakinleş") is offered
+// shortly before the change. Nothing is offered when the footage just goes on.
+const PROMPT_LABEL = { fast: 'Hızlan', hard: 'Sertleş', deep: 'Derine', slow: 'Sakinleş' };
+const HOT = new Set(['fast', 'hard', 'deep']);
+
+export function nextTempoPrompt(current, movements = [], { sameOccurrence = () => true, maxGap = 3 } = {}) {
+  if (!current) return null;
+  const end = Number(current.loopEndTime ?? current.endTime);
+  if (!Number.isFinite(end)) return null;
+  const next = (Array.isArray(movements) ? movements : [])
+    .filter(item => item && item.id !== current.id && item.sourceVerified !== false && sameOccurrence(item))
+    .map(item => ({ item, start: Number(item.loopStartTime ?? item.startTime) }))
+    .filter(row => Number.isFinite(row.start) && row.start >= end - 1 && row.start <= end + maxGap)
+    .sort((a, b) => a.start - b.start)[0]?.item;
+  if (!next) return null;
+  const from = movementFlavor(current), to = movementFlavor(next);
+  if (to === from) return null;
+  if (HOT.has(to)) return { flavor: to, label: PROMPT_LABEL[to], movement: next };
+  if ((to === 'slow' || to === 'steady') && HOT.has(from)) return { flavor: 'slow', label: PROMPT_LABEL.slow, movement: next };
+  if (to === 'slow') return { flavor: 'slow', label: PROMPT_LABEL.slow, movement: next };
+  return null;
+}

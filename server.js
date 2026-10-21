@@ -824,6 +824,8 @@ ${reviewCandidates}
             ? String(action.oralGiver).toLowerCase() : '',
           receiverLegs: ['raised_on_shoulders', 'raised', 'spread', 'together'].includes(String(action.receiverLegs || '').toLowerCase())
             ? String(action.receiverLegs).toLowerCase() : 'unclear',
+          movementChange: ['faster', 'slower', 'harder', 'deeper'].includes(String(action.movementChange || '').toLowerCase())
+            ? String(action.movementChange).toLowerCase() : 'none',
           sensoryConfidence: Math.max(0, Math.min(1, Number(action.sensoryConfidence) || 0)),
           loopStartTime: Number(action.loopStartTime ?? action.startTime),
           loopEndTime: Number(action.loopEndTime ?? action.endTime),

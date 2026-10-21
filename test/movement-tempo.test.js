@@ -60,3 +60,15 @@ test('cards group by where his hands are; moves without a grip share one card wh
   assert.ok(result.some(card => card.label === 'Devam et' && card.variants.length === 2));
   assert.equal(result.flatMap(card => card.variants).length, 8);
 });
+
+test('a tempo button is offered only where the next real part changes pace', async () => {
+  const { nextTempoPrompt } = await import('../public/movement-tempo.js');
+  const part = (id, start, extra = {}) => ({ id, loopStartTime: start, loopEndTime: start + 12, sourceVerified: true, ...extra });
+  const steady = part('a', 0), faster = part('b', 12, { movementTempo: 'fast' }), calm = part('c', 24), later = part('d', 60, { movementChange: 'deeper' });
+  assert.deepEqual([nextTempoPrompt(steady, [steady, faster, calm]).label, nextTempoPrompt(steady, [steady, faster, calm]).movement.id], ['Hızlan', 'b']);
+  assert.equal(nextTempoPrompt(faster, [steady, faster, calm]).label, 'Sakinleş', 'calming down after a hot part');
+  assert.equal(nextTempoPrompt(calm, [calm, part('e', 36)]), null, 'just going on offers nothing');
+  assert.equal(nextTempoPrompt(calm, [calm, later]), null, 'a far later part is not the next moment');
+  assert.equal(nextTempoPrompt(steady, [steady, faster], { sameOccurrence: item => item.id !== 'b' }), null, 'another occurrence never counts');
+  assert.equal(nextTempoPrompt(part('x', 0), [part('y', 12, { movementChange: 'harder' })]).label, 'Sertleş');
+});

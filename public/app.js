@@ -38,6 +38,7 @@ import {
   longPreludeSequences,
   adultFirstUnlockCount,
   movementCardsWithTempo,
+  nextTempoPrompt,
   sourceMotionProgressRate,
   verifiedActionSubsequences,
   exclusiveControlClipIds,
@@ -3000,6 +3001,8 @@ function normalizeAnalysis(body) {
         ? String(a.oralGiver).toLowerCase() : '',
       receiverLegs: ['raised_on_shoulders', 'raised', 'spread', 'together'].includes(String(a.receiverLegs || '').toLowerCase())
         ? String(a.receiverLegs).toLowerCase() : 'unclear',
+      movementChange: ['faster', 'slower', 'harder', 'deeper'].includes(String(a.movementChange || '').toLowerCase())
+        ? String(a.movementChange).toLowerCase() : 'none',
       sensoryConfidence: Math.max(0, Math.min(1, Number(a.sensoryConfidence) || 0)),
       loopStartTime: Number(a.loopStartTime ?? a.startTime),
       loopEndTime: Number(a.loopEndTime ?? a.endTime),
@@ -4693,6 +4696,8 @@ function resetAdultRewards() {
   state.adultRewardReturn = null;
   state.activeAdultRewardId = null;
   if (typeof hideRewardToast === 'function') hideRewardToast();
+  if (typeof hideTempoPrompt === 'function') hideTempoPrompt();
+  state.tempoPrompt = null;
 }
 
 // ---------- Measured intensity (motion + breath/moan audio) ----------
@@ -6988,6 +6993,7 @@ function updateAdultPlayback(now, mediaTime) {
   // The real footage sets the pace: its measured motion and breath/moan
   // sounds speed Lust and his pleasure up or down, and the hottest moments
   // answer with a quiet pulse.
+  if (typeof updateTempoPrompt === 'function') updateTempoPrompt(position, movement, mediaTime, now);
   const sensed = typeof intensityNow === 'function' ? intensityNow() : null;
   const sensedRate = sensed && typeof intensityRate === 'function' ? intensityRate(sensed) : 1;
   if (sensed && typeof feelIntensity === 'function') feelIntensity(sensed, now);
@@ -7084,6 +7090,63 @@ function feelLustProgress(lust) {
     feelStage.classList.remove('vq-unlock'); void feelStage.offsetWidth; feelStage.classList.add('vq-unlock');
     setTimeout(() => feelStage.classList.remove('vq-unlock'), 1400);
   }
+}
+
+// ---------- Moment-of-change tempo prompt ----------
+function tempoPromptElement() {
+  const stage = els.video?.closest?.('.video-stage');
+  if (!stage || !globalThis.document?.createElement) return null;
+  let button = stage.querySelector('.tempo-prompt');
+  if (!button) {
+    button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tempo-prompt hidden';
+    button.addEventListener('click', () => {
+      const offer = state.tempoPrompt;
+      hideTempoPrompt();
+      if (!offer?.movementId) return;
+      state.activeMovementChoiceId = null;
+      selectAdultMovement(offer.movementId, true);
+    });
+    stage.appendChild(button);
+  }
+  return button;
+}
+
+function hideTempoPrompt() {
+  const stage = els.video?.closest?.('.video-stage');
+  stage?.querySelector?.('.tempo-prompt')?.classList.add('hidden');
+  if (state.tempoPrompt) state.tempoPrompt = { ...state.tempoPrompt, visible: false };
+}
+
+// Shown in the last 5 s of the playing part when the next real part changes
+// pace; gone when another part is chosen or 4 s after this part ends.
+function updateTempoPrompt(position, movement, mediaTime, now = performance.now()) {
+  if (typeof nextTempoPrompt !== 'function' || !position || !movement || isWarmupPosition(position) ||
+      state.adultOutcomePhase !== 'idle') { hideTempoPrompt(); return; }
+  const end = Number(movement.loopEndTime);
+  const current = state.tempoPrompt;
+  if (current && current.forId !== movement.id) hideTempoPrompt();
+  if (!(mediaTime >= end - 5)) return;
+  if (state.tempoPrompt?.forId === movement.id) return;
+  const occurrence = positionOccurrenceForMovement(position, movement)?.id;
+  const offer = nextTempoPrompt(movement, position.movements || [], {
+    sameOccurrence: item => positionOccurrenceForMovement(position, item)?.id === occurrence });
+  state.tempoPrompt = { forId: movement.id, movementId: offer?.movement?.id || null, visible: Boolean(offer), shownAt: now };
+  if (!offer) return;
+  const button = tempoPromptElement();
+  if (!button) return;
+  button.textContent = offer.label;
+  button.dataset.flavor = offer.flavor;
+  button.classList.remove('hidden');
+  // Restart the pop animation for a new offer.
+  button.classList.remove('pop'); void button.offsetWidth; button.classList.add('pop');
+  logEngineEvent('TEMPO_PROMPT_SHOWN', { flavor: offer.flavor, from: movement.id, to: offer.movement.id });
+  clearTimeout(state.tempoPromptTimer);
+  const shownFor = movement.id;
+  state.tempoPromptTimer = setTimeout(() => {
+    if (state.tempoPrompt?.forId === shownFor) hideTempoPrompt();
+  }, 9000);
 }
 
 // Quiet by default: only the hottest measured moments of the real video (fast
