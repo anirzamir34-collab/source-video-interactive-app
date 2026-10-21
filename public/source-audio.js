@@ -43,8 +43,14 @@ export function createSourceAudioPreparer({ extract = extractMp4Audio, encode = 
     });
     try {
       const operation = (async () => {
-        const audio = /^audio\//i.test(source.type) ? source :
-          await extract(source, { signal: ownedSignal, onProgress, timeoutMs });
+        let audio = null;
+        if (/^audio\//i.test(source.type)) audio = source;
+        else {
+          // A failed fast remux (an unusual MP4, a storage read error on a
+          // saved game) falls back to decoding the file instead of giving up.
+          try { audio = await extract(source, { signal: ownedSignal, onProgress, timeoutMs }); }
+          catch (error) { if (ownedSignal.aborted) throw error; audio = null; }
+        }
         ownedSignal.throwIfAborted();
         onProgress({ phase: 'audio_extracted', loaded: audio?.size || 0, total: audio?.size || 0 });
         return checkedMp3(await encode(audio || source, { signal: ownedSignal, duration, onProgress }));
@@ -56,7 +62,9 @@ export function createSourceAudioPreparer({ extract = extractMp4Audio, encode = 
     } catch (error) {
       if (ownedSignal.aborted) throw ownedSignal.reason;
       if (error.code) throw error;
-      throw failure('LOCAL_AUDIO_UNSUPPORTED', 'Bu dosyanın sesi cihazda MP3’e dönüştürülemedi. Desteklenen bir MP4 veya ayrı ses dosyası kullan.');
+      const detail = String(error?.name && error.name !== 'Error' ? `${error.name}: ${error.message}` : error?.message || '').slice(0, 160);
+      throw Object.assign(failure('LOCAL_AUDIO_UNSUPPORTED', 'Bu dosyanın sesi cihazda MP3’e dönüştürülemedi. Desteklenen bir MP4 veya ayrı ses dosyası kullan.' +
+        (detail ? ` (Teknik neden: ${detail})` : '')), { cause: error });
     } finally {
       globalThis.clearTimeout(timer);
       ownedSignal.removeEventListener('abort', cancel);
