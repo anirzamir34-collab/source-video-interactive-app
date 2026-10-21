@@ -729,6 +729,12 @@ function invalidateTurkishMediaCredentials(refreshDelay = 0) {
   els.mediaJobStatus?.classList.add('hidden');
   els.mediaJobRetryBtn?.classList.add('hidden');
   els.dubBufferStatus?.classList.add('hidden');
+  // A finished game keeps a way to make its Turkish media with the new key.
+  if (state.analysis && state.savedGameReady && (els.dubMode?.checked || els.subtitleMode?.checked)) {
+    els.mediaJobStatus?.classList.remove('hidden');
+    els.mediaJobRetryBtn?.classList.remove('hidden');
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Anahtar değişti. Yeniden dene ile Türkçe medya yeni anahtarla hazırlanır; oyun ve analiz korunur.';
+  }
   renderMediaControls();
   renderElevenLabsApiKeyState();
   for (const badge of [els.subtitleQuotaStatus, els.dubQuotaStatus]) {
@@ -1375,36 +1381,76 @@ els.mediaJobCancelBtn?.addEventListener('click', () => {
   onTurkishMediaStatus({ state: 'CANCELLED', message: 'Türkçe medya işlemi iptal edildi.' });
   renderMediaControls();
 });
+// Options for a Turkish media job of the current game: the same voices,
+// cast and scene context the analysis used.
+function currentMediaJobOptions(analysis, modes = selectedAnalysisModes()) {
+  return {
+    outputs: { dub: modes.dubbing, subtitles: modes.subtitles,
+      ...(modes.dubbingProvider === 'elevenlabs_v1' ? { dubbingProvider: 'elevenlabs_v1' } : {}) },
+    qualityMode: modes.dubQuality,
+    sceneContext: verifiedMediaSceneContext(),
+    speakerHints: verifiedSpeakerVoiceHints(analysis),
+    castGenders: speakingCastGenders(analysis),
+    castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(analysis) : []
+  };
+}
+
 els.mediaJobRetryBtn?.addEventListener('click', async () => {
-  if (state.analysisInProgress || state.savedGameBusy) return;
+  if (state.analysisInProgress || state.savedGameBusy) {
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Önceki işlem bitince tekrar dene.';
+    return;
+  }
   if (state.mediaRevoice) { await regenerateTurkishVoices(state.mediaRevoice, true); return; }
   const session = state.analysisSession;
-  if (!session) return;
-  const requested = mediaClient.requestedOutputs();
+  const file = state.selectedFile || session?.file || null;
   const modes = selectedAnalysisModes();
-  if (requested && (requested.dub !== modes.dubbing || requested.subtitles !== modes.subtitles ||
+  // The game is ready: only the Turkish media is redone; the visual analysis
+  // and the game stay as they are (no new Gemini analysis).
+  const gameReady = Boolean(state.analysis && state.savedGameReady);
+  if (!session && !gameReady) {
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Yeniden denenecek analiz bulunamadı. Videoyu hazırla ile başlat.';
+    return;
+  }
+  const requested = mediaClient.requestedOutputs();
+  if (!gameReady && requested && (requested.dub !== modes.dubbing || requested.subtitles !== modes.subtitles ||
       (requested.dub && (requested.dubbingProvider || 'classic') !== modes.dubbingProvider))) {
     els.analyzeBtn.click();
     return;
   }
   state.analysisInProgress = true; updateAnalyzeAvailability();
-  setGameState('ANALYZING');
+  if (!gameReady) setGameState('ANALYZING');
+  if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Türkçe medya yeniden deneniyor...';
   let completed = false, cancelled = false;
   try {
-    const result = await mediaClient.retry();
-    if (state.analysisSession !== session) return;
-    session.mediaManifest = result;
-    session.mediaModeKey = mediaModeKeyFromOptions({ outputs: requested, qualityMode: modes.dubQuality });
+    let result;
+    try {
+      result = requested ? await mediaClient.retry() : null;
+    } catch (error) {
+      // A changed API key (a renewed or new account) cannot continue the old
+      // server job; a fresh job reuses the server's cached audio stages.
+      if (error.name === 'AbortError' || ![403, 404].includes(Number(error.status))) throw error;
+    }
+    if (!result) {
+      if (!file) throw new Error('Video dosyası bulunamadı. Videoyu yeniden seçip Videoyu hazırla ile başlat.');
+      result = await mediaClient.start(file, currentMediaJobOptions(state.analysis, modes));
+    }
+    if (session && state.analysisSession !== session) return;
+    if (session) {
+      session.mediaManifest = result;
+      session.mediaModeKey = mediaModeKeyFromOptions({ outputs: mediaClient.requestedOutputs() || requested, qualityMode: modes.dubQuality });
+    }
     updateSourceTranscript(result.sourceTranscript);
     renderMediaControls(); completed = true;
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Türkçe medya hazır. Oyun ve analiz korundu.';
+    if (gameReady) await savedGames?.saveCurrent(true);
   } catch (error) {
     cancelled = error.name === 'AbortError';
-    if (error.name !== 'AbortError') els.mediaJobMessage.textContent = error.message;
+    if (error.name !== 'AbortError' && els.mediaJobMessage) els.mediaJobMessage.textContent = error.message;
   } finally {
     state.analysisInProgress = false; updateAnalyzeAvailability();
-    if (!completed) setGameState(cancelled ? 'IDLE' : 'ERROR');
+    if (!completed && !gameReady) setGameState(cancelled ? 'IDLE' : 'ERROR');
   }
-  if (completed) els.analyzeBtn.click();
+  if (completed && !gameReady) els.analyzeBtn.click();
 });
 
 function renderVoiceMappingPanel() {

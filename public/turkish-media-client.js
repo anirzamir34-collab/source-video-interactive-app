@@ -596,7 +596,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
 
   async function retry() {
     if (destroyed) throw abortError();
-    if (!lastStart) throw new Error('Yeniden başlatılacak Türkçe medya işi yok.');
+    if (!lastStart) throw Object.assign(new Error('Yeniden başlatılacak Türkçe medya işi yok.'), { status: 404 });
     const selected = lastStart, previousId = jobId;
     if (!previousId) return start(selected.source, selected.options);
     if (jobState === 'READY') throw new Error('Bu Türkçe medya işi zaten hazır.');
