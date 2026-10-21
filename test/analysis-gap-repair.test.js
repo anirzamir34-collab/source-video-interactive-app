@@ -36,9 +36,22 @@ test('failed or partially recovered ranges stay repairable without deleting veri
   } }], 90);
   assert.deepEqual(partial.analysisGaps.map(item => [item.startTime, item.endTime]), [[20, 40]]);
   assert.deepEqual(partial.actions.map(item => item.startTime), [0, 14, 40]);
-  assert.throws(() => mergeRepairedAnalysis(original, [{ gap, result: {
+  // A remaining part reported past the interval's edge is kept inside it
+  // instead of failing the whole save.
+  const clamped = mergeRepairedAnalysis(original, [{ gap, result: {
     available: true, analysisGaps: [{ startTime: 20, endTime: 70 }]
-  } }], 90), /tutarsız/);
+  } }], 90);
+  assert.deepEqual(clamped.analysisGaps.map(item => [item.startTime, item.endTime]), [[20, gap.endTime]]);
+  // Seconds relative to the interval are moved into it.
+  const relative = mergeRepairedAnalysis(original, [{ gap, result: {
+    available: true, analysisGaps: [{ startTime: 0, endTime: 5 }],
+    actions: [{ startTime: gap.startTime + 6, endTime: gap.startTime + 9, sourceVerified: true }]
+  } }], 90);
+  assert.deepEqual(relative.analysisGaps.map(item => [item.startTime, item.endTime]), [[gap.startTime, gap.startTime + 5]]);
+  // An entry that cannot be read keeps the whole interval missing.
+  const unreadable = mergeRepairedAnalysis(original, [{ gap, result: {
+    available: true, analysisGaps: [{ startTime: 'x', endTime: 5 }] } }], 90);
+  assert.deepEqual(unreadable.analysisGaps.map(item => [item.startTime, item.endTime]), [[gap.startTime, gap.endTime]]);
 });
 
 test('repair removes stale unreadable warning but keeps unresolved coverage visible', () => {

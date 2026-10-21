@@ -28,11 +28,7 @@ export function mergeRepairedAnalysis(analysis, repairs, duration) {
       throw new Error('Analiz dışındaki bir aralık yenilenemez.');
     }
     if (!result?.available) { unresolved.push(gap); continue; }
-    const remaining = (result.analysisGaps || []).map(item => ({ ...item,
-      startTime: Number(item.startTime), endTime: Number(item.endTime) }));
-    if (remaining.some(item => !Number.isFinite(item.startTime) || !Number.isFinite(item.endTime) ||
-      item.endTime <= item.startTime || item.startTime < gap.startTime - 0.05 ||
-      item.endTime > gap.endTime + 0.05)) throw new Error('Yeniden analiz edilen aralık tutarsız.');
+    const remaining = repairedRemainingGaps(result.analysisGaps, gap);
     unresolved.push(...remaining);
     if (!remaining.length) resolved++;
     for (const action of result.actions || []) {
@@ -67,4 +63,26 @@ export function mergeRepairedAnalysis(analysis, repairs, duration) {
     repairedGapCount: Number(analysis.repairedGapCount || 0) + resolved,
     warnings
   };
+}
+
+// The still-missing parts the model reports for a repaired interval. Models
+// sometimes write them in seconds relative to the interval or slightly past
+// its edges; those are moved into the interval instead of failing the whole
+// save. An entry that cannot be placed keeps the whole interval missing, so
+// nothing unverified is ever marked complete.
+export function repairedRemainingGaps(rows, gap) {
+  const start = Number(gap.startTime), end = Number(gap.endTime), span = end - start;
+  const out = [];
+  for (const item of Array.isArray(rows) ? rows : []) {
+    let from = Number(item?.startTime), to = Number(item?.endTime);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return [{ ...gap }];
+    if (from < start - 0.05 && to <= span + 0.05) { from += start; to += start; }
+    from = Math.max(start, from); to = Math.min(end, to);
+    if (to - from < 0.05) {
+      if (Number(item.endTime) < start - 0.05 || Number(item.startTime) > end + 0.05) continue;
+      return [{ ...gap }];
+    }
+    out.push({ ...item, startTime: from, endTime: to });
+  }
+  return out;
 }
