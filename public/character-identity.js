@@ -109,6 +109,14 @@ const AGE_NOUNS = {
 };
 export function ageBasedName(character = {}) {
   const gender = String(character?.gender || '').toLowerCase();
+  const identity = String(character?.genderIdentity || '').toLowerCase();
+  // A trans or non-binary person is named as the video establishes them.
+  if (identity === 'trans_woman' || identity === 'trans_man') {
+    const noun = identity === 'trans_woman' ? 'trans kadın' : 'trans erkek';
+    const prefix = { young: 'Genç ', mature: 'Olgun ', senior: 'Yaşlı ' }[String(character?.ageGroup || '').toLowerCase()] || '';
+    return prefix ? `${prefix}${noun}` : noun[0].toLocaleUpperCase('tr-TR') + noun.slice(1);
+  }
+  if (identity === 'nonbinary') return 'Non-binary kişi';
   if (!AGE_NOUNS[gender]) return '';
   const age = String(character?.ageGroup || '').toLowerCase();
   const said = text(character?.displayName).toLocaleLowerCase('tr-TR');

@@ -25,7 +25,8 @@ export function castProfilesFor(analysis) {
     const characterId = String(character.id || character.participantTrackId || '').trim();
     if (!characterId) continue;
     const ageGroup = characterAgeGroup(character);
-    out.push({ characterId, gender, ...(ageGroup ? { ageGroup } : {}) });
+    const identity = String(character.genderIdentity || '').toLowerCase();
+    out.push({ characterId, gender, ...(ageGroup ? { ageGroup } : {}), ...(['trans_woman', 'trans_man', 'nonbinary'].includes(identity) ? { genderIdentity: identity } : {}) });
   }
   return out.slice(0, 16);
 }

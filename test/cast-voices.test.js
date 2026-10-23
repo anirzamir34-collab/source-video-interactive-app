@@ -124,3 +124,20 @@ test('the library helper adds the most used Turkish voices the account lacks and
   assert.equal(result.failed.length, 1, 'stops after the voice limit');
   assert.ok(calls.some(([method, path]) => method === 'GET' && path.includes('language=tr') && path.includes('sort=usage_character_count_1y')));
 });
+
+test('with a trans woman in the cast, the cast and pitch rank decide genders, not a fixed pitch line', async () => {
+  const { assignGendersByCastRank, castHasTrans, normalizeCastProfiles } = await import('../lib/turkish-media/cast-voices.js');
+  const cast = normalizeCastProfiles([{ characterId: 'm', gender: 'male' }, { characterId: 't', gender: 'female', genderIdentity: 'trans_woman' }]);
+  assert.equal(castHasTrans(cast), true);
+  const transcript = { speakers: [{ speakerId: 'a', gender: 'male' }, { speakerId: 'b', gender: 'male' }], utterances: [{ speakerId: 'b' }] };
+  assignGendersByCastRank(transcript, { a: { medianHz: 105 }, b: { medianHz: 150 } }, cast);
+  assert.deepEqual(transcript.speakers.map(row => row.gender), ['male', 'female']);
+  assert.equal(transcript.utterances[0].gender, 'female');
+});
+
+test('a trans woman is named as such', async () => {
+  const { stableCharacterName } = await import('../public/character-identity.js');
+  const chars = [{ id: 't', participantTrackId: 'PARTNER_A', gender: 'female', genderIdentity: 'trans_woman', ageGroup: 'young' }];
+  assert.equal(stableCharacterName(chars[0], chars), 'Genç trans kadın');
+  assert.equal(stableCharacterName({ ...chars[0], ageGroup: '' }, chars), 'Trans kadın');
+});
