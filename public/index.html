@@ -124,14 +124,6 @@
         <div class="setup-options">
           <label class="mode-switch">
             <span>
-              <b>Hareket ve seçim analizi</b>
-              <small>Pozisyonlar, seçenekler ve sahneler</small>
-            </span>
-            <input id="motionMode" type="checkbox" checked />
-            <i></i>
-          </label>
-          <label class="mode-switch">
-            <span>
               <b>Türkçe altyazı <em id="subtitleQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
               <small>Konuşmaların Türkçe yazısı</small>
             </span>
@@ -200,6 +192,8 @@
 
         </details>
 
+        <!-- Movement and choice analysis is always on. -->
+        <input id="motionMode" type="checkbox" checked hidden autocomplete="off" />
         <input type="hidden" id="dubbingProvider" value="classic" />
         <input type="hidden" id="dubQualityMode" value="quality" />
       </section>
