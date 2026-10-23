@@ -35,6 +35,7 @@ import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 import { installScoutRoute } from './lib/scout-route.js';
 import { buildAnalysisPrompt } from './lib/analysis-prompt.js';
+import { CHOICE_LABEL_SYSTEM, CHOICE_LABEL_SCHEMA, CHOICE_LABEL_VERSION, sanitizeLabelItems, acceptedLabels } from './lib/choice-labels.js';
 import { ensureProtagonistTrack } from './lib/protagonist-track.js';
 import { normalizeRewardMoments } from './public/reward-moments.js';
 import { createGeminiVideoFiles, isGeminiFileUri, absoluteClipTimes, geminiVideoMime } from './lib/gemini-video.js';
@@ -408,6 +409,7 @@ SECOND PASS VISUAL REVIEW MODE:
 - Keep each corrected action and its loop within that candidate's original startTime/endTime. Review the first and last visible evidence as well as the midpoint; text from the first pass is not visual evidence.
 - Re-inspect the SAME storyboard frames against these first-pass candidates:
 ${reviewCandidates}
+- A candidate may carry auditReasons: the exact question to settle. sixty_nine_mismatch: the label says 69; decide from the frames whether both give oral at once (positionId oral, oralGiver mutual) or not. label_position_mismatch / body_position_mismatch: the label, the reported body arrangement and positionId disagree; run the 10-step position check and make all three agree. oral_giver_missing: decide who gives oral. low_configuration_confidence: re-check the arrangement at start, midpoint and end. route_unproven / route_trans_review: the route (vaginal/anal) is not proven; with route_trans_review the receiving partner is a trans woman per the viewer's cast note, so never assume vaginal. Return the route only when directly visible, otherwise activityType other and a label without a route word.
 - Return candidates whose underlying event is visibly supported in their source interval. Require start, midpoint and end evidence for precise position and repeatable-loop claims; when only those details fail, retain a neutral event without a position or loop.
 - Correct timestamps, canonical position id/label and confidence when the frames prove a correction.
 - Preserve actionId/sceneId for the same candidate.
@@ -1552,6 +1554,40 @@ app.get('/api/gemini-analysis-models', async (req, res) => {
   } catch (error) {
     return res.status(502).json({ models: [], message: 'Gemini model kataloğu doğrulanamadı.' });
   }
+});
+
+// Dialogue-led choice labels (text only, small). Failure never blocks play.
+app.post('/api/choice-labels', async (req, res) => {
+  const apiKey = resolveGeminiApiKey(req);
+  if (!apiKey) return res.status(503).json({ labels: {}, reason: 'GEMINI_NOT_CONFIGURED' });
+  const items = sanitizeLabelItems(req.body?.items);
+  if (!items.length) return res.json({ labels: {}, version: CHOICE_LABEL_VERSION });
+  const ai = new GoogleGenAI({ apiKey });
+  const usage = emptyGeminiUsage();
+  for (const model of analysisModelCandidates('economy', process.env)) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: JSON.stringify({ items }) }] }],
+        config: { ...geminiGenerationConfig(model), maxOutputTokens: 4096,
+          systemInstruction: CHOICE_LABEL_SYSTEM, responseSchema: CHOICE_LABEL_SCHEMA,
+          httpOptions: { timeout: 45000, retryOptions: { attempts: 1 } } }
+      });
+      const meta = response?.usageMetadata || {};
+      usage.requests = 1;
+      usage.inputTokens = Number(meta.promptTokenCount || 0);
+      usage.outputTokens = Number(meta.candidatesTokenCount || 0);
+      usage.thinkingTokens = Number(meta.thoughtsTokenCount || 0);
+      const labels = acceptedLabels(parseModelJson(String(response?.text || '')), items);
+      console.info('[choice-labels]', JSON.stringify({ model, items: items.length, changed: Object.keys(labels).length }));
+      return res.json({ labels, version: CHOICE_LABEL_VERSION, aiUsage: usage });
+    } catch (error) {
+      if (storyboardFailureReason(error) === 'GEMINI_MODEL_UNAVAILABLE') continue;
+      console.warn('[choice-labels-failed]', JSON.stringify({ model, reason: storyboardFailureReason(error) }));
+      return res.status(502).json({ labels: {}, reason: storyboardFailureReason(error) });
+    }
+  }
+  return res.status(502).json({ labels: {}, reason: 'GEMINI_MODEL_UNAVAILABLE' });
 });
 
 app.post('/api/gemini-key-status', async (req, res) => {

@@ -6,7 +6,13 @@ import { protagonistSpouseTracks, withSpouseLabel } from './spouse-labels.js';
 import { trimIntroOutro } from './intro-outro.js';
 import { prepareGeminiVideo } from './gemini-video-client.js';
 import { resolveCutRange, formatClock } from './time-range.js';
-import { castProfilesFor } from './voice-cast.js';
+import { castProfilesFor, castNoteIdentities } from './voice-cast.js';
+import { labelAuditCandidates, mergeLabelAudit } from './label-audit.js';
+import { snapActionBoundaries } from './boundary-snap.js';
+import { createChoicePreview } from './choice-preview.js';
+import { dialogueLabelItems, applyDialogueLabels } from './dialogue-labels.js';
+import { sceneKeyFor, sceneChapters, sceneCardContent, characterCardContent, playableIntervals, createExplorationTracker } from './game-moments.js';
+import { DECISION_SECONDS, autoContinueEnabled, setAutoContinue, choiceRoles, roleCaption, createDecisionTimer } from './decision-timer.js';
 import { normalizeRewardMoments, rewardsForScene, derivedHighlight, pickAdultReward, rewardTitle } from './reward-moments.js';
 import { buildIntensityTrack, measuredMovementFlavors, intensityRate } from './intensity-engine.js';
 import { positionBrief } from './position-brief.js';
@@ -2463,6 +2469,40 @@ els.analyzeBtn.addEventListener('click', async () => {
               }
               chunkBody = mergeSecondPassReview(chunkBody, reviewBody, criticalReviewCandidates);
             }
+            // Label audit: only position parts whose own data disagree are
+            // re-checked once on the same frames. It corrects, never deletes,
+            // and a failed audit keeps the first pass.
+            const auditCandidates = modes.reviewMode !== 'manual' && !criticalReviewCandidates.length &&
+              typeof labelAuditCandidates === 'function'
+              ? labelAuditCandidates(chunkBody, { transWomanCast: chunkHasTransWoman(chunkBody) }) : [];
+            if (auditCandidates.length) {
+              try {
+                form.set('reviewMode', '1');
+                form.set('reviewCandidates', JSON.stringify(auditCandidates));
+                els.analysisOutput.textContent =
+                  `${chunkStart.toFixed(1)}–${chunkEnd.toFixed(1)} saniye · ${auditCandidates.length} etiket aynı karelerle yeniden denetleniyor...`;
+                const auditResponse = await postAnalysisForm('/api/gemini-storyboard-analyze', freshChunkForm(), {
+                  headers: geminiRequestHeaders(),
+                  stage: 'review', label: 'Bölüm ' + (chunkIndex + 1) + ' · etiket denetimi'
+                });
+                const auditBody = await auditResponse.json().catch(() => null);
+                recordAiUsage(auditBody?.aiUsage);
+                if (auditResponse.ok && auditBody?.available) {
+                  const normalizedAudit = normalizeChunkActionTimes(auditBody.actions, chunkStart, chunkEnd);
+                  chunkBody = mergeLabelAudit(chunkBody, { ...auditBody, actions: normalizedAudit.actions },
+                    auditCandidates, mergeSecondPassReview);
+                  logEngineEvent('LABEL_AUDIT_APPLIED', { chunkIndex, candidates: auditCandidates.length });
+                } else {
+                  logEngineEvent('LABEL_AUDIT_SKIPPED', { chunkIndex, reason: auditBody?.reason || auditResponse.status });
+                }
+              } catch (error) {
+                if (error?.name === 'AbortError') throw error;
+                logEngineEvent('LABEL_AUDIT_SKIPPED', { chunkIndex, reason: error?.message || 'error' });
+              } finally {
+                form.delete('reviewMode');
+                form.delete('reviewCandidates');
+              }
+            }
             chunkResults[chunkIndex] = chunkBody;
             delete session.firstPassResults[chunkIndex];
             session.chunkResults = chunkResults;
@@ -2891,6 +2931,19 @@ els.analyzeBtn.addEventListener('click', async () => {
   normalized.motionProfile = (Array.isArray(storyboard?.motionProfile) ? storyboard.motionProfile : [])
     .map(row => [Number(Number(row?.time).toFixed(2)), Number(row?.score)])
     .filter(([time, score]) => Number.isFinite(time) && Number.isFinite(score));
+  state.savedMediaManifest = null;
+  // Story and opening choices are phrased after what was just said.
+  if (typeof refineChoiceLabelsFromDialogue === 'function') {
+    analysisProgress.update('save', { detail: 'Seçenekler konuşmalara göre adlandırılıyor.' });
+    await refineChoiceLabelsFromDialogue(normalized);
+  }
+  // Part edges follow measured hard cuts so no card opens or ends on another shot.
+  if (typeof snapActionBoundaries === 'function') {
+    const snapped = snapActionBoundaries(normalized.actions, {
+      sceneBoundaries: storyboard?.sceneBoundaries || [], motionProfile: normalized.motionProfile });
+    normalized.actions = snapped.actions;
+    normalized.boundarySnapCount = snapped.changed;
+  }
   initializeInteractive(normalized);
   clearAnalysisReview();
   clearAnalysisReview = mountAnalysisReview(els.analysisReview, normalized, state.selectedFile, storyboard.duration);
@@ -3298,6 +3351,7 @@ function initializeInteractive(analysis) {
   }
   prepareAdultScenes();
   const restoredSnapshot = restoreRuntimeSnapshot(analysis);
+  if (typeof resetGameMoments === 'function') resetGameMoments(analysis);
   if (restoredSnapshot) {
     const restoreTarget = Math.max(0, Number(state.gameCursorTime) || 0);
     const applyRestoreSeek = () => {
@@ -5492,6 +5546,10 @@ function renderAdultApproachChoices(scene, later = false) {
         if (next) selectAdultMovement(next.id, true);
       }
     });
+    if (typeof attachChoicePreview === 'function') {
+      const first = (choice.variants || [])[0] || choice;
+      attachChoicePreview(button, first.loopStartTime ?? first.startTime, first.loopEndTime ?? first.endTime);
+    }
     target.appendChild(button);
     if (!dialogueOnly && (choice.label !== compactChoiceLabel(choice.label) || choice.label.length > 65 ||
         sourceSequenceCount > 1)) {
@@ -5832,6 +5890,7 @@ function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}
   }
 
   state.gameCursorTime = Math.max(0, Number(scene.startTime) || 0, mediaTime);
+  if (!sameSession && typeof announceMoment === 'function') announceMoment(sceneLeadAction(scene));
   renderAdultPanel(scene);
   setGameState('SEGMENT_PLAYING');
   logEngineEvent('ADULT_SCENE_ENTERED', { sceneId: scene.id, reason, sameSession });
@@ -6363,6 +6422,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
   if (typeof hideTempoPrompt === 'function') hideTempoPrompt();
+  if (typeof cancelDecisionTimer === 'function') cancelDecisionTimer();
   const previousPositionId = state.activePositionId;
   const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
   const forwardMovements = forwardLocalMovementClips(position, cursor);
@@ -6535,6 +6595,12 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       // Actual media readiness, not a click, drives the visible playing state.
       selectAdultMovement(movement.id, true);
     });
+    if (typeof attachChoicePreview === 'function') attachChoicePreview(button, () => {
+      const part = choice.timeline && typeof nextTimelinePart === 'function'
+        ? nextTimelinePart(choice, (state.adultTimelineCursor ??= new Map()).get(choice.id)).part
+        : choice.variants[0];
+      return part ? { start: part.loopStartTime ?? part.startTime, end: part.loopEndTime ?? part.endTime } : null;
+    });
     wrapper.appendChild(button);
     if (choice.tempoOptions.length) {
       const row = document.createElement('div');
@@ -6680,6 +6746,9 @@ function selectAdultMovement(
   });
   if (!movementGuard.allowed) return;
   if (shouldSeek && typeof hideTempoPrompt === 'function') hideTempoPrompt();
+  if (shouldSeek && typeof cancelDecisionTimer === 'function') cancelDecisionTimer();
+  if (shouldSeek) state.choicePreview?.hide();
+  if (shouldSeek && typeof announceMoment === 'function') announceMoment(movement);
   if (shouldSeek) logEngineEvent('MOVEMENT_SELECTED', { id: movement.id, positionId: position?.id || null });
 
   if (!shouldSeek) return;
@@ -7208,6 +7277,7 @@ function updateAdultPlayback(now, mediaTime) {
       state.activeMovementId = null;
       if (currentAdultFlow() >= 99.9) unlockNextAdultPositionFromLust();
       renderAdultProgressiveUI(true);
+      if (typeof startPanelFlowTimer === 'function') startPanelFlowTimer(position, movement);
       logEngineEvent('MOVEMENT_ENDED_AWAITING_SELECTION', {
         positionId: position.id,
         occurrenceId: state.activeAdultOccurrenceId,
@@ -7326,6 +7396,16 @@ function feelLustProgress(lust) {
     feelStage.classList.remove('vq-unlock'); void feelStage.offsetWidth; feelStage.classList.add('vq-unlock');
     setTimeout(() => feelStage.classList.remove('vq-unlock'), 1400);
   }
+}
+
+// A trans woman in this chapter, from the analysis itself or the viewer's
+// cast note, so the label audit never accepts an assumed vaginal route.
+function chunkHasTransWoman(body) {
+  const characters = body?.storyContext?.characters || [];
+  if (characters.some(row => String(row?.genderIdentity || '').toLowerCase() === 'trans_woman')) return true;
+  const note = typeof currentCastNote === 'function' ? currentCastNote() : '';
+  return typeof castNoteIdentities === 'function' &&
+    castNoteIdentities(note).some(row => row.identity === 'trans_woman');
 }
 
 // What the viewer says about who is in the video (for example "bir trans
@@ -7605,7 +7685,352 @@ async function resumeAnalysisGap(target, { skippable = false } = {}) {
   }
 }
 
+// ---------- Scene titles, character cards and exploration ----------
+function characterForTrack(trackId) {
+  const id = String(trackId || '').trim();
+  if (!id) return null;
+  const characters = state.analysis?.storyContext?.characters || [];
+  return characters.find(row => row && (row.participantTrackId === id || row.id === id)) || null;
+}
+
+function characterDisplayName(character) {
+  if (!character) return '';
+  const characters = state.analysis?.storyContext?.characters || [];
+  return typeof stableCharacterName === 'function' ? stableCharacterName(character, characters) : String(character.displayName || '');
+}
+
+function momentTracks(action = {}) {
+  return [...new Set([action.partnerTrackId, action.primaryCharacterId, ...(action.involvedCharacterIds || [])]
+    .map(value => String(value || '').trim())
+    .filter(value => value && value !== 'MAIN_MALE' && value !== 'MULTI_PARTNER' &&
+      value !== String(state.analysis?.mainMaleTrackId || 'MAIN_MALE')))];
+}
+
+function currentMediaManifest() {
+  return state.savedMediaManifest || state.analysisSession?.mediaManifest || null;
+}
+
+function turkishCueRowsForCards() {
+  const subtitles = currentMediaManifest()?.subtitles || {};
+  const rows = track => (Array.isArray(track) ? track : track?.cues || []);
+  const list = rows(subtitles.dub_tr).length ? rows(subtitles.dub_tr) : rows(subtitles.source_tr);
+  return list.map(cue => ({ speakerId: cue.speakerId, start: Number(cue.start ?? cue.startTime), text: String(cue.text || '') }));
+}
+
+function resetGameMoments(analysis) {
+  state.momentQueue = [];
+  clearTimeout(state.momentTimer);
+  state.momentTimer = null;
+  state.titledSceneKeys = new Set();
+  state.introducedCharacterIds = new Set(['MAIN_MALE']);
+  state.sceneChapterMap = typeof sceneChapters === 'function' ? sceneChapters(analysis?.actions || []) : new Map();
+  let saved = [];
+  try { saved = JSON.parse(globalThis.localStorage?.getItem(`vq.explore.${state.analysisFingerprint || ''}`) || '[]'); } catch { saved = []; }
+  state.exploration = typeof createExplorationTracker === 'function'
+    ? createExplorationTracker(playableIntervals(analysis?.actions || []), Array.isArray(saved) ? saved : []) : null;
+  state.explorationSavedAt = 0;
+  momentLayer()?.replaceChildren();
+  renderExplorationChip();
+}
+
+function momentLayer() {
+  const stage = els.video?.closest?.('.video-stage');
+  if (!stage || !globalThis.document?.createElement) return null;
+  let layer = stage.querySelector('.moment-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.className = 'moment-layer';
+    layer.setAttribute('aria-live', 'polite');
+    stage.appendChild(layer);
+  }
+  return layer;
+}
+
+function showNextMoment() {
+  const layer = momentLayer();
+  const next = state.momentQueue?.shift();
+  if (!layer || !next) { state.momentTimer = null; return; }
+  const card = document.createElement('div');
+  card.className = `moment-card moment-card--${next.kind}`;
+  if (next.kind === 'scene') {
+    card.innerHTML = `${next.content.kicker ? `<small>${escapeHtml(next.content.kicker)}</small>` : ''}` +
+      `${next.content.title ? `<strong>${escapeHtml(next.content.title)}</strong>` : ''}` +
+      `${next.content.people.length ? `<span>${escapeHtml(next.content.people.join(' · '))}</span>` : ''}`;
+  } else {
+    card.innerHTML = `<strong>${escapeHtml(next.content.name)}</strong>` +
+      `${next.content.role ? `<small>${escapeHtml(next.content.role)}</small>` : ''}` +
+      `${next.content.line ? `<q>${escapeHtml(next.content.line)}</q>` : ''}`;
+  }
+  layer.replaceChildren(card);
+  const duration = next.kind === 'scene' ? 2600 : 4200;
+  state.momentTimer = setTimeout(() => {
+    card.classList.add('leaving');
+    state.momentTimer = setTimeout(() => { card.remove(); showNextMoment(); }, 380);
+  }, duration);
+}
+
+function queueMoment(kind, content) {
+  if (!content) return;
+  (state.momentQueue ??= []).push({ kind, content });
+  if (state.momentQueue.length > 3) state.momentQueue.splice(0, state.momentQueue.length - 3);
+  if (!state.momentTimer) showNextMoment();
+}
+
+// Called whenever a part starts: a new scene gets its title once, and each
+// person gets a short card the first time they are part of the action.
+function announceMoment(action) {
+  if (!action || !state.analysis) return;
+  const key = typeof sceneKeyFor === 'function' ? sceneKeyFor(action) : '';
+  if (key && !(state.titledSceneKeys ??= new Set()).has(key)) {
+    state.titledSceneKeys.add(key);
+    const names = momentTracks(action).map(id => characterDisplayName(characterForTrack(id))).filter(Boolean);
+    queueMoment('scene', sceneCardContent(action, { chapter: state.sceneChapterMap?.get(key) || 0,
+      setting: state.analysis.storyContext?.setting || '', names }));
+  }
+  const cues = turkishCueRowsForCards();
+  for (const id of momentTracks(action)) {
+    if ((state.introducedCharacterIds ??= new Set()).has(id)) continue;
+    const character = characterForTrack(id);
+    if (!character) continue;
+    state.introducedCharacterIds.add(id);
+    queueMoment('character', characterCardContent(character, { name: characterDisplayName(character), cues }));
+  }
+}
+
+function sceneLeadAction(scene) {
+  const actions = state.analysis?.actions || [];
+  return actions.find(action => String(action.adultSceneId || '') === String(scene?.id || '')) ||
+    actions.find(action => Number(action.startTime) >= Number(scene?.startTime) - 0.1 &&
+      Number(action.startTime) < Number(scene?.endTime) && action.adultScene) || null;
+}
+
+function explorationSummary() {
+  const percent = state.exploration?.percent?.() ?? null;
+  if (percent === null) return '';
+  const unseen = (state.adultScenes || []).flatMap(scene => scene.positions || [])
+    .filter(position => !isWarmupPosition(position) &&
+      !(position.movements || []).some(item => Number(state.adultMovementPlayCounts?.get(item.id) || 0) > 0)).length;
+  return `Videonun %${percent}'ini keşfettin${unseen ? ` · ${unseen} pozisyon görülmedi` : ''}`;
+}
+
+function endScreenHtml() {
+  const summary = explorationSummary();
+  return `<div class="meta">Video tamamlandı.</div>${summary ? `<div class="meta explore-summary">${escapeHtml(summary)}</div>` : ''}`;
+}
+
+function renderExplorationChip() {
+  const stage = els.video?.closest?.('.video-stage');
+  if (!stage || !globalThis.document?.createElement) return;
+  let chip = stage.querySelector('.explore-chip');
+  if (!state.exploration) { chip?.remove(); return; }
+  if (!chip) {
+    chip = document.createElement('div');
+    chip.className = 'explore-chip';
+    chip.title = 'Videonun oynanabilir bölümlerinden ne kadarını gördün';
+    stage.appendChild(chip);
+  }
+  chip.textContent = `Keşif %${state.exploration.percent()}`;
+}
+
+function recordExploration() {
+  if (!state.exploration || !state.analysis || els.video?.paused || state.gameState === 'ANALYZING') return;
+  state.exploration.record(els.video.currentTime);
+  const now = Date.now();
+  if (now - (state.explorationSavedAt || 0) < 2000) return;
+  state.explorationSavedAt = now;
+  renderExplorationChip();
+  try {
+    if (state.analysisFingerprint) globalThis.localStorage?.setItem(`vq.explore.${state.analysisFingerprint}`,
+      JSON.stringify(state.exploration.covered()));
+  } catch { /* per-viewer convenience only */ }
+}
+
+{
+  const exploredVideo = els.video;
+  exploredVideo?.addEventListener?.('timeupdate', () => { if (typeof recordExploration === 'function') recordExploration(); });
+  exploredVideo?.addEventListener?.('seeking', () => state.exploration?.breakRun?.());
+}
+
+// ---------- Dialogue-led choice labels ----------
+function dialogueSpeakerName(speakerId) {
+  const characters = state.analysis?.storyContext?.characters || [];
+  const character = characters.find(row => (row?.speakerIds || []).map(String).includes(String(speakerId)));
+  if (character) {
+    if (character.participantTrackId === 'MAIN_MALE' || character.id === 'MAIN_MALE') return 'Sen';
+    return characterDisplayName(character);
+  }
+  const gender = (state.sourceTranscript?.speakers || []).find(row => row.speakerId === speakerId)?.gender;
+  return gender === 'female' ? 'Kadın' : gender === 'male' ? 'Erkek' : '';
+}
+
+async function refineChoiceLabelsFromDialogue(analysis, { timeoutMs = 25000 } = {}) {
+  if (!analysis?.actions?.length || typeof dialogueLabelItems !== 'function') return 0;
+  const previous = state.analysis;
+  state.analysis = analysis;
+  let items = [];
+  try {
+    // Turkish lines per source segment: the dub wording where it exists,
+    // the subtitle wording otherwise.
+    const subtitles = currentMediaManifest()?.subtitles || {};
+    const rows = track => (Array.isArray(track) ? track : track?.cues || []);
+    const joined = track => {
+      const map = new Map();
+      for (const cue of rows(track)) {
+        if (!cue?.segmentId) continue;
+        map.set(cue.segmentId, `${map.get(cue.segmentId) || ''} ${cue.text || ''}`.trim());
+      }
+      return map;
+    };
+    const translated = new Map((currentMediaManifest()?.translatedUtterances || [])
+      .filter(row => row?.segmentId && row.translatedText).map(row => [row.segmentId, String(row.translatedText)]));
+    const turkish = new Map([...translated, ...joined(subtitles.source_tr), ...joined(subtitles.dub_tr)]);
+    items = dialogueLabelItems(analysis.actions, { utterances: state.sourceTranscript?.utterances || [],
+      turkishBySegment: turkish, speakerName: dialogueSpeakerName });
+  } finally { state.analysis = previous; }
+  if (!items.length) return 0;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch('/api/choice-labels', { method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...geminiRequestHeaders() },
+      body: JSON.stringify({ items }) });
+    const body = await response.json().catch(() => ({}));
+    recordAiUsage(body?.aiUsage);
+    if (!response.ok) { logEngineEvent('DIALOGUE_LABELS_SKIPPED', { reason: body?.reason || response.status }); return 0; }
+    const changed = applyDialogueLabels(analysis.actions, body.labels || {});
+    logEngineEvent('DIALOGUE_LABELS_APPLIED', { items: items.length, changed });
+    return changed;
+  } catch (error) {
+    logEngineEvent('DIALOGUE_LABELS_SKIPPED', { reason: error?.name === 'AbortError' ? 'timeout' : error?.message });
+    return 0;
+  } finally { clearTimeout(timer); }
+}
+
+// ---------- Card preview ----------
+function attachChoicePreview(button, start, end) {
+  if (!state.choicePreview && typeof createChoicePreview === 'function') {
+    state.choicePreview = createChoicePreview({ getSource: () => els.video?.currentSrc || els.video?.src || '' });
+  }
+  state.choicePreview?.attach(button, start, end);
+}
+
+// ---------- Timed decisions ----------
+function decisionTimer() {
+  if (!state.decisionTimer && typeof createDecisionTimer === 'function') state.decisionTimer = createDecisionTimer();
+  return state.decisionTimer || null;
+}
+
+function cancelDecisionTimer() {
+  decisionTimer()?.cancel();
+  const stage = els.video?.closest?.('.video-stage');
+  stage?.querySelectorAll?.('[data-counting="true"]').forEach(node => { node.dataset.counting = 'false'; });
+  stage?.querySelector?.('.flow-countdown')?.classList.add('hidden');
+}
+
+// A small switch beside the choices: the countdown can be stopped for this
+// decision or turned off for good.
+function decisionToggleElement() {
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'decision-auto-toggle';
+  const paint = (seconds) => {
+    const on = typeof autoContinueEnabled === 'function' ? autoContinueEnabled() : true;
+    toggle.dataset.on = on ? 'true' : 'false';
+    toggle.textContent = on ? `Otomatik devam · ${seconds ?? DECISION_SECONDS}` : 'Otomatik devam kapalı';
+  };
+  paint();
+  toggle.addEventListener('click', event => {
+    event.stopPropagation();
+    const on = typeof autoContinueEnabled === 'function' ? autoContinueEnabled() : true;
+    if (typeof setAutoContinue === 'function') setAutoContinue(!on);
+    if (on) { cancelDecisionTimer(); paint(); }
+    else renderChoices();
+  });
+  toggle.paint = paint;
+  return toggle;
+}
+
+function startStoryDecisionTimer(flowButton, flowAction) {
+  const timer = decisionTimer();
+  if (!timer || !flowButton || !flowAction) return;
+  const toggle = decisionToggleElement();
+  els.choices.appendChild(toggle);
+  if (typeof autoContinueEnabled === 'function' && !autoContinueEnabled()) return;
+  flowButton.dataset.counting = 'true';
+  flowButton.style.setProperty('--decision-seconds', `${DECISION_SECONDS}s`);
+  timer.start({
+    onTick: left => toggle.paint?.(left),
+    isStillValid: () => flowButton.isConnected && !state.activeAction && !state.adultMode &&
+      !state.navigationSeeking && els.video?.paused !== false &&
+      globalThis.document?.visibilityState !== 'hidden',
+    onExpire: () => {
+      logEngineEvent('DECISION_AUTO_CONTINUE', { actionId: flowAction.actionId });
+      flowButton.dataset.counting = 'false';
+      void playAction(flowAction);
+    }
+  });
+}
+
+// Inside a position, a part that ends with footage continuing right after it
+// (same occurrence, starting within 3 s) plays on by itself after the
+// countdown. Anything else waits for the player.
+function flowContinuationMovement(position, movement) {
+  if (!position || !movement) return null;
+  const occurrence = positionOccurrenceForMovement(position, movement)?.id;
+  if (!occurrence) return null;
+  const end = Number(movement.loopEndTime);
+  return (position.movements || [])
+    .filter(item => item && item.id !== movement.id && item.sourceVerified === true &&
+      positionOccurrenceForMovement(position, item)?.id === occurrence)
+    .map(item => ({ item, start: Number(item.loopStartTime) }))
+    .filter(row => Number.isFinite(row.start) && row.start >= end - 1 && row.start <= end + 3)
+    .sort((a, b) => a.start - b.start)[0]?.item || null;
+}
+
+function flowCountdownElement() {
+  const stage = els.video?.closest?.('.video-stage');
+  if (!stage || !globalThis.document?.createElement) return null;
+  let box = stage.querySelector('.flow-countdown');
+  if (!box) {
+    box = document.createElement('button');
+    box.type = 'button';
+    box.className = 'flow-countdown hidden';
+    // Stops this countdown only; the player keeps choosing by hand.
+    box.addEventListener('click', () => cancelDecisionTimer());
+    stage.appendChild(box);
+  }
+  return box;
+}
+
+function startPanelFlowTimer(position, movement) {
+  const timer = decisionTimer();
+  if (!timer || (typeof autoContinueEnabled === 'function' && !autoContinueEnabled())) return;
+  const next = flowContinuationMovement(position, movement);
+  if (!next) return;
+  const box = flowCountdownElement();
+  const positionId = position.id;
+  const paint = left => {
+    if (!box) return;
+    box.textContent = `Akış devam ediyor · ${left} · Durdur`;
+    box.classList.remove('hidden');
+  };
+  timer.start({
+    onTick: paint,
+    isStillValid: () => state.activePositionId === positionId && !state.activeMovementId &&
+      state.adultOutcomePhase === 'idle' && els.video?.paused !== false &&
+      globalThis.document?.visibilityState !== 'hidden',
+    onExpire: () => {
+      box?.classList.add('hidden');
+      logEngineEvent('PANEL_FLOW_AUTO_CONTINUE', { from: movement.id, to: next.id });
+      state.activeMovementChoiceId = null;
+      selectAdultMovement(next.id, true);
+    }
+  });
+}
+
 function renderChoices() {
+  if (typeof cancelDecisionTimer === 'function') cancelDecisionTimer();
+  state.choicePreview?.hide();
   if (!state.adultMode) els.approachChoices?.classList.add('hidden');
   if (
     state.adultMode &&
@@ -7627,7 +8052,7 @@ function renderChoices() {
     state.gameCursorTime = Number.isFinite(outroAt) && outroAt > 0 ? outroAt
       : Number(els.video.duration) || Number(state.analysis?.videoDuration) || state.gameCursorTime;
     els.choices.classList.remove('hidden');
-    els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
+    els.choices.innerHTML = typeof endScreenHtml === 'function' ? endScreenHtml() : '<div class="meta">Video tamamlandı.</div>';
     setGameState('ENDED');
     return;
   }
@@ -7713,24 +8138,37 @@ function renderChoices() {
       }
     } else {
       setGameState('ENDED');
-      els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
+      els.choices.innerHTML = typeof endScreenHtml === 'function' ? endScreenHtml() : '<div class="meta">Video tamamlandı.</div>';
     }
     return;
   }
 
+  const roles = typeof choiceRoles === 'function' ? choiceRoles(candidates) : new Map();
+  let flowButton = null, flowAction = null;
   candidates.forEach((action) => {
     const button = document.createElement('button');
     const approach = choiceSurfaceForAction(action) === 'approach';
     button.className = `choice story-choice${approach ? ' approach-choice' : ''}`;
     button.dataset.choiceSurface = approach ? 'approach' : 'story';
     const storyLabel = storyChoiceLabelForAction(action);
+    const meta = roles.get(action);
+    const caption = typeof roleCaption === 'function' ? roleCaption(meta) : '';
+    if (meta?.role) button.dataset.choiceRole = meta.role;
     button.innerHTML = `
       ${approach ? '<small class="choice-kind">YAKINLAŞMA</small>' : ''}
       <div class="choice-title">${escapeHtml(storyLabel)}</div>
+      ${caption ? `<small class="choice-role">${escapeHtml(caption)}</small>` : ''}
+      ${meta?.role === 'flow' ? '<span class="choice-countdown" aria-hidden="true"><i></i></span>' : ''}
     `;
-    button.addEventListener('click', () => playAction(action));
+    button.addEventListener('click', () => {
+      if (typeof cancelDecisionTimer === 'function') cancelDecisionTimer();
+      playAction(action);
+    });
+    if (typeof attachChoicePreview === 'function') attachChoicePreview(button, action.loopStartTime ?? action.startTime, action.loopEndTime ?? action.endTime);
+    if (meta?.role === 'flow') { flowButton = button; flowAction = action; }
     els.choices.appendChild(button);
   });
+  if (flowButton && typeof startStoryDecisionTimer === 'function') startStoryDecisionTimer(flowButton, flowAction);
   renderDebug({ nextCandidateActions: candidates.map(a => a.actionId) });
 }
 
@@ -7823,6 +8261,9 @@ function cancelTimelineNavigation() {
 }
 
 async function playAction(action) {
+  if (typeof cancelDecisionTimer === 'function') cancelDecisionTimer();
+  if (typeof announceMoment === 'function') announceMoment(action);
+  state.choicePreview?.hide();
   cancelTimelineNavigation();
   const adultScene = findAdultSceneForTimeline(state.adultScenes, {
     action,
@@ -8135,7 +8576,7 @@ els.video.addEventListener('timeupdate', () => {
   state.activeAction = null;
   state.gameCursorTime = outroAt;
   els.choices.classList.remove('hidden');
-  els.choices.innerHTML = '<div class="meta">Video tamamlandı.</div>';
+  els.choices.innerHTML = typeof endScreenHtml === 'function' ? endScreenHtml() : '<div class="meta">Video tamamlandı.</div>';
   setGameState('ENDED');
 });
 els.video.addEventListener('ended', handleSourceEnded);
@@ -8622,6 +9063,7 @@ async function openSavedGame(game) {
         ...ownership.excluded.map(action => ({ startTime: action.startTime, endTime: action.endTime }))]) };
   } else state.analysis = savedAnalysis;
   state.sourceTranscript = turkishMedia?.manifest.sourceTranscript || null;
+  state.savedMediaManifest = turkishMedia?.manifest || null;
   state.sourceContext = savedSourceContext;
   state.activeSavedGameId = game.id;
   state.savedGameReady = true;
@@ -8650,6 +9092,21 @@ async function openSavedGame(game) {
   else {
     els.playerSection.classList.remove('hidden');
     setGameState('DIALOGUE_READY');
+  }
+  // Older saves get dialogue-led choice labels once, in the background.
+  const labelFlag = `vq.dlabels.${state.analysisFingerprint || ''}`;
+  let labelsDone = false;
+  try { labelsDone = globalThis.localStorage?.getItem(labelFlag) === '1'; } catch { labelsDone = false; }
+  if (!labelsDone && state.analysis && state.sourceTranscript && typeof refineChoiceLabelsFromDialogue === 'function') {
+    const openedGame = state.analysis;
+    void refineChoiceLabelsFromDialogue(openedGame).then(changed => {
+      if (openedGame.actions?.some(action => action.dialogueLabel)) {
+        try { globalThis.localStorage?.setItem(labelFlag, '1'); } catch { /* convenience only */ }
+      }
+      if (!changed || state.analysis !== openedGame) return;
+      void savedGames?.saveCurrent(true);
+      if (state.gameState === 'DECISION_PENDING' && !state.adultMode && !state.activeAction) renderChoices();
+    });
   }
   els.analysisCard.classList.remove('hidden');
   els.analysisState.textContent = 'SAVED_GAME_READY';
