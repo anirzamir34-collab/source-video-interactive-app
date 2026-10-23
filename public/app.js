@@ -102,7 +102,7 @@ import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery
 import { recoverVerifiedChunksOnCreditExhaustion } from './partial-analysis-recovery.js';
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
 import { retryableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
-import { planSavedGapRepair, appendSavedGapRepairHistory, savedGapRepairHistory } from './analysis-repair-attempts.js';
+import { planSavedGapRepair, appendSavedGapRepairHistory, savedGapRepairHistory, gapRepairHasModelResponse } from './analysis-repair-attempts.js';
 
 import { attachPanelFeedback, compactPanelChoiceLabel, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
@@ -8650,9 +8650,7 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     let sampledTimestamps = [];
     try {
       const earlierSamples = savedGapRepairHistory(previous)
-        .filter(item => item.model === repairModel &&
-          item.promptVersion === GAP_REPAIR_PROMPT_VERSION &&
-          item.validatorVersion === GAP_REPAIR_VALIDATOR_VERSION &&
+        .filter(item => gapRepairHasModelResponse(item) &&
           Number(item.startTime) < Number(gap.endTime) &&
           Number(item.endTime) > Number(gap.startTime))
         .flatMap(item => Array.isArray(item.sampledTimestamps) && item.sampledTimestamps.length
@@ -8737,9 +8735,7 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
       ? (result.actions || []).filter(action => action.sourceVerified === true).length : 0;
     const outcome = !result?.available ? 'failed'
       : (result.analysisGaps || []).length ? 'partial' : 'processed';
-    const modelInspectedFrames = ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS',
-      'MODEL_UNSTRUCTURED_RESPONSE', 'GEMINI_EMPTY_RESPONSE',
-      'GEMINI_INVALID_JSON'].includes(reason) || ['partial', 'processed'].includes(outcome);
+    const modelInspectedFrames = gapRepairHasModelResponse({ reason, outcome });
     results.push({ startTime: gap.startTime, endTime: gap.endTime, reason,
       httpStatus, outcome, verifiedActions, samplingStrategy: attempt.samplingStrategy,
       ...(modelInspectedFrames ? { sampledTimestamps } : {}),
