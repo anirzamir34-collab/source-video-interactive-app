@@ -21,7 +21,7 @@ export function savedGapRepairHistory(analysis = {}) {
     if (!history.some(old => matched(old, entry, entry.model, entry.promptVersion, entry.validatorVersion) &&
       old.samplingStrategy === entry.samplingStrategy && old.reason === entry.reason)) history.push(entry);
   }
-  return history.slice(-120);
+  return history.slice(-512);
 }
 
 export function planSavedGapRepair(analysis, gap, model, promptVersion, validatorVersion) {
