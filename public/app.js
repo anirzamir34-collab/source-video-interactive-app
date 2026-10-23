@@ -1536,8 +1536,11 @@ function renderVoiceMappingPanel() {
       option.textContent = `${voice.name} · ${genderLabel(voice.gender)}${voice.language ? ` · ${voice.language}` : ''}`;
       select.append(option);
     }
-    const selected = draft.get(speaker.speakerId) ??
-      (['male', 'female'].includes(speaker.gender) ? previous[speaker.speakerId] : '') ?? '';
+    // The list stays on automatic unless you change it: an automatic voice
+    // is never sent back as a manual choice, so better voices can replace it.
+    const current = state.voiceCatalog.find(voice => voice.voiceId === previous[speaker.speakerId]);
+    if (current) automatic.textContent = `Otomatik (şu an: ${current.name})`;
+    const selected = draft.get(speaker.speakerId) ?? '';
     if (selected && !state.voiceCatalog.some(voice => voice.voiceId === selected)) {
       const unavailable = document.createElement('option');
       unavailable.value = selected; unavailable.disabled = true;
@@ -1547,6 +1550,38 @@ function renderVoiceMappingPanel() {
     select.disabled = state.analysisInProgress || state.savedGameBusy;
     label.append(select); return label;
   });
+  // One tap adds the most used Turkish voices of the ElevenLabs library.
+  const host = els.voiceMappingRows.parentElement;
+  if (!host?.insertBefore || host.querySelector?.('.voice-add-turkish')) {
+    els.voiceMappingRows.replaceChildren(...rows);
+    els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked;
+    return;
+  }
+  const addTurkish = document.createElement('button');
+  addTurkish.type = 'button';
+  addTurkish.className = 'voice-add-turkish';
+  addTurkish.textContent = 'En iyi Türkçe sesleri ekle';
+  addTurkish.disabled = state.analysisInProgress || state.savedGameBusy;
+  addTurkish.addEventListener('click', async event => {
+    event.preventDefault();
+    addTurkish.disabled = true;
+    els.voiceMappingMessage.textContent = 'ElevenLabs kütüphanesinden Türkçe sesler ekleniyor…';
+    try {
+      const result = await mediaClient.addTurkishVoices();
+      state.voiceCatalog = null;
+      els.voiceMappingRows.querySelectorAll('select').forEach(select => { select.value = ''; });
+      const names = result.added.map(row => row.name.replace(/^TR /, '')).join(', ');
+      els.voiceMappingMessage.textContent = result.added.length
+        ? `${result.added.length} Türkçe ses eklendi (${names}). Şimdi "Sesleri uygula"ya bas; uygun Türkçe sesler otomatik seçilecek.`
+        : (result.skipped.length ? 'Hesabında uygun Türkçe sesler zaten var. "Sesleri uygula"ya basabilirsin.'
+          : `Türkçe ses eklenemedi: ${result.failed[0]?.reason || 'ElevenLabs izin vermedi.'}`);
+      await loadVoiceCatalog();
+      renderVoiceMappingPanel();
+    } catch (error) {
+      els.voiceMappingMessage.textContent = `Türkçe ses eklenemedi: ${error.message}`;
+    } finally { addTurkish.disabled = false; }
+  });
+  host.insertBefore(addTurkish, els.voiceMappingRows);
   els.voiceMappingRows.replaceChildren(...rows);
   els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked;
 }

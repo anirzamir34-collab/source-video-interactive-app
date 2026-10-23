@@ -92,3 +92,32 @@ test('a man\'s line inside a woman\'s voice moves to a male voice; a raised male
   assert.equal(alone.utterances[0].speakerId, 'w-m');
   assert.equal(alone.speakers.find(row => row.speakerId === 'w-m').gender, 'male');
 });
+
+test('Turkish voices added later replace an earlier non-Turkish automatic pick', () => {
+  const english = { voice_id: 'en1', labels: { gender: 'female', language: 'en' } };
+  const turkish = { voice_id: 'tr1', labels: { gender: 'female', language: 'tr' } };
+  const speaker = { speakerId: 's', gender: 'female' };
+  assert.equal(mapSpeakerVoices([speaker], [english, turkish], { s: 'en1' })['s'], 'tr1');
+  assert.equal(mapSpeakerVoices([speaker], [english, turkish], {}, { s: 'en1' })['s'], 'en1', 'a manual choice stays');
+});
+
+test('the library helper adds the most used Turkish voices the account lacks and stops at the voice limit', async () => {
+  const { createElevenLabsProvider } = await import('../lib/turkish-media/elevenlabs.js');
+  const calls = [];
+  const request = async (url, options = {}) => {
+    calls.push([options.method || 'GET', new URL(url).pathname + new URL(url).search]);
+    if (url.includes('/v2/voices')) return { voices: [{ voice_id: 'have', name: 'TR Ayşe', labels: { language: 'tr', gender: 'female', age: 'young' } }], has_more: false };
+    if (url.includes('/v1/shared-voices')) {
+      const q = new URL(url).searchParams;
+      return { voices: [{ voice_id: `${q.get('gender')}-${q.get('age')}`, public_owner_id: 'owner', name: `${q.get('gender')} ${q.get('age')}` }] };
+    }
+    if (url.includes('male-middle_aged') && !url.includes('female')) throw new Error('voice_limit_reached: maximum number of voices');
+    return { voice_id: 'new' };
+  };
+  const provider = createElevenLabsProvider({ config: { elevenLabs: { apiKey: 'k' }, requestTimeoutMs: 1000, maxRetries: 0 }, request });
+  const result = await provider.addTurkishLibraryVoices();
+  assert.deepEqual(result.skipped.map(row => `${row.gender}-${row.age}`), ['female-young']);
+  assert.deepEqual(result.added.map(row => `${row.gender}-${row.age}`), ['male-young', 'female-middle_aged']);
+  assert.equal(result.failed.length, 1, 'stops after the voice limit');
+  assert.ok(calls.some(([method, path]) => method === 'GET' && path.includes('language=tr') && path.includes('sort=usage_character_count_1y')));
+});

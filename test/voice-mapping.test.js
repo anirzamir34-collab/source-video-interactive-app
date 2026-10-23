@@ -386,11 +386,14 @@ test('manual voice UI labels uncertain source gender and displays catalogue name
   const selects = f.els.voiceMappingRows.querySelectorAll('select');
   assert.deepEqual(selects[0].options.map(option => option.value), ['', ...catalogue.map(voice => voice.voiceId)]);
   assert.deepEqual(selects[0].options.map(option => option.textContent), [
-    'Otomatik ses seçimi', 'Katalog Ses A · Erkek · tr', 'Katalog Ses B · Kadın · tr'
+    'Otomatik (şu an: Katalog Ses A)', 'Katalog Ses A · Erkek · tr', 'Katalog Ses B · Kadın · tr'
   ]);
   assert.equal(selects[0].dataset.speakerId, 'source-a');
   assert.equal(selects[0].value, '', 'unverified voice must not reuse a possibly mismatched saved default');
-  assert.equal(selects[1].value, 'catalogue-custom-b');
+  // An automatic voice stays automatic (shown as the current voice) so a
+  // better voice can replace it; it is never sent back as a manual choice.
+  assert.equal(selects[1].value, '');
+  assert.equal(selects[1].options[0].textContent, 'Otomatik (şu an: Katalog Ses B)');
   assert.equal(f.els.voiceMappingApplyBtn.disabled, false);
 });
 

@@ -616,3 +616,5 @@ html body #playerSection .video-stage .tempo-prompt.pop { animation: vqTempoPop 
 .proxy-consent [data-proxy-no] { background: transparent; color: #f3ead6; border: 1px solid rgba(255, 255, 255, .25); }
 
 .adult-dock-meters .lust-stage { font-style: normal; font-weight: 700; letter-spacing: .04em; }
+
+.voice-add-turkish { width: 100%; min-height: 40px; margin: 0 0 10px; border-radius: 12px; border: 1px solid rgba(46,230,166,.5); background: rgba(46,230,166,.12); color: #2ee6a6; font-weight: 800; }

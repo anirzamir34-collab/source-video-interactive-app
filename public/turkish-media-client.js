@@ -82,7 +82,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   function requestHeaders(path, options) {
     const headers = new Headers(options.headers);
     const usesProviders = (options.method === 'POST' &&
-      (path === `${API}/jobs` || /^\/api\/turkish-media\/jobs\/[^/]+\/retry$/.test(path))) ||
+      (path === `${API}/jobs` || path === `${API}/voices/add-turkish` || /^\/api\/turkish-media\/jobs\/[^/]+\/retry$/.test(path))) ||
       ((!options.method || options.method === 'GET') && [ `${API}/capabilities`, `${API}/voices` ].includes(path));
     if (usesProviders) {
       // Read the password controls at request time. Keys never enter job
@@ -683,6 +683,7 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
   return { start, loadResult, setDubEnabled, setSubtitleTrack, setSyncOffset, sync, reset, capture, conversationEndAt, materializeAudio,
     requestedOutputs: () => lastStart ? jsonCopy(lastStart.options.outputs) : null,
     getCapabilities: () => request(`${API}/capabilities`),
+    addTurkishVoices: () => request(`${API}/voices/add-turkish`, { method: 'POST', timeoutMs: 120000 }),
     async getVoices() {
       const body = await request(`${API}/voices`);
       const rows = Array.isArray(body) ? body : body.voices;
