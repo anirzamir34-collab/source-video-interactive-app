@@ -24,7 +24,8 @@ const repairErrorLabels = {
   GEMINI_TEMPORARILY_UNAVAILABLE: 'Gemini geçici olarak kullanılamıyor',
   NETWORK_OR_ANALYSIS_ERROR: 'Bağlantı veya analiz hatası',
   NO_VERIFIED_ACTIONS: 'Doğrulanmış yeni eylem bulunamadı',
-  GEMINI_NO_VERIFIED_EVENTS: 'Gemini yanıtladı, ancak doğrulanmış yeni olay üretemedi'
+  GEMINI_NO_VERIFIED_EVENTS: 'Gemini yanıtladı, ancak doğrulanmış yeni olay üretemedi',
+  NO_FRESH_VIDEO_FRAMES: 'Bu aralıkta önceki denemelerden farklı kullanılabilir video karesi kalmadı'
 };
 export function describeSavedGameRepair(analysis) {
   const run = analysis?.lastRepairAttempt;
