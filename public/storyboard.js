@@ -25,7 +25,7 @@ export function savedGapSampleTimes(start, end, strategy = 'baseline', excludedT
     const timestamp = Number(time.toFixed(3));
     if (fresh(timestamp)) times.push(timestamp);
   }
-  if (!times.length && length <= 0.1) {
+  if (!times.length && length <= interval) {
     const timestamp = Number(Math.min(end - 0.001, start + offset).toFixed(3));
     if (fresh(timestamp)) times.push(timestamp);
   }
