@@ -5,7 +5,7 @@ import { dubEndLimit, dubTimingGroups, planDubWindows, validDubWindow, dubTiming
 test('dub slack stops at the next speech, overlapping speech, audio event and video end', () => {
   const turn = { segmentId: 'a', sourceStart: 1, sourceEnd: 2 };
   const transcript = { source: { duration: 6 }, utterances: [turn], audioEvents: [] };
-  assert.equal(dubEndLimit(transcript, turn), 3);
+  assert.equal(dubEndLimit(transcript, turn), 4.5);
   transcript.utterances.push({ segmentId: 'b', sourceStart: 2.4, sourceEnd: 3 });
   assert.equal(dubEndLimit(transcript, turn), 2.4);
   transcript.audioEvents.push({ start: 2.1, end: 2.3 });

@@ -78,3 +78,17 @@ test('a voice left open gets its gender from pitch or the cast instead of asking
   resolveOpenGenders(unknown, {}, []);
   assert.equal(unknown.speakers[0].gender, null, 'with nothing known it stays open');
 });
+
+test('a man\'s line inside a woman\'s voice moves to a male voice; a raised male voice stays', async () => {
+  const { correctUtteranceGenders } = await import('../lib/turkish-media/cast-voices.js');
+  const transcript = {
+    speakers: [{ speakerId: 'w', gender: 'female' }, { speakerId: 'm', gender: 'male' }],
+    utterances: [{ segmentId: 'a', speakerId: 'w' }, { segmentId: 'b', speakerId: 'w' }, { segmentId: 'c', speakerId: 'm' }] };
+  const measured = { w: { medianHz: 220, utteranceMedians: { a: 225, b: 118 } }, m: { medianHz: 115, utteranceMedians: { c: 190 } } };
+  assert.deepEqual(correctUtteranceGenders(transcript, measured), ['b']);
+  assert.deepEqual(transcript.utterances.map(row => row.speakerId), ['w', 'm', 'm']);
+  const alone = { speakers: [{ speakerId: 'w', gender: 'female' }], utterances: [{ segmentId: 'x', speakerId: 'w' }] };
+  correctUtteranceGenders(alone, { w: { utteranceMedians: { x: 110 } } });
+  assert.equal(alone.utterances[0].speakerId, 'w-m');
+  assert.equal(alone.speakers.find(row => row.speakerId === 'w-m').gender, 'male');
+});

@@ -1614,8 +1614,17 @@ function verifiedSpeakerVoiceHints(analysis = state.analysis) {
     }
   }
 
+  // When the analysis ties one voice to many people (or one person to many
+  // voices), its voice matching is not reliable; those claims are ignored
+  // and the voice is identified from the sound itself.
+  const claimsPerCharacter = new Map();
+  for (const rows of proposals.values()) for (const row of rows) {
+    claimsPerCharacter.set(row.characterId, (claimsPerCharacter.get(row.characterId) || 0) + 1);
+  }
   const hints = {};
   for (const [speakerId, rows] of proposals) {
+    if (new Set(rows.map(row => row.characterId)).size >= 3 ||
+        rows.every(row => (claimsPerCharacter.get(row.characterId) || 0) >= 3)) continue;
     const characterIds = [...new Set(rows.map(row => row.characterId))];
     // One Scribe ID matched to two visible people is ambiguous evidence. Do not
     // force a voice identity from it; keep the raw speaker separate. When those
