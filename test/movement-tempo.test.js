@@ -83,3 +83,18 @@ test('parts the tempo button opens are kept off the cards', async () => {
   assert.deepEqual([...promptReservedIds(list, { sameOccurrence: current => item => occ(item) === occ(current) })], [],
     'another occurrence never reserves');
 });
+
+test('a position shows 2-3 cards in video order, each naming the part it plays next', async () => {
+  const { positionTimelineCards, nextTimelinePart } = await import('../public/movement-tempo.js');
+  const part = (id, start, label) => ({ id, loopStartTime: start, loopEndTime: start + 12, label });
+  const grouped = [{ label: 'Kalçasını kavra', variants: [part('a', 0, 'Kalçasını kavrayıp pompala'), part('c', 24, 'Arkasından devam et')] },
+    { label: 'Devam et', variants: [part('b', 12, 'Sertçe devam et'), part('d', 36, 'Derine bastır'), part('e', 48, 'Yavaşla')] }];
+  const cards = positionTimelineCards(grouped, { maxCards: 3 });
+  assert.equal(cards.length, 3);
+  assert.deepEqual(cards.map(card => card.variants.map(item => item.id)), [['a', 'b'], ['c'], ['d', 'e']]);
+  assert.equal(nextTimelinePart(cards[0], 0).part.label, 'Kalçasını kavrayıp pompala');
+  assert.equal(nextTimelinePart(cards[0], 1).part.label, 'Sertçe devam et');
+  assert.deepEqual([nextTimelinePart(cards[0], 2).done, nextTimelinePart(cards[0], 2).part.id], [true, 'a']);
+  assert.equal(positionTimelineCards([{ variants: [part('x', 0, 'Tek')] }]).length, 1);
+  assert.equal(positionTimelineCards([{ variants: [part('x', 0, 'A'), part('y', 12, 'B')] }]).length, 2);
+});

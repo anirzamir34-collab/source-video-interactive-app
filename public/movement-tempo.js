@@ -183,3 +183,40 @@ export function promptReservedIds(movements = [], { sameOccurrence = () => () =>
   if (reserved.size >= list.length) return new Set();
   return reserved;
 }
+
+// Position cards follow the video: the real parts of a position, in source
+// order, are shared over 2-3 cards (start, middle, end). Each card plays its
+// own parts one after another and is labelled with the part it plays next;
+// it never silently loops back into other footage.
+export function positionTimelineCards(cards = [], { maxCards = 3 } = {}) {
+  const seen = new Set();
+  const parts = (Array.isArray(cards) ? cards : []).flatMap(card => card?.variants || [])
+    .filter(part => part?.id && !seen.has(part.id) && seen.add(part.id))
+    .sort((a, b) => Number(a.loopStartTime ?? a.startTime) - Number(b.loopStartTime ?? b.startTime));
+  if (!parts.length) return [];
+  const count = Math.min(maxCards, parts.length);
+  const out = [];
+  for (let index = 0; index < count; index++) {
+    const from = Math.round(index * parts.length / count), to = Math.round((index + 1) * parts.length / count);
+    const chunk = parts.slice(from, to);
+    if (!chunk.length) continue;
+    const label = chunk[0].label || cards[0]?.label || '';
+    // Two cards cut from one long action read the same; the later one says
+    // it continues it.
+    const repeats = out.some(card => card.label === label);
+    out.push({ id: `timeline-${chunk[0].id}`, label, timeline: true, suffix: repeats ? ' · devamı' : '',
+      order: index, variants: chunk, baseVariants: chunk, tempoOptions: [], baseFlavor: 'steady' });
+  }
+  return out;
+}
+
+// The part a timeline card plays next, from the card's own cursor (how many
+// of its parts were started from this card). After the last part the card
+// offers its first part again ("Tekrar").
+export function nextTimelinePart(card, cursor = 0) {
+  const parts = card?.variants || [];
+  const position = Math.max(0, Math.floor(Number(cursor) || 0));
+  const done = position >= parts.length;
+  const index = done ? 0 : position;
+  return { part: parts[index] || null, done, index, total: parts.length };
+}

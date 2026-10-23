@@ -614,3 +614,5 @@ html body #playerSection .video-stage .tempo-prompt.pop { animation: vqTempoPop 
 .proxy-consent-actions button { min-height: 38px; padding: 0 14px; border-radius: 10px; font-weight: 700; font-size: 13px; }
 .proxy-consent [data-proxy-yes] { background: #2ee6a6; color: #04130d; border: 0; }
 .proxy-consent [data-proxy-no] { background: transparent; color: #f3ead6; border: 1px solid rgba(255, 255, 255, .25); }
+
+.adult-dock-meters .lust-stage { font-style: normal; font-weight: 700; letter-spacing: .04em; }

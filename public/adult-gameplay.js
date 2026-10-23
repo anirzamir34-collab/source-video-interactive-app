@@ -681,7 +681,7 @@ export function longPreludeSequences(prelude = {}) {
     .map(item => item.id === prelude.id ? prelude : { ...item, loopStartTime: undefined, loopEndTime: undefined });
 }
 
-export { movementCardsWithTempo, nextTempoPrompt, promptReservedIds } from './movement-tempo.js';
+export { movementCardsWithTempo, nextTempoPrompt, promptReservedIds, positionTimelineCards, nextTimelinePart } from './movement-tempo.js';
 
 // The first full Lust opens one position when the video has few (up to 3),
 // two when it has 4-5 and three when it has 6 or more; every later full Lust

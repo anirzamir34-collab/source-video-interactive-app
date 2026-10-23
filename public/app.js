@@ -41,6 +41,8 @@ import {
   movementCardsWithTempo,
   nextTempoPrompt,
   promptReservedIds,
+  positionTimelineCards,
+  nextTimelinePart,
   sourceMotionProgressRate,
   verifiedActionSubsequences,
   exclusiveControlClipIds,
@@ -3224,6 +3226,7 @@ function initializeInteractive(analysis) {
   state.adultVisitedPositionIds = new Set();
   state.adultMovementPlayCounts = new Map();
   state.adultPreludePlayCounts = new Map();
+  state.adultTimelineCursor = new Map();
   state.adultDialogueInterludeIds = new Set();
   state.adultComboCount = 0;
   state.adultClimaxProgress = 0;
@@ -3670,13 +3673,48 @@ function prepareAdultScenes() {
       Number(item.endTime) <= Number(action.startTime) + 0.05 &&
       ['scene_transition', 'partner_transition', 'outcome', 'aftermath'].includes(
         String(item.actionType || '').toLowerCase()));
-    if (!last || openingCast(last) !== openingCast(action) || gap > 45 ||
+    // One approach is one encounter: a short talk in between or a second
+    // woman joining (group scenes) does not start a second Lust.
+    const sameProtagonist = last && String(last.subjectTrackId || 'MAIN_MALE') === String(action.subjectTrackId || 'MAIN_MALE');
+    if (!last || !(openingCast(last) === openingCast(action) || sameProtagonist) || gap > 120 ||
         gap < -0.15 || interveningBreak) standaloneOpenings.push([action]);
     else previous.push(action);
   }
+  // The first core position that follows an opening closely (same
+  // protagonist, no scene cut in between) takes the opening as its own
+  // introduction: one Lust from the first touch to the sex panel.
+  const coreAnchors = actions.filter(action => traceByAction.get(action)?.sceneCandidate)
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const followingCore = (first, last) => {
+    const anchor = coreAnchors.find(item => Number(item.startTime) >= Number(last.endTime) - 0.05);
+    if (!anchor) return null;
+    const between = actions.filter(item => item.sourceVerified === true &&
+      Number(item.startTime) >= Number(last.endTime) - 0.05 && Number(item.endTime) <= Number(anchor.startTime) + 0.05)
+      .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+    const cut = between.some(item =>
+      ['scene_transition', 'outcome', 'aftermath'].includes(String(item.actionType || '').toLowerCase()));
+    // Talk and touches that already belong to the coming scene bridge the
+    // opening to it; only a long empty stretch separates them.
+    const bridge = between.filter(item => ['approach', 'story'].includes(item.choiceSurface) &&
+      (item.adultScene === true || item.choiceSurface === 'approach'));
+    let cursor = Number(last.endTime), widest = 0;
+    for (const item of bridge) { widest = Math.max(widest, Number(item.startTime) - cursor); cursor = Math.max(cursor, Number(item.endTime)); }
+    widest = Math.max(widest, Number(anchor.startTime) - cursor);
+    const sameProtagonist = String(anchor.subjectTrackId || 'MAIN_MALE') === String(first.subjectTrackId || 'MAIN_MALE');
+    // Another woman only belongs to the same encounter in a group scene.
+    const partners = new Set([first, last, ...bridge].map(item => String(item.partnerTrackId || '')));
+    const samePartner = partners.has(String(anchor.partnerTrackId || '')) || anchor.groupScene === true;
+    return widest <= 60 && !cut && sameProtagonist && samePartner ? { sceneId: sceneIdFor(anchor), bridge } : null;
+  };
   for (const group of standaloneOpenings) {
     const first = group[0], last = group.at(-1);
-    const id = `verified-opening:${String(first.actionId || Math.round(first.startTime * 1000))}`;
+    const approachSeconds = group.reduce((sum, item) => sum + Math.max(0, Number(item.endTime) - Number(item.startTime)), 0);
+    const following = followingCore(first, last);
+    const coreSceneId = following?.sceneId || null;
+    // A brief greeting hug far from any sex scene is a story moment, not a
+    // Lust opening.
+    if (!coreSceneId && approachSeconds < 8 && !group.some(item => item.adultScene === true)) continue;
+    const id = coreSceneId || `verified-opening:${String(first.actionId || Math.round(first.startTime * 1000))}`;
     const cast = openingCast(first);
     const members = [...group, ...actions.filter(action =>
       action.sourceVerified === true && action.choiceSurface === 'story' &&
@@ -3685,9 +3723,10 @@ function prepareAdultScenes() {
       Number(action.endTime) <= Number(last.endTime) + 0.05 &&
       !verifiedPositionSceneIds.has(sceneIdFor(action)) &&
       !introductions.has(action))];
+    if (following) for (const action of following.bridge) if (!members.includes(action)) members.push(action);
     for (const action of members) {
       sceneOccurrenceByAction.set(action, id);
-      traceByAction.get(action).membershipReason = 'VERIFIED_STANDALONE_OPENING';
+      traceByAction.get(action).membershipReason = coreSceneId ? 'VERIFIED_SAME_ENCOUNTER_OPENING' : 'VERIFIED_STANDALONE_OPENING';
     }
     verifiedPositionSceneIds.add(id);
   }
@@ -5103,6 +5142,9 @@ function renderAdultProgress() {
   if (els.maleProgressBar) els.maleProgressBar.style.width = `${maleOrgasm}%`;
   if (els.femaleProgressBar) els.femaleProgressBar.style.width = `${lust}%`;
   if (els.adultDockLustValue) els.adultDockLustValue.textContent = String(Math.round(lust));
+  // One Lust, two stages: warming up, then passion; full passion opens sex.
+  const lustStage = document.getElementById?.('adultDockLustStage');
+  if (lustStage) lustStage.textContent = state.adultSexUnlocked ? 'L' : (lust < 50 ? 'Isınma' : 'Tutku');
   // The first-approach overlay shows its own live Lust meter.
   for (const meter of els.approachChoices?.querySelectorAll?.('.approach-lust') || []) {
     meter.style.setProperty('--lust', `${Math.round(lust)}%`);
@@ -6351,11 +6393,17 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
       return item => positionOccurrenceForMovement(position, item)?.id === occurrence;
     } })
     : new Set();
+  // Cards come first: the tempo button only takes parts when at least two
+  // cards' worth of footage stays on the cards.
+  if (verifiedMovements.length - reserved.size < 2) reserved.clear();
   const movementPool = verifiedMovements.filter(item => !reserved.has(item.id));
   position.tempoReservedIds = reserved;
-  const movementChoices = movementCardsWithTempo(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
+  const groupedChoices = movementCardsWithTempo(collapseConsecutiveEquivalentCards(splitSparseMovementChoiceCards(
     buildVerifiedMovementChoices(movementPool, position.label, 6, position), 6
   )), { maxCards: 5, bundle: bundleAdjacentSourceCards });
+  // 2-3 cards in video order, each labelled with the part it plays next.
+  const timelineChoices = typeof positionTimelineCards === 'function' ? positionTimelineCards(groupedChoices, { maxCards: 3 }) : [];
+  const movementChoices = timelineChoices.length ? timelineChoices : groupedChoices;
   const movementCoverage = summarizeMovementChoiceCoverage(movementChoices);
   position.activeMovementChoices = movementChoices;
   if (els.movementHeading) els.movementHeading.textContent = position.label;
@@ -6393,10 +6441,28 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
     const tempoSummary = !choice.tempoOptions.length && choice.hasTempoShift && choice.tempoVariants?.length
       ? `<small class="movement-tempo-summary">${escapeHtml(choice.tempoVariants.map(item => tempoLabel(item.movementTempo)).join(' / '))}</small>`
       : '';
-    button.innerHTML = `${energyBadge}<span data-choice-label>${escapeHtml(
-      compactPanelChoiceLabel(choice.label, choice.variants[0] || choice))}</span>${variantStatus}${tempoSummary}`;
+    const timelineLabel = () => {
+      const next = nextTimelinePart(choice, (state.adultTimelineCursor ??= new Map()).get(choice.id));
+      const base = compactPanelChoiceLabel(next.part?.label || choice.label, next.part || choice);
+      const text = choice.suffix && (next.part?.label || choice.label) === choice.label ? `${base}${choice.suffix}` : base;
+      const step = next.total > 1 && !next.done ? `<small class="movement-variant-status">${next.index + 1}/${next.total}</small>` : '';
+      return `<span data-choice-label>${next.done ? '✓ Tekrar · ' : ''}${escapeHtml(text)}</span>${step}`;
+    };
+    button.innerHTML = choice.timeline && typeof nextTimelinePart === 'function' ? timelineLabel()
+      : `${energyBadge}<span data-choice-label>${escapeHtml(
+        compactPanelChoiceLabel(choice.label, choice.variants[0] || choice))}</span>${variantStatus}${tempoSummary}`;
     button.addEventListener('click', () => {
       if (state.adultLoopSeeking && choice.variants.some(item => item.id === state.activeMovementId)) return;
+      if (choice.timeline && typeof nextTimelinePart === 'function') {
+        const cursors = (state.adultTimelineCursor ??= new Map());
+        const { part, index } = nextTimelinePart(choice, cursors.get(choice.id));
+        if (!part) return;
+        cursors.set(choice.id, index + 1);
+        state.activeMovementChoiceId = choice.id;
+        selectAdultMovement(part.id, true);
+        button.innerHTML = timelineLabel();
+        return;
+      }
       const currentId = choice.variants.some(item => item.id === state.activeMovementId)
         ? state.activeMovementId
         : null;
