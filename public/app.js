@@ -8653,8 +8653,8 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
         .filter(item => item.model === repairModel &&
           item.promptVersion === GAP_REPAIR_PROMPT_VERSION &&
           item.validatorVersion === GAP_REPAIR_VALIDATOR_VERSION &&
-          Number(item.startTime) === Number(gap.startTime) &&
-          Number(item.endTime) === Number(gap.endTime))
+          Number(item.startTime) < Number(gap.endTime) &&
+          Number(item.endTime) > Number(gap.startTime))
         .flatMap(item => Array.isArray(item.sampledTimestamps) && item.sampledTimestamps.length
           ? item.sampledTimestamps
           : savedGapSampleTimes(gap.startTime, gap.endTime, item.samplingStrategy || 'baseline'));
