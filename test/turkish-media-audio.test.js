@@ -364,7 +364,7 @@ test('mix uses sourceStart sample offsets, ducks the original language and suppo
     { segmentId: 'b', speakerId: 'female', start: .375, end: 1.25, audioPath: '/tmp/b.wav' }
   ] });
   assert.match(graph, /1-0.82\*min/);
-  assert.match(graph, /val\(0\)\*/);
+  assert.match(graph, /volume=volume='.*':eval=frame/, 'ducked once per small block, not per sample');
   assert.match(graph, /adelay=6000S:all=1/);
   assert.match(graph, /adelay=18000S:all=1/);
   assert.match(graph, /acompressor=threshold=0.125/);
