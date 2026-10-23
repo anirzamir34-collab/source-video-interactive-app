@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { savedGapSampleTimes } from '../public/storyboard.js';
-import { planSavedGapRepair, appendSavedGapRepairHistory } from '../public/analysis-repair-attempts.js';
+import { planSavedGapRepair, appendSavedGapRepairHistory, gapRepairHasModelResponse } from '../public/analysis-repair-attempts.js';
 
 const gap = { startTime: 478.2, endTime: 557.9 };
 const model = 'gemini-3.8-flash';
@@ -50,6 +50,15 @@ test('new video timestamps stay in the same missing interval and never reuse sam
     all.push(...samples);
   }
   assert.ok(all.length >= 60);
+});
+
+test('quota and network failures do not mark any frames consumed', () => {
+  assert.equal(gapRepairHasModelResponse({ reason: 'GEMINI_CREDITS_DEPLETED', outcome: 'failed' }), false);
+  assert.equal(gapRepairHasModelResponse({ reason: 'NETWORK_OR_ANALYSIS_ERROR', outcome: 'failed' }), false);
+  assert.equal(gapRepairHasModelResponse({ reason: 'GEMINI_MODEL_UNAVAILABLE', outcome: 'failed' }), false);
+  assert.equal(gapRepairHasModelResponse({ reason: 'GEMINI_CONTENT_RESTRICTED', outcome: 'failed' }), true);
+  assert.equal(gapRepairHasModelResponse({ reason: 'GEMINI_EMPTY_RESPONSE', outcome: 'failed' }), true);
+  assert.equal(gapRepairHasModelResponse({ reason: '', outcome: 'partial' }), true);
 });
 
 test('network and quota errors do not consume a new sampling strategy', () => {
