@@ -150,7 +150,7 @@ function useNativeTiming(f) {
   };
 }
 
-test('uncertain source speaker prompts for manual voice before paying for translation or TTS', async t => {
+test('an uncertain source speaker no longer stops the dub: it gets an automatic gender and voice', async t => {
   const f = await fixture(t);
   const original = f.elevenLabs.transcribe;
   f.elevenLabs.transcribe = async (...args) => {
@@ -161,11 +161,7 @@ test('uncertain source speaker prompts for manual voice before paying for transl
   };
   let failure;
   try { await f.pipeline(f.input); } catch (error) { failure = error; }
-  assert.equal(failure?.code, 'VOICE_PROFILE_UNVERIFIED');
-  assert.deepEqual(failure.speakerIds.length, 1);
-  assert.equal(f.calls.translate.length, 0);
-  assert.equal(f.calls.synthesize.length, 0);
-  assert.equal(f.calls.mix.length, 0);
+  assert.notEqual(failure?.code, 'VOICE_PROFILE_UNVERIFIED');
 });
 
 test('measured mix progress reaches the client before packaging without inventing a completed mix', async t => {

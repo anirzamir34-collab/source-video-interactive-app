@@ -76,7 +76,10 @@ test('a voice left open gets its gender from pitch or the cast instead of asking
   assert.deepEqual(transcript.utterances.map(row => row.gender), ['male', 'female']);
   const unknown = { speakers: [{ speakerId: 'q', gender: null }], utterances: [] };
   resolveOpenGenders(unknown, {}, []);
-  assert.equal(unknown.speakers[0].gender, null, 'with nothing known it stays open');
+  assert.ok(['male', 'female'].includes(unknown.speakers[0].gender), 'even with nothing known the dub does not stop');
+  const tie = { speakers: [{ speakerId: 'w1', gender: 'female' }, { speakerId: 'w2', gender: 'female' }, { speakerId: 'm1', gender: 'male' }, { speakerId: 'q', gender: null }], utterances: [] };
+  resolveOpenGenders(tie, {}, [{ characterId: 'a', gender: 'male' }, { characterId: 'b', gender: 'female' }]);
+  assert.equal(tie.speakers[3].gender, 'male', 'a tie takes the gender with fewer found voices');
 });
 
 test('a man\'s line inside a woman\'s voice moves to a male voice; a raised male voice stays', async () => {
