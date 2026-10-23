@@ -964,7 +964,7 @@ function updateAnalyzeAvailability() {
     els.testGeminiApiKeyBtn, els.clearGeminiApiKeyBtn]
     .forEach(control => { if (control) control.disabled = busy; });
   if (els.mediaJobRetryBtn) els.mediaJobRetryBtn.disabled = busy;
-  if (els.voiceMappingApplyBtn) els.voiceMappingApplyBtn.disabled = busy || !els.dubMode.checked;
+  if (els.voiceMappingApplyBtn) els.voiceMappingApplyBtn.disabled = busy;
   els.voiceMappingRows?.querySelectorAll?.('select').forEach(select => { select.disabled = busy; });
   savedGames?.refreshControls();
 }
@@ -1554,7 +1554,7 @@ function renderVoiceMappingPanel() {
   const host = els.voiceMappingRows.parentElement;
   if (!host?.insertBefore || host.querySelector?.('.voice-add-turkish')) {
     els.voiceMappingRows.replaceChildren(...rows);
-    els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked;
+    els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy;
     return;
   }
   const addTurkish = document.createElement('button');
@@ -1583,7 +1583,7 @@ function renderVoiceMappingPanel() {
   });
   host.insertBefore(addTurkish, els.voiceMappingRows);
   els.voiceMappingRows.replaceChildren(...rows);
-  els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked;
+  els.voiceMappingApplyBtn.disabled = state.analysisInProgress || state.savedGameBusy;
 }
 
 async function loadVoiceCatalog() {
@@ -1766,9 +1766,20 @@ els.voiceMappingPanel?.addEventListener('toggle', async () => {
   }
 });
 els.voiceMappingApplyBtn?.addEventListener('click', async () => {
-  if (state.analysisInProgress || state.savedGameBusy || !els.dubMode.checked) return;
+  if (state.analysisInProgress || state.savedGameBusy) {
+    els.voiceMappingMessage.textContent = 'Önceki işlem bitince tekrar bas.'; return;
+  }
+  // Applying voices means dubbing, even when the switch was left off after
+  // a page reload; never ignore the tap silently.
+  if (els.dubMode && !els.dubMode.checked) {
+    els.dubMode.checked = true;
+    if (typeof updateAnalysisModesUI === 'function') updateAnalysisModesUI();
+  }
   const source = state.selectedFile || state.analysisSession?.file;
-  if (!(source instanceof Blob) || !source.size) return;
+  if (!(source instanceof Blob) || !source.size) {
+    els.voiceMappingMessage.textContent = 'Video dosyası bulunamadı; kayıtlı oyunu yeniden açıp tekrar dene.'; return;
+  }
+  els.voiceMappingMessage.textContent = 'Sesler uygulanıyor; dublaj yeniden hazırlanıyor…';
   const values = [...els.voiceMappingRows.querySelectorAll('select')].filter(select => select.value);
   if (new Set(values.map(select => select.value)).size !== values.length) {
     els.voiceMappingMessage.textContent = 'Her konuşmacı için ayrı bir ses seç.'; return;
