@@ -8738,7 +8738,8 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     const outcome = !result?.available ? 'failed'
       : (result.analysisGaps || []).length ? 'partial' : 'processed';
     const modelInspectedFrames = ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS',
-      'MODEL_UNSTRUCTURED_RESPONSE'].includes(reason) || ['partial', 'processed'].includes(outcome);
+      'MODEL_UNSTRUCTURED_RESPONSE', 'GEMINI_EMPTY_RESPONSE',
+      'GEMINI_INVALID_JSON'].includes(reason) || ['partial', 'processed'].includes(outcome);
     results.push({ startTime: gap.startTime, endTime: gap.endTime, reason,
       httpStatus, outcome, verifiedActions, samplingStrategy: attempt.samplingStrategy,
       ...(modelInspectedFrames ? { sampledTimestamps } : {}),
