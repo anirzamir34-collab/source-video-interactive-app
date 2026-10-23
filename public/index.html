@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/choice-surface.css" />
   <link rel="stylesheet" href="/minimal-ui.css" />
   <link rel="stylesheet" href="/setup-compact.css" />
+  <link rel="stylesheet" href="/setup-modern.css" />
 </head>
 <body>
   <main class="shell">
@@ -57,16 +58,18 @@
       </details>
     </section>
 
-    <section class="upload-card">
-      <label class="upload-target" for="videoInput">
-        <div class="upload-icon">⇧</div>
-        <strong>Video seç</strong>
-        <span>MP4, MOV, WEBM veya M4V</span>
-      </label>
-      <input id="videoInput" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" hidden />
-      <div id="fileMeta" class="meta"></div>
+    <section id="setupCard" class="upload-card setup-card">
+      <div class="setup-step">
+        <div class="setup-step__head"><span class="setup-step__num">1</span><h2>Video</h2></div>
+        <label class="upload-target" for="videoInput">
+          <div class="upload-icon">⇧</div>
+          <strong>Video seç</strong>
+          <span>MP4 · MOV · WEBM · M4V</span>
+        </label>
+        <input id="videoInput" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" hidden />
+        <div id="fileMeta" class="meta"></div>
       <div class="url-import">
-        <div class="url-divider"><span>VİDEO BAĞLANTISI</span></div>
+        <div class="url-divider"><span>veya bağlantı yapıştır</span></div>
         <div class="url-row">
           <input id="videoUrl" class="url-input" type="url" inputmode="url"
             placeholder="https://site.com/video-sayfasi" autocomplete="off" />
@@ -96,33 +99,58 @@
         </div>
         <div id="trimStatus" class="trim-status" role="status" aria-live="polite"></div>
       </div>
-      <div class="protagonist-lock">
-        <label for="protagonistInput">Başkarakter</label>
-        <input
-          id="protagonistInput"
-          type="text"
-          maxlength="180"
-          placeholder="Örnek: Sakallı, siyah tişörtlü erkek"
-          autocomplete="off"
-        />
-        <small>Grup videolarında oynayacağın kişi. Boş bırakırsan otomatik seçilir.</small>
       </div>
-      <div class="protagonist-lock">
-        <label for="castNoteInput">Videodaki kişiler</label>
-        <input
-          id="castNoteInput"
-          type="text"
-          maxlength="300"
-          placeholder="Örnek: Bir trans kadın ve bir erkek"
-          autocomplete="off"
-        />
-        <small>İsteğe bağlı. Trans, femboy gibi kimlikleri yazarsan analiz ve dublaj buna göre yapılır.</small>
+
+      <div class="setup-step">
+        <div class="setup-step__head"><span class="setup-step__num">2</span><h2>Kişiler</h2><small>İsteğe bağlı</small></div>
+        <div class="setup-fields">
+          <label class="setup-field protagonist-lock" for="protagonistInput">
+            <span>Başkarakter</span>
+            <input id="protagonistInput" type="text" maxlength="180"
+              placeholder="Sakallı, siyah tişörtlü erkek" autocomplete="off" />
+            <small>Grup videolarında oynayacağın kişi</small>
+          </label>
+          <label class="setup-field" for="castNoteInput">
+            <span>Videodaki kişiler</span>
+            <input id="castNoteInput" type="text" maxlength="300"
+              placeholder="Bir trans kadın ve bir erkek" autocomplete="off" />
+            <small>Trans, femboy gibi kimlikler analiz ve dublaja işlenir</small>
+          </label>
+        </div>
       </div>
-      <section class="analysis-modes">
-        <div class="analysis-chips">
+
+      <section class="setup-step analysis-modes">
+        <div class="setup-step__head"><span class="setup-step__num">3</span><h2>Hazırlanacaklar</h2></div>
+        <div class="setup-options">
+          <label class="mode-switch">
+            <span>
+              <b>Hareket ve seçim analizi</b>
+              <small>Pozisyonlar, seçenekler ve sahneler</small>
+            </span>
+            <input id="motionMode" type="checkbox" checked />
+            <i></i>
+          </label>
+          <label class="mode-switch">
+            <span>
+              <b>Türkçe altyazı <em id="subtitleQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
+              <small>Konuşmaların Türkçe yazısı</small>
+            </span>
+            <input id="subtitleMode" type="checkbox" />
+            <i></i>
+          </label>
+          <label class="mode-switch">
+            <span>
+              <b>Türkçe dublaj <em id="dubQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
+              <small>Konuşmaların Türkçe sesi</small>
+            </span>
+            <input id="dubMode" type="checkbox" />
+            <i></i>
+          </label>
+        </div>
+        <div class="analysis-chips" role="group" aria-label="Analiz türü">
           <label class="analysis-deep-toggle" for="deepAnalysisMode">
             <input id="deepAnalysisMode" type="checkbox" />
-            <span>Derin Analiz</span>
+            <span>Derin analiz</span>
           </label>
           <label class="analysis-deep-toggle analysis-video-toggle" for="videoAnalysisMode">
             <input id="videoAnalysisMode" type="checkbox" />
@@ -171,33 +199,6 @@
         </div>
 
         </details>
-
-        <label class="mode-switch">
-          <span>
-            <b>Hareket ve seçim analizi</b>
-            <small>Aksiyonlar, ana seçenekler ve alt seçenekler</small>
-          </span>
-          <input id="motionMode" type="checkbox" checked />
-          <i></i>
-        </label>
-
-        <label class="mode-switch">
-          <span>
-            <b>Türkçe altyazı <em id="subtitleQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
-            <small>Konuşmaların Türkçe altyazısı</small>
-          </span>
-          <input id="subtitleMode" type="checkbox" />
-          <i></i>
-        </label>
-
-        <label class="mode-switch">
-          <span>
-            <b>Türkçe dublaj <em id="dubQuotaStatus" class="quota-status checking">Kontrol ediliyor</em></b>
-            <small>Konuşmaların Türkçe sesi</small>
-          </span>
-          <input id="dubMode" type="checkbox" />
-          <i></i>
-        </label>
 
         <input type="hidden" id="dubbingProvider" value="classic" />
         <input type="hidden" id="dubQualityMode" value="quality" />

@@ -1,0 +1,229 @@
+/* Setup card: three calm steps (Video, Kişiler, Hazırlanacaklar), one input
+   style, one switch style. Loaded last; scoped to #setupCard. */
+#setupCard {
+  --s-line: rgba(255, 255, 255, .07);
+  --s-field: rgba(255, 255, 255, .035);
+  --s-field-hover: rgba(255, 255, 255, .055);
+  --s-muted: #8d98a3;
+  --s-text: #eef3f4;
+  --s-accent: #2ee6a6;
+  padding: 8px 22px 22px !important;
+  border-radius: 22px !important;
+  border: 1px solid var(--s-line) !important;
+  background: linear-gradient(180deg, rgba(20, 25, 28, .92), rgba(12, 15, 17, .96)) !important;
+  box-shadow: 0 24px 60px -30px rgba(0, 0, 0, .8) !important;
+}
+
+#setupCard .setup-step {
+  margin: 0 !important;
+  padding: 18px 0 !important;
+  border: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+}
+#setupCard .setup-step + .setup-step { border-top: 1px solid var(--s-line) !important; }
+
+#setupCard .setup-step__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+#setupCard .setup-step__head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: .01em;
+  color: var(--s-text);
+}
+#setupCard .setup-step__head small {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--s-muted);
+}
+#setupCard .setup-step__num {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: #04150f;
+  background: var(--s-accent);
+}
+
+/* Video source */
+#setupCard .upload-target {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 12px !important;
+  min-height: 56px !important;
+  padding: 12px 16px !important;
+  border-radius: 14px !important;
+  border: 1px dashed rgba(46, 230, 166, .35) !important;
+  background: rgba(46, 230, 166, .05) !important;
+  text-align: left !important;
+  transition: background .2s, border-color .2s;
+}
+#setupCard .upload-target:hover { background: rgba(46, 230, 166, .09) !important; border-color: rgba(46, 230, 166, .6) !important; }
+#setupCard .upload-target .upload-icon { font-size: 20px !important; color: var(--s-accent); }
+#setupCard .upload-target strong { font-size: 15px !important; color: var(--s-text); }
+#setupCard .upload-target span { margin-left: auto; font-size: 11px !important; color: var(--s-muted); }
+
+#setupCard .url-import { margin-top: 10px !important; }
+#setupCard .url-divider { margin: 0 0 8px !important; }
+#setupCard .url-divider span {
+  font-size: 11px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--s-muted) !important;
+}
+#setupCard .url-row { display: flex !important; gap: 8px !important; }
+
+/* One input style for every text field */
+#setupCard .url-input,
+#setupCard .setup-field input {
+  width: 100%;
+  min-height: 44px !important;
+  padding: 10px 14px !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--s-line) !important;
+  background: var(--s-field) !important;
+  color: var(--s-text) !important;
+  font-size: 14px !important;
+  box-shadow: none !important;
+  transition: border-color .2s, background .2s;
+}
+#setupCard .url-input:focus,
+#setupCard .setup-field input:focus {
+  outline: none;
+  border-color: rgba(46, 230, 166, .55) !important;
+  background: var(--s-field-hover) !important;
+}
+#setupCard .url-input::placeholder,
+#setupCard .setup-field input::placeholder { color: #5f6a72; }
+#setupCard .url-btn {
+  min-height: 44px !important;
+  padding: 0 16px !important;
+  border-radius: 12px !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+}
+
+/* People */
+#setupCard .setup-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+#setupCard .setup-field {
+  display: flex !important;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: none !important;
+}
+#setupCard .setup-field > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--s-text);
+}
+#setupCard .setup-field small {
+  font-size: 11px !important;
+  line-height: 1.35;
+  color: var(--s-muted) !important;
+}
+
+/* Outputs: one grouped list with dividers */
+#setupCard .analysis-modes { display: block !important; grid-template-columns: none !important; padding-top: 18px !important; }
+#setupCard .setup-field small { margin: 0 !important; padding: 0 !important; }
+#setupCard .setup-options {
+  border: 1px solid var(--s-line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--s-field);
+}
+#setupCard .setup-options .mode-switch {
+  margin: 0 !important;
+  padding: 12px 14px !important;
+  min-height: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  border-bottom: 1px solid var(--s-line) !important;
+  background: none !important;
+  box-shadow: none !important;
+}
+#setupCard .setup-options .mode-switch:last-child { border-bottom: 0 !important; }
+#setupCard .setup-options .mode-switch b { font-size: 14px !important; color: var(--s-text); }
+#setupCard .setup-options .mode-switch small { font-size: 11px !important; color: var(--s-muted) !important; }
+#setupCard .quota-status { font-size: 10px !important; vertical-align: 1px; }
+
+/* Analysis type: two pills */
+#setupCard .analysis-chips {
+  display: flex !important;
+  gap: 8px !important;
+  margin: 12px 0 0 !important;
+}
+#setupCard .analysis-chips .analysis-deep-toggle {
+  flex: 0 0 auto !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  margin: 0 !important;
+  min-height: 36px !important;
+  padding: 0 14px !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--s-line) !important;
+  background: var(--s-field) !important;
+  font-size: 13px !important;
+  color: var(--s-text);
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+}
+#setupCard .analysis-chips .analysis-deep-toggle:has(input:checked) {
+  border-color: rgba(46, 230, 166, .6) !important;
+  background: rgba(46, 230, 166, .12) !important;
+  color: var(--s-accent);
+}
+#setupCard .analysis-chips input { accent-color: var(--s-accent); margin: 0; }
+#setupCard .analysis-deep-model { margin-top: 10px !important; }
+
+/* API keys: a quiet link-like disclosure */
+#setupCard .provider-settings {
+  margin: 12px 0 0 !important;
+  border: 0 !important;
+  background: none !important;
+}
+#setupCard .provider-settings > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 0 !important;
+  padding: 6px 0 !important;
+  border: 0 !important;
+  background: none !important;
+  font-size: 12px !important;
+  color: var(--s-muted) !important;
+  cursor: pointer;
+}
+#setupCard .provider-settings > summary span { font-size: 11px !important; opacity: .7; }
+#setupCard .provider-settings[open] > summary { color: var(--s-text) !important; }
+
+#setupCard #analyzeBtn {
+  width: 100%;
+  min-height: 52px !important;
+  margin-top: 4px !important;
+  border-radius: 14px !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+}
+
+@media (max-width: 640px) {
+  #setupCard { padding: 4px 16px 16px !important; }
+  #setupCard .setup-fields { grid-template-columns: 1fr; }
+  #setupCard .upload-target span { display: none; }
+}
