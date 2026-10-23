@@ -39,7 +39,7 @@ test('track ids and gender words never become names or label text', async () => 
     { id: 'MAIN_MALE', participantTrackId: 'MAIN_MALE', displayName: 'MAIN_MALE', gender: 'male', evidenceLevel: 'fact', confidence: 1, evidence: 'x' }] };
   const bound = bindActionCharacter({ label: "FEMALE_1'in üstüne çıkmasına izin ver", subjectTrackId: 'MAIN_MALE', partnerTrackId: 'FEMALE_1',
     involvedCharacterIds: ['MAIN_MALE', 'FEMALE_1'], actionType: 'position', adultScene: true }, context);
-  assert.equal(bound.partnerLabel, 'Kadın 1');
+  assert.equal(bound.partnerLabel, 'Kadın', 'a single unnamed woman is simply Kadın');
   assert.equal(bound.label, 'Üstüne çıkmasına izin ver');
 });
 

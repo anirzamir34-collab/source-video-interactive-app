@@ -473,3 +473,18 @@ test('different addressee and partner assertions in a group stay unresolved rath
   assert.equal(result.identityResolution, 'conflict');
   assert.equal(result.primaryCharacterLabel, '');
 });
+
+test('one stable name per person: a spoken name, else an age word; never a look nickname or "kız"', async () => {
+  const { stableCharacterName, adultWording, bindActionCharacter } = await import('../public/character-identity.js');
+  const chars = [
+    { id: 'a', participantTrackId: 'PARTNER_A', displayName: 'Genç kız', gender: 'female', ageGroup: 'young', evidenceLevel: 'fact', confidence: .9, evidence: 'x' },
+    { id: 'b', participantTrackId: 'PARTNER_B', displayName: 'Sarah', gender: 'female', ageGroup: 'adult', evidenceLevel: 'fact', confidence: .9, evidence: 'x' },
+    { id: 'c', participantTrackId: 'OTHER_FEMALE_1', displayName: 'Ev sahibi kadın', gender: 'female', ageGroup: 'young', evidenceLevel: 'fact', confidence: .9, evidence: 'x' }];
+  assert.deepEqual(chars.map(row => stableCharacterName(row, chars)), ['Genç kadın 1', 'Sarah', 'Genç kadın 2']);
+  assert.equal(adultWording('Genç kızla tanış'), 'Genç kadınla tanış');
+  assert.equal(adultWording('Kızıl saçlı kadına sarıl'), 'Kızıl saçlı kadına sarıl');
+  const bound = bindActionCharacter({ label: 'Örgülü kadını öp', subjectTrackId: 'MAIN_MALE', partnerTrackId: 'PARTNER_A',
+    partnerLabel: 'Örgülü kadın' }, { characters: chars });
+  assert.equal(bound.label, 'Genç kadını öp');
+  assert.equal(bound.partnerLabel, 'Genç kadın 1');
+});

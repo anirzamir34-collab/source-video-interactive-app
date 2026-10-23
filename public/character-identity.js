@@ -100,6 +100,68 @@ function compactLook(phrase, character) {
   return look.slice(0, 1).toLocaleUpperCase('tr-TR') + look.slice(1);
 }
 
+// One stable name per person in every scene: the name the video gives, or a
+// plain age word ("Genç kadın", "Kadın", "Olgun kadın"). Looks such as hair
+// or clothes are never used as names, and adults are never called "kız".
+const AGE_NOUNS = {
+  female: { young: 'Genç kadın', adult: 'Kadın', mature: 'Olgun kadın', senior: 'Yaşlı kadın', '': 'Kadın' },
+  male: { young: 'Genç adam', adult: 'Adam', mature: 'Olgun adam', senior: 'Yaşlı adam', '': 'Adam' }
+};
+export function ageBasedName(character = {}) {
+  const gender = String(character?.gender || '').toLowerCase();
+  if (!AGE_NOUNS[gender]) return '';
+  const age = String(character?.ageGroup || '').toLowerCase();
+  const said = text(character?.displayName).toLocaleLowerCase('tr-TR');
+  const fallback = /genç|young/u.test(said) ? 'young' : /olgun|orta yaş/u.test(said) ? 'mature' : /yaşlı/u.test(said) ? 'senior' : '';
+  return AGE_NOUNS[gender][AGE_NOUNS[gender][age] ? age : fallback];
+}
+export function stableCharacterName(character, characters = []) {
+  if (!character) return '';
+  const name = verifiedCharacterName(character);
+  if (name && !/\bkız\b/iu.test(name)) return name;
+  const base = ageBasedName(character);
+  if (!base) return '';
+  // Two people of the same kind are numbered in order of appearance.
+  const same = (Array.isArray(characters) ? characters : []).filter(other =>
+    !verifiedCharacterName(other) && ageBasedName(other) === base);
+  const index = same.findIndex(other => (other.participantTrackId || other.id) === (character.participantTrackId || character.id));
+  return same.length > 1 && index >= 0 ? `${base} ${index + 1}` : base;
+}
+
+// "kız" forms become "kadın" forms in labels about adults ("Genç kızı öp" ->
+// "Genç kadını öp"); "kızıl" (red-haired) and other words are left alone.
+const KIZ_FORMS = { 'kız': 'kadın', 'kızı': 'kadını', 'kızla': 'kadınla', 'kızın': 'kadının', 'kıza': 'kadına',
+  'kızdan': 'kadından', 'kızda': 'kadında', 'kızlar': 'kadınlar', 'kızları': 'kadınları', 'kızlarla': 'kadınlarla' };
+export function adultWording(label = '') {
+  return String(label || '').replace(/(^|[^\p{L}])(kız(?:ı|la|ın|a|dan|da|lar|ları|larla)?)(?=$|[^\p{L}])/giu, (match, lead, word) => {
+    const lower = word.toLocaleLowerCase('tr-TR');
+    const next = KIZ_FORMS[lower];
+    if (!next) return match;
+    const upper = word[0] !== word[0].toLocaleLowerCase('tr-TR');
+    return lead + (upper ? next[0].toLocaleUpperCase('tr-TR') + next.slice(1) : next);
+  });
+}
+
+// Replaces a person's look nickname ("Örgülü kadın", "Pembe büstiyerli kadın")
+// in a label with their stable name, keeping the Turkish case ending.
+export function replaceNickname(label, nicknames = [], stable = '') {
+  let out = String(label || '');
+  if (!stable) return out;
+  for (const nick of [...new Set(nicknames.map(text).filter(Boolean))].sort((a, b) => b.length - a.length)) {
+    if (nick.toLocaleLowerCase('tr-TR') === stable.toLocaleLowerCase('tr-TR')) continue;
+    const escaped = nick.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(^|[^\\p{L}])${escaped}(\\p{L}*)`, 'giu'), (match, lead, suffix, offset) => {
+      const atStart = offset + lead.length === 0;
+      // "Genç kadın 2" cannot take a case ending; the plain words can.
+      const plain = suffix ? stable.replace(/\s+\d+$/u, '') : stable;
+      const name = atStart ? plain : (/^[A-ZÇĞİÖŞÜ]/u.test(plain.split(' ')[0]) && !AGE_WORD.test(plain) ? plain : plain.toLocaleLowerCase('tr-TR'));
+      return `${lead}${name}${suffix}`;
+    });
+  }
+  return out;
+}
+const AGE_WORD = /^(?:Genç|Olgun|Yaşlı|Kadın|Adam)(?=\s|$)/u;
+
 export function verifiedVisualDescription(character) {
   if (character?.identityConflict || character?.evidenceLevel !== 'fact' ||
       Number(character?.confidence) < 0.68) return '';
@@ -312,6 +374,17 @@ export function bindActionCharacter(action, context = {}) {
     result.label = protagonistFirstPerson(result.label);
     result.narrativeChoiceLabel = protagonistFirstPerson(result.narrativeChoiceLabel);
   }
+  // Every person keeps one name in every label: look nicknames give way to
+  // the stable name, and adults are never called "kız".
+  for (const person of [lookup(action.partnerTrackId), lookup(action.primaryCharacterId)].filter(Boolean)) {
+    const stable = stableCharacterName(person, characters);
+    const nicknames = [person.displayName, visualDisplayName(person), action.partnerLabel, action.primaryCharacterLabel]
+      .filter(value => value && !verifiedCharacterName({ ...person, displayName: value }));
+    result.label = replaceNickname(result.label, nicknames, stable);
+    result.narrativeChoiceLabel = replaceNickname(result.narrativeChoiceLabel, nicknames, stable);
+  }
+  result.label = adultWording(result.label);
+  result.narrativeChoiceLabel = adultWording(result.narrativeChoiceLabel);
   // He gives oral to her: never word it as her doing it to him.
   if (String(action.oralGiver || '').toLowerCase() === 'main_male' &&
       /yapmasına izin ver|emmesine|yalamasına/iu.test(result.label)) {
@@ -346,7 +419,8 @@ export function bindActionCharacter(action, context = {}) {
   // Track aliases are private routing keys. Ordinary story/dialogue metadata
   // must not pretend that 'Karakter A' is a verified on-screen identity.
   const ordinary = isOrdinaryRelationshipAction(action);
-  const evidencedLabel = character => verifiedCharacterName(character) || verifiedVisualDescription(character);
+  const evidencedLabel = character => stableCharacterName(character, characters) ||
+    verifiedCharacterName(character) || verifiedVisualDescription(character);
   if (target) {
     result.primaryCharacterId = target.participantTrackId || target.id;
     result.primaryCharacterLabel = evidencedLabel(target) || (ordinary ? '' : participantLabel(target));
