@@ -1,4 +1,12 @@
 // Keep the paid repair history when the latest saved-game report is replaced.
+// Only a model reply consumes its submitted frame positions. Quota, network
+// and authentication failures must remain retryable with the same evidence.
+export const gapRepairHasModelResponse = item =>
+  ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS',
+    'MODEL_UNSTRUCTURED_RESPONSE', 'GEMINI_EMPTY_RESPONSE',
+    'GEMINI_INVALID_JSON'].includes(item?.reason) ||
+  ['processed', 'partial'].includes(item?.outcome);
+
 const matched = (item, gap, model, promptVersion, validatorVersion) =>
   item?.model === model && item?.promptVersion === promptVersion &&
   item?.validatorVersion === validatorVersion &&
@@ -21,25 +29,22 @@ export function savedGapRepairHistory(analysis = {}) {
     if (!history.some(old => matched(old, entry, entry.model, entry.promptVersion, entry.validatorVersion) &&
       old.samplingStrategy === entry.samplingStrategy && old.reason === entry.reason)) history.push(entry);
   }
-  return history.slice(-120);
+  return history.slice(-512);
 }
 
 export function planSavedGapRepair(analysis, gap, model, promptVersion, validatorVersion) {
   const attempts = savedGapRepairHistory(analysis).filter(item =>
     matched(item, gap, model, promptVersion, validatorVersion));
-  // A provider refusal is not final: a repeat (or a different frame
-  // sampling) may pass, and the user asked for this retry explicitly.
-  // Only two refusals with this exact model and prompt stop further tries.
-  const blocked = attempts.filter(item => item.reason === 'GEMINI_CONTENT_RESTRICTED');
-  if (blocked.length >= 2) return { skip: 'skipped_previous_rejection', reason: blocked[0].reason,
-    httpStatus: blocked[0].httpStatus || null };
-  if (blocked.length) return { samplingStrategy: 'shifted' };
-  const empty = attempts.filter(item => item.reason === 'GEMINI_NO_VERIFIED_EVENTS');
-  if (empty.some(item => item.samplingStrategy === 'shifted')) {
-    return { skip: 'skipped_previous_empty', reason: 'GEMINI_NO_VERIFIED_EVENTS',
-      httpStatus: empty.find(item => item.samplingStrategy === 'shifted')?.httpStatus || null };
-  }
-  return { samplingStrategy: empty.length ? 'shifted' : 'baseline' };
+  // Never silently skip an explicit user retry after two provider refusals.
+  // Advance only when the previous request actually yielded a model response;
+  // quota, network and model-access failures did not inspect the frames.
+  const responded = attempts.filter(gapRepairHasModelResponse);
+  const used = new Set(responded.map(item => item.samplingStrategy || 'baseline'));
+  let index = 0;
+  const strategyAt = value => value === 0 ? 'baseline'
+    : value === 1 ? 'shifted' : `alternate-${value}`;
+  while (used.has(strategyAt(index))) index++;
+  return { samplingStrategy: strategyAt(index) };
 }
 
 export function appendSavedGapRepairHistory(analysis, model, promptVersion, validatorVersion, results) {
@@ -48,5 +53,5 @@ export function appendSavedGapRepairHistory(analysis, model, promptVersion, vali
     .filter(item => !String(item.outcome || '').startsWith('skipped_'))
     .map(item => ({ ...item, model, promptVersion, validatorVersion,
       samplingStrategy: item.samplingStrategy || 'baseline' }));
-  return [...old, ...added].slice(-120);
+  return [...old, ...added].slice(-512);
 }

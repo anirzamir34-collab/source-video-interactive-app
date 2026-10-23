@@ -2,17 +2,34 @@ import { canvasBlob, seekMediaTo } from './playback-logic.js';
 
 // A second explicit saved-game repair pass inspects different actual video
 // frames. Replaying the identical sheets after an empty response is not useful.
-export function savedGapSampleTimes(start, end, strategy = 'baseline') {
+export function savedGapSampleTimes(start, end, strategy = 'baseline', excludedTimestamps = []) {
   const length = end - start;
   if (!Number.isFinite(length) || length <= 0) return [];
   const interval = Math.max(0.75, length / Math.min(48,
     Math.max(12, Math.ceil(length / 3))));
-  const offset = strategy === 'shifted' ? interval / 2 : 0;
+  // Binary-reflected fractions give each explicit retry a fresh position
+  // within the same sampling slots: 0, 1/2, 1/4, 3/4, 1/8, 5/8, ...
+  const match = /^alternate-(\d+)$/.exec(strategy);
+  let index = strategy === 'shifted' ? 1 : match ? Number(match[1]) : 0;
+  let phase = 0;
+  for (let fraction = 0.5; index > 0 && fraction > 1e-8; fraction /= 2) {
+    if (index % 2) phase += fraction;
+    index = Math.floor(index / 2);
+  }
+  const offset = phase * Math.min(interval, length);
+  const excluded = Array.isArray(excludedTimestamps)
+    ? excludedTimestamps.filter(Number.isFinite) : [];
+  const fresh = time => !excluded.some(used => Math.abs(used - time) < 0.12);
   const times = [];
   for (let time = start + offset; time < end - 0.05; time += interval) {
-    times.push(Number(time.toFixed(3)));
+    const timestamp = Number(time.toFixed(3));
+    if (fresh(timestamp)) times.push(timestamp);
   }
-  return times.length ? times : [start];
+  if (!times.length && length <= interval) {
+    const timestamp = Number(Math.min(end - 0.001, start + offset).toFixed(3));
+    if (fresh(timestamp)) times.push(timestamp);
+  }
+  return times;
 }
 
 export function detectSceneBoundaries(motionProfile = [], interval = 1) {
@@ -361,7 +378,9 @@ export async function extractStoryboard(source, onProgress = () => {}, signal, o
     const interval = Math.max(0.75, duration / targetFrameCount);
     const times = [];
     if (repairRange) {
-      times.push(...savedGapSampleTimes(rangeStart, rangeEnd, options.repairSamplingStrategy));
+      times.push(...savedGapSampleTimes(rangeStart, rangeEnd,
+        options.repairSamplingStrategy, options.repairPreviouslySampledTimes));
+      if (!times.length) throw new Error('Bu aralıkta henüz kullanılmamış başka video karesi bulunamadı.');
     } else {
       for (let time = 0; time < duration; time += interval) times.push(time);
     }
@@ -584,7 +603,9 @@ export async function extractStoryboard(source, onProgress = () => {}, signal, o
       motionProfile,
       duration,
       repairRange ? Math.min(12, Math.ceil(times.length / 4)) : samplingPlan.focusedCount
-    ).filter(time => time >= rangeStart && time < rangeEnd);
+    ).filter(time => time >= rangeStart && time < rangeEnd &&
+      (!repairRange || !(options.repairPreviouslySampledTimes || [])
+        .some(used => Math.abs(Number(used) - time) < 0.12)));
     plannedFrames = times.length + focusedTimes.length;
     for (let index = 0; index < focusedTimes.length; index += 1) {
       await captureFrameSafely(

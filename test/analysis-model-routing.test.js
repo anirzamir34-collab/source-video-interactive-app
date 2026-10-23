@@ -122,9 +122,10 @@ test('repair catalog prefers only tested general multimodal model families', () 
   assert.match(server, /const models = checks\.filter\(Boolean\)/);
 });
 
-test('saved game repair displays per-gap errors and suppresses repeated provider rejection', () => {
+test('saved game repair displays per-gap errors and retries provider refusals with fresh frames', () => {
   const ui = readFileSync(new URL('../public/saved-games-ui.js', import.meta.url), 'utf8');
-  assert.match(app, /skipped_previous_rejection/);
+  assert.doesNotMatch(app, /skipped_previous_rejection/);
+  assert.match(app, /repairPreviouslySampledTimes: earlierSamples/);
   assert.match(app, /skipped_model_error/);
   assert.match(app, /lastRepairAttempt:/);
   assert.match(app, /planSavedGapRepair\(previous, gap, repairModel/);

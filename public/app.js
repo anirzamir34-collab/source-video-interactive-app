@@ -95,13 +95,14 @@ import { bindActionCharacter, canonicalizeActionTrackIds, verifiedCharacterName,
 import {
   adaptiveAnalysisChunkPlan,
   adaptiveConversationActionChunkPlan,
-  extractStoryboard
+  extractStoryboard,
+  savedGapSampleTimes
 } from './storyboard.js';
 import { canContinuePastChunkFailure, chunkGapResult } from './analysis-recovery.js';
 import { recoverVerifiedChunksOnCreditExhaustion } from './partial-analysis-recovery.js';
 import { runContextualAnalysisChunks } from './analysis-scheduler.js';
 import { retryableAnalysisGaps, mergeRepairedAnalysis } from './analysis-gap-repair.js';
-import { planSavedGapRepair, appendSavedGapRepairHistory } from './analysis-repair-attempts.js';
+import { planSavedGapRepair, appendSavedGapRepairHistory, savedGapRepairHistory, gapRepairHasModelResponse } from './analysis-repair-attempts.js';
 
 import { attachPanelFeedback, compactPanelChoiceLabel, forwardVerifiedClips } from './panel-feedback.js';
 import { mountSavedGames } from './saved-games-ui.js';
@@ -8636,16 +8637,6 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     const gap = gaps[index];
     const attempt = planSavedGapRepair(previous, gap, repairModel,
       GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION);
-    if (attempt.skip) {
-      const restricted = attempt.skip === 'skipped_previous_rejection';
-      results.push({ startTime: gap.startTime, endTime: gap.endTime,
-        reason: attempt.reason, httpStatus: attempt.httpStatus,
-        outcome: attempt.skip });
-      onProgress(`Bölüm ${index + 1}/${gaps.length}: ${restricted
-        ? 'Gemini içerik kısıtlaması nedeniyle aynı isteğe devam edilemez; farklı bir model seç.'
-        : 'İki ayrı kare örneklemesi de boş kaldı; başka Gemini modeli seç.'}`);
-      continue;
-    }
     if (modelFailure) {
       results.push({ startTime: gap.startTime, endTime: gap.endTime,
         reason: modelFailure, httpStatus: null, outcome: 'skipped_model_error' });
@@ -8656,9 +8647,19 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
     let reason = '';
     let httpStatus = null;
     let repairTelemetry = null;
+    let sampledTimestamps = [];
     try {
+      const earlierSamples = savedGapRepairHistory(previous)
+        .filter(item => gapRepairHasModelResponse(item) &&
+          Number(item.startTime) < Number(gap.endTime) &&
+          Number(item.endTime) > Number(gap.startTime))
+        .flatMap(item => Array.isArray(item.sampledTimestamps) && item.sampledTimestamps.length
+          ? item.sampledTimestamps
+          : savedGapSampleTimes(gap.startTime, gap.endTime, item.samplingStrategy || 'baseline'));
       const storyboard = await extractStoryboard(game.video, () => {}, undefined,
-        { timeRange: gap, repairSamplingStrategy: attempt.samplingStrategy });
+        { timeRange: gap, repairSamplingStrategy: attempt.samplingStrategy,
+          repairPreviouslySampledTimes: earlierSamples });
+      sampledTimestamps = storyboard.timestamps;
       const form = new FormData();
       storyboard.sheets.forEach((sheet, sheetIndex) => form.append('storyboards', sheet,
         `repair-${index + 1}-${sheetIndex + 1}.jpg`));
@@ -8680,8 +8681,8 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
       form.append('dialogueSpeakerContext', JSON.stringify(savedSourceContext?.speakers || []));
       form.append('sensoryAudioContext', JSON.stringify((savedSourceContext?.nonSpeechEvents || []).filter(item =>
         Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime)));
-      onProgress(`Eksik bölüm ${index + 1}/${gaps.length} · ${repairModel} ile ${attempt.samplingStrategy === 'shifted'
-        ? 'farklı video karelerinden ikinci analiz yapılıyor' : 'analiz ediliyor'}…`);
+      onProgress(`Eksik bölüm ${index + 1}/${gaps.length} · ${repairModel} ile ${attempt.samplingStrategy === 'baseline'
+        ? 'analiz ediliyor' : 'öncekinden farklı video kareleri analiz ediliyor'}…`);
       const response = await fetch('/api/gemini-storyboard-analyze', {
         method: 'POST', headers: geminiRequestHeaders(), body: form,
         signal: AbortSignal.timeout(240000)
@@ -8721,8 +8722,10 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
         reason = String(result?.reason || 'ANALYSIS_FAILED');
       }
     } catch (error) {
-      reason = ['TimeoutError', 'AbortError'].includes(error?.name)
-        ? 'GEMINI_TEMPORARILY_UNAVAILABLE' : 'NETWORK_OR_ANALYSIS_ERROR';
+      reason = String(error?.message || '').includes('henüz kullanılmamış başka video karesi')
+        ? 'NO_FRESH_VIDEO_FRAMES'
+        : ['TimeoutError', 'AbortError'].includes(error?.name)
+          ? 'GEMINI_TEMPORARILY_UNAVAILABLE' : 'NETWORK_OR_ANALYSIS_ERROR';
       result = { available: false, reason };
     }
     reason = result?.available ? '' : String(result?.reason || reason || 'ANALYSIS_FAILED');
@@ -8732,8 +8735,10 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
       ? (result.actions || []).filter(action => action.sourceVerified === true).length : 0;
     const outcome = !result?.available ? 'failed'
       : (result.analysisGaps || []).length ? 'partial' : 'processed';
+    const modelInspectedFrames = gapRepairHasModelResponse({ reason, outcome });
     results.push({ startTime: gap.startTime, endTime: gap.endTime, reason,
       httpStatus, outcome, verifiedActions, samplingStrategy: attempt.samplingStrategy,
+      ...(modelInspectedFrames ? { sampledTimestamps } : {}),
       ...(repairTelemetry ? { repairTelemetry } : {}) });
     onProgress(`Bölüm ${index + 1}/${gaps.length}: ${reason ||
       (outcome === 'partial' ? `${verifiedActions} olay doğrulandı, kalan aralık hâlâ eksik`
