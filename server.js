@@ -371,6 +371,7 @@ app.post('/api/gemini-storyboard-analyze', storyboardUpload.array('storyboards',
     req.body?.protagonistProfile || ''
   ).trim();
   const protagonistHint = String(req.body?.protagonistHint || '').trim().slice(0, 300);
+  const castNote = String(req.body?.castNote || '').trim().slice(0, 300);
   const dialogueContext = String(req.body?.dialogueContext || '[]');
   const dialogueSpeakerContext = String(req.body?.dialogueSpeakerContext || '[]').slice(0, 16000);
   const sensoryAudioContext = String(req.body?.sensoryAudioContext || '[]').slice(0, 16000);
@@ -431,7 +432,7 @@ ${reviewCandidates}
         duration, chunkIndex, chunkCount, chunkStart, chunkEnd, timestamps, motionProfile,
         sceneBoundaries, reviewInstructions, conditionalRelationshipInstructions, qualityMode,
         dialogueContext, dialogueSpeakerContext, sensoryAudioContext, storyContextMemory,
-        protagonistProfile, protagonistHint, sourceKind: videoFileUri ? 'video' : 'frames'
+        protagonistProfile, protagonistHint, castNote, sourceKind: videoFileUri ? 'video' : 'frames'
       });
 
     const ai = new GoogleGenAI({ apiKey });

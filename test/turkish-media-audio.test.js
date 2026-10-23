@@ -327,7 +327,7 @@ test('overlong dubbing requests regeneration before any shortening or truncation
   });
   assert.deepEqual(await readdir(directory), []);
   assert.equal(mocked.calls.length, 1);
-  await assert.rejects(service.fitDubSegment('/tmp/long.wav', { targetDuration: 1, maxTempo: 1.5 }), { code: 'DUB_TEMPO_INVALID' });
+  await assert.rejects(service.fitDubSegment('/tmp/long.wav', { targetDuration: 1, maxTempo: 1.7 }), { code: 'DUB_TEMPO_INVALID' });
 });
 
 test('fit measures converted duration and pads only silence, without -t or atrim', async t => {

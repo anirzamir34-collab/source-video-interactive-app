@@ -16,8 +16,35 @@ export function characterAgeGroup(character = {}) {
   return '';
 }
 
-export function castProfilesFor(analysis) {
+// The viewer may say who is in the video ("bir trans kadın ve bir erkek").
+// That stated fact fills genderIdentity when the analysis left it empty and
+// exactly one person in the cast can be meant.
+const NOTE_IDENTITIES = [
+  { identity: 'trans_woman', gender: 'female', pattern: /\btrans\s*(kadin|woman|kiz|girl)|\btranseksuel kadin|\bts\b|\btgirl\b|\bshemale\b/u },
+  { identity: 'trans_man', gender: 'male', pattern: /\btrans\s*(erkek|man|adam)\b/u },
+  { identity: 'femboy', gender: 'male', pattern: /\bfemboy\b/u },
+  { identity: 'nonbinary', gender: null, pattern: /\b(non.?binary|nonbinary|ikili olmayan)\b/u }
+];
+export function castNoteIdentities(note) {
+  const text = fold(note);
+  return text ? NOTE_IDENTITIES.filter(row => row.pattern.test(text)) : [];
+}
+export function applyCastNote(characters = [], note = '') {
+  const list = Array.isArray(characters) ? characters : [];
+  for (const row of castNoteIdentities(note)) {
+    if (list.some(character => String(character?.genderIdentity || '').toLowerCase() === row.identity)) continue;
+    const candidates = list.filter(character => character && !character.genderIdentity &&
+      (!row.gender || String(character.gender || '').toLowerCase() === row.gender) &&
+      !(row.gender === 'male' && /MAIN_MALE/.test(String(character.participantTrackId || character.id || ''))));
+    if (candidates.length === 1) candidates[0].genderIdentity = row.identity;
+  }
+  return list;
+}
+
+export function castProfilesFor(analysis, castNote = '') {
   const out = [];
+  const note = castNote || analysis?.castNote || '';
+  if (note) applyCastNote((analysis?.storyContext?.characters || []).filter(row => row?.evidenceLevel === 'fact' && !row?.identityConflict), note);
   for (const character of analysis?.storyContext?.characters || []) {
     if (character?.evidenceLevel !== 'fact' || character?.identityConflict) continue;
     const gender = String(character.gender || '').toLowerCase();

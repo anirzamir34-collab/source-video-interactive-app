@@ -30,7 +30,7 @@ test('Gemini is the only translation provider and model precedence follows exist
   assert.equal(config.translation.apiKey, 'server-key');
   assert.equal(config.translation.baseUrl, 'https://generativelanguage.googleapis.com/v1beta');
   assert.equal(config.translation.model, GEMINI_DEFAULT_MODEL);
-  assert.equal(config.translationVersion, 'scene-tr-gemini-economy-v3');
+  assert.equal(config.translationVersion, 'scene-tr-gemini-economy-v4-explicit');
   assert.equal(loadMediaConfig({ GEMINI_MODEL: 'gemini-custom' }).translation.model, GEMINI_DEFAULT_MODEL,
     'premium visual-model settings must never raise translation cost');
   assert.equal(config.translation.fallbackModel, 'gemini-3.1-flash-lite');

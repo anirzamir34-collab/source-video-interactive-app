@@ -86,14 +86,26 @@ test('a man\'s line inside a woman\'s voice moves to a male voice; a raised male
   const { correctUtteranceGenders } = await import('../lib/turkish-media/cast-voices.js');
   const transcript = {
     speakers: [{ speakerId: 'w', gender: 'female' }, { speakerId: 'm', gender: 'male' }],
-    utterances: [{ segmentId: 'a', speakerId: 'w' }, { segmentId: 'b', speakerId: 'w' }, { segmentId: 'c', speakerId: 'm' }] };
+    utterances: [{ segmentId: 'a', speakerId: 'w', sourceStart: 0, sourceEnd: 2 }, { segmentId: 'b', speakerId: 'w', sourceStart: 3, sourceEnd: 5 },
+      { segmentId: 'c', speakerId: 'm', sourceStart: 6, sourceEnd: 8 }] };
   const measured = { w: { medianHz: 220, utteranceMedians: { a: 225, b: 118 } }, m: { medianHz: 115, utteranceMedians: { c: 190 } } };
   assert.deepEqual(correctUtteranceGenders(transcript, measured), ['b']);
   assert.deepEqual(transcript.utterances.map(row => row.speakerId), ['w', 'm', 'm']);
-  const alone = { speakers: [{ speakerId: 'w', gender: 'female' }], utterances: [{ segmentId: 'x', speakerId: 'w' }] };
+  const alone = { speakers: [{ speakerId: 'w', gender: 'female' }], utterances: [{ segmentId: 'x', speakerId: 'w', sourceStart: 0, sourceEnd: 2 }] };
   correctUtteranceGenders(alone, { w: { utteranceMedians: { x: 110 } } });
-  assert.equal(alone.utterances[0].speakerId, 'w-m');
-  assert.equal(alone.speakers.find(row => row.speakerId === 'w-m').gender, 'male');
+  assert.equal(alone.utterances[0].speakerId, 'w', 'a woman\'s low line never creates a male voice');
+  const man = { speakers: [{ speakerId: 'm', gender: 'male' }], utterances: [{ segmentId: 'y', speakerId: 'm', sourceStart: 0, sourceEnd: 2 }] };
+  correctUtteranceGenders(man, { m: { utteranceMedians: { y: 240 } } });
+  assert.equal(man.utterances[0].speakerId, 'm-f');
+});
+
+test('a short low moan or a line only a bit lower keeps the woman\'s voice', async () => {
+  const { correctUtteranceGenders } = await import('../lib/turkish-media/cast-voices.js');
+  const transcript = {
+    speakers: [{ speakerId: 'w', gender: 'female' }, { speakerId: 'm', gender: 'male' }],
+    utterances: [{ segmentId: 'a', speakerId: 'w', sourceStart: 0, sourceEnd: 0.5 }, { segmentId: 'b', speakerId: 'w', sourceStart: 1, sourceEnd: 3 }] };
+  const measured = { w: { medianHz: 150, utteranceMedians: { a: 100, b: 118 } }, m: { medianHz: 105 } };
+  assert.deepEqual(correctUtteranceGenders(transcript, measured), []);
 });
 
 test('Turkish voices added later replace an earlier non-Turkish automatic pick', () => {
@@ -140,4 +152,15 @@ test('a trans woman is named as such', async () => {
   const chars = [{ id: 't', participantTrackId: 'PARTNER_A', gender: 'female', genderIdentity: 'trans_woman', ageGroup: 'young' }];
   assert.equal(stableCharacterName(chars[0], chars), 'Genç trans kadın');
   assert.equal(stableCharacterName({ ...chars[0], ageGroup: '' }, chars), 'Trans kadın');
+});
+
+test('a viewer cast note marks the one matching person as a trans woman', async () => {
+  const { castProfilesFor } = await import('../public/voice-cast.js');
+  const analysis = { storyContext: { characters: [
+    { id: 'MAIN_MALE', participantTrackId: 'MAIN_MALE', gender: 'male', evidenceLevel: 'fact' },
+    { id: 'PARTNER_A', gender: 'female', evidenceLevel: 'fact' }] } };
+  const cast = castProfilesFor(analysis, 'Videoda bir trans kadın ve bir erkek var');
+  assert.equal(cast.find(row => row.characterId === 'PARTNER_A').genderIdentity, 'trans_woman');
+  assert.equal(cast.find(row => row.characterId === 'MAIN_MALE').genderIdentity, undefined);
+  assert.equal(castProfilesFor({ storyContext: { characters: [{ id: 'A', gender: 'female', evidenceLevel: 'fact' }] } }, '').length, 1);
 });

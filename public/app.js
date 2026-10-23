@@ -338,6 +338,7 @@ const els = {
   dubQuotaStatus: $('dubQuotaStatus'),
   selectedModesSummary: $('selectedModesSummary'),
   protagonistInput: $('protagonistInput'),
+  castNoteInput: $('castNoteInput'),
   analysisCard: $('analysisCard'),
   analysisTitle: $('analysisTitle'),
   analysisState: $('analysisState'),
@@ -1394,7 +1395,7 @@ function currentMediaJobOptions(analysis, modes = selectedAnalysisModes()) {
     sceneContext: verifiedMediaSceneContext(),
     speakerHints: verifiedSpeakerVoiceHints(analysis),
     castGenders: speakingCastGenders(analysis),
-    castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(analysis) : []
+    castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(analysis, typeof currentCastNote === 'function' ? currentCastNote(analysis) : '') : []
   };
 }
 
@@ -1793,7 +1794,7 @@ els.voiceMappingApplyBtn?.addEventListener('click', async () => {
     // these hints a man's lines merged into a woman's voice stayed merged
     // and the chosen male voice never reached them.
     speakerHints: verifiedSpeakerVoiceHints(state.analysis), castGenders: speakingCastGenders(state.analysis),
-    castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(state.analysis) : [] };
+    castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(state.analysis, typeof currentCastNote === 'function' ? currentCastNote(state.analysis) : '') : [] };
   await regenerateTurkishVoices({ source, options, previous, session: state.analysisSession, started: false });
 });
 
@@ -2167,6 +2168,7 @@ els.analyzeBtn.addEventListener('click', async () => {
       subtitles: modes.subtitles,
       dubbing: modes.dubbing,
       protagonist: requestedProtagonist,
+      ...((typeof currentCastNote === 'function' && currentCastNote()) ? { castNote: currentCastNote() } : {}),
       dialogue: dialogueSample
     });
     // Keep an already paid deep-analysis plan unchanged. Different chunk
@@ -2327,6 +2329,8 @@ els.analyzeBtn.addEventListener('click', async () => {
     if (modes.analysisTier === 'deep') form.append('deepAnalysisModel', modes.deepAnalysisModel);
       form.append('protagonistProfile', contextSnapshot.protagonistProfile);
       form.append('protagonistHint', requestedProtagonist);
+      const chunkCastNote = typeof currentCastNote === 'function' ? currentCastNote() : '';
+      if (chunkCastNote) form.append('castNote', chunkCastNote);
       form.append('storyContextMemory', JSON.stringify(compactStoryMemory(contextSnapshot.storyContextMemory)));
 
       const freshChunkForm = () => {
@@ -2839,7 +2843,7 @@ els.analyzeBtn.addEventListener('click', async () => {
           sceneContext: verifiedMediaSceneContext(),
           speakerHints,
           castGenders: speakingCastGenders(normalized),
-          castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(normalized) : []
+          castProfiles: typeof castProfilesFor === 'function' ? castProfilesFor(normalized, typeof currentCastNote === 'function' ? currentCastNote(normalized) : '') : []
         });
       session.mediaManifest = finalMedia;
       recordAiUsage(finalMedia?.qualityReport?.geminiUsage);
@@ -5708,7 +5712,13 @@ function renderAdultProgressiveUI(force = false) {
       )
       .map(position => String(position.activityType))
   );
-  const showRouteCategories = verifiedRoutes.has('vaginal') && verifiedRoutes.has('anal');
+  // With a trans woman and no other woman in the cast a "vaginal" label is
+  // an analysis mix-up, so the route filter is not shown.
+  const castForRoutes = typeof castProfilesFor === 'function'
+    ? castProfilesFor(state.analysis, typeof currentCastNote === 'function' ? currentCastNote(state.analysis) : '') : [];
+  const onlyTransWomen = castForRoutes.some(row => row.genderIdentity === 'trans_woman') &&
+    !castForRoutes.some(row => row.gender === 'female' && !row.genderIdentity);
+  const showRouteCategories = verifiedRoutes.has('vaginal') && verifiedRoutes.has('anal') && !onlyTransWomen;
   const categories = showRouteCategories
     ? [
         { id: 'all', label: 'Tümü' },
@@ -6352,6 +6362,7 @@ function selectAdultPosition(positionId, shouldSeek = true, requestedOccurrenceI
   const scene = state.adultScene;
   const position = scene?.positions.find(item => item.id === positionId);
   if (!position || state.adultOutcomePhase !== 'idle') return;
+  if (typeof hideTempoPrompt === 'function') hideTempoPrompt();
   const previousPositionId = state.activePositionId;
   const cursor = Math.max(Number(state.adultTimelineFloor) || 0, Number(els.video?.currentTime) || 0);
   const forwardMovements = forwardLocalMovementClips(position, cursor);
@@ -6668,6 +6679,7 @@ function selectAdultMovement(
       ? !state.adultSexUnlocked : state.adultUnlockedPositionIds.has(position.id)
   });
   if (!movementGuard.allowed) return;
+  if (shouldSeek && typeof hideTempoPrompt === 'function') hideTempoPrompt();
   if (shouldSeek) logEngineEvent('MOVEMENT_SELECTED', { id: movement.id, positionId: position?.id || null });
 
   if (!shouldSeek) return;
@@ -7316,6 +7328,14 @@ function feelLustProgress(lust) {
   }
 }
 
+// What the viewer says about who is in the video (for example "bir trans
+// kadın ve bir erkek"). Saved with the analysis so dubbing keeps using it.
+function currentCastNote(analysis = null) {
+  const typed = String(els.castNoteInput?.value || '').trim().slice(0, 300);
+  if (typed && analysis && typeof analysis === 'object') analysis.castNote = typed;
+  return typed || String(analysis?.castNote || '').trim().slice(0, 300);
+}
+
 // ---------- Moment-of-change tempo prompt ----------
 function tempoPromptElement() {
   const stage = els.video?.closest?.('.video-stage');
@@ -7328,13 +7348,29 @@ function tempoPromptElement() {
     button.addEventListener('click', () => {
       const offer = state.tempoPrompt;
       hideTempoPrompt();
-      if (!offer?.movementId) return;
+      if (!offer?.movementId || !tempoOfferStillValid(offer)) {
+        logEngineEvent('TEMPO_PROMPT_STALE_IGNORED', { to: offer?.movementId || null });
+        return;
+      }
       state.activeMovementChoiceId = null;
       selectAdultMovement(offer.movementId, true);
     });
     stage.appendChild(button);
   }
   return button;
+}
+
+// The button belongs to the part it was shown for: it only opens the next
+// part of the same position and the same continuous occurrence, never footage
+// behind the playhead or in another position.
+function tempoOfferStillValid(offer) {
+  if (!offer || offer.positionId !== state.activePositionId) return false;
+  if (offer.occurrenceId && state.activeAdultOccurrenceId &&
+      offer.occurrenceId !== state.activeAdultOccurrenceId) return false;
+  if (state.activeMovementId && state.activeMovementId !== offer.forId) return false;
+  const now = Number(els.video?.currentTime);
+  if (Number.isFinite(now) && Number.isFinite(offer.targetStart) && offer.targetStart < now - 1.5) return false;
+  return true;
 }
 
 function hideTempoPrompt() {
@@ -7353,13 +7389,18 @@ function updateTempoPrompt(position, movement, mediaTime, now = performance.now(
   if (current && current.forId !== movement.id) hideTempoPrompt();
   if (!(mediaTime >= end - 5)) return;
   if (state.tempoPrompt?.forId === movement.id) return;
+  // Shown only while this very part is playing, never for a stale part.
+  if (!(mediaTime <= end + 0.5)) return;
   const occurrence = positionOccurrenceForMovement(position, movement)?.id;
+  if (!occurrence) { state.tempoPrompt = { forId: movement.id, movementId: null, visible: false, shownAt: now }; return; }
   const offer = nextTempoPrompt(movement, position.movements || [], {
     sameOccurrence: item => positionOccurrenceForMovement(position, item)?.id === occurrence });
   // Only footage the cards do not play is offered, so the button is always
   // something new.
   const fresh = offer && (!(position.tempoReservedIds instanceof Set) || position.tempoReservedIds.has(offer.movement.id));
-  state.tempoPrompt = { forId: movement.id, movementId: fresh ? offer.movement.id : null, visible: Boolean(fresh), shownAt: now };
+  state.tempoPrompt = { forId: movement.id, movementId: fresh ? offer.movement.id : null, visible: Boolean(fresh), shownAt: now,
+    positionId: position.id, occurrenceId: occurrence,
+    targetStart: fresh ? Number(offer.movement.loopStartTime ?? offer.movement.startTime) : null };
   if (!fresh) return;
   const button = tempoPromptElement();
   if (!button) return;
