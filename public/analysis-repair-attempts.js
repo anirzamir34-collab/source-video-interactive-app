@@ -49,5 +49,5 @@ export function appendSavedGapRepairHistory(analysis, model, promptVersion, vali
     .filter(item => !String(item.outcome || '').startsWith('skipped_'))
     .map(item => ({ ...item, model, promptVersion, validatorVersion,
       samplingStrategy: item.samplingStrategy || 'baseline' }));
-  return [...old, ...added].slice(-120);
+  return [...old, ...added].slice(-512);
 }
