@@ -94,3 +94,24 @@ test('a 69 filed as missionary becomes mutual oral named 69', async () => {
   assert.equal(protagonistPerspective({ subjectTrackId: 'MAIN_MALE', positionId: 'cowgirl', oralGiver: 'mutual' }).positionId, 'oral');
   assert.equal(positionBrief({ positionId: 'oral', oralGiver: 'mutual' }), '69: aynı anda birbirinize oral yapıyorsunuz.');
 });
+
+test('a male partner acting on the protagonist is part of his scene (gay scenes)', async () => {
+  const { partitionProtagonistActions, protagonistPerspective } = await import('../public/protagonist-ownership.js');
+  const characters = [{ id: 'MAIN_MALE', participantTrackId: 'MAIN_MALE', gender: 'male' },
+    { id: 'PARTNER_A', participantTrackId: 'PARTNER_A', gender: 'male' }];
+  const oral = { actionId: 'x', subjectTrackId: 'PARTNER_A', partnerTrackId: 'MAIN_MALE', involvedCharacterIds: ['MAIN_MALE', 'PARTNER_A'],
+    adultScene: true, choiceSurface: 'panel', positionId: 'oral', sourceVerified: true, startTime: 0, endTime: 10 };
+  assert.equal(partitionProtagonistActions([oral], { characters }).playable.length, 1);
+  const owned = protagonistPerspective(oral, { characters });
+  assert.deepEqual([owned.subjectTrackId, owned.partnerTrackId], ['MAIN_MALE', 'PARTNER_A']);
+});
+
+test('single-gender casts dub every voice in that gender; femboy is named', async () => {
+  const { assignSingleGenderCast } = await import('../lib/turkish-media/cast-voices.js');
+  const { stableCharacterName } = await import('../public/character-identity.js');
+  const transcript = { speakers: [{ speakerId: 'a', gender: 'female' }, { speakerId: 'b', gender: 'male' }], utterances: [{ speakerId: 'a' }] };
+  assert.equal(assignSingleGenderCast(transcript, [{ gender: 'male' }, { gender: 'male', genderIdentity: 'femboy' }]), true);
+  assert.deepEqual(transcript.speakers.map(row => row.gender), ['male', 'male']);
+  assert.equal(assignSingleGenderCast(transcript, [{ gender: 'male' }, { gender: 'female' }]), false);
+  assert.equal(stableCharacterName({ id: 'f', gender: 'male', genderIdentity: 'femboy', ageGroup: 'young' }, []), 'Genç femboy');
+});

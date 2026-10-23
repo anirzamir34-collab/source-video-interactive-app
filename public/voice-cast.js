@@ -26,7 +26,7 @@ export function castProfilesFor(analysis) {
     if (!characterId) continue;
     const ageGroup = characterAgeGroup(character);
     const identity = String(character.genderIdentity || '').toLowerCase();
-    out.push({ characterId, gender, ...(ageGroup ? { ageGroup } : {}), ...(['trans_woman', 'trans_man', 'nonbinary'].includes(identity) ? { genderIdentity: identity } : {}) });
+    out.push({ characterId, gender, ...(ageGroup ? { ageGroup } : {}), ...(['trans_woman', 'trans_man', 'nonbinary', 'femboy'].includes(identity) ? { genderIdentity: identity } : {}) });
   }
   return out.slice(0, 16);
 }

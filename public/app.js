@@ -91,7 +91,7 @@ import {
   selectSameMomentStoryActions,
   storyChoiceLabelForAction
 } from './story-engine.js';
-import { bindActionCharacter, canonicalizeActionTrackIds, verifiedCharacterName, verifiedVisualDescription } from './character-identity.js';
+import { bindActionCharacter, canonicalizeActionTrackIds, verifiedCharacterName, verifiedVisualDescription, stableCharacterName } from './character-identity.js';
 import {
   adaptiveAnalysisChunkPlan,
   adaptiveConversationActionChunkPlan,
@@ -5079,8 +5079,8 @@ function openAdultOrgasmDecision() {
     els.orgasmDecisionTitle.textContent = !state.adultOrgasmDecision.hasVerifiedOutcome
       ? 'Doğrulanmış final kesiti bulunamadı'
       : actor === 'both'
-      ? 'Kadın ve erkek orgazm oldu'
-      : actor === 'female' ? 'Kadın orgazm oldu' : 'Erkek orgazm oldu';
+      ? 'İkiniz de orgazm oldunuz'
+      : actor === 'female' ? 'Partnerin orgazm oldu' : 'Orgazm oldun';
   }
   if (els.orgasmDecisionMeta) {
     els.orgasmDecisionMeta.textContent =
@@ -5838,13 +5838,14 @@ function adultPartnerName(position) {
   const characters = state.analysis?.storyContext?.characters || [];
   const id = String(position?.partnerTrackId || '').trim();
   const character = characters.find(item => String(item.participantTrackId || item.id || '').trim() === id);
-  const known = character && (verifiedCharacterName(character) || verifiedVisualDescription(character));
+  const known = character && ((typeof stableCharacterName === 'function' && stableCharacterName(character, characters)) ||
+    verifiedCharacterName(character) || verifiedVisualDescription(character));
   if (known) return known;
   const label = String(position?.partnerLabel || '').trim();
   if (label && !/^(?:Karakter|Partner)\b/iu.test(label)) return label;
   const order = [...new Set((state.adultScene?.positions || []).map(item => item.partnerTrackId).filter(Boolean))];
   const index = order.indexOf(id);
-  return index >= 0 ? `Kadın ${index + 1}` : '';
+  return index >= 0 ? `Partner ${index + 1}` : '';
 }
 
 function selectAdultCategory(categoryId, shouldSeek = true) {

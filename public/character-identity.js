@@ -117,6 +117,7 @@ export function ageBasedName(character = {}) {
     return prefix ? `${prefix}${noun}` : noun[0].toLocaleUpperCase('tr-TR') + noun.slice(1);
   }
   if (identity === 'nonbinary') return 'Non-binary kişi';
+  if (identity === 'femboy') return String(character?.ageGroup || '').toLowerCase() === 'young' ? 'Genç femboy' : 'Femboy';
   if (!AGE_NOUNS[gender]) return '';
   const age = String(character?.ageGroup || '').toLowerCase();
   const said = text(character?.displayName).toLocaleLowerCase('tr-TR');

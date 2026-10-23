@@ -44,8 +44,10 @@ export function partitionProtagonistActions(actions = [], context = {}, mainTrac
     const subjectCharacter = characters.find(character =>
       canonical(character.participantTrackId || character.id) === subject);
     const subjectGender = String(subjectCharacter?.gender || '').toLowerCase();
+    // A partner of any gender (a woman, a man in a gay scene, a trans woman,
+    // a femboy) acting on the protagonist is still his scene.
     const femalePartnerActsOnMain = Boolean(subject) && subject !== protagonist &&
-      (subjectGender === 'female' || (!subjectGender && /^PARTNER[_-]?[A-Z0-9]+$/i.test(subject))) &&
+      (subjectGender === 'female' || /^PARTNER[_-]?[A-Z0-9]+$/i.test(subject)) &&
       !otherMaleTrack(subject) && participants.includes(protagonist);
     const foreignActor = Boolean(subject && subject !== protagonist) && !femalePartnerActsOnMain;
     const anotherMaleInShot = participants.some(id =>
@@ -124,7 +126,8 @@ export function protagonistPerspective(action = {}, context = {}, mainTrack = 'M
   const character = (Array.isArray(context.characters) ? context.characters : []).find(item =>
     String(item.participantTrackId || item.id || '').trim() === subject);
   const gender = String(character?.gender || '').toLowerCase();
-  const female = gender === 'female' || (!gender && /^PARTNER[_-]?[A-Z0-9]+$/i.test(subject));
+  // Any partner (whatever the gender) acting on the protagonist.
+  const female = gender === 'female' || /^PARTNER[_-]?[A-Z0-9]+$/i.test(subject);
   if (!female) return action;
   const ids = [action.partnerTrackId, action.primaryCharacterId, ...(action.involvedCharacterIds || []),
     ...(action.participantTrackIds || [])].map(value => String(value || '').trim());
@@ -143,7 +146,7 @@ function missingProtagonistSubject(action, context, mainTrack) {
   if (!partner || partner === mainTrack || /OTHER_MALE|MALE_OTHER|SECOND_MALE|MULTI_PARTNER/i.test(partner)) return action;
   const character = (Array.isArray(context.characters) ? context.characters : []).find(item =>
     String(item.participantTrackId || item.id || '').trim() === partner);
-  if (String(character?.gender || '').toLowerCase() === 'male') return action;
+  if (String(character?.gender || '').toLowerCase() === 'male' && !/^PARTNER[_-]?[A-Z0-9]+$/i.test(partner)) return action;
   const others = [...(action.involvedCharacterIds || []), ...(action.participantTrackIds || [])]
     .map(value => String(value || '').trim()).filter(Boolean).filter(id => id !== partner && id !== mainTrack);
   if (others.length) return action;
