@@ -21,7 +21,8 @@ export function positionBrief(position = {}) {
   const family = String(position.familyId || position.positionId || '').toLowerCase();
   if (family === 'oral') {
     const giver = String(position.oralGiver || position.movements?.find(item => item?.oralGiver)?.oralGiver || '').toLowerCase();
-    return giver === 'main_male' ? 'Ona oral yapıyorsun.' : giver === 'partner' ? 'Sana oral yapıyor.' : 'Oral.';
+    return giver === 'mutual' ? '69: aynı anda birbirinize oral yapıyorsunuz.'
+      : giver === 'main_male' ? 'Ona oral yapıyorsun.' : giver === 'partner' ? 'Sana oral yapıyor.' : 'Oral.';
   }
   const brief = BRIEF[family] || '';
   const route = String(position.routeNamespace || position.activityType || '').toLowerCase();

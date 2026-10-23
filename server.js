@@ -820,7 +820,7 @@ ${reviewCandidates}
           observedAffect: ['neutral', 'relaxed', 'tense', 'happy', 'sad', 'fearful', 'excited', 'distressed', 'unclear'].includes(String(action.observedAffect || '').toLowerCase()) ? String(action.observedAffect).toLowerCase() : 'unclear',
           bodyResponse: ['relaxed', 'tense', 'recoil', 'rhythmic', 'still', 'changing', 'unclear'].includes(String(action.bodyResponse || '').toLowerCase()) ? String(action.bodyResponse).toLowerCase() : 'unclear',
           sensoryEvidence: String(action.sensoryEvidence || '').trim(),
-          oralGiver: ['partner', 'main_male'].includes(String(action.oralGiver || '').toLowerCase())
+          oralGiver: ['partner', 'main_male', 'mutual'].includes(String(action.oralGiver || '').toLowerCase())
             ? String(action.oralGiver).toLowerCase() : '',
           receiverLegs: ['raised_on_shoulders', 'raised', 'spread', 'together'].includes(String(action.receiverLegs || '').toLowerCase())
             ? String(action.receiverLegs).toLowerCase() : 'unclear',

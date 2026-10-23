@@ -104,7 +104,19 @@ export function mergeUnownedIntervals(intervals = []) {
 // model may name her as both subject and partner. Present the action from the
 // protagonist's side — subject MAIN_MALE, partner her — and keep who actually
 // moved in actorTrackId, so one encounter is never split by who acts.
+// 69: both give oral at once. The model sometimes files it under the body
+// arrangement (missionary, cowgirl); the words win and it becomes mutual oral.
+const SIXTY_NINE = /(?:^|[^\p{L}\d])(?:69|altmış\s*dokuz|sixty[\s-]?nine)(?:$|[^\p{L}\d])|karşılıklı\s+oral|birbirlerine\s+oral|aynı\s+anda\s+(?:birbirlerini|birbirine)/iu;
+export function sixtyNine(action = {}) {
+  const text = [action.label, action.positionLabel, action.positionEvidence, action.movementType, action.narrativeChoiceLabel]
+    .filter(Boolean).join(' ');
+  if (String(action.oralGiver || '').toLowerCase() !== 'mutual' && !SIXTY_NINE.test(text)) return action;
+  return { ...action, positionId: 'oral', positionLabel: '69 Pozisyonu', oralGiver: 'mutual',
+    activityType: 'oral', choiceSurface: action.choiceSurface === 'story' ? 'story' : 'panel' };
+}
+
 export function protagonistPerspective(action = {}, context = {}, mainTrack = 'MAIN_MALE') {
+  action = sixtyNine(action);
   const subject = String(action.subjectTrackId || '').trim();
   if (!subject) return missingProtagonistSubject(action, context, mainTrack);
   if (subject === mainTrack) return action;

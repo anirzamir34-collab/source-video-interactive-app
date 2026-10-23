@@ -83,3 +83,14 @@ test('every canonical position has a fixed description from his point of view', 
   assert.equal(positionBrief({ familyId: 'oral', movements: [{ oralGiver: 'main_male' }] }), 'Ona oral yapıyorsun.');
   assert.match(positionBrief({ familyId: 'prone-bone', routeNamespace: 'anal' }), /Anal\.$/);
 });
+
+test('a 69 filed as missionary becomes mutual oral named 69', async () => {
+  const { sixtyNine, protagonistPerspective } = await import('../public/protagonist-ownership.js');
+  const { positionBrief } = await import('../public/position-brief.js');
+  const fixed = sixtyNine({ positionId: 'missionary', positionLabel: 'Misyoner Pozisyonu', label: '69 pozisyonunda devam et', choiceSurface: 'panel' });
+  assert.deepEqual([fixed.positionId, fixed.positionLabel, fixed.oralGiver], ['oral', '69 Pozisyonu', 'mutual']);
+  assert.equal(sixtyNine({ positionId: 'missionary', positionEvidence: 'Karşılıklı oral, baş ayak ters' }).oralGiver, 'mutual');
+  assert.equal(sixtyNine({ positionId: 'missionary', label: '1690 saniyede devam et' }).positionId, 'missionary', 'a number inside another is not 69');
+  assert.equal(protagonistPerspective({ subjectTrackId: 'MAIN_MALE', positionId: 'cowgirl', oralGiver: 'mutual' }).positionId, 'oral');
+  assert.equal(positionBrief({ positionId: 'oral', oralGiver: 'mutual' }), '69: aynı anda birbirinize oral yapıyorsunuz.');
+});

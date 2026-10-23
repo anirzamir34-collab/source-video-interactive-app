@@ -3137,7 +3137,7 @@ function normalizeAnalysis(body) {
       observedAffect: String(a.observedAffect || 'unclear'),
       bodyResponse: String(a.bodyResponse || 'unclear'),
       sensoryEvidence: String(a.sensoryEvidence || ''),
-      oralGiver: ['partner', 'main_male'].includes(String(a.oralGiver || '').toLowerCase())
+      oralGiver: ['partner', 'main_male', 'mutual'].includes(String(a.oralGiver || '').toLowerCase())
         ? String(a.oralGiver).toLowerCase() : '',
       receiverLegs: ['raised_on_shoulders', 'raised', 'spread', 'together'].includes(String(a.receiverLegs || '').toLowerCase())
         ? String(a.receiverLegs).toLowerCase() : 'unclear',
@@ -3348,6 +3348,10 @@ function canonicalAdultPosition(action) {
     standing: 'Ayakta Pozisyon'
   };
 
+  // A 69 keeps the oral family but is named as what it is.
+  if (family === 'oral' && String(action.oralGiver || '').toLowerCase() === 'mutual') {
+    return { id: family, label: '69 Pozisyonu', correctedFromAction };
+  }
   if (family) return { id: family, label: labels[family], correctedFromAction };
 
   return { id: '', label: '', correctedFromAction: false };
