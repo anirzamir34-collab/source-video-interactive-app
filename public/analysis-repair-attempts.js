@@ -32,7 +32,8 @@ export function planSavedGapRepair(analysis, gap, model, promptVersion, validato
   // quota, network and model-access failures did not inspect the frames.
   const responded = attempts.filter(item =>
     ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS',
-      'MODEL_UNSTRUCTURED_RESPONSE'].includes(item.reason) ||
+      'MODEL_UNSTRUCTURED_RESPONSE', 'GEMINI_EMPTY_RESPONSE',
+      'GEMINI_INVALID_JSON'].includes(item.reason) ||
     ['processed', 'partial'].includes(item.outcome));
   const used = new Set(responded.map(item => item.samplingStrategy || 'baseline'));
   let index = 0;
