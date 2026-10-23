@@ -1,4 +1,12 @@
 // Keep the paid repair history when the latest saved-game report is replaced.
+// Only a model reply consumes its submitted frame positions. Quota, network
+// and authentication failures must remain retryable with the same evidence.
+export const gapRepairHasModelResponse = item =>
+  ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS',
+    'MODEL_UNSTRUCTURED_RESPONSE', 'GEMINI_EMPTY_RESPONSE',
+    'GEMINI_INVALID_JSON'].includes(item?.reason) ||
+  ['processed', 'partial'].includes(item?.outcome);
+
 const matched = (item, gap, model, promptVersion, validatorVersion) =>
   item?.model === model && item?.promptVersion === promptVersion &&
   item?.validatorVersion === validatorVersion &&
@@ -30,11 +38,7 @@ export function planSavedGapRepair(analysis, gap, model, promptVersion, validato
   // Never silently skip an explicit user retry after two provider refusals.
   // Advance only when the previous request actually yielded a model response;
   // quota, network and model-access failures did not inspect the frames.
-  const responded = attempts.filter(item =>
-    ['GEMINI_CONTENT_RESTRICTED', 'GEMINI_NO_VERIFIED_EVENTS',
-      'MODEL_UNSTRUCTURED_RESPONSE', 'GEMINI_EMPTY_RESPONSE',
-      'GEMINI_INVALID_JSON'].includes(item.reason) ||
-    ['processed', 'partial'].includes(item.outcome));
+  const responded = attempts.filter(gapRepairHasModelResponse);
   const used = new Set(responded.map(item => item.samplingStrategy || 'baseline'));
   let index = 0;
   const strategyAt = value => value === 0 ? 'baseline'
