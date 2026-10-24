@@ -398,3 +398,17 @@ test('a partial dub that kept some original voices still saves', () => {
   m.qualityReport.originalVoiceKeptCount = 1;
   assert.doesNotThrow(() => prepareGame(input));
 });
+
+test('a dub stopped by ElevenLabs credit saves with its missing lines listed for later', () => {
+  const input = fixture();
+  const m = input.turkishMedia.manifest;
+  const second = { ...m.sourceTranscript.utterances[0], segmentId: 'segment-source-2', sourceStart: 3, sourceEnd: 4,
+    words: [{ text: 'Hi.', start: 3, end: 4, type: 'word' }] };
+  m.sourceTranscript.utterances.push(second);
+  m.translatedUtterances.push({ segmentId: second.segmentId, speakerId: second.speakerId, translatedText: 'Selam.' });
+  m.qualityReport.pendingDubSegmentIds = ['segment-unknown'];
+  assert.throws(() => prepareGame(input), /eksik dublaj listesi/);
+  m.qualityReport.pendingDubSegmentIds = [second.segmentId];
+  m.qualityReport.pendingDubCount = 1;
+  assert.doesNotThrow(() => prepareGame(input));
+});

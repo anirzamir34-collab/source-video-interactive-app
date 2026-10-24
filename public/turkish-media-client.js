@@ -558,7 +558,10 @@ export function createTurkishMediaClient({ video, captionElements = {}, onStatus
       ...(options.speakerHints && Object.keys(options.speakerHints).length
         ? { speakerHints: jsonCopy(options.speakerHints) } : {}),
       ...(options.castGenders ? { castGenders: jsonCopy(options.castGenders) } : {}),
-      ...(Array.isArray(options.castProfiles) && options.castProfiles.length ? { castProfiles: jsonCopy(options.castProfiles) } : {}) } };
+      ...(Array.isArray(options.castProfiles) && options.castProfiles.length ? { castProfiles: jsonCopy(options.castProfiles) } : {}),
+      // Completing a partial dub: the source is the saved mix and only the
+      // listed missing lines are voiced on the server.
+      ...(options.resume && options.outputs?.dub !== false ? { resume: jsonCopy(options.resume) } : {}) } };
     const selected = lastStart;
     try {
       if (!/^audio\//i.test(source?.type || '')) {

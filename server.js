@@ -86,7 +86,11 @@ app.disable('x-powered-by');
 // req.ip the real client address, so the login limiter counts each client
 // instead of locking everyone out behind the shared proxy address.
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '1mb' }));
+const jsonBody = express.json({ limit: '1mb' });
+// Completing a partial dub sends the saved transcript, Turkish lines and dub
+// timings back to the server, which can be larger than ordinary requests.
+const largeJsonBody = express.json({ limit: '16mb' });
+app.use((req, res, next) => (req.path === '/api/turkish-media/jobs' ? largeJsonBody : jsonBody)(req, res, next));
 app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 
 const APP_PASSWORD = String(process.env.APP_PASSWORD || '');

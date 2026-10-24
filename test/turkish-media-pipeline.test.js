@@ -1055,3 +1055,47 @@ test('a single line that cannot fit keeps its original voice instead of failing 
   assert.equal(result.qualityReport.originalVoiceKeptCount, 1);
   assert.equal(result.subtitles.source_tr.length, 2, 'every line keeps its Turkish subtitle');
 });
+
+test('running out of ElevenLabs credit keeps the voiced lines; a resume voices only the missing ones', async t => {
+  const words = Array.from({ length: 6 }, (_, index) => {
+    const start = 1 + index * 3;
+    return { text: 'Hello.', type: 'word', start, end: start + 1.5, speaker_id: `speaker_${index % 2}` };
+  });
+  const f = await fixture(t, { words }); useNativeTiming(f);
+  const extract = f.audio.extractSource;
+  f.audio.extractSource = async (...args) => ({ ...await extract(...args), duration: 30 });
+  f.config.dubSingleTurn = true;
+  const synthesize = f.elevenLabs.synthesizeDialogue;
+  let budget = 3;
+  f.elevenLabs.synthesizeDialogue = async turns => {
+    if (budget <= 0) throw new MediaError('ELEVENLABS_QUOTA_EXCEEDED', 'ElevenLabs kredisi yetmedi.', { status: 402 });
+    budget -= 1;
+    return synthesize(turns);
+  };
+  const partial = await f.pipeline(f.input);
+  const report = partial.qualityReport;
+  assert.equal(report.pendingDubCount, 3);
+  assert.equal(report.partialReason, 'ELEVENLABS_QUOTA_EXCEEDED');
+  assert.equal(partial.dubSegments.length, 3);
+  assert.equal(report.missingDubCount, 0);
+  assert.equal(partial.dubSegments.length + report.originalVoiceKeptCount + report.pendingDubCount, 6);
+  assert.equal(f.calls.mix.length, 1);
+  assert.equal(f.calls.mix[0].length, 3);
+  assert.notEqual(partial.artifactKey, undefined);
+
+  budget = 10;
+  const before = { transcribe: f.calls.transcribe, translate: f.calls.translate.length, synth: f.calls.synthesize.length };
+  const resumed = await f.pipeline({ ...f.input, source: { path: f.sourcePath, hash: 'saved-mix-hash' }, resume: {
+    sourceTranscript: partial.sourceTranscript, translatedUtterances: partial.translatedUtterances,
+    voiceMapping: partial.voiceMapping, dubSegments: partial.dubSegments,
+    pendingSegmentIds: report.pendingDubSegmentIds } });
+  assert.equal(f.calls.transcribe, before.transcribe, 'no new transcription');
+  assert.equal(f.calls.translate.length, before.translate, 'no new translation');
+  const voiced = f.calls.synthesize.slice(before.synth).flat().map(turn => turn.segmentId);
+  assert.deepEqual([...new Set(voiced)].sort(), [...report.pendingDubSegmentIds].sort(), 'only missing lines are voiced');
+  assert.equal(f.calls.mix.at(-1).length, 3, 'only the new lines are mixed onto the saved mix');
+  assert.equal(resumed.dubSegments.length, 6);
+  assert.equal(resumed.qualityReport.pendingDubCount, 0);
+  assert.equal(resumed.qualityReport.missingDubCount, 0);
+  assert.equal(resumed.subtitles.dub_tr.length, 6);
+});

@@ -1300,6 +1300,9 @@ function onTurkishMediaStatus(status) {
   }
   els.mediaJobCancelBtn?.classList.toggle('hidden', terminal);
   els.mediaJobRetryBtn?.classList.toggle('hidden', status.state !== 'FAILED');
+  // A dub finished with some lines still waiting (credit ran out) offers to
+  // complete only those lines once the result is loaded.
+  if (status.state === 'READY' && typeof renderPendingDubAction === 'function' && typeof setTimeout === 'function') setTimeout(() => renderPendingDubAction(), 0);
   if (status.state === 'FAILED' && status.error?.code) {
     if (status.error.code === 'GEMINI_CREDITS_EXHAUSTED') {
       state.geminiProviderStatus = {
@@ -1357,6 +1360,68 @@ function renderMediaControls() {
     els.mediaExports.classList.toggle('hidden', !available);
   }
   renderVoiceMappingPanel();
+  if (typeof renderPendingDubAction === 'function') renderPendingDubAction(captured);
+}
+
+// Lines left without a Turkish voice because ElevenLabs ran out of credit.
+// The game plays with the rest; this offers to voice only those lines.
+function pendingDubSegmentIds(manifest) {
+  const ids = manifest?.qualityReport?.pendingDubSegmentIds;
+  return Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && id) : [];
+}
+
+function renderPendingDubAction(captured = mediaClient.capture()) {
+  const pending = pendingDubSegmentIds(captured?.manifest).length;
+  const ready = pending > 0 && Boolean(captured?.manifest?.assets?.mix) && Boolean(state.analysis || state.sourceTranscript);
+  state.pendingDubResume = ready;
+  if (!ready || state.analysisInProgress || !els.mediaJobStatus || !els.mediaJobRetryBtn) return;
+  els.mediaJobStatus.classList.remove('hidden');
+  els.mediaJobRetryBtn.classList.remove('hidden');
+  els.mediaJobRetryBtn.disabled = false;
+  els.mediaJobRetryBtn.textContent = `Eksik dublajı tamamla (${pending} cümle)`;
+  if (els.mediaJobMessage) els.mediaJobMessage.textContent = `ElevenLabs kredisi bittiği için ${pending} cümle Türkçe seslendirilmedi; oyun hazır dublajla oynanır. Krediyi yenileyince bu düğme yalnız eksik cümleleri seslendirir, baştan yapmaz.`;
+}
+
+async function completePendingDub() {
+  const captured = mediaClient.capture();
+  const manifest = captured?.manifest;
+  const pending = pendingDubSegmentIds(manifest);
+  if (!manifest || !pending.length) return false;
+  state.analysisInProgress = true; updateAnalyzeAvailability();
+  if (els.mediaJobMessage) els.mediaJobMessage.textContent = `Yalnız eksik ${pending.length} cümle seslendiriliyor; hazır dublaj aynen korunuyor.`;
+  let completed = false, mix = null;
+  try {
+    // The saved mix is the base: finished lines stay exactly as they are.
+    mix = await mediaClient.materializeAudio();
+    if (!(mix instanceof Blob) || !mix.size) throw new Error('Kayıtlı Türkçe ses bulunamadı; eksik dublaj tamamlanamadı.');
+    const source = new File([mix], 'kayitli-dublaj.mp3', { type: mix.type || 'audio/mpeg' });
+    const result = await mediaClient.start(source, {
+      outputs: { dub: true, subtitles: manifest.outputs?.subtitles !== false },
+      qualityMode: 'quality',
+      resume: { sourceTranscript: manifest.sourceTranscript, translatedUtterances: manifest.translatedUtterances,
+        voiceMapping: manifest.voiceMapping, dubSegments: manifest.dubSegments, pendingSegmentIds: pending,
+        qualityReport: { unverifiedSpeakerIds: manifest.qualityReport?.unverifiedSpeakerIds || [] } }
+    });
+    if (state.analysisSession) state.analysisSession.mediaManifest = result;
+    state.savedMediaManifest = result;
+    completed = true;
+    const left = pendingDubSegmentIds(result).length;
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = left
+      ? `${pending.length - left} cümle eklendi; kredi yine bitti, ${left} cümle kaldı. Hazır dublaj korundu.`
+      : 'Eksik dublaj tamamlandı. Önceki Türkçe sesler aynen korundu.';
+    if (state.savedGameReady) await savedGames?.saveCurrent(true);
+  } catch (error) {
+    if (error.name !== 'AbortError' && els.mediaJobMessage) els.mediaJobMessage.textContent = error.message;
+    // The earlier partial dub stays playable after a failed attempt.
+    if (!mediaClient.capture() && mix instanceof Blob) {
+      try { mediaClient.loadResult(manifest, { audioBlob: mix, dubEnabled: captured.dubEnabled,
+        subtitleTrack: captured.subtitleTrack, syncOffset: captured.syncOffset }); } catch {}
+    }
+  } finally {
+    state.analysisInProgress = false; updateAnalyzeAvailability();
+    renderMediaControls();
+  }
+  return completed;
 }
 
 // Gameplay hooks follow the finished mix. They create no requests and never
@@ -1422,6 +1487,7 @@ els.mediaJobRetryBtn?.addEventListener('click', async () => {
     return;
   }
   if (state.mediaRevoice) { await regenerateTurkishVoices(state.mediaRevoice, true); return; }
+  if (state.pendingDubResume && pendingDubSegmentIds(mediaClient.capture()?.manifest).length) { await completePendingDub(); return; }
   const session = state.analysisSession;
   const file = state.selectedFile || session?.file || null;
   // "Türkçe dublajı hazırla" means dubbing even when the switch was left off

@@ -82,8 +82,13 @@ function validateTurkishMedia(media, audio, duration) {
   }
   // Lines that kept their original voice have a translation but no dub row.
   const keptOriginal = Math.max(0, Number(manifest.qualityReport?.originalVoiceKeptCount) || 0);
+  // Lines still waiting for a Turkish voice (ElevenLabs credit ran out);
+  // the saved game plays with the rest and can complete them later.
+  const pendingIds = Array.isArray(manifest.qualityReport?.pendingDubSegmentIds) ? manifest.qualityReport.pendingDubSegmentIds : [];
+  if (pendingIds.some(id => !utterances.has(id)) || new Set(pendingIds).size !== pendingIds.length) throw new Error('Kayıttaki eksik dublaj listesi geçersiz.');
+  const pending = pendingIds.length;
   for (const [name, rows] of [['çeviri', manifest.translatedUtterances], ['dublaj', manifest.dubSegments]]) {
-    const expected = name === 'dublaj' ? utterances.size - keptOriginal : utterances.size;
+    const expected = name === 'dublaj' ? utterances.size - keptOriginal - pending : utterances.size;
     if (!Array.isArray(rows) || (rows.length && rows.length !== expected)) throw new Error(`Kayıttaki ${name} kapsamı eksik.`);
     const seen = new Set();
     for (const row of rows) {
@@ -101,7 +106,7 @@ function validateTurkishMedia(media, audio, duration) {
   }
   if (audio?.size && source.utterances.length &&
       (manifest.translatedUtterances.length !== source.utterances.length ||
-        manifest.dubSegments.length + Number(manifest.qualityReport?.originalVoiceKeptCount || 0) !== source.utterances.length ||
+        manifest.dubSegments.length + keptOriginal + pending !== source.utterances.length ||
         source.utterances.some(row => !manifest.voiceMapping[row.speakerId]))) throw new Error('Kayıttaki dublaj kapsamı eksik.');
   if (!manifest.subtitles || typeof manifest.subtitles !== 'object') throw new Error('Kayıttaki altyazı bilgileri eksik.');
   for (const track of ['source_tr', 'dub_tr']) {
