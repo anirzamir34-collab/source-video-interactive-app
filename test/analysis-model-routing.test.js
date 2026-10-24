@@ -146,6 +146,6 @@ test('initial economy and deep storyboard analyses expose loss counters without 
   assert.match(app, /hardeningAcceptedCount: normalized\.actions\.length/);
   assert.match(app, /state\.analysis = normalized/);
   assert.match(server, /safetySettings: geminiAnalysisSafetySettings/);
-  assert.match(server, /savedGameRepair \? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION/);
+  assert.match(server, /systemInstruction: GEMINI_VISUAL_SYSTEM_INSTRUCTION/);
   assert.match(server, /savedGameRepair \? \[deepAnalysisModel\] : analysisModelCandidates/);
 });

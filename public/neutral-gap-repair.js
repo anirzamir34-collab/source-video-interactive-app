@@ -1,6 +1,8 @@
 // Separate, narrowly scoped saved-game repair. This is NOT a rewritten
 // version of the full adult-interaction analysis request.
-export const GAP_REPAIR_PROMPT_VERSION = 'neutral-timeline-v4';
+// The saved-game repair now sends the same analysis instructions as the
+// first analysis; this version marks repair attempts made that way.
+export const GAP_REPAIR_PROMPT_VERSION = 'full-analysis-v5';
 export const GAP_REPAIR_VALIDATOR_VERSION = 'neutral-validator-v2';
 
 export const GAP_REPAIR_SYSTEM_INSTRUCTION = `You are a factual video timeline assistant.

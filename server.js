@@ -1,5 +1,5 @@
 import { parseModelJson } from './public/model-json.js';
-import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION, GAP_REPAIR_SYSTEM_INSTRUCTION, buildGapRepairPrompt, inspectNeutralRepairActions } from './public/neutral-gap-repair.js';
+import { GAP_REPAIR_PROMPT_VERSION, GAP_REPAIR_VALIDATOR_VERSION } from './public/neutral-gap-repair.js';
 import { GoogleGenAI } from "@google/genai";
 import express from 'express';
 import multer from 'multer';
@@ -426,12 +426,9 @@ ${reviewCandidates}
 - For groupScene, partnerSwitch or partner_transition candidates, independently re-identify every visible adult using stable neutral track IDs. Preserve a partner change only when the source frames visibly prove MAIN_MALE changes from one adult partner to another; otherwise omit it.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
-    const prompt = savedGameRepair
-      ? buildGapRepairPrompt({
-        chunkStart, chunkEnd,
-        timestamps, motionProfile, sceneBoundaries
-      })
-      : (ANALYSIS_PROMPT_STYLE === 'legacy' ? buildLegacyAnalysisPrompt : buildAnalysisPrompt)({
+    // Re-analysis of a missing part uses exactly the same instructions as the
+    // first analysis; if the provider still refuses it, the part stays missing.
+    const prompt = (ANALYSIS_PROMPT_STYLE === 'legacy' ? buildLegacyAnalysisPrompt : buildAnalysisPrompt)({
         duration, chunkIndex, chunkCount, chunkStart, chunkEnd, timestamps, motionProfile,
         sceneBoundaries, reviewInstructions, conditionalRelationshipInstructions, qualityMode,
         dialogueContext, dialogueSpeakerContext, sensoryAudioContext, storyContextMemory,
@@ -480,7 +477,7 @@ ${reviewCandidates}
           // Video frames at low resolution: ~66 tokens per frame instead of 258.
           ...(videoFileUri ? { mediaResolution: 'MEDIA_RESOLUTION_LOW' } : {}),
           safetySettings: geminiAnalysisSafetySettings,
-          systemInstruction: savedGameRepair ? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION
+          systemInstruction: GEMINI_VISUAL_SYSTEM_INSTRUCTION
         };
         // A new analysis run must reach Gemini again; identical requests are
         // shared only within the same run (retries, concurrent duplicates).
@@ -513,11 +510,10 @@ ${reviewCandidates}
             // Reject it BEFORE cache insertion: a successful HTTP transport
             // must not freeze a zero-evidence response for subsequent retries.
             if (savedGameRepair) {
-              const inspected = inspectNeutralRepairActions(result?.actions,
-                { startTime: chunkStart, endTime: chunkEnd });
-              repairTelemetry = { ...inspected.diagnostics, stageReached: inspected.actions.length
-                ? 'REPAIR_VALIDATOR_PASSED' : 'REPAIR_VALIDATOR_EMPTY' };
-              if (!inspected.actions.length) {
+              const count = Array.isArray(result?.actions) ? result.actions.filter(item => item?.sourceVerified === true).length : 0;
+              repairTelemetry = { modelRawActionsCount: Array.isArray(result?.actions) ? result.actions.length : 0,
+                repairValidatorAcceptedCount: count, stageReached: count ? 'REPAIR_VALIDATOR_PASSED' : 'REPAIR_VALIDATOR_EMPTY' };
+              if (!count) {
                 throw Object.assign(new Error('No verified neutral events in this source interval.'),
                   { code: 'GEMINI_NO_VERIFIED_EVENTS', repairTelemetry });
               }
@@ -704,13 +700,10 @@ ${reviewCandidates}
       }
     }
     if (savedGameRepair) {
-      // Validate before normalizing and preserve aggregate reject reasons.
-      // No model text, images, labels or identifying source data in telemetry.
-      const inspection = inspectNeutralRepairActions(parsed?.actions,
-        { startTime: chunkStart, endTime: chunkEnd });
-      repairTelemetry = { ...inspection.diagnostics, stageReached:
-        inspection.actions.length ? 'REPAIR_VALIDATOR_PASSED' : 'REPAIR_VALIDATOR_EMPTY' };
-      parsed = { ...parsed, actions: inspection.actions };
+      // Counts only: no model text, images, labels or identifying data.
+      const count = Array.isArray(parsed?.actions) ? parsed.actions.filter(item => item?.sourceVerified === true).length : 0;
+      repairTelemetry = { modelRawActionsCount: Array.isArray(parsed?.actions) ? parsed.actions.length : 0,
+        repairValidatorAcceptedCount: count, stageReached: count ? 'REPAIR_VALIDATOR_PASSED' : 'REPAIR_VALIDATOR_EMPTY' };
     }
     const unresolvedGaps = Array.isArray(parsed?.analysisGaps)
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
@@ -757,7 +750,7 @@ ${reviewCandidates}
     // Counts only: no labels, frames, participant names or raw model output.
     const normalizerRejected = { invalidStructure: 0, lowConfidence: 0, duplicates: 0 };
     if (videoFileUri && Array.isArray(parsed?.actions)) parsed.actions = absoluteClipTimes(parsed.actions, chunkStart, chunkEnd);
-    if (!savedGameRepair && parsed && Array.isArray(parsed.actions)) {
+    if (parsed && Array.isArray(parsed.actions)) {
       const protagonist = ensureProtagonistTrack(parsed);
       if (protagonist.inferred) {
         parsed = protagonist.parsed;

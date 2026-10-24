@@ -9262,6 +9262,8 @@ async function repairSavedGame(game, onProgress = () => {}, selectedModel = '') 
       form.append('deepAnalysisModel', repairModel);
       form.append('repairMode', '1');
       form.append('storyContextMemory', JSON.stringify(compactStoryMemory(previous.storyContext || {})));
+      if (previous.protagonistProfile) form.append('protagonistProfile', String(previous.protagonistProfile));
+      if (previous.castNote) form.append('castNote', String(previous.castNote));
       form.append('dialogueContext', JSON.stringify(compactDialogueSegments((savedSourceContext?.segments || []).filter(item =>
         Number(item.endTime) > gap.startTime && Number(item.startTime) < gap.endTime))));
       form.append('dialogueSpeakerContext', JSON.stringify(savedSourceContext?.speakers || []));

@@ -12,7 +12,7 @@ test('gap-repair uses a separate short neutral timeline prompt', () => {
     motionProfile: '[{"time":103,"score":7}]',
     sceneBoundaries: '[{"time":110,"kind":"hard-cut"}]'
   });
-  assert.equal(GAP_REPAIR_PROMPT_VERSION, 'neutral-timeline-v4');
+  assert.equal(GAP_REPAIR_PROMPT_VERSION, 'full-analysis-v5');
   assert.equal(GAP_REPAIR_VALIDATOR_VERSION, 'neutral-validator-v2');
   assert.match(GAP_REPAIR_SYSTEM_INSTRUCTION, /non-graphic/);
   assert.match(prompt, /100–160 seconds/);
@@ -60,12 +60,12 @@ test('unobserved seconds remain gaps even when a few neutral events are recovere
     { sourceVerified: true, startTime: 100, endTime: 160 }]), []);
 });
 
-test('saved-game server route is versioned and never sends full instruction for repair', () => {
+test('saved-game repair is versioned and sends exactly the first-analysis instructions', () => {
   const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(server, /savedGameRepair\s*\? buildGapRepairPrompt/);
-  assert.match(server, /savedGameRepair \? GAP_REPAIR_SYSTEM_INSTRUCTION : GEMINI_VISUAL_SYSTEM_INSTRUCTION/);
-  assert.match(server, /inspectNeutralRepairActions\(parsed\?\.actions/);
+  assert.doesNotMatch(server, /buildGapRepairPrompt\(/);
+  assert.doesNotMatch(server, /GAP_REPAIR_SYSTEM_INSTRUCTION/);
+  assert.match(server, /systemInstruction: GEMINI_VISUAL_SYSTEM_INSTRUCTION/);
   assert.match(app, /planSavedGapRepair\(previous, gap, repairModel/);
   assert.match(app, /uncoveredNeutralRepairIntervals\(gap, result\.actions\)/);
   assert.match(app, /promptVersion: GAP_REPAIR_PROMPT_VERSION/);

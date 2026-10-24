@@ -270,7 +270,7 @@ test('repair endpoint tracks validator and server normalization drops without lo
   const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const app = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(server, /serverNormalizerRejected: normalizerRejected/);
-  assert.match(server, /repairTelemetry = \{ \.\.\.inspection\.diagnostics/);
+  assert.match(server, /repairValidatorAcceptedCount: count/);
   assert.match(server, /GAP_REPAIR_VALIDATOR_VERSION/);
   assert.match(app, /clientNormalizerDroppedCount/);
   assert.match(app, /mergedActionsCount: count/);
