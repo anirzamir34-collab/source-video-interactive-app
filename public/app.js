@@ -564,7 +564,7 @@ async function releaseAnalysisWakeLock() {
 document.addEventListener('visibilitychange', () => {
   if (
     document.visibilityState === 'visible' &&
-    state.gameState === 'ANALYZING'
+    (state.gameState === 'ANALYZING' || state.mediaJobActive)
   ) {
     acquireAnalysisWakeLock();
   }
@@ -578,7 +578,7 @@ function setGameState(next) {
     logEngineEvent('GAME_STATE_CHANGED', { from: previous, to: next });
   }
 
-  if (next === 'ANALYZING') {
+  if (next === 'ANALYZING' || state.mediaJobActive) {
     acquireAnalysisWakeLock();
   } else {
     releaseAnalysisWakeLock();
@@ -1276,6 +1276,13 @@ function onTurkishMediaStatus(status) {
   }
   if (status.sourceTranscript) { updateSourceTranscript(status.sourceTranscript); renderVoiceMappingPanel(); }
   logEngineEvent('TURKISH_MEDIA_STATUS', { state: status.state, jobId: status.jobId || null });
+  // Keep the screen awake while the server makes the dub, so the phone keeps
+  // talking to the server and the job is not abandoned.
+  const mediaActive = Boolean(status.jobId) && !['READY', 'FAILED', 'CANCELLED', 'PLAYBACK_READY',
+    'PLAYBACK_BLOCKED', 'PLAYBACK_FAILED'].includes(String(status.state || ''));
+  state.mediaJobActive = mediaActive;
+  if (mediaActive && typeof acquireAnalysisWakeLock === 'function') acquireAnalysisWakeLock();
+  else if (!mediaActive && state.gameState !== 'ANALYZING' && typeof releaseAnalysisWakeLock === 'function') releaseAnalysisWakeLock();
   if (status.state === 'PLAYBACK_READY') { els.dubBufferStatus.classList.add('hidden'); return; }
   if (['PLAYBACK_BLOCKED', 'PLAYBACK_FAILED'].includes(status.state)) {
     els.dubBufferMessage.textContent = status.message || 'Türkçe ses oynatılamadı.';

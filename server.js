@@ -1408,6 +1408,17 @@ const mediaUploads = createMediaUploads({ directory: path.join(mediaConfig.direc
 const mediaJobs = createMediaJobs({ config: mediaConfig, cache: mediaCache, limiter: mediaLimiter, audio: mediaAudio,
   leaseSource: mediaUploads.acquireLeaseByPath,
   onFailure: details => console.error('Turkish media job failed.', details) });
+
+// A free Render instance spins down after 15 minutes without incoming
+// requests, even while a long dub is still being made (a phone browser stops
+// polling when the screen locks). While a media job runs, the server calls
+// its own public health page every 4 minutes so the instance stays up and the
+// job is not lost.
+const selfUrl = String(process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+if (selfUrl) setInterval(() => {
+  if (!(mediaJobs.activeCount?.() > 0)) return;
+  fetch(`${selfUrl}/health`, { signal: AbortSignal.timeout(15000) }).catch(() => {});
+}, 4 * 60 * 1000).unref();
 installTurkishMediaRoutes(app, { uploads: mediaUploads, jobs: mediaJobs,
   rawParser: express.raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_CHUNK_BYTES }),
   secrets: [mediaConfig.elevenLabs.apiKey, mediaConfig.translation.apiKey],
