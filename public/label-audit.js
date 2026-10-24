@@ -59,6 +59,14 @@ function familiesAgree(positionId, family) {
   return (COMPATIBLE[positionId] || [positionId]).includes(family);
 }
 
+// Where MAIN_MALE's own body has to be for each position.
+const MALE_POSTURE = {
+  cowgirl: ['lying_back', 'seated'], 'reverse-cowgirl': ['lying_back', 'seated'], 'seated-facing': ['seated', 'lying_back'],
+  rear: ['kneeling', 'standing', 'behind', 'on_top'], 'standing-rear': ['standing', 'behind'],
+  'prone-bone': ['on_top', 'behind', 'kneeling'], missionary: ['kneeling', 'standing', 'on_top'], 'legs-up': ['kneeling', 'standing', 'on_top']
+};
+const ON_TOP = new Set(['cowgirl', 'reverse-cowgirl']);
+
 export function auditReasons(action = {}, { transWomanCast = false } = {}) {
   const reasons = [];
   const positionId = String(action.positionId || '').toLowerCase();
@@ -70,6 +78,10 @@ export function auditReasons(action = {}, { transWomanCast = false } = {}) {
   else if (!familiesAgree(positionId, said)) reasons.push('label_position_mismatch');
   if (!['oral', 'manual'].includes(positionId) && !familiesAgree(positionId, body)) reasons.push('body_position_mismatch');
   if (positionId === 'oral' && !['partner', 'main_male', 'mutual'].includes(String(action.oralGiver || ''))) reasons.push('oral_giver_missing');
+  const posture = String(action.mainMalePosture || '').toLowerCase();
+  const allowed = MALE_POSTURE[positionId];
+  if (allowed && posture && posture !== 'unclear' && !allowed.includes(posture)) reasons.push('male_posture_mismatch');
+  else if (allowed && ON_TOP.has(positionId) && posture === 'unclear') reasons.push('male_posture_unclear');
   const configuration = Number(action.positionConfigurationConfidence);
   if (!['oral', 'manual'].includes(positionId) && Number.isFinite(configuration) && configuration < POSITION_CONFIDENCE) reasons.push('low_configuration_confidence');
   const route = String(action.activityType || '').toLowerCase();
@@ -93,7 +105,7 @@ export function labelAuditCandidates(result = {}, options = {}) {
     .map(row => ({ ...row.action, auditReasons: row.reasons }));
 }
 function weight(reasons) {
-  return reasons.reduce((sum, reason) => sum + ({ sixty_nine_mismatch: 8, label_position_mismatch: 6,
+  return reasons.reduce((sum, reason) => sum + ({ sixty_nine_mismatch: 8, male_posture_mismatch: 7, label_position_mismatch: 6,
     body_position_mismatch: 5, route_trans_review: 4, route_unproven: 3, oral_giver_missing: 2 }[reason] || 1), 0);
 }
 

@@ -2667,6 +2667,11 @@ els.analyzeBtn.addEventListener('click', async () => {
           mergedStoryContext.synopsisTr ? `HİKÂYE ÖZETİ: ${mergedStoryContext.synopsisTr}` : '',
           prompts.join('\n\n')
         ].filter(Boolean).join('\n\n'),
+        // Each chapter's own text, in time order, for the one clear summary.
+        summaryChapters: completedResults.map(result => ({
+          startTime: Number(result.chunkStart), endTime: Number(result.chunkEnd),
+          text: [result.storyContext?.synopsisTr, result.videoPrompt].map(value => String(value || '').trim()).filter(Boolean).join(' ')
+        })).filter(row => row.text).sort((a, b) => (a.startTime || 0) - (b.startTime || 0)),
         storyContext: mergedStoryContext,
         actions: mergedActions,
         rewardMoments: typeof normalizeRewardMoments === 'function' ? normalizeRewardMoments(completedResults.flatMap(result =>
@@ -2937,6 +2942,10 @@ els.analyzeBtn.addEventListener('click', async () => {
     analysisProgress.update('save', { detail: 'Seçenekler konuşmalara göre adlandırılıyor.' });
     await refineChoiceLabelsFromDialogue(normalized);
   }
+  if (typeof refreshStorySummary === 'function') {
+    analysisProgress.update('save', { detail: 'Video özeti tek ve net bir hikâye olarak yazılıyor.' });
+    await refreshStorySummary(normalized);
+  }
   // Part edges follow measured hard cuts so no card opens or ends on another shot.
   if (typeof snapActionBoundaries === 'function') {
     const snapped = snapActionBoundaries(normalized.actions, {
@@ -3165,6 +3174,8 @@ function normalizeAnalysis(body) {
       positionOccurrenceId: String(a.positionOccurrenceId || ""),
       receiverBodyOrientation: String(a.receiverBodyOrientation || 'unclear'),
       receiverSupport: String(a.receiverSupport || 'unclear'),
+      mainMalePosture: ['lying_back', 'seated', 'kneeling', 'standing', 'on_top', 'behind'].includes(String(a.mainMalePosture || '').toLowerCase())
+        ? String(a.mainMalePosture).toLowerCase() : 'unclear',
       positionConfigurationConfidence: Math.max(0, Math.min(1, Number(a.positionConfigurationConfidence) || 0)),
       positionEvidence: String(a.positionEvidence || ''),
       classificationReview: a.classificationReview === 'verified' ? 'verified'
@@ -3242,6 +3253,8 @@ function normalizeAnalysis(body) {
     mainMaleTrackId: body?.mainMaleTrackId ?? null,
     semanticVideoMap: body?.semanticVideoMap ?? [],
     videoPrompt: body?.videoPrompt ?? body?.description ?? '',
+    summaryChapters: Array.isArray(body?.summaryChapters) ? body.summaryChapters : [],
+    storySummary: body?.storySummary || null,
     storyContext,
     warnings: Array.isArray(body?.warnings) ? body.warnings : [],
     actions: ownership.playable,
@@ -3365,7 +3378,8 @@ function initializeInteractive(analysis) {
   }
   els.adultInteractionPanel?.classList.add("hidden");
   els.playerSection.classList.remove('hidden');
-  els.videoPrompt.textContent = typeof analysis.videoPrompt === 'string' ? analysis.videoPrompt : JSON.stringify(analysis.videoPrompt, null, 2);
+  if (typeof renderStorySummary === 'function') renderStorySummary(analysis);
+  else els.videoPrompt.textContent = typeof analysis.videoPrompt === 'string' ? analysis.videoPrompt : JSON.stringify(analysis.videoPrompt, null, 2);
   renderTimeline();
   setGameState('DECISION_PENDING');
   renderChoices();
@@ -7906,6 +7920,71 @@ async function refineChoiceLabelsFromDialogue(analysis, { timeoutMs = 25000 } = 
   } finally { clearTimeout(timer); }
 }
 
+// ---------- One clear story summary ----------
+const IDENTITY_WORDS = { trans_woman: 'trans kadın', trans_man: 'trans erkek', nonbinary: 'non-binary', femboy: 'femboy' };
+
+function summaryCast(analysis) {
+  const characters = analysis?.storyContext?.characters || [];
+  return characters.filter(row => row?.evidenceLevel === 'fact').map(row => ({
+    name: typeof stableCharacterName === 'function' ? stableCharacterName(row, characters) : String(row.displayName || ''),
+    identity: IDENTITY_WORDS[String(row.genderIdentity || '').toLowerCase()] || (row.gender === 'female' ? 'kadın' : row.gender === 'male' ? 'erkek' : ''),
+    player: row.participantTrackId === 'MAIN_MALE' || row.id === 'MAIN_MALE'
+  })).filter(row => row.name);
+}
+
+async function refreshStorySummary(analysis, { timeoutMs = 25000 } = {}) {
+  if (!analysis) return null;
+  const chapters = analysis.summaryChapters?.length ? analysis.summaryChapters
+    : [{ startTime: 0, endTime: Number(analysis.videoDuration) || null, text: String(analysis.videoPrompt || '').replace(/^HİKÂYE ÖZETİ:\s*/u, '') }];
+  if (!chapters.some(row => String(row.text || '').trim())) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch('/api/story-summary', { method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...geminiRequestHeaders() },
+      body: JSON.stringify({ chapters, cast: summaryCast(analysis), setting: analysis.storyContext?.setting || '' }) });
+    const body = await response.json().catch(() => ({}));
+    recordAiUsage(body?.aiUsage);
+    if (!response.ok || !body?.summary) { logEngineEvent('STORY_SUMMARY_SKIPPED', { reason: body?.reason || response.status }); return null; }
+    analysis.storySummary = body.summary;
+    logEngineEvent('STORY_SUMMARY_READY', { beats: body.summary.beats?.length || 0 });
+    return body.summary;
+  } catch (error) {
+    logEngineEvent('STORY_SUMMARY_SKIPPED', { reason: error?.name === 'AbortError' ? 'timeout' : error?.message });
+    return null;
+  } finally { clearTimeout(timer); }
+}
+
+function renderStorySummary(analysis) {
+  const box = els.videoPrompt;
+  if (!box) return;
+  const summary = analysis?.storySummary;
+  if (!summary?.summary || !globalThis.document?.createElement) {
+    box.textContent = typeof analysis?.videoPrompt === 'string' ? analysis.videoPrompt : JSON.stringify(analysis?.videoPrompt ?? '', null, 2);
+    box.classList.remove('story-summary');
+    return;
+  }
+  box.classList.add('story-summary');
+  const nodes = [];
+  if (summary.title) { const h = document.createElement('h3'); h.textContent = summary.title; nodes.push(h); }
+  const p = document.createElement('p'); p.textContent = summary.summary; nodes.push(p);
+  if (summary.beats?.length) {
+    const list = document.createElement('ol');
+    for (const beat of summary.beats) {
+      const item = document.createElement('li');
+      if (Number.isFinite(beat.startTime)) {
+        const time = document.createElement('time');
+        time.textContent = typeof formatClock === 'function' ? formatClock(beat.startTime) : `${Math.round(beat.startTime)} sn`;
+        item.append(time);
+      }
+      const text = document.createElement('span'); text.textContent = beat.text; item.append(text);
+      list.append(item);
+    }
+    nodes.push(list);
+  }
+  box.replaceChildren(...nodes);
+}
+
 // ---------- Card preview ----------
 function attachChoicePreview(button, start, end) {
   if (!state.choicePreview && typeof createChoicePreview === 'function') {
@@ -9094,6 +9173,14 @@ async function openSavedGame(game) {
     setGameState('DIALOGUE_READY');
   }
   // Older saves get dialogue-led choice labels once, in the background.
+  if (state.analysis && !state.analysis.storySummary && typeof refreshStorySummary === 'function') {
+    const summaryGame = state.analysis;
+    void refreshStorySummary(summaryGame).then(summary => {
+      if (!summary || state.analysis !== summaryGame) return;
+      renderStorySummary(summaryGame);
+      void savedGames?.saveCurrent(true);
+    });
+  }
   const labelFlag = `vq.dlabels.${state.analysisFingerprint || ''}`;
   let labelsDone = false;
   try { labelsDone = globalThis.localStorage?.getItem(labelFlag) === '1'; } catch { labelsDone = false; }

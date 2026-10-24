@@ -54,3 +54,13 @@ test('audit reasons reach Gemini with the candidate', () => {
   assert.deepEqual(serialized[0].auditReasons, ['sixty_nine_mismatch']);
   assert.equal(serialized[0].oralGiver, 'mutual');
 });
+
+test('a cowgirl claim while the man stands or kneels behind her is re-checked', () => {
+  const cowgirl = { ...base, actionId: 'k', positionId: 'cowgirl', receiverBodyOrientation: 'on_top_facing',
+    label: 'Kucağında inip kalkmasına izin ver', mainMalePosture: 'standing' };
+  assert.ok(auditReasons(cowgirl).includes('male_posture_mismatch'));
+  assert.deepEqual(auditReasons({ ...cowgirl, mainMalePosture: 'lying_back' }), []);
+  assert.ok(auditReasons({ ...cowgirl, mainMalePosture: 'unclear' }).includes('male_posture_unclear'));
+  assert.deepEqual(auditReasons({ ...base, positionId: 'rear', receiverBodyOrientation: 'hands_knees', label: 'Arkadan devam et',
+    mainMalePosture: 'kneeling' }), []);
+});

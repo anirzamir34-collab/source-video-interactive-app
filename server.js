@@ -35,6 +35,7 @@ import { withChoiceSurface } from './public/choice-routing.js';
 import { hasFamilyOrSpouseContext } from './public/relationship-roles.js';
 import { installScoutRoute } from './lib/scout-route.js';
 import { buildAnalysisPrompt } from './lib/analysis-prompt.js';
+import { STORY_SUMMARY_SYSTEM, STORY_SUMMARY_SCHEMA, STORY_SUMMARY_VERSION, sanitizeSummaryInput, acceptedSummary } from './lib/story-summary.js';
 import { CHOICE_LABEL_SYSTEM, CHOICE_LABEL_SCHEMA, CHOICE_LABEL_VERSION, sanitizeLabelItems, acceptedLabels } from './lib/choice-labels.js';
 import { ensureProtagonistTrack } from './lib/protagonist-track.js';
 import { normalizeRewardMoments } from './public/reward-moments.js';
@@ -409,7 +410,7 @@ SECOND PASS VISUAL REVIEW MODE:
 - Keep each corrected action and its loop within that candidate's original startTime/endTime. Review the first and last visible evidence as well as the midpoint; text from the first pass is not visual evidence.
 - Re-inspect the SAME storyboard frames against these first-pass candidates:
 ${reviewCandidates}
-- A candidate may carry auditReasons: the exact question to settle. sixty_nine_mismatch: the label says 69; decide from the frames whether both give oral at once (positionId oral, oralGiver mutual) or not. label_position_mismatch / body_position_mismatch: the label, the reported body arrangement and positionId disagree; run the 10-step position check and make all three agree. oral_giver_missing: decide who gives oral. low_configuration_confidence: re-check the arrangement at start, midpoint and end. route_unproven / route_trans_review: the route (vaginal/anal) is not proven; with route_trans_review the receiving partner is a trans woman per the viewer's cast note, so never assume vaginal. Return the route only when directly visible, otherwise activityType other and a label without a route word.
+- A candidate may carry auditReasons: the exact question to settle. sixty_nine_mismatch: the label says 69; decide from the frames whether both give oral at once (positionId oral, oralGiver mutual) or not. label_position_mismatch / body_position_mismatch: the label, the reported body arrangement and positionId disagree; run the 10-step position check and make all three agree. oral_giver_missing: decide who gives oral. male_posture_mismatch / male_posture_unclear: check how MAIN_MALE's own body is placed at start, midpoint and end; she is on top (cowgirl, reverse-cowgirl) only when he lies or sits under her with her weight on his hips; when he stands or kneels behind her it is rear, standing-rear or prone-bone, even if he holds her hips. low_configuration_confidence: re-check the arrangement at start, midpoint and end. route_unproven / route_trans_review: the route (vaginal/anal) is not proven; with route_trans_review the receiving partner is a trans woman per the viewer's cast note, so never assume vaginal. Return the route only when directly visible, otherwise activityType other and a label without a route word.
 - Return candidates whose underlying event is visibly supported in their source interval. Require start, midpoint and end evidence for precise position and repeatable-loop claims; when only those details fail, retain a neutral event without a position or loop.
 - Correct timestamps, canonical position id/label and confidence when the frames prove a correction.
 - Preserve actionId/sceneId for the same candidate.
@@ -1556,38 +1557,55 @@ app.get('/api/gemini-analysis-models', async (req, res) => {
   }
 });
 
-// Dialogue-led choice labels (text only, small). Failure never blocks play.
-app.post('/api/choice-labels', async (req, res) => {
+// Small text-only Gemini passes (choice labels, story summary). They never
+// block play: any failure returns an empty result.
+async function geminiTextJson(req, { system, schema, payload, maxOutputTokens = 4096, tag }) {
   const apiKey = resolveGeminiApiKey(req);
-  if (!apiKey) return res.status(503).json({ labels: {}, reason: 'GEMINI_NOT_CONFIGURED' });
-  const items = sanitizeLabelItems(req.body?.items);
-  if (!items.length) return res.json({ labels: {}, version: CHOICE_LABEL_VERSION });
+  if (!apiKey) return { status: 503, reason: 'GEMINI_NOT_CONFIGURED' };
   const ai = new GoogleGenAI({ apiKey });
-  const usage = emptyGeminiUsage();
   for (const model of analysisModelCandidates('economy', process.env)) {
     try {
       const response = await ai.models.generateContent({
         model,
-        contents: [{ role: 'user', parts: [{ text: JSON.stringify({ items }) }] }],
-        config: { ...geminiGenerationConfig(model), maxOutputTokens: 4096,
-          systemInstruction: CHOICE_LABEL_SYSTEM, responseSchema: CHOICE_LABEL_SCHEMA,
+        contents: [{ role: 'user', parts: [{ text: JSON.stringify(payload) }] }],
+        config: { ...geminiGenerationConfig(model), maxOutputTokens, systemInstruction: system, responseSchema: schema,
           httpOptions: { timeout: 45000, retryOptions: { attempts: 1 } } }
       });
       const meta = response?.usageMetadata || {};
-      usage.requests = 1;
-      usage.inputTokens = Number(meta.promptTokenCount || 0);
-      usage.outputTokens = Number(meta.candidatesTokenCount || 0);
-      usage.thinkingTokens = Number(meta.thoughtsTokenCount || 0);
-      const labels = acceptedLabels(parseModelJson(String(response?.text || '')), items);
-      console.info('[choice-labels]', JSON.stringify({ model, items: items.length, changed: Object.keys(labels).length }));
-      return res.json({ labels, version: CHOICE_LABEL_VERSION, aiUsage: usage });
+      const usage = { ...emptyGeminiUsage(), requests: 1, inputTokens: Number(meta.promptTokenCount || 0),
+        outputTokens: Number(meta.candidatesTokenCount || 0), thinkingTokens: Number(meta.thoughtsTokenCount || 0) };
+      return { status: 200, model, usage, parsed: parseModelJson(String(response?.text || '')) };
     } catch (error) {
       if (storyboardFailureReason(error) === 'GEMINI_MODEL_UNAVAILABLE') continue;
-      console.warn('[choice-labels-failed]', JSON.stringify({ model, reason: storyboardFailureReason(error) }));
-      return res.status(502).json({ labels: {}, reason: storyboardFailureReason(error) });
+      console.warn(`[${tag}-failed]`, JSON.stringify({ model, reason: storyboardFailureReason(error) }));
+      return { status: 502, reason: storyboardFailureReason(error) };
     }
   }
-  return res.status(502).json({ labels: {}, reason: 'GEMINI_MODEL_UNAVAILABLE' });
+  return { status: 502, reason: 'GEMINI_MODEL_UNAVAILABLE' };
+}
+
+// Dialogue-led choice labels.
+app.post('/api/choice-labels', async (req, res) => {
+  const items = sanitizeLabelItems(req.body?.items);
+  if (!items.length) return res.json({ labels: {}, version: CHOICE_LABEL_VERSION });
+  const result = await geminiTextJson(req, { system: CHOICE_LABEL_SYSTEM, schema: CHOICE_LABEL_SCHEMA,
+    payload: { items }, tag: 'choice-labels' });
+  if (result.status !== 200) return res.status(result.status).json({ labels: {}, reason: result.reason });
+  const labels = acceptedLabels(result.parsed, items);
+  console.info('[choice-labels]', JSON.stringify({ model: result.model, items: items.length, changed: Object.keys(labels).length }));
+  return res.json({ labels, version: CHOICE_LABEL_VERSION, aiUsage: result.usage });
+});
+
+// One coherent story summary from the chapter texts.
+app.post('/api/story-summary', async (req, res) => {
+  const input = sanitizeSummaryInput(req.body || {});
+  if (!input.chapters.length) return res.json({ summary: null, version: STORY_SUMMARY_VERSION });
+  const result = await geminiTextJson(req, { system: STORY_SUMMARY_SYSTEM, schema: STORY_SUMMARY_SCHEMA,
+    payload: input, maxOutputTokens: 3072, tag: 'story-summary' });
+  if (result.status !== 200) return res.status(result.status).json({ summary: null, reason: result.reason });
+  const summary = acceptedSummary(result.parsed, input);
+  console.info('[story-summary]', JSON.stringify({ model: result.model, chapters: input.chapters.length, accepted: Boolean(summary) }));
+  return res.json({ summary, version: STORY_SUMMARY_VERSION, aiUsage: result.usage });
 });
 
 app.post('/api/gemini-key-status', async (req, res) => {

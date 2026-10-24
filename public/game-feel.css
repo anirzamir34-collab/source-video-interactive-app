@@ -192,3 +192,18 @@ html body #playerSection .video-stage #choices .decision-auto-toggle[data-on="tr
   #playerSection .video-stage .moment-card,
   .choice-preview { animation: none; }
 }
+
+/* ---- Video özeti: one clear story ---- */
+#videoPrompt.story-summary-box { white-space: pre-wrap; }
+#videoPrompt.story-summary {
+  white-space: normal;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--gf-text);
+}
+#videoPrompt.story-summary h3 { margin: 0 0 8px; font-size: 17px; font-weight: 700; }
+#videoPrompt.story-summary p { margin: 0 0 14px; color: rgba(244, 247, 248, .86); }
+#videoPrompt.story-summary ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+#videoPrompt.story-summary li { display: grid; grid-template-columns: 48px 1fr; gap: 10px; align-items: baseline; font-size: 13px; }
+#videoPrompt.story-summary time { color: var(--gf-accent); font-variant-numeric: tabular-nums; font-size: 12px; }

@@ -67,7 +67,7 @@ const reviewFields = new Set([
   'narrativeChoiceLabel', 'sceneTitle', 'sceneGoal', 'relationshipContext',
   'storyEvidenceLevel', 'storyConfidence', 'storyEvidence',
   'outcomeType', 'outcomeStartTime', 'outcomeEndTime', 'outcomeLabel',
-  'oralGiver', 'receiverLegs', 'movementChange', 'auditReasons'
+  'oralGiver', 'receiverLegs', 'movementChange', 'auditReasons', 'mainMalePosture'
 ]);
 
 export function serializeReviewCandidates(input) {

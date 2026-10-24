@@ -42,3 +42,14 @@ test('an accepted label becomes the story wording and the old one is kept', () =
   assert.equal(actions[1].narrativeChoiceLabel, undefined);
   assert.equal(dialogueLabelItems(actions, { utterances }).length, 0, 'done once');
 });
+
+test('the story summary keeps one name per person and refuses family roles', async () => {
+  const { sanitizeSummaryInput, acceptedSummary } = await import('../lib/story-summary.js');
+  const input = sanitizeSummaryInput({ chapters: [{ startTime: 0, endTime: 60, text: 'Mercedes odaya girer.' }],
+    cast: [{ name: 'Mercedes', identity: 'trans kadın' }] });
+  const ok = acceptedSummary({ title: 'Profesörün odası', summary: 'Mercedes odaya girer ve adamla konuşur, sonra yanına oturur.',
+    beats: [{ startTime: 5, text: 'Mercedes odaya girer.' }, { startTime: 999, text: 'Sonra' }] }, input);
+  assert.equal(ok.beats[0].startTime, 5);
+  assert.equal(ok.beats[1].startTime, null, 'a time outside the video is dropped');
+  assert.equal(acceptedSummary({ title: 'x', summary: 'Mercedes üvey annesiyle konuşur ve odadan çıkar, sonra geri döner.', beats: [] }, input), null);
+});
