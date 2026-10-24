@@ -8,7 +8,7 @@ const utterances = [
   { segmentId: 's2', speakerId: 'm', sourceStart: 40, sourceEnd: 41, sourceText: 'Hmm' }
 ];
 
-test('only story and opening choices with speech right before them are sent, with the Turkish line', () => {
+test('every label is sent for a perspective check; only story lines carry the speech before them', () => {
   const actions = [
     { actionId: 'a', sourceVerified: true, choiceSurface: 'story', startTime: 11, label: 'Onunla konuş' },
     { actionId: 'b', sourceVerified: true, choiceSurface: 'panel', positionId: 'rear', startTime: 11, label: 'x' },
@@ -16,8 +16,11 @@ test('only story and opening choices with speech right before them are sent, wit
   ];
   const items = dialogueLabelItems(actions, { utterances, turkishBySegment: new Map([['s1', 'Masaj ister misin?']]),
     speakerName: id => (id === 'm' ? 'Sen' : 'Selin') });
-  assert.deepEqual(items.map(item => item.actionId), ['a']);
+  assert.deepEqual(items.map(item => item.actionId), ['a', 'b', 'c'], 'every label is checked for perspective');
   assert.deepEqual(items[0].lines, [{ speaker: 'Selin', text: 'Do you want a massage?', tr: 'Masaj ister misin?' }]);
+  assert.deepEqual(items[1].lines, [], 'sex-panel labels never use dialogue');
+  assert.equal(items[1].surface, 'panel');
+  assert.deepEqual(items[2].lines, [], 'a lone "Hmm" is not dialogue');
 });
 
 test('answers are filtered: family roles, kız, ids and unchanged labels are refused', () => {
@@ -41,6 +44,9 @@ test('an accepted label becomes the story wording and the old one is kept', () =
   assert.equal(actions[0].storyEvidenceLevel, 'fact');
   assert.equal(actions[1].narrativeChoiceLabel, undefined);
   assert.equal(dialogueLabelItems(actions, { utterances }).length, 0, 'done once');
+  const panel = [{ actionId: 'p', positionId: 'rear', label: 'Penisinin ucunu yalamasına izin ver' }];
+  applyDialogueLabels(panel, { p: 'Penisini yalamasına izin ver' });
+  assert.equal(panel[0].label, 'Penisini yalamasına izin ver', 'a panel card shows its corrected label');
 });
 
 test('the story summary keeps one name per person and refuses family roles', async () => {

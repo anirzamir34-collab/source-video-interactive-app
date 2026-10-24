@@ -9,8 +9,9 @@ import { resolveCutRange, formatClock } from './time-range.js';
 import { castProfilesFor, castNoteIdentities } from './voice-cast.js';
 import { labelAuditCandidates, mergeLabelAudit } from './label-audit.js';
 import { snapActionBoundaries } from './boundary-snap.js';
+import { alignBoundariesToSpeech } from './speech-boundaries.js';
 import { createChoicePreview } from './choice-preview.js';
-import { dialogueLabelItems, applyDialogueLabels } from './dialogue-labels.js';
+import { dialogueLabelItems, applyDialogueLabels, DIALOGUE_LABEL_VERSION } from './dialogue-labels.js';
 import { sceneKeyFor, sceneChapters, sceneCardContent, characterCardContent, playableIntervals, createExplorationTracker } from './game-moments.js';
 import { DECISION_SECONDS, autoContinueEnabled, setAutoContinue, choiceRoles, roleCaption, createDecisionTimer } from './decision-timer.js';
 import { normalizeRewardMoments, rewardsForScene, derivedHighlight, pickAdultReward, rewardTitle } from './reward-moments.js';
@@ -208,6 +209,9 @@ const state = {
   analysis: null,
   sourceTranscript: null,
   sourceContext: null,
+  // The sex panel opens on its first position; the older three-stage flow
+  // (story, approach panel, positions) stays available when false.
+  directPositionPanel: true,
   turkishMediaStatus: null,
   mediaRevoice: null,
   voiceMappingGeneration: 0,
@@ -3362,6 +3366,17 @@ function initializeInteractive(analysis) {
     const spouseTracks = protagonistSpouseTracks(state.analysis.storyContext || {});
     if (spouseTracks.size) state.analysis.actions = state.analysis.actions.map(action => withSpouseLabel(action, spouseTracks));
   }
+  // No part ends in the middle of a spoken line (original or dub), so a
+  // choice never interrupts a sentence.
+  if (typeof alignBoundariesToSpeech === 'function' && Array.isArray(analysis?.actions)) {
+    const dubRows = (typeof currentMediaManifest === 'function' ? currentMediaManifest()?.dubSegments : null) || [];
+    const aligned = alignBoundariesToSpeech(analysis.actions, [...(state.sourceContext?.segments || []), ...dubRows]);
+    if (aligned.changed) {
+      analysis.actions = aligned.actions;
+      if (state.analysis && state.analysis !== analysis) state.analysis.actions = aligned.actions;
+      logEngineEvent('SPEECH_BOUNDARIES_ALIGNED', { changed: aligned.changed });
+    }
+  }
   prepareAdultScenes();
   const restoredSnapshot = restoreRuntimeSnapshot(analysis);
   if (typeof resetGameMoments === 'function') resetGameMoments(analysis);
@@ -4275,6 +4290,11 @@ function prepareAdultScenes() {
     // not from treating the first pose change as the first core position.
     // The same rule applies to every video and to all providers.
     scene.positions = assignVerifiedOpeningRoles(scene.positions);
+    // The sex panel opens directly on its first position: oral and manual
+    // are positions of the panel like any other, never a warm-up stage.
+    // Kisses and touches before it stay ordinary timeline choices.
+    if (state.directPositionPanel === true) scene.positions = scene.positions.map(position => isWarmupPosition(position)
+      ? { ...position, progressionRole: 'core' } : position);
     const firstCoreStart = scene.positions
       .filter(position => !isWarmupPosition(position))
       .reduce((earliest, position) => Math.min(earliest, Number(position.startTime)), Number.POSITIVE_INFINITY);
@@ -4375,8 +4395,14 @@ function prepareAdultScenes() {
   // at the story before it. Earlier conversation/story stays an ordinary
   // timeline choice in the normal panel, so the Lust panel takes over
   // exactly when the first touch, kiss, undressing or oral act begins.
+  // A scene with positions starts exactly at its first position: everything
+  // before it (talk, kisses, touches) is played as ordinary timeline choices,
+  // so the panel opens on the first real position at its own moment. A scene
+  // with no position keeps its opening choices.
   for (const scene of state.adultScenes) {
-    const intimateStarts = [
+    const positionStarts = state.directPositionPanel === true
+      ? (scene.positions || []).map(position => Number(position.startTime)).filter(Number.isFinite) : [];
+    const intimateStarts = positionStarts.length ? positionStarts : [
       ...(scene.foreplay || []).filter(item => item.sourceVerified === true && item.nonIntimate !== true)
         .map(item => Number(item.startTime)),
       ...(scene.positions || []).map(position => Number(position.startTime))
@@ -4384,11 +4410,12 @@ function prepareAdultScenes() {
     if (!intimateStarts.length) continue;
     const firstIntimate = Math.min(...intimateStarts);
     if (!(Number(scene.startTime) < firstIntimate - 0.05)) continue;
-    const before = item => Number(item.endTime) <= firstIntimate + 0.05;
-    const released = [...(scene.dialogue || []), ...(scene.foreplay || []).filter(item => item.nonIntimate === true)]
-      .filter(before);
+    const before = item => positionStarts.length ? Number(item.startTime) < firstIntimate - 0.05
+      : Number(item.endTime) <= firstIntimate + 0.05;
+    const released = [...(scene.dialogue || []), ...(scene.foreplay || [])
+      .filter(item => positionStarts.length || item.nonIntimate === true)].filter(before);
     scene.dialogue = (scene.dialogue || []).filter(item => !before(item));
-    scene.foreplay = (scene.foreplay || []).filter(item => item.nonIntimate !== true || !before(item));
+    scene.foreplay = (scene.foreplay || []).filter(item => !released.includes(item));
     scene.startTime = firstIntimate;
     for (const item of released) {
       const row = traceByAction.get(actions.find(action => action.actionId === (item.sourceActionId || item.id)));
@@ -5907,6 +5934,20 @@ function enterAdultScene(scene, { forceStart = false, reason = 'timeline' } = {}
   if (!sameSession && typeof announceMoment === 'function') announceMoment(sceneLeadAction(scene));
   renderAdultPanel(scene);
   setGameState('SEGMENT_PLAYING');
+  // The panel opens already playing its first position from its own first
+  // moment, like the video itself.
+  if (!sameSession && state.directPositionPanel === true && !state.activeMovementId && !state.activeAdultPreludeId) {
+    const first = (scene.positions || []).filter(position => !isBonusPosition(position))
+      .sort((a, b) => Number(a.startTime) - Number(b.startTime))[0];
+    const firstMove = first && (first.movements || []).filter(item => item?.sourceVerified === true)
+      .sort((a, b) => Number(a.loopStartTime) - Number(b.loopStartTime))[0];
+    if (first && firstMove) {
+      selectAdultPosition(first.id, false);
+      state.activeMovementChoiceId = null;
+      selectAdultMovement(firstMove.id, true);
+      logEngineEvent('PANEL_OPENED_ON_FIRST_POSITION', { positionId: first.id, movementId: firstMove.id });
+    }
+  }
   logEngineEvent('ADULT_SCENE_ENTERED', { sceneId: scene.id, reason, sameSession });
   return true;
 }
@@ -7280,6 +7321,14 @@ function updateAdultPlayback(now, mediaTime) {
     return;
   }
 
+  // A sentence that is still being spoken (original or dub) is finished
+  // first, up to 4 s past the part's end, so the pause never cuts a line.
+  if (mediaTime >= movement.loopEndTime - 0.04 && mediaTime < movement.loopEndTime + 4 &&
+      typeof genericConversationEnd === 'function') {
+    const talkEnd = genericConversationEnd(Number(movement.loopEndTime));
+    if (talkEnd > Number(movement.loopEndTime) + 0.05 && talkEnd - Number(movement.loopEndTime) <= 4 &&
+        mediaTime < talkEnd - 0.03) return;
+  }
   if (mediaTime >= movement.loopEndTime - 0.04 || mediaTime < movement.loopStartTime - 0.15) {
     // A verified clip never chooses the next movement on behalf of the user.
     // Automatic chaining could cross a bad model grouping and visibly jump
@@ -8458,8 +8507,11 @@ function finishAction(action, decisionEndTime = action.endTime) {
   // underway. Restore that verified boundary, not the stale callback position,
   // so a later source action is not silently marked consumed. Keep normal
   // sub-frame progress unchanged to avoid needless seek/rewind jitter.
+  // Any overshoot past the next part's start (a timeupdate arrives a few
+  // frames late) anchors at that start, so the touching next choice is still
+  // offered instead of being skipped as "already started".
   const safeBoundary = Number.isFinite(nextSourceStart) &&
-    observedEnd > nextSourceStart + 0.15 ? nextSourceStart : observedEnd;
+    observedEnd > nextSourceStart ? nextSourceStart : observedEnd;
   const reachedTime = Math.min(Number(els.video.duration) || Number(state.analysis?.videoDuration) || Infinity,
     safeBoundary);
   state.consumedActionIds.add(action.actionId);
@@ -9167,6 +9219,17 @@ async function openSavedGame(game) {
     els.mediaJobRetryBtn.textContent = 'Türkçe dublajı hazırla';
     if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Bu kayıtta Türkçe ses yok. Dublaj açıkken bu düğmeyle hazırlanır; analiz ve oyun aynen kalır.';
   }
+  // Older saves get their labels checked once (player's perspective, and
+  // story labels after the line just spoken) before the cards are built.
+  let labelsChecked = false;
+  if (state.analysis && typeof refineChoiceLabelsFromDialogue === 'function' &&
+      (state.analysis.actions || []).some(action => action?.sourceVerified === true &&
+        action.dialogueLabel !== (typeof DIALOGUE_LABEL_VERSION === 'string' ? DIALOGUE_LABEL_VERSION : ''))) {
+    els.fileMeta.textContent = `${game.title} · seçenekler kontrol ediliyor…`;
+    await refineChoiceLabelsFromDialogue(state.analysis, { timeoutMs: 15000 });
+    labelsChecked = (state.analysis.actions || []).some(action => action.dialogueLabel === DIALOGUE_LABEL_VERSION);
+    els.fileMeta.textContent = `${game.title} · kayıtlı video · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
+  }
   if (state.analysis) initializeInteractive(state.analysis);
   else {
     els.playerSection.classList.remove('hidden');
@@ -9181,20 +9244,7 @@ async function openSavedGame(game) {
       void savedGames?.saveCurrent(true);
     });
   }
-  const labelFlag = `vq.dlabels.${state.analysisFingerprint || ''}`;
-  let labelsDone = false;
-  try { labelsDone = globalThis.localStorage?.getItem(labelFlag) === '1'; } catch { labelsDone = false; }
-  if (!labelsDone && state.analysis && state.sourceTranscript && typeof refineChoiceLabelsFromDialogue === 'function') {
-    const openedGame = state.analysis;
-    void refineChoiceLabelsFromDialogue(openedGame).then(changed => {
-      if (openedGame.actions?.some(action => action.dialogueLabel)) {
-        try { globalThis.localStorage?.setItem(labelFlag, '1'); } catch { /* convenience only */ }
-      }
-      if (!changed || state.analysis !== openedGame) return;
-      void savedGames?.saveCurrent(true);
-      if (state.gameState === 'DECISION_PENDING' && !state.adultMode && !state.activeAction) renderChoices();
-    });
-  }
+  if (labelsChecked) void savedGames?.saveCurrent(true);
   els.analysisCard.classList.remove('hidden');
   els.analysisState.textContent = 'SAVED_GAME_READY';
   els.analysisTitle.textContent = game.title;

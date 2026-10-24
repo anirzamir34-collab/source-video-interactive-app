@@ -511,7 +511,7 @@ test('next verified source boundary interrupts long speech without rewinding or 
   f.els.video.time = 3.02;
   f.els.video.dispatchEvent(new Event('timeupdate'));
   assert.equal(f.state.activeAction, null);
-  assert.equal(f.state.gameCursorTime, 3.02);
+  assert.equal(f.state.gameCursorTime, 3, 'a late timeupdate anchors at the next part\'s start');
   assert.equal(f.state.consumedActionIds.has('walk'), false);
   assert.equal(f.els.choices.children.length, 1);
   assert.equal(f.futureActions()[0].actionId, 'walk');
