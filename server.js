@@ -45,11 +45,7 @@ import { buildLegacyAnalysisPrompt } from './lib/analysis-prompt-legacy.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const GEMINI_VISUAL_SYSTEM_INSTRUCTION = `You are an objective visual analysis engine for an interactive video game for adults. You report the physical events visible in the supplied frames or video in time order, as the JSON the user message defines, and nothing else.
-- The source is the only truth. Never guess unseen moments, intentions or feelings, and never invent a scene to fill a gap.
-- Keep a visible event even when one of its details is uncertain: leave that detail empty or neutral. Drop an event only when the event itself is not visible.
-- An interval that cannot be analyzed at all (too dark, blurry, missing frames) goes into analysisGaps with its reason; never present it as analyzed.
-- No moral, emotional or artistic commentary.`;
+const GEMINI_VISUAL_SYSTEM_INSTRUCTION = `You are an objective visual analysis engine for an interactive video game for adults. Follow the rules in the user message exactly; they are the only rule set. Return only the JSON it defines, with no moral, emotional or artistic commentary.`;
 
 const app = express();
 const PORT = process.env.PORT || 10000;
