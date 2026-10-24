@@ -45,20 +45,11 @@ import { buildLegacyAnalysisPrompt } from './lib/analysis-prompt-legacy.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const GEMINI_VISUAL_SYSTEM_INSTRUCTION = `GÖREV VE ROL: Sen nesnel, klinik ve teknik bir görsel analiz motorusun. Sana iletilen ardışık görsel karelerdeki (frame) fiziksel eylemleri, mekan değişimlerini ve nesne/özne etkileşimlerini kronolojik olarak raporlamakla görevlisiniz. Kesinlikle ahlaki, öznel, duygusal veya sanatsal yorum yapma. Sadece gördüğün ham fiziksel veriyi işle.
-
-ANALİZ ŞABLONU VE DETAYLAR:
-Her bir gözlemlenebilir eylemi şu başlıklar altında ayrı ayrı değerlendir:
-1. Zaman Aralığı / Kare Numarası: [Eylemin başlangıç ve bitiş anı]
-2. Fiziksel Katılımcılar (Özneler/Nesneler): [Sahnede yer alan aktörler veya fiziksel ögeler, örn: Aktör A, Aktör B, Nesne X]
-3. Somut Eylem / Etkileşim Sınıflandırması: [Öznelerin gerçekleştirdiği yer değiştirme, temas, jest, mimik veya nesne kullanımı gibi somut hareketler]
-4. Görünür Değişimler ve Geçişler: [Kamera açısı değişimi, mekan değişimi veya eylemin yönündeki net fiziksel farklılıklar]
-
-KESİN DOĞRULUK VE SINIRLILIK KURALLARI:
-- Sadece görsel karelerde %100 doğrulanabilir olan ham eylemleri baz al.
-- İki eylem arasındaki boşlukları, görünmeyen sahneleri veya karakterlerin içsel niyetlerini asla tahmin etme, hayali sahne veya çıkarım üretme.
-- Eğer bir zaman aralığındaki görsel veri düşük çözünürlük, karanlık veya belirsizlik nedeniyle net olarak analiz edilemiyorsa; ilgili aralığı kesinlikle silme veya atlama. O aralık için 'Durum: Analiz Edilemeyen Kesit' etiketini kullan, açıklama alanını boş bırak ve yanına '[UYARI: Görsel veri yetersiz/belirsiz]' notunu ekle.
-- İncelenemeyen veya belirsiz olan hiçbir zaman aralığını tamamlanmış veya çözümlenmiş bir analiz gibi sunma.`;
+const GEMINI_VISUAL_SYSTEM_INSTRUCTION = `You are an objective visual analysis engine for an interactive video game for adults. You report the physical events visible in the supplied frames or video in time order, as the JSON the user message defines, and nothing else.
+- The source is the only truth. Never guess unseen moments, intentions or feelings, and never invent a scene to fill a gap.
+- Keep a visible event even when one of its details is uncertain: leave that detail empty or neutral. Drop an event only when the event itself is not visible.
+- An interval that cannot be analyzed at all (too dark, blurry, missing frames) goes into analysisGaps with its reason; never present it as analyzed.
+- No moral, emotional or artistic commentary.`;
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -401,29 +392,14 @@ FAMILY/SPOUSE CONTEXT — EXACT PARTICIPANT PAIR VALIDATION:
 - If subjectTrackId, primaryCharacterId or partnerTrackId conflict, preserve the independently observable event and time interval with a neutral label; leave uncertain identities unresolved rather than dropping the event or assigning it to a family member.
 ` : '';
   const reviewInstructions = reviewMode ? `
-SECOND PASS VISUAL REVIEW MODE:
-- Review the existence of each source event separately from its descriptive metadata. If the event is visible but a specific category, contact point, participant, or label is uncertain, keep the event at its original source interval with a neutral, supported label and clear uncertainty. Reject the event only when the event itself cannot be verified.
-- Apply the same event-preservation rule to story, approach, panel, MAIN and BONUS candidates. A classification correction must not erase an otherwise visible ordinary action or opening interaction.
-- Treat all candidate labels, confidence scores and evidence descriptions as untrusted proposals. Independently read the supplied frames before comparing them to the candidate text.
-- A camera/viewpoint change, partial occlusion, surface contact or tempo change alone does not establish a different configuration. Verify continuity between adjacent intervals. Do not force a single label when a real configuration change is visible.
-- Use only the declared canonical IDs. Never invent a canonical name. Leave uncertain classifications out and explain the uncertainty in warnings.
-- Keep each corrected action and its loop within that candidate's original startTime/endTime. Review the first and last visible evidence as well as the midpoint; text from the first pass is not visual evidence.
-- Re-inspect the SAME storyboard frames against these first-pass candidates:
+SECOND PASS REVIEW (same rules as above; this only says what to check):
+- Re-inspect the SAME frames for these first-pass candidates. Their labels, confidences and evidence are untrusted proposals; read the frames first.
 ${reviewCandidates}
-- A candidate may carry auditReasons: the exact question to settle. sixty_nine_mismatch: the label says 69; decide from the frames whether both give oral at once (positionId oral, oralGiver mutual) or not. label_position_mismatch / body_position_mismatch: the label, the reported body arrangement and positionId disagree; run the 10-step position check and make all three agree. oral_giver_missing: decide who gives oral. male_posture_mismatch / male_posture_unclear: check how MAIN_MALE's own body is placed at start, midpoint and end; she is on top (cowgirl, reverse-cowgirl) only when he lies or sits under her with her weight on his hips; when he stands or kneels behind her it is rear, standing-rear or prone-bone, even if he holds her hips. low_configuration_confidence: re-check the arrangement at start, midpoint and end. route_unproven / route_trans_review: the route (vaginal/anal) is not proven; with route_trans_review the receiving partner is a trans woman per the viewer's cast note, so never assume vaginal. Return the route only when directly visible, otherwise activityType other and a label without a route word.
-- Return candidates whose underlying event is visibly supported in their source interval. Require start, midpoint and end evidence for precise position and repeatable-loop claims; when only those details fail, retain a neutral event without a position or loop.
-- Correct timestamps, canonical position id/label and confidence when the frames prove a correction.
-- Preserve actionId/sceneId for the same candidate.
-- Independently verify each proposed verifiedSubsequences boundary against the supplied frames. Preserve only source-backed 5+ second intervals of the same action and participants; an unsupported list must be empty.
-- Do not add a new action merely because it sounds plausible.
-- If only a candidate's specific label or category conflicts with the frames, correct or remove that claim and preserve the visible event. Omit the entire candidate only if its source event or playable interval is unsupported, and add a warning.
-- Outcome/final candidates require stronger evidence than ordinary actions.
-- For any candidate whose first-pass activityType is vaginal or anal, independently classify the route again from the SAME visible frames. Treat the first-pass route as untrusted; do not preserve it merely for consistency.
-- Body position never proves route: missionary, cowgirl, rear, standing-rear, spoon and similar configurations can be vaginal or anal.
-- Return vaginal or anal only when the visible contact/penetration location is directly distinguishable and consistent at the candidate start, midpoint and end. Otherwise return activityType other with low activityTypeConfidence, or omit the candidate.
-- Never default an ambiguous penetrative candidate to vaginal. Correct activityType, activityTypeConfidence, activityEvidence and the Turkish label together so they cannot contradict one another.
-- Re-check narrativeChoiceLabel, sceneTitle, sceneGoal, relationshipContext, storyEvidenceLevel, storyConfidence and storyEvidence for supplied candidates. Preserve them only when the same frames/dialogue still support them; otherwise downgrade to neutral wording.
-- For groupScene, partnerSwitch or partner_transition candidates, independently re-identify every visible adult using stable neutral track IDs. Preserve a partner change only when the source frames visibly prove MAIN_MALE changes from one adult partner to another; otherwise omit it.
+- For each candidate apply "event vs detail": keep its visible event at its original interval and actionId/sceneId; correct or empty only the details the frames do not support (position, route, partner, label, loop, verifiedSubsequences). Omit a candidate only when its event or interval is not visible. Never add a new action.
+- auditReasons, when present, name the exact question: sixty_nine_mismatch (both giving oral at once or not), label_position_mismatch / body_position_mismatch (make label, body arrangement and positionId agree via the 10-step check), male_posture_mismatch / male_posture_unclear (she is on top only when he lies or sits under her), oral_giver_missing, low_configuration_confidence, route_unproven / route_trans_review (route only when directly visible; with a trans woman receiving, never assume vaginal).
+- Re-check every vaginal/anal route independently; positionId never decides it.
+- Partner changes and group identities stay only when the frames prove them. Outcomes need stronger evidence than ordinary actions.
+- Keep corrected actions and loops inside the candidate's original startTime/endTime.
 ` : '';
   const chunkDuration = Math.max(1, chunkEnd - chunkStart);
     // Re-analysis of a missing part uses exactly the same instructions as the
@@ -705,9 +681,22 @@ ${reviewCandidates}
       repairTelemetry = { modelRawActionsCount: Array.isArray(parsed?.actions) ? parsed.actions.length : 0,
         repairValidatorAcceptedCount: count, stageReached: count ? 'REPAIR_VALIDATOR_PASSED' : 'REPAIR_VALIDATOR_EMPTY' };
     }
-    const unresolvedGaps = Array.isArray(parsed?.analysisGaps)
+    const allGaps = Array.isArray(parsed?.analysisGaps)
       ? parsed.analysisGaps.filter(gap => Number(gap?.endTime) > Number(gap?.startTime))
       : [];
+    // Gaps the model itself reports for an unreadable stretch (free-text
+    // reason) keep the chunk's verified actions; only the stretch stays
+    // missing. Provider or recovery failures (code reasons) fail the chunk.
+    const isCodeReason = gap => /^[A-Z][A-Z0-9_]+$/.test(String(gap?.reason || ''));
+    const modelVerifiedCount = Array.isArray(parsed?.actions)
+      ? parsed.actions.filter(item => item?.sourceVerified === true).length : 0;
+    const partialGaps = !allGaps.some(isCodeReason) && modelVerifiedCount ? allGaps.map(gap => {
+      let start = Number(gap.startTime), end = Number(gap.endTime);
+      if (videoFileUri && start < chunkStart - 0.5) { start += chunkStart; end += chunkStart; }
+      return { startTime: Math.max(chunkStart, start), endTime: Math.min(chunkEnd, end), chunkIndex,
+        reason: 'MODEL_REPORTED_UNREADABLE', detail: String(gap.reason || '').slice(0, 200) };
+    }).filter(gap => gap.endTime - gap.startTime >= 0.5) : [];
+    const unresolvedGaps = partialGaps.length || (!allGaps.some(isCodeReason) && modelVerifiedCount) ? [] : allGaps;
     if (unresolvedGaps.length) {
       const quotaBlocked = unresolvedGaps.some(gap =>
         ['GEMINI_QUOTA_OR_CREDITS', 'GEMINI_RATE_LIMITED', 'GEMINI_DAILY_LIMIT', 'GEMINI_CREDITS_DEPLETED'].includes(String(gap?.reason || ''))
@@ -960,7 +949,7 @@ ${reviewCandidates}
       storyContext: parsed.storyContext && typeof parsed.storyContext === 'object' ? parsed.storyContext : {},
       actions: dedupedActions,
       rewardMoments: normalizeRewardMoments(parsed.rewardMoments, { chunkStart, chunkEnd }),
-      analysisGaps: Array.isArray(parsed.analysisGaps) ? parsed.analysisGaps : [],
+      analysisGaps: partialGaps,
       restrictedRanges: Array.isArray(parsed.restrictedRanges) ? parsed.restrictedRanges : [],
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
       aiUsage: analysisUsage,
