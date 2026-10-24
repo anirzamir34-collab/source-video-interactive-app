@@ -2941,6 +2941,9 @@ els.analyzeBtn.addEventListener('click', async () => {
     .map(row => [Number(Number(row?.time).toFixed(2)), Number(row?.score)])
     .filter(([time, score]) => Number.isFinite(time) && Number.isFinite(score));
   state.savedMediaManifest = null;
+  // What the player asked for at the start (kept with the saved game), so a
+  // dub postponed by a credit stop can be made later without asking again.
+  normalized.mediaRequested = { dubbing: Boolean(modes.dubbing), subtitles: Boolean(modes.subtitles) };
   // Story and opening choices are phrased after what was just said.
   if (typeof refineChoiceLabelsFromDialogue === 'function') {
     analysisProgress.update('save', { detail: 'Seçenekler konuşmalara göre adlandırılıyor.' });
@@ -2970,12 +2973,14 @@ els.analyzeBtn.addEventListener('click', async () => {
   // The next "Analiz et" on this video starts a brand-new run.
   session.runId = null;
   analysisProgress.finish();
-  if (sourceAudioOnly && state.analysis && els.mediaJobStatus && els.mediaJobRetryBtn) {
+  const dubPostponed = Boolean(creditRecovery?.recovered && (modes.dubbing || modes.subtitles));
+  if ((sourceAudioOnly || dubPostponed) && state.analysis && els.mediaJobStatus && els.mediaJobRetryBtn) {
     els.mediaJobStatus.classList.remove('hidden');
     els.mediaJobRetryBtn.classList.remove('hidden');
     els.mediaJobRetryBtn.disabled = false;
     els.mediaJobRetryBtn.textContent = 'Türkçe dublajı hazırla';
-    if (els.mediaJobMessage) els.mediaJobMessage.textContent = mediaFailureMessage;
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = sourceAudioOnly ? mediaFailureMessage
+      : 'Gemini kredisi bittiği için Türkçe dublaj ertelendi. Eksik bölümleri tamamladıktan sonra kayıtlı oyunu açınca dublaj kendiliğinden hazırlanır; istersen bu düğmeyle hemen başlatabilirsin.';
   }
   } catch (error) {
     console.error('Analysis failed:', error);
@@ -9247,6 +9252,15 @@ async function openSavedGame(game) {
   else {
     els.playerSection.classList.remove('hidden');
     setGameState('DIALOGUE_READY');
+  }
+  // A dub the player asked for but that was postponed (credit stop during
+  // analysis) is made now, once the analysis has no missing parts left.
+  if (!turkishMedia && state.analysis?.mediaRequested?.dubbing && els.mediaJobRetryBtn &&
+      !(state.autoDubTriedIds ??= new Set()).has(game.id) && state.autoDubTriedIds.add(game.id) &&
+      typeof retryableAnalysisGaps === 'function' && !retryableAnalysisGaps(state.analysis, game.duration).length) {
+    if (els.mediaJobMessage) els.mediaJobMessage.textContent = 'Analiz tamamlandı; başta istediğin Türkçe dublaj şimdi hazırlanıyor.';
+    logEngineEvent('POSTPONED_DUB_STARTED', { gameId: game.id });
+    setTimeout(() => els.mediaJobRetryBtn?.click(), 300);
   }
   // Older saves get dialogue-led choice labels once, in the background.
   if (state.analysis && !state.analysis.storySummary && typeof refreshStorySummary === 'function') {
