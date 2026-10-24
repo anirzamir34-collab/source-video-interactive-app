@@ -4859,6 +4859,19 @@ function unlockNextAdultPositionFromLust() {
   if (state.interactionMeterNeedsReset) return null;
   if (currentAdultFlow() < 99.9 || state.adultOutcomePhase !== 'idle' || state.adultOrgasmDecision) return null;
   const firstUnlock = !state.adultSexUnlocked;
+  // A later return of an activity that is already open (oral again after an
+  // oral part) is the same choice, not a new position: it opens with it, so
+  // a full Lust always opens a genuinely new position.
+  if (state.directPositionPanel === true) {
+    const family = position => String(position?.familyId || position?.categoryId || '').trim();
+    const open = new Set((state.adultScene?.positions || [])
+      .filter(position => state.adultUnlockedPositionIds.has(position.id)).map(family).filter(Boolean));
+    for (const position of orderedLockedAdultPositions()) {
+      if (!open.has(family(position))) continue;
+      state.adultUnlockedPositionIds.add(position.id);
+      state.adultRevealedPositionIds.add(position.id);
+    }
+  }
   const locked = orderedLockedAdultPositions();
   const coreVisited = (state.adultScene?.positions || []).some(position =>
     !isWarmupPosition(position) && !isBonusPosition(position) &&

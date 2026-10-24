@@ -363,7 +363,7 @@ test('mix uses sourceStart sample offsets, ducks the original language and suppo
     { segmentId: 'a', speakerId: 'male', start: 20, end: 21, sourceStart: .125, sourceEnd: 1, audioPath: '/tmp/a.wav', duration: 50 },
     { segmentId: 'b', speakerId: 'female', start: .375, end: 1.25, audioPath: '/tmp/b.wav' }
   ] });
-  assert.match(graph, /1-0.82\*min/);
+  assert.match(graph, /1-0.68\*min/);
   assert.match(graph, /volume=volume='.*':eval=frame/, 'ducked once per small block, not per sample');
   assert.match(graph, /adelay=6000S:all=1/);
   assert.match(graph, /adelay=18000S:all=1/);
@@ -372,7 +372,7 @@ test('mix uses sourceStart sample offsets, ducks the original language and suppo
   assert.match(graph, /alimiter=limit=0.95:level=0:latency=1/);
   assert.equal(result.qa.mixMode, 'speech-ducking');
   assert.equal(result.qa.originalSpeechMuted, false);
-  assert.equal(result.qa.originalSpeechLevel, .18);
+  assert.equal(result.qa.originalSpeechLevel, .32);
   assert.equal(result.qa.preservesMusicDuringSpeech, true);
   assert.match(result.qa.limitation, /music and ambience are reduced/);
   assert.equal(await stat(result.path).then(row => row.size), 5);
@@ -432,7 +432,7 @@ test('compressed source fallback also retains quiet source speech and normal sou
     dubSegments: [{ segmentId: 'one', speakerId: 'speaker', start: 1, end: 2, audioPath: dub }] });
   const decoded = await samples(output.path);
   assert.ok(frequencyAmplitude(decoded.slice(.2 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440) > .08);
-  assert.ok(Math.abs(frequencyAmplitude(decoded.slice(1.2 * SAMPLE_RATE, 1.8 * SAMPLE_RATE), 440) - .018) < .003);
+  assert.ok(Math.abs(frequencyAmplitude(decoded.slice(1.2 * SAMPLE_RATE, 1.8 * SAMPLE_RATE), 440) - .032) < .004);
   assert.ok(frequencyAmplitude(decoded.slice(1.2 * SAMPLE_RATE, 1.8 * SAMPLE_RATE), 880) > .15);
 });
 
@@ -482,7 +482,7 @@ test('final MP3 retains the complete timeline, audible dub and original non-spee
   assert.equal(decoded.length, 8 * SAMPLE_RATE, 'Xing gapless decoding preserves the video clock');
   assert.ok(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 880) > .15);
   assert.ok(frequencyAmplitude(decoded.slice(.2 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440) > .08);
-  assert.ok(Math.abs(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 440) - .018) < .003);
+  assert.ok(Math.abs(frequencyAmplitude(decoded.slice(2.1 * SAMPLE_RATE, 2.9 * SAMPLE_RATE), 440) - .032) < .004);
   assert.ok((await stat(output.path)).size < (await stat(source)).size / 10);
   assert.ok(!(await readdir(path.dirname(output.path))).includes('turkish-mix.wav'));
 });
@@ -521,7 +521,7 @@ test('many separated dialogue turns preserve ducking, gapless timing and measure
     const normalBed = frequencyAmplitude(outside, 440, outsideStart);
     const quietBed = frequencyAmplitude(inside, 440, insideStart);
     assert.ok(normalBed > .08, 'bed remains audible between turns, accounting for MP3 encoder gain');
-    assert.ok(Math.abs(quietBed / normalBed - .18) < .01, 'only the matching interval ducks the bed');
+    assert.ok(Math.abs(quietBed / normalBed - .32) < .015, 'only the matching interval ducks the bed');
     assert.ok(frequencyAmplitude(inside, 880, insideStart) > .1, 'each late turn remains audible at its own offset');
   }
 });
@@ -701,9 +701,9 @@ test('a redistributed dub ducks the original speech clock and preserves the bed 
     { segmentId: 'shifted', speakerId: 'a', start: .5, end: 1, originalSpeechStart: 1, originalSpeechEnd: 1.5, audioPath: voice }
   ] });
   const audio = await samples(mixed.path);
-  assert.ok(Math.abs(frequencyAmplitude(audio.slice(.6 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440, .6 * SAMPLE_RATE) - .12 * .18) < .002,
+  assert.ok(Math.abs(frequencyAmplitude(audio.slice(.6 * SAMPLE_RATE, .8 * SAMPLE_RATE), 440, .6 * SAMPLE_RATE) - .12 * .32) < .003,
     'source is quiet whenever the redistributed dub is speaking');
-  assert.ok(Math.abs(rms(audio.slice(1.1 * SAMPLE_RATE, 1.4 * SAMPLE_RATE)) - .12 * .18 / Math.sqrt(2)) < .002,
+  assert.ok(Math.abs(rms(audio.slice(1.1 * SAMPLE_RATE, 1.4 * SAMPLE_RATE)) - .12 * .32 / Math.sqrt(2)) < .003,
     'original speech is retained at a low level');
   assert.ok(frequencyAmplitude(audio.slice(1.7 * SAMPLE_RATE, 1.9 * SAMPLE_RATE), 440) > .1, 'other scenes return to normal');
 });
@@ -736,7 +736,7 @@ test('real mix preserves non-speech bed, retains quiet original speech, aligns o
   const early = audio.slice(.2 * SAMPLE_RATE, .4 * SAMPLE_RATE);
   const overlap = audio.slice(1.35 * SAMPLE_RATE, 1.6 * SAMPLE_RATE);
   assert.ok(Math.abs(frequencyAmplitude(early, 440, .2 * SAMPLE_RATE) - .12) < .002);
-  assert.ok(Math.abs(frequencyAmplitude(overlap, 440, 1.35 * SAMPLE_RATE) - .12 * .18) < .002, 'original language stays quiet during source speech');
+  assert.ok(Math.abs(frequencyAmplitude(overlap, 440, 1.35 * SAMPLE_RATE) - .12 * .32) < .003, 'original language stays quiet during source speech');
   assert.ok(frequencyAmplitude(overlap, 880, 1.35 * SAMPLE_RATE) > .01);
   assert.ok(frequencyAmplitude(overlap, 1320, 1.35 * SAMPLE_RATE) > .01);
   assert.ok(audio.reduce((peak, sample) => Math.max(peak, Math.abs(sample)), 0) <= .951);
